@@ -22,7 +22,8 @@ where
     }
 
     fn eval(unstable_events: &[Event<&str, u32, Self>], stable_events: &[Self]) -> Self::Value {
-        let mut set = HashSet::new();
+        let mut set = Self::Value::new();
+        // No "remove" operation can be in the stable set
         for op in stable_events {
             if let Operation::Add(v) = op {
                 set.insert(v.clone());
@@ -39,10 +40,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crdt::or_set::Operation,
-        trcb::{OpRules, Trcb},
-    };
+    use std::collections::HashSet;
+
+    use crate::{crdt::or_set::Operation, trcb::Trcb};
 
     #[test]
     fn test_or_set() {
@@ -73,10 +73,7 @@ mod tests {
         trcb_a.tc_deliver(event_b);
 
         assert_eq!(trcb_a.lvv.get(&"B"), Some(2));
-        assert_eq!(
-            Operation::eval(&trcb_a.po_log, &trcb_a.state),
-            Operation::eval(&trcb_b.po_log, &trcb_b.state)
-        );
+        assert_eq!(trcb_a.eval(), trcb_b.eval(),);
     }
 
     #[test]
@@ -97,9 +94,7 @@ mod tests {
         trcb_a.tc_deliver(event_b);
         trcb_b.tc_deliver(event_a);
 
-        assert_eq!(
-            Operation::eval(&trcb_a.po_log, &trcb_a.state),
-            Operation::eval(&trcb_b.po_log, &trcb_b.state)
-        );
+        assert_eq!(trcb_a.eval(), HashSet::from(["A", "B"]));
+        assert_eq!(trcb_b.eval(), trcb_a.eval());
     }
 }

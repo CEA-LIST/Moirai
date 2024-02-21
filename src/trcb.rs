@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     ops::{Add, AddAssign},
+    time::UNIX_EPOCH,
 };
 
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
@@ -16,6 +17,7 @@ where
 {
     pub vc: VectorClock<K, T>,
     pub op: O,
+    pub wc: u128,
     pub origin: K,
 }
 
@@ -26,7 +28,12 @@ where
     O: Clone + Debug,
 {
     pub fn new(vc: VectorClock<K, T>, op: O, origin: K) -> Self {
-        Self { vc, op, origin }
+        Self {
+            vc,
+            op,
+            origin,
+            wc: UNIX_EPOCH.elapsed().unwrap().as_millis(),
+        }
     }
 }
 
@@ -77,8 +84,7 @@ where
 
     pub fn new_peer(&mut self, peer_id: &K) {
         self.peers.push(peer_id.clone());
-        self.ltm
-            .insert(peer_id.clone(), VectorClock::new(peer_id.clone()));
+        self.ltm.add_key(peer_id.clone());
         self.lvv.increment(peer_id);
     }
 
@@ -91,9 +97,10 @@ where
     }
 
     pub fn tc_deliver(&mut self, event: Event<K, T, O>) {
-        self.lvv.merge(&event.vc);
-        self.ltm.update(&event.origin, &event.vc);
-
+        if self.id != event.origin {
+            self.lvv.merge(&event.vc);
+            self.ltm.update(&event.origin, &event.vc);
+        }
         self.effect(event);
         let partition = self.tc_stable();
         self.stable(partition);
@@ -123,16 +130,17 @@ where
 
         // If no previous event in the PO-Log makes the new event obsolete, then the new event is added to the PO-Log.
         if !self.po_log.iter().any(|e| O::obsolete(&event, e)) {
-            self.po_log.push(event.clone());
+            self.po_log.push(event);
         }
-
-        let partition = self.tc_stable();
-        self.stable(partition);
     }
 
     fn stable(&mut self, partition: StableUnstable<K, T, O>) {
         let (stable, unstable) = partition;
         self.state.extend(stable.iter().map(|e| e.op.clone()));
         self.po_log = unstable;
+    }
+
+    pub fn eval(&self) -> O::Value {
+        O::eval(&self.po_log, &self.state)
     }
 }

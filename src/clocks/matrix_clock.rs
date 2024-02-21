@@ -7,6 +7,7 @@ use std::{
 
 use super::vector_clock::VectorClock;
 
+/// The matrix must ALWAYS be square
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct MatrixClock<K, T>
 where
@@ -24,7 +25,10 @@ where
     pub fn new(keys: &[K]) -> MatrixClock<K, T> {
         let mut clock = HashMap::new();
         for k in keys {
-            clock.insert(k.clone(), VectorClock::new(k.clone()));
+            clock.insert(
+                k.clone(),
+                VectorClock::from(keys, &vec![T::default(); keys.len()]),
+            );
         }
         MatrixClock { clock }
     }
@@ -37,8 +41,14 @@ where
         self.clock.get_mut(key)
     }
 
-    pub fn insert(&mut self, key: K, vc: VectorClock<K, T>) {
-        self.clock.insert(key, vc);
+    /// Add a new key to the matrix clock, set its vector clock to the initial value
+    pub fn add_key(&mut self, key: K) {
+        let mut keys = self.clock.keys().cloned().collect::<Vec<_>>();
+        keys.extend([key.clone()]);
+        self.clock.insert(
+            key,
+            VectorClock::from(&keys, &vec![T::default(); keys.len()]),
+        );
     }
 
     pub fn update(&mut self, key: &K, vc: &VectorClock<K, T>) {
@@ -96,8 +106,12 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let mc = MatrixClock::<i32, i32>::new(&[0]);
-        assert_eq!(mc.get(&0), Some(VectorClock::new(0)));
+        let mc = MatrixClock::<&str, i32>::new(&["A", "B", "C"]);
+        assert_eq!(mc.clock.len(), 3);
+        assert_eq!(
+            mc.get(&"A"),
+            Some(VectorClock::from(&["A", "B", "C"], &[0, 0, 0]))
+        );
     }
 
     #[test]

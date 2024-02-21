@@ -22,7 +22,7 @@ where
     K: Hash + Clone + Eq,
     T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
 {
-    /// Create a new VectorClock with a single key and a value of 0
+    /// Create a new VectorClock with a single key and an initial value
     pub fn new(key: K) -> VectorClock<K, T> {
         let mut clock = HashMap::new();
         clock.insert(key, T::default());
