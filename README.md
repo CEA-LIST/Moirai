@@ -33,3 +33,4 @@ RUST_LOG=debug cargo test -- --nocapture
       events.
 - [ ] Use a better data structure for the PO-Log of events. Something supporting
       the inherent DAG properties of the log.
+- [ ] Replace LVV by Vector Clock?
