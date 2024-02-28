@@ -18,6 +18,7 @@ where
 {
     type Value = DiGraph<V, ()>;
 
+    // Add-wins policy
     fn obsolete(is_obsolete: &Event<&str, u32, Self>, other: &Event<&str, u32, Self>) -> bool {
         match (&is_obsolete.op, &other.op) {
             (Operation::AddVertex(v1), Operation::AddVertex(v2))
@@ -99,8 +100,15 @@ mod tests {
     use crate::{crdt::graph::Operation, trcb::Trcb};
     use petgraph::algo::is_isomorphic;
 
+    #[cfg(feature = "dhat-heap")]
+    #[global_allocator]
+    static ALLOC: dhat::Alloc = dhat::Alloc;
+
     #[test]
     fn test_graph() {
+        #[cfg(feature = "dhat-heap")]
+        let _profiler = dhat::Profiler::new_heap();
+
         let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
 
