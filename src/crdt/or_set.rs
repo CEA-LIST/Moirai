@@ -40,11 +40,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::{crdt::or_set::Operation, trcb::Trcb};
     use std::collections::HashSet;
 
-    use crate::{crdt::or_set::Operation, trcb::Trcb};
-
-    #[test]
+    #[test_log::test]
     fn test_or_set() {
         let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
@@ -76,7 +75,7 @@ mod tests {
         assert_eq!(trcb_a.eval(), trcb_b.eval(),);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_concurrent_remove() {
         let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");

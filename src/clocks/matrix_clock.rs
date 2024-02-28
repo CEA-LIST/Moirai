@@ -104,7 +104,7 @@ where
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn test_new() {
         let mc = MatrixClock::<&str, i32>::new(&["A", "B", "C"]);
         assert_eq!(mc.clock.len(), 3);
@@ -114,7 +114,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_min() {
         let mc = MatrixClock::from(
             &["A", "B"],
@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(mc.min(), VectorClock::from(&["A", "B"], &[8, 2]));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_merge() {
         let mut mc1 = MatrixClock::from(
             &["A", "B"],
@@ -155,7 +155,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_display() {
         let mc = MatrixClock::from(
             &["A", "B", "C"],
