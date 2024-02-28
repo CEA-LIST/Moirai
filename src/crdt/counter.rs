@@ -31,7 +31,7 @@ where
 mod tests {
     use crate::{crdt::counter::Operation, trcb::Trcb};
 
-    #[test]
+    #[test_log::test]
     fn test_counter() {
         let mut trcb_a = Trcb::<&str, u32, Operation<i32>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<i32>>::new("B");

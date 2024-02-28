@@ -200,13 +200,13 @@ where
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn test_new() {
         let clock = VectorClock::<i32, i32>::new(0);
         assert_eq!(clock.get(&0), Some(0));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_increment() {
         let mut clock = VectorClock::new("A");
         clock.increment(&"A");
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(clock.get(&"A"), Some(2));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_merge() {
         let mut clock1 = VectorClock::new("A");
         clock1.increment(&"A");
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(clock1.get(&"B"), Some(1));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_concurrent_clocks() {
         let mut clock: VectorClock<&str, i32> = VectorClock::new(&"A");
         clock.increment(&"B");
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(clock2.partial_cmp(&clock), None);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_display() {
         let mut clock: VectorClock<&str, i32> = VectorClock::new("A");
         clock.increment(&"A");
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(String::from("{ A: 1, B: 1 }"), clock.to_string());
     }
 
-    #[test]
+    #[test_log::test]
     fn test_min() {
         let mut clock1: VectorClock<&str, i32> = VectorClock::new("A");
         clock1.increment(&"A");

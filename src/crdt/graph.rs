@@ -104,7 +104,7 @@ mod tests {
     #[global_allocator]
     static ALLOC: dhat::Alloc = dhat::Alloc;
 
-    #[test]
+    #[test_log::test]
     fn test_graph() {
         #[cfg(feature = "dhat-heap")]
         let _profiler = dhat::Profiler::new_heap();

@@ -1,3 +1,5 @@
+use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
+use log::{error, info};
 use std::{
     cmp::Ordering,
     fmt::Debug,
@@ -5,8 +7,6 @@ use std::{
     ops::{Add, AddAssign},
     time::UNIX_EPOCH,
 };
-
-use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Event<K, T, O>
@@ -100,8 +100,30 @@ where
     /// Deliver an event to the local state.
     pub fn tc_deliver(&mut self, event: Event<K, T, O>) {
         if self.id != event.origin {
+            if event.vc < self.lvv {
+                error!(
+                    "Event from {:?} with op {:?} received in {:?} is behind the LVV. LVV is {:?} while event VC is {:?}",
+                    event.origin, event.op, self.id, self.lvv, event.vc
+                );
+                return;
+            }
+            if let Some(new_lc) = event.vc.get(&event.origin) {
+                if let Some(old_vc) = self.ltm.get(&event.origin) {
+                    if let Some(old_lc) = old_vc.get(&event.origin) {
+                        if old_lc.clone() + T::from(1) != new_lc {
+                            error!("Event from {:?} with op {:?} received in {:?} is not causally ready. Local LC is {:?} while event LC is {:?}", event.origin, event.op, self.id, old_lc, new_lc);
+                            return;
+                        }
+                    }
+                }
+            }
             self.lvv.merge(&event.vc);
             self.ltm.update(&event.origin, &event.vc);
+        } else {
+            info!(
+                "Delivering event from {:?} with op {:?} to itself",
+                event.origin, event.op
+            );
         }
         self.effect(event);
         let partition = self.tc_stable();
@@ -138,6 +160,9 @@ where
 
     fn stable(&mut self, partition: StableUnstable<K, T, O>) {
         let (stable, unstable) = partition;
+        if !stable.is_empty() {
+            info!("Some events have become stable in {:?}", self.id);
+        }
         self.state.extend(stable.iter().map(|e| e.op.clone()));
         self.po_log = unstable;
     }

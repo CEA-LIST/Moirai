@@ -42,7 +42,7 @@ where
 mod tests {
     use crate::{crdt::lww_register::Operation, trcb::Trcb};
 
-    #[test]
+    #[test_log::test]
     fn test_lww_register() {
         let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
@@ -63,7 +63,7 @@ mod tests {
         assert_eq!(trcb_a.eval(), "C");
     }
 
-    #[test]
+    #[test_log::test]
     fn test_concurrent_lww_register() {
         let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
         let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");

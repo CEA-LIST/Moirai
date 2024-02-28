@@ -1,6 +1,6 @@
 # A Rust Implementation of Pure Operation-Based CRDTs
 
-## Benchmarking & Profiling
+## Monitoring
 
 ### Benchmarking
 
@@ -14,6 +14,12 @@ hyperfine 'cargo test --release'
 ```sh
 cargo install flamegraph
 cargo flamegraph --root --dev --unit-test po-crdt --  test_graph
+```
+
+### Logging
+
+```sh
+RUST_LOG=debug cargo test -- --nocapture
 ```
 
 ## Work notes
