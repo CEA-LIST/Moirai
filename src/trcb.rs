@@ -88,6 +88,7 @@ where
         self.lvv.increment(peer_id);
     }
 
+    /// Broadcast a new operation to all peers and deliver it to the local state.
     pub fn tc_bcast(&mut self, op: O) -> Event<K, T, O> {
         self.lvv.increment(&self.id);
         self.ltm.update(&self.id, &self.lvv);
@@ -96,6 +97,7 @@ where
         event
     }
 
+    /// Deliver an event to the local state.
     pub fn tc_deliver(&mut self, event: Event<K, T, O>) {
         if self.id != event.origin {
             self.lvv.merge(&event.vc);
