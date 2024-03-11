@@ -36,14 +36,18 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{crdt::mv_register::Operation, trcb::Trcb};
+    use uuid::Uuid;
 
     #[test_log::test]
     fn test_mv_register_concurrent() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation("A"));
         let event_b = trcb_b.tc_bcast(Operation("B"));
@@ -57,11 +61,14 @@ mod tests {
 
     #[test_log::test]
     fn test_mv_register() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation("A"));
         trcb_b.tc_deliver(event_a);

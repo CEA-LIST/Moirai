@@ -26,6 +26,7 @@ RUST_LOG=debug cargo test -- --nocapture
 
 - PO-CRDTs do not provide history, since stable events can be obsoleted by a new
   event at any time.
+- Receiving two events with the same timestamp is an error in the protocol.
 
 ## Todo list
 
@@ -33,4 +34,4 @@ RUST_LOG=debug cargo test -- --nocapture
       events.
 - [ ] Use a better data structure for the PO-Log of events. Something supporting
       the inherent DAG properties of the log.
-- [ ] Replace LVV by Vector Clock?
+- [ ] Remove LVV?

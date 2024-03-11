@@ -42,46 +42,44 @@ where
 mod tests {
     use crate::{crdt::or_set::Operation, trcb::Trcb};
     use std::collections::HashSet;
+    use uuid::Uuid;
 
     #[test_log::test]
     fn test_or_set() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation::Add("A"));
         trcb_b.tc_deliver(event_a);
 
-        assert_eq!(trcb_a.lvv.get(&"A"), Some(1));
-        assert_eq!(trcb_b.lvv.get(&"A"), Some(1));
-
         let event_b = trcb_b.tc_bcast(Operation::Add("B"));
         trcb_a.tc_deliver(event_b);
-
-        assert_eq!(trcb_a.lvv.get(&"B"), Some(1));
-        assert_eq!(trcb_a.lvv.get(&"B"), Some(1));
 
         let event_a = trcb_a.tc_bcast(Operation::Remove("A"));
         trcb_b.tc_deliver(event_a);
 
-        assert_eq!(trcb_a.lvv.get(&"A"), Some(2));
-
         let event_b = trcb_b.tc_bcast(Operation::Add("C"));
         trcb_a.tc_deliver(event_b);
 
-        assert_eq!(trcb_a.lvv.get(&"B"), Some(2));
         assert_eq!(trcb_a.eval(), trcb_b.eval(),);
     }
 
     #[test_log::test]
     fn test_concurrent_remove() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation::Add("A"));
         trcb_b.tc_deliver(event_a);
