@@ -1,11 +1,10 @@
+use super::vector_clock::VectorClock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
     hash::Hash,
     ops::{Add, AddAssign},
 };
-
-use super::vector_clock::VectorClock;
 
 /// The matrix must ALWAYS be square
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -14,7 +13,7 @@ where
     K: Hash + Clone + Eq,
     T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
 {
-    clock: HashMap<K, VectorClock<K, T>>,
+    pub clock: HashMap<K, VectorClock<K, T>>,
 }
 
 impl<K, T> MatrixClock<K, T>

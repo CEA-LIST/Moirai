@@ -99,6 +99,7 @@ where
 mod tests {
     use crate::{crdt::graph::Operation, trcb::Trcb};
     use petgraph::algo::is_isomorphic;
+    use uuid::Uuid;
 
     #[cfg(feature = "dhat-heap")]
     #[global_allocator]
@@ -109,11 +110,14 @@ mod tests {
         #[cfg(feature = "dhat-heap")]
         let _profiler = dhat::Profiler::new_heap();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event = trcb_a.tc_bcast(Operation::AddVertex("A"));
         trcb_b.tc_deliver(event);

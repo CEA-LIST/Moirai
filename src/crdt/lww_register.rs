@@ -18,11 +18,23 @@ where
                 Ordering::Equal => false,
                 Ordering::Greater => false,
             },
-            None => match is_obsolete.wc.cmp(&other.wc) {
-                Ordering::Less => true,
-                Ordering::Equal => is_obsolete.origin < other.origin,
-                Ordering::Greater => false,
-            },
+            None => {
+                println!("Concurrent events");
+                match is_obsolete.wc.cmp(&other.wc) {
+                    Ordering::Less => {
+                        println!("LESS");
+                        true
+                    }
+                    Ordering::Equal => {
+                        println!("EQUAL");
+                        is_obsolete.origin < other.origin
+                    }
+                    Ordering::Greater => {
+                        println!("GREATER");
+                        false
+                    }
+                }
+            }
         }
     }
 
@@ -41,14 +53,18 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{crdt::lww_register::Operation, trcb::Trcb};
+    use uuid::Uuid;
 
     #[test_log::test]
     fn test_lww_register() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation("A"));
         trcb_b.tc_deliver(event_a);
@@ -65,18 +81,34 @@ mod tests {
 
     #[test_log::test]
     fn test_concurrent_lww_register() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation("A"));
+        println!("{}", event_a.wc < event_a.wc);
         let event_b = trcb_b.tc_bcast(Operation("B"));
+        println!("DELIVERING");
         trcb_a.tc_deliver(event_b.clone());
         trcb_b.tc_deliver(event_a.clone());
 
         assert_eq!(trcb_a.eval(), trcb_b.eval());
-        assert_eq!(trcb_a.eval(), "B");
+
+        if event_a.wc < event_a.wc {
+            assert_eq!(trcb_a.eval(), "B");
+        } else if event_a.wc > event_a.wc {
+            assert_eq!(trcb_a.eval(), "A");
+        } else {
+            if event_a.origin < event_b.origin {
+                assert_eq!(trcb_a.eval(), "B");
+            } else {
+                assert_eq!(trcb_a.eval(), "A");
+            }
+        }
     }
 }

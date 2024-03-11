@@ -30,14 +30,18 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{crdt::counter::Operation, trcb::Trcb};
+    use uuid::Uuid;
 
     #[test_log::test]
     fn test_counter() {
-        let mut trcb_a = Trcb::<&str, u32, Operation<i32>>::new("A");
-        let mut trcb_b = Trcb::<&str, u32, Operation<i32>>::new("B");
+        let id_a = Uuid::new_v4().to_string();
+        let id_b = Uuid::new_v4().to_string();
 
-        trcb_a.new_peer(&"B");
-        trcb_b.new_peer(&"A");
+        let mut trcb_a = Trcb::<&str, u32, Operation<i32>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Operation<i32>>::new(id_b.as_str());
+
+        trcb_a.new_peer(&id_b.as_str());
+        trcb_b.new_peer(&id_a.as_str());
 
         let event_a = trcb_a.tc_bcast(Operation(12));
         let event_b = trcb_b.tc_bcast(Operation(5));
