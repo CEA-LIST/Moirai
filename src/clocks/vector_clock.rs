@@ -9,42 +9,42 @@ use std::{
 };
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct VectorClock<K = usize, T = usize>
+pub struct VectorClock<K = usize, C = usize>
 where
     K: Eq + Hash + Clone,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    clock: HashMap<K, T>,
+    clock: HashMap<K, C>,
 }
 
-impl<K, T> VectorClock<K, T>
+impl<K, C> VectorClock<K, C>
 where
-    K: Hash + Clone + Eq,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    K: PartialOrd + Hash + Clone + Eq,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     /// Create a new VectorClock with a single key and an initial value
-    pub fn new(key: K) -> VectorClock<K, T> {
+    pub fn new(key: K) -> VectorClock<K, C> {
         let mut clock = HashMap::new();
-        clock.insert(key, T::default());
+        clock.insert(key, C::default());
         VectorClock { clock }
     }
 
     /// Get the value of a key
-    pub fn get(&self, key: &K) -> Option<T> {
+    pub fn get(&self, key: &K) -> Option<C> {
         self.clock.get(key).cloned()
     }
 
     /// Increment the value of a key
     pub fn increment(&mut self, key: &K) {
         let value = match self.clock.get(key) {
-            Some(v) => v.clone() + T::from(1),
-            None => T::default(),
+            Some(v) => v.clone() + C::from(1),
+            None => C::default(),
         };
         self.clock.insert(key.clone(), value);
     }
 
     /// Take the max of the two clocks
-    pub fn merge(&mut self, other: &VectorClock<K, T>) {
+    pub fn merge(&mut self, other: &VectorClock<K, C>) {
         for (k, v) in &(other.clock) {
             if match self.clock.get(k) {
                 Some(v2) => v2 < v,
@@ -58,7 +58,7 @@ where
     /// Create a VectorClock from two slices
     /// The first slice is the keys and the second slice is the values
     /// The two slices must have the same length
-    pub fn from(key: &[K], value: &[T]) -> VectorClock<K, T> {
+    pub fn from(key: &[K], value: &[C]) -> VectorClock<K, C> {
         if key.len() != value.len() {
             panic!("The two slices must have the same length");
         }
@@ -72,7 +72,7 @@ where
     /// Take the min of the two clocks
     /// The min of two clocks is the clock that has the min value for each key
     /// It represents the number of events that have been observed by both clocks
-    pub fn min(&self, other: &VectorClock<K, T>) -> VectorClock<K, T> {
+    pub fn min(&self, other: &VectorClock<K, C>) -> VectorClock<K, C> {
         let mut result = VectorClock::default();
         for (k, v) in &(other.clock) {
             if match self.clock.get(k) {
@@ -88,22 +88,22 @@ where
     }
 }
 
-impl<K, T> Default for VectorClock<K, T>
+impl<K, C> Default for VectorClock<K, C>
 where
     K: Eq + Hash + Clone,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    fn default() -> VectorClock<K, T> {
+    fn default() -> VectorClock<K, C> {
         VectorClock {
-            clock: HashMap::<K, T>::new(),
+            clock: HashMap::<K, C>::new(),
         }
     }
 }
 
-impl<K, T> Display for VectorClock<K, T>
+impl<K, C> Display for VectorClock<K, C>
 where
     K: Eq + Hash + Clone + Ord + Display,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug + Display,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug + Display,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let mut keys: Vec<&K> = self.clock.keys().collect();
@@ -117,10 +117,10 @@ where
     }
 }
 
-impl<K, T> PartialOrd for VectorClock<K, T>
+impl<K, C> PartialOrd for VectorClock<K, C>
 where
-    K: Hash + Clone + Eq,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    K: PartialOrd + Hash + Clone + Eq,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let mut has_less: bool = false;

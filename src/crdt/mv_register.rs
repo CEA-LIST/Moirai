@@ -1,16 +1,29 @@
+use crate::trcb::Message;
 use crate::trcb::{Event, OpRules};
-use std::{cmp::Ordering, fmt::Debug, hash::Hash};
+use serde::Serialize;
+use std::{
+    cmp::Ordering,
+    fmt::Debug,
+    hash::Hash,
+    ops::{Add, AddAssign},
+};
 
 #[derive(Clone, Debug)]
-pub struct Operation<V>(pub V);
+pub struct Op<V>(pub V);
 
-impl<V> OpRules<&str, u32> for Operation<V>
+impl<V> OpRules for Op<V>
 where
-    V: Debug + Clone + Eq + Hash,
+    V: Debug + Clone + Eq + Hash + Serialize,
 {
     type Value = Vec<V>;
 
-    fn obsolete(is_obsolete: &Event<&str, u32, Self>, other: &Event<&str, u32, Self>) -> bool {
+    fn obsolete<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        is_obsolete: &Event<K, C, Self>,
+        other: &Event<K, C, Self>,
+    ) -> bool {
         let cmp = is_obsolete.vc.partial_cmp(&other.vc);
         match cmp {
             Some(ord) => match ord {
@@ -21,13 +34,21 @@ where
         }
     }
 
-    fn eval(unstable_events: &[Event<&str, u32, Self>], stable_events: &[Self]) -> Self::Value {
+    fn eval<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        unstable_events: &[Event<K, C, Self>],
+        stable_events: &[Self],
+    ) -> Self::Value {
         let mut set = Self::Value::new();
         for op in stable_events {
             set.push(op.0.clone());
         }
         for event in unstable_events {
-            set.push(event.op.0.clone());
+            if let Message::Op(op) = &event.message {
+                set.push(op.0.clone());
+            }
         }
         set
     }
@@ -35,7 +56,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{crdt::mv_register::Operation, trcb::Trcb};
+    use crate::{
+        crdt::mv_register::Op,
+        trcb::{Message, Signal, Trcb},
+    };
     use uuid::Uuid;
 
     #[test_log::test]
@@ -43,14 +67,17 @@ mod tests {
         let id_a = Uuid::new_v4().to_string();
         let id_b = Uuid::new_v4().to_string();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        trcb_a.new_peer(&id_b.as_str());
-        trcb_b.new_peer(&id_a.as_str());
+        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        trcb_b.tc_deliver(event_a);
 
-        let event_a = trcb_a.tc_bcast(Operation("A"));
-        let event_b = trcb_b.tc_bcast(Operation("B"));
+        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        trcb_a.tc_deliver(event_b);
+
+        let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
+        let event_b = trcb_b.tc_bcast(Message::Op(Op("B")));
 
         trcb_a.tc_deliver(event_b);
         trcb_b.tc_deliver(event_a);
@@ -64,19 +91,22 @@ mod tests {
         let id_a = Uuid::new_v4().to_string();
         let id_b = Uuid::new_v4().to_string();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        trcb_a.new_peer(&id_b.as_str());
-        trcb_b.new_peer(&id_a.as_str());
-
-        let event_a = trcb_a.tc_bcast(Operation("A"));
+        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Operation("B"));
+        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
         trcb_a.tc_deliver(event_b);
 
-        let event_a = trcb_a.tc_bcast(Operation("C"));
+        let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
+        trcb_b.tc_deliver(event_a);
+
+        let event_b = trcb_b.tc_bcast(Message::Op(Op("B")));
+        trcb_a.tc_deliver(event_b);
+
+        let event_a = trcb_a.tc_bcast(Message::Op(Op("C")));
         trcb_b.tc_deliver(event_a);
 
         assert_eq!(trcb_a.eval(), vec!["C"]);

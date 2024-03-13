@@ -1,36 +1,59 @@
-use crate::trcb::{Event, OpRules};
-use std::{collections::HashSet, fmt::Debug, hash::Hash};
+use serde::Serialize;
+
+use crate::trcb::{Event, Message, OpRules};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    hash::Hash,
+    ops::{Add, AddAssign},
+};
 
 #[derive(Clone, Debug)]
-pub enum Operation<V> {
+pub enum Op<V> {
     Add(V),
     Remove(V),
 }
 
-impl<V> OpRules<&str, u32> for Operation<V>
+impl<V> OpRules for Op<V>
 where
-    V: Debug + Clone + Eq + Hash,
+    V: Debug + Clone + Eq + Hash + Serialize,
 {
     type Value = HashSet<V>;
 
-    fn obsolete(is_obsolete: &Event<&str, u32, Self>, other: &Event<&str, u32, Self>) -> bool {
-        match (&is_obsolete.op, &other.op) {
-            (Operation::Remove(_), _) => true,
-            (Operation::Add(v1), Operation::Add(v2))
-            | (Operation::Add(v1), Operation::Remove(v2)) => is_obsolete.vc < other.vc && v1 == v2,
+    fn obsolete<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        is_obsolete: &Event<K, C, Self>,
+        other: &Event<K, C, Self>,
+    ) -> bool {
+        match (&is_obsolete.message, &other.message) {
+            (_, Message::Signal(_)) => false,
+            (Message::Signal(_), _) => false,
+            (Message::Op(Op::Remove(_)), _) => true,
+            (Message::Op(Op::Add(v1)), Message::Op(Op::Add(v2)))
+            | (Message::Op(Op::Add(v1)), Message::Op(Op::Remove(v2))) => {
+                is_obsolete.vc < other.vc && v1 == v2
+            }
         }
     }
 
-    fn eval(unstable_events: &[Event<&str, u32, Self>], stable_events: &[Self]) -> Self::Value {
+    fn eval<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        unstable_events: &[Event<K, C, Self>],
+        stable_events: &[Self],
+    ) -> Self::Value {
         let mut set = Self::Value::new();
         // No "remove" operation can be in the stable set
         for op in stable_events {
-            if let Operation::Add(v) = op {
+            if let Op::Add(v) = op {
                 set.insert(v.clone());
             }
         }
         for event in unstable_events {
-            if let Operation::Add(v) = &event.op {
+            if let Message::Op(Op::Add(v)) = &event.message {
                 set.insert(v.clone());
             }
         }
@@ -40,7 +63,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{crdt::or_set::Operation, trcb::Trcb};
+    use crate::{
+        crdt::or_set::Op,
+        trcb::{Message, Signal, Trcb},
+    };
     use std::collections::HashSet;
     use uuid::Uuid;
 
@@ -49,22 +75,25 @@ mod tests {
         let id_a = Uuid::new_v4().to_string();
         let id_b = Uuid::new_v4().to_string();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        trcb_a.new_peer(&id_b.as_str());
-        trcb_b.new_peer(&id_a.as_str());
-
-        let event_a = trcb_a.tc_bcast(Operation::Add("A"));
+        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Operation::Add("B"));
+        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
         trcb_a.tc_deliver(event_b);
 
-        let event_a = trcb_a.tc_bcast(Operation::Remove("A"));
+        let event_a = trcb_a.tc_bcast(Message::Op(Op::Add("A")));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Operation::Add("C"));
+        let event_b = trcb_b.tc_bcast(Message::Op(Op::Add("B")));
+        trcb_a.tc_deliver(event_b);
+
+        let event_a = trcb_a.tc_bcast(Message::Op(Op::Remove("A")));
+        trcb_b.tc_deliver(event_a);
+
+        let event_b = trcb_b.tc_bcast(Message::Op(Op::Add("C")));
         trcb_a.tc_deliver(event_b);
 
         assert_eq!(trcb_a.eval(), trcb_b.eval(),);
@@ -75,19 +104,22 @@ mod tests {
         let id_a = Uuid::new_v4().to_string();
         let id_b = Uuid::new_v4().to_string();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Operation<&str>>::new(id_b.as_str());
+        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        trcb_a.new_peer(&id_b.as_str());
-        trcb_b.new_peer(&id_a.as_str());
-
-        let event_a = trcb_a.tc_bcast(Operation::Add("A"));
+        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
         trcb_b.tc_deliver(event_a);
-        let event_b = trcb_b.tc_bcast(Operation::Add("B"));
+
+        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
         trcb_a.tc_deliver(event_b);
 
-        let event_a = trcb_a.tc_bcast(Operation::Remove("A"));
-        let event_b = trcb_b.tc_bcast(Operation::Add("A"));
+        let event_a = trcb_a.tc_bcast(Message::Op(Op::Add("A")));
+        trcb_b.tc_deliver(event_a);
+        let event_b = trcb_b.tc_bcast(Message::Op(Op::Add("B")));
+        trcb_a.tc_deliver(event_b);
+
+        let event_a = trcb_a.tc_bcast(Message::Op(Op::Remove("A")));
+        let event_b = trcb_b.tc_bcast(Message::Op(Op::Add("A")));
         trcb_a.tc_deliver(event_b);
         trcb_b.tc_deliver(event_a);
 

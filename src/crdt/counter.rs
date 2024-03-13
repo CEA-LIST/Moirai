@@ -1,35 +1,55 @@
+use crate::trcb::{Event, Message, OpRules};
+use serde::Serialize;
+use std::hash::Hash;
+use std::ops::AddAssign;
 use std::{fmt::Debug, ops::Add};
 
-use crate::trcb::{Event, OpRules};
-
 #[derive(Clone, Debug)]
-pub struct Operation<V>(pub V);
+pub struct Op<V>(pub V);
 
-impl<V> OpRules<&str, u32> for Operation<V>
+impl<V> OpRules for Op<V>
 where
-    V: Add<V, Output = V> + Debug + Clone + Default,
+    V: Add<V, Output = V> + Debug + Clone + Default + Serialize,
 {
     type Value = V;
 
-    fn obsolete(_: &Event<&str, u32, Self>, _: &Event<&str, u32, Self>) -> bool {
+    fn obsolete<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        _: &Event<K, C, Self>,
+        _: &Event<K, C, Self>,
+    ) -> bool {
         false
     }
 
-    fn eval(unstable_events: &[Event<&str, u32, Self>], stable_events: &[Self]) -> Self::Value {
+    fn eval<
+        K: PartialOrd + Hash + Eq + Clone + Debug,
+        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    >(
+        unstable_events: &[Event<K, C, Self>],
+        stable_events: &[Self],
+    ) -> Self::Value {
         stable_events
             .iter()
             .map(|event| event.0.clone())
             .fold(V::default(), |acc, x| acc + x)
             + unstable_events
                 .iter()
-                .map(|event| event.op.0.clone())
+                .filter_map(|event| match &event.message {
+                    Message::Op(op) => Some(op.0.clone()),
+                    Message::Signal(_) => None,
+                })
                 .fold(V::default(), |acc, x| acc + x)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{crdt::counter::Operation, trcb::Trcb};
+    use crate::{
+        crdt::counter::Op,
+        trcb::{Message, Signal, Trcb},
+    };
     use uuid::Uuid;
 
     #[test_log::test]
@@ -37,14 +57,17 @@ mod tests {
         let id_a = Uuid::new_v4().to_string();
         let id_b = Uuid::new_v4().to_string();
 
-        let mut trcb_a = Trcb::<&str, u32, Operation<i32>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Operation<i32>>::new(id_b.as_str());
+        let mut trcb_a = Trcb::<&str, u32, Op<i32>>::new(id_a.as_str());
+        let mut trcb_b = Trcb::<&str, u32, Op<i32>>::new(id_b.as_str());
 
-        trcb_a.new_peer(&id_b.as_str());
-        trcb_b.new_peer(&id_a.as_str());
+        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        trcb_b.tc_deliver(event_a);
 
-        let event_a = trcb_a.tc_bcast(Operation(12));
-        let event_b = trcb_b.tc_bcast(Operation(5));
+        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        trcb_a.tc_deliver(event_b);
+
+        let event_a = trcb_a.tc_bcast(Message::Op(Op(12)));
+        let event_b = trcb_b.tc_bcast(Message::Op(Op(5)));
 
         trcb_a.tc_deliver(event_b);
         trcb_b.tc_deliver(event_a);

@@ -8,35 +8,35 @@ use std::{
 
 /// The matrix must ALWAYS be square
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct MatrixClock<K, T>
+pub struct MatrixClock<K, C>
 where
-    K: Hash + Clone + Eq,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    K: PartialOrd + Hash + Clone + Eq,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    pub clock: HashMap<K, VectorClock<K, T>>,
+    pub clock: HashMap<K, VectorClock<K, C>>,
 }
 
-impl<K, T> MatrixClock<K, T>
+impl<K, C> MatrixClock<K, C>
 where
-    K: Hash + Clone + Eq,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Debug,
+    K: PartialOrd + Hash + Clone + Eq,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    pub fn new(keys: &[K]) -> MatrixClock<K, T> {
+    pub fn new(keys: &[K]) -> MatrixClock<K, C> {
         let mut clock = HashMap::new();
         for k in keys {
             clock.insert(
                 k.clone(),
-                VectorClock::from(keys, &vec![T::default(); keys.len()]),
+                VectorClock::from(keys, &vec![C::default(); keys.len()]),
             );
         }
         MatrixClock { clock }
     }
 
-    pub fn get(&self, key: &K) -> Option<VectorClock<K, T>> {
+    pub fn get(&self, key: &K) -> Option<VectorClock<K, C>> {
         self.clock.get(key).cloned()
     }
 
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut VectorClock<K, T>> {
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut VectorClock<K, C>> {
         self.clock.get_mut(key)
     }
 
@@ -46,17 +46,17 @@ where
         keys.extend([key.clone()]);
         self.clock.insert(
             key,
-            VectorClock::from(&keys, &vec![T::default(); keys.len()]),
+            VectorClock::from(&keys, &vec![C::default(); keys.len()]),
         );
     }
 
-    pub fn update(&mut self, key: &K, vc: &VectorClock<K, T>) {
+    pub fn update(&mut self, key: &K, vc: &VectorClock<K, C>) {
         self.clock
             .entry(key.clone())
             .and_modify(|vc2| vc2.merge(vc));
     }
 
-    pub fn from(keys: &[K], vcs: &[VectorClock<K, T>]) -> MatrixClock<K, T> {
+    pub fn from(keys: &[K], vcs: &[VectorClock<K, C>]) -> MatrixClock<K, C> {
         let mut clock = HashMap::new();
         for (k, vc) in keys.iter().zip(vcs.iter()) {
             clock.insert(k.clone(), vc.clone());
@@ -64,7 +64,7 @@ where
         MatrixClock { clock }
     }
 
-    pub fn min(&self) -> VectorClock<K, T> {
+    pub fn min(&self) -> VectorClock<K, C> {
         let mut min_vc = self.clock.values().next().unwrap().clone();
         for vc in self.clock.values() {
             min_vc = min_vc.min(vc);
@@ -72,7 +72,7 @@ where
         min_vc
     }
 
-    pub fn merge(&mut self, other: &MatrixClock<K, T>) {
+    pub fn merge(&mut self, other: &MatrixClock<K, C>) {
         for (k, vc1) in &(other.clock) {
             self.clock
                 .entry(k.clone())
@@ -82,10 +82,10 @@ where
     }
 }
 
-impl<K, T> Display for MatrixClock<K, T>
+impl<K, C> Display for MatrixClock<K, C>
 where
-    K: Hash + Clone + Eq + Display + Ord,
-    T: Add<T, Output = T> + AddAssign<T> + From<u8> + Ord + Default + Clone + Display + Debug,
+    K: PartialOrd + Hash + Clone + Eq + Display + Ord,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Display + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let mut sorted_keys: Vec<_> = self.clock.keys().collect();
