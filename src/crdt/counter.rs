@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::ops::AddAssign;
 use std::{fmt::Debug, ops::Add};
 
-use crate::protocol::event::{Event, Message};
+use crate::protocol::event::OpEvent;
 use crate::protocol::op_rules::OpRules;
 
 #[derive(Clone, Debug)]
@@ -19,8 +19,8 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        _: &Event<K, C, Self>,
-        _: &Event<K, C, Self>,
+        _: &OpEvent<K, C, Self>,
+        _: &OpEvent<K, C, Self>,
     ) -> bool {
         false
     }
@@ -29,7 +29,7 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        unstable_events: &[Event<K, C, Self>],
+        unstable_events: &[&OpEvent<K, C, Self>],
         stable_events: &[Self],
     ) -> Self::Value {
         stable_events
@@ -38,11 +38,7 @@ where
             .fold(V::default(), |acc, x| acc + x)
             + unstable_events
                 .iter()
-                .filter_map(|event| match &event.message {
-                    Message::Op(op) => Some(op.0.clone()),
-                    Message::Signal(_) => None,
-                })
-                .fold(V::default(), |acc, x| acc + x)
+                .fold(V::default(), |acc, x| acc + x.op.0.clone())
     }
 }
 
@@ -51,7 +47,7 @@ mod tests {
     use crate::{
         crdt::counter::Op,
         protocol::{
-            event::{Message, Signal},
+            event::{Message, ProtocolCmd},
             trcb::Trcb,
         },
     };
@@ -65,10 +61,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<i32>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<i32>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event_a = trcb_a.tc_bcast(Message::Op(Op(12)));

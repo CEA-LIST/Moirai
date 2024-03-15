@@ -1,7 +1,4 @@
-use crate::protocol::{
-    event::{Event, Message},
-    op_rules::OpRules,
-};
+use crate::protocol::{event::OpEvent, op_rules::OpRules};
 use serde::Serialize;
 use std::{
     cmp::Ordering,
@@ -23,10 +20,10 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        is_obsolete: &Event<K, C, Self>,
-        other: &Event<K, C, Self>,
+        is_obsolete: &OpEvent<K, C, Self>,
+        other: &OpEvent<K, C, Self>,
     ) -> bool {
-        let cmp = is_obsolete.vc.partial_cmp(&other.vc);
+        let cmp = is_obsolete.metadata.vc.partial_cmp(&other.metadata.vc);
         match cmp {
             Some(ord) => match ord {
                 Ordering::Less => true,
@@ -40,7 +37,7 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        unstable_events: &[Event<K, C, Self>],
+        unstable_events: &[&OpEvent<K, C, Self>],
         stable_events: &[Self],
     ) -> Self::Value {
         let mut set = Self::Value::new();
@@ -48,9 +45,7 @@ where
             set.push(op.0.clone());
         }
         for event in unstable_events {
-            if let Message::Op(op) = &event.message {
-                set.push(op.0.clone());
-            }
+            set.push(event.op.0.clone());
         }
         set
     }
@@ -61,7 +56,7 @@ mod tests {
     use crate::{
         crdt::mv_register::Op,
         protocol::{
-            event::{Message, Signal},
+            event::{Message, ProtocolCmd},
             trcb::Trcb,
         },
     };
@@ -75,10 +70,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
@@ -99,10 +94,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));

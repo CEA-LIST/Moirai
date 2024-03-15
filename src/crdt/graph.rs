@@ -8,10 +8,7 @@ use std::{
 use petgraph::graph::DiGraph;
 use serde::Serialize;
 
-use crate::protocol::{
-    event::{Event, Message},
-    op_rules::OpRules,
-};
+use crate::protocol::{event::OpEvent, op_rules::OpRules};
 
 #[derive(Clone, Debug)]
 pub enum Op<V> {
@@ -32,27 +29,22 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        is_obsolete: &Event<K, C, Self>,
-        other: &Event<K, C, Self>,
+        is_obsolete: &OpEvent<K, C, Self>,
+        other: &OpEvent<K, C, Self>,
     ) -> bool {
-        match (&is_obsolete.message, &other.message) {
-            (_, Message::Signal(_)) => false,
-            (Message::Signal(_), _) => false,
-            (Message::Op(Op::AddVertex(v1)), Message::Op(Op::AddVertex(v2)))
-            | (Message::Op(Op::AddVertex(v1)), Message::Op(Op::RemoveVertex(v2))) => {
-                is_obsolete.vc < other.vc && v1 == v2
+        match (&is_obsolete.op, &other.op) {
+            (Op::AddVertex(v1), Op::AddVertex(v2)) | (Op::AddVertex(v1), Op::RemoveVertex(v2)) => {
+                is_obsolete.metadata.vc < other.metadata.vc && v1 == v2
             }
-            (Message::Op(Op::AddVertex(_)), Message::Op(Op::AddArc(_, _)))
-            | (Message::Op(Op::AddArc(_, _)), Message::Op(Op::AddVertex(_)))
-            | (Message::Op(Op::AddVertex(_)), Message::Op(Op::RemoveArc(_, _))) => false,
-            (Message::Op(Op::RemoveVertex(_)), _) | (Message::Op(Op::RemoveArc(_, _)), _) => true,
-            (Message::Op(Op::AddArc(v1, v2)), Message::Op(Op::AddArc(v3, v4)))
-            | (Message::Op(Op::AddArc(v1, v2)), Message::Op(Op::RemoveArc(v3, v4))) => {
-                is_obsolete.vc < other.vc && v1 == v3 && v2 == v4
+            (Op::AddVertex(_), Op::AddArc(_, _))
+            | (Op::AddArc(_, _), Op::AddVertex(_))
+            | (Op::AddVertex(_), Op::RemoveArc(_, _)) => false,
+            (Op::RemoveVertex(_), _) | (Op::RemoveArc(_, _), _) => true,
+            (Op::AddArc(v1, v2), Op::AddArc(v3, v4))
+            | (Op::AddArc(v1, v2), Op::RemoveArc(v3, v4)) => {
+                is_obsolete.metadata.vc < other.metadata.vc && v1 == v3 && v2 == v4
             }
-            (Message::Op(Op::AddArc(v1, v2)), Message::Op(Op::RemoveVertex(v3))) => {
-                v1 == v3 || v2 == v3
-            }
+            (Op::AddArc(v1, v2), Op::RemoveVertex(v3)) => v1 == v3 || v2 == v3,
         }
     }
 
@@ -60,7 +52,7 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        unstable_events: &[Event<K, C, Self>],
+        unstable_events: &[&OpEvent<K, C, Self>],
         stable_events: &[Self],
     ) -> Self::Value {
         let mut graph = DiGraph::new();
@@ -87,12 +79,12 @@ where
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
         for event in unstable_events {
-            match &event.message {
-                Message::Op(Op::AddVertex(v)) => {
+            match &event.op {
+                Op::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Message::Op(Op::AddArc(v1, v2)) => {
+                Op::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     let idx = graph.add_edge(
@@ -102,19 +94,18 @@ where
                     );
                     edge_index.insert((v1, v2), idx);
                 }
-                Message::Op(Op::RemoveVertex(v)) => {
+                Op::RemoveVertex(v) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = node_index.get(v) {
                         graph.remove_node(*idx);
                     }
                 }
-                Message::Op(Op::RemoveArc(v1, v2)) => {
+                Op::RemoveArc(v1, v2) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = edge_index.get(&(v1, v2)) {
                         graph.remove_edge(*idx);
                     }
                 }
-                _ => {}
             }
         }
         graph
@@ -126,7 +117,7 @@ mod tests {
     use crate::{
         crdt::graph::Op,
         protocol::{
-            event::{Message, Signal},
+            event::{Message, ProtocolCmd},
             trcb::Trcb,
         },
     };
@@ -148,10 +139,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event = trcb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
