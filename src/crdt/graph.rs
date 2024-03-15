@@ -8,7 +8,10 @@ use std::{
 use petgraph::graph::DiGraph;
 use serde::Serialize;
 
-use crate::trcb::{Event, Message, OpRules};
+use crate::protocol::{
+    event::{Event, Message},
+    op_rules::OpRules,
+};
 
 #[derive(Clone, Debug)]
 pub enum Op<V> {
@@ -122,7 +125,10 @@ where
 mod tests {
     use crate::{
         crdt::graph::Op,
-        trcb::{Message, Signal, Trcb},
+        protocol::{
+            event::{Message, Signal},
+            trcb::Trcb,
+        },
     };
     use petgraph::algo::is_isomorphic;
     use uuid::Uuid;

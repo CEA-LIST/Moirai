@@ -1,11 +1,15 @@
 use serde::Serialize;
 
-use crate::trcb::{Event, Message, OpRules};
 use std::{
     cmp::Ordering,
     fmt::Debug,
     hash::Hash,
     ops::{Add, AddAssign},
+};
+
+use crate::protocol::{
+    event::{Event, Message},
+    op_rules::OpRules,
 };
 
 #[derive(Clone, Debug)]
@@ -64,7 +68,10 @@ where
 mod tests {
     use crate::{
         crdt::lww_register::Op,
-        trcb::{Message, Signal, Trcb},
+        protocol::{
+            event::{Message, Signal},
+            trcb::Trcb,
+        },
     };
     use uuid::Uuid;
 
