@@ -1,8 +1,10 @@
-use crate::trcb::{Event, Message, OpRules};
 use serde::Serialize;
 use std::hash::Hash;
 use std::ops::AddAssign;
 use std::{fmt::Debug, ops::Add};
+
+use crate::protocol::event::{Event, Message};
+use crate::protocol::op_rules::OpRules;
 
 #[derive(Clone, Debug)]
 pub struct Op<V>(pub V);
@@ -48,7 +50,10 @@ where
 mod tests {
     use crate::{
         crdt::counter::Op,
-        trcb::{Message, Signal, Trcb},
+        protocol::{
+            event::{Message, Signal},
+            trcb::Trcb,
+        },
     };
     use uuid::Uuid;
 

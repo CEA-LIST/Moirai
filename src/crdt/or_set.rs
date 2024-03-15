@@ -1,6 +1,8 @@
+use crate::protocol::{
+    event::{Event, Message},
+    op_rules::OpRules,
+};
 use serde::Serialize;
-
-use crate::trcb::{Event, Message, OpRules};
 use std::{
     collections::HashSet,
     fmt::Debug,
@@ -65,7 +67,10 @@ where
 mod tests {
     use crate::{
         crdt::or_set::Op,
-        trcb::{Message, Signal, Trcb},
+        protocol::{
+            event::{Message, Signal},
+            trcb::Trcb,
+        },
     };
     use std::collections::HashSet;
     use uuid::Uuid;

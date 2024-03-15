@@ -1,5 +1,7 @@
-use crate::trcb::Message;
-use crate::trcb::{Event, OpRules};
+use crate::protocol::{
+    event::{Event, Message},
+    op_rules::OpRules,
+};
 use serde::Serialize;
 use std::{
     cmp::Ordering,
@@ -58,7 +60,10 @@ where
 mod tests {
     use crate::{
         crdt::mv_register::Op,
-        trcb::{Message, Signal, Trcb},
+        protocol::{
+            event::{Message, Signal},
+            trcb::Trcb,
+        },
     };
     use uuid::Uuid;
 

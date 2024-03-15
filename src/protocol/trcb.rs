@@ -1,93 +1,13 @@
-use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use log::{error, info};
-use serde::Serialize;
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    hash::Hash,
-    ops::{Add, AddAssign},
-};
+use std::hash::Hash;
+use std::ops::Add;
+use std::{cmp::Ordering, fmt::Debug, ops::AddAssign};
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub struct Event<K, C, O>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    O: Clone + Debug + OpRules,
-{
-    pub vc: VectorClock<K, C>,
-    pub message: Message<O>,
-    pub wc: u128,
-    pub origin: K,
-}
+use crate::clocks::matrix_clock::MatrixClock;
+use crate::clocks::vector_clock::VectorClock;
 
-impl<K, C, O> Event<K, C, O>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    O: Clone + Debug + OpRules,
-{
-    pub fn new(vc: VectorClock<K, C>, message: Message<O>, origin: K) -> Self {
-        Self {
-            vc,
-            message,
-            origin,
-            wc: Self::since_the_epoch(),
-        }
-    }
-
-    fn since_the_epoch() -> u128 {
-        #[cfg(feature = "wasm")]
-        return web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
-        #[cfg(not(feature = "wasm"))]
-        return std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
-    }
-}
-
-pub trait OpRules: Clone + Debug {
-    type Value: Clone + Debug + Serialize + Default;
-
-    fn obsolete<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    >(
-        is_obsolete: &Event<K, C, Self>,
-        other: &Event<K, C, Self>,
-    ) -> bool; // Checks if the operation is obsolete.
-    fn eval<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    >(
-        unstable_events: &[Event<K, C, Self>],
-        stable_events: &[Self],
-    ) -> Self::Value; // Evaluates the state of the CRDT.
-}
-
-pub trait DynamicEnv {
-    fn join(&mut self);
-    fn leave(&mut self);
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Signal {
-    Join,
-    Leave,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Message<O>
-where
-    O: Clone + Debug + OpRules,
-{
-    Op(O),
-    Signal(Signal),
-}
+use super::event::{Event, Message, Signal};
+use super::op_rules::OpRules;
 
 pub type POLog<K, C, M> = Vec<Event<K, C, M>>;
 pub type StableUnstable<K, C, M> = (Vec<Event<K, C, M>>, Vec<Event<K, C, M>>);
