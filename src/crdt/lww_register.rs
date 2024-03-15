@@ -7,10 +7,7 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-use crate::protocol::{
-    event::{Event, Message},
-    op_rules::OpRules,
-};
+use crate::protocol::{event::OpEvent, op_rules::OpRules};
 
 #[derive(Clone, Debug)]
 pub struct Op<V>(pub V);
@@ -25,19 +22,19 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        is_obsolete: &Event<K, C, Self>,
-        other: &Event<K, C, Self>,
+        is_obsolete: &OpEvent<K, C, Self>,
+        other: &OpEvent<K, C, Self>,
     ) -> bool {
-        let cmp = is_obsolete.vc.partial_cmp(&other.vc);
+        let cmp = is_obsolete.metadata.vc.partial_cmp(&other.metadata.vc);
         match cmp {
             Some(ord) => match ord {
                 Ordering::Less => true,
                 Ordering::Equal => false,
                 Ordering::Greater => false,
             },
-            None => match is_obsolete.wc.cmp(&other.wc) {
+            None => match is_obsolete.metadata.wc.cmp(&other.metadata.wc) {
                 Ordering::Less => true,
-                Ordering::Equal => is_obsolete.origin < other.origin,
+                Ordering::Equal => is_obsolete.metadata.origin < other.metadata.origin,
                 Ordering::Greater => false,
             },
         }
@@ -47,15 +44,12 @@ where
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     >(
-        unstable_events: &[Event<K, C, Self>],
+        unstable_events: &[&OpEvent<K, C, Self>],
         stable_events: &[Self],
     ) -> Self::Value {
         let mut value = None;
         for event in unstable_events {
-            value = match &event.message {
-                Message::Op(op) => Some(op.0.clone()),
-                Message::Signal(_) => None,
-            }
+            value = Some(event.op.0.clone());
         }
         for event in stable_events {
             value = Some(event.0.clone());
@@ -69,7 +63,7 @@ mod tests {
     use crate::{
         crdt::lww_register::Op,
         protocol::{
-            event::{Message, Signal},
+            event::{Message, ProtocolCmd},
             trcb::Trcb,
         },
     };
@@ -83,10 +77,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
@@ -110,10 +104,10 @@ mod tests {
         let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
-        let event_a = trcb_a.tc_bcast(Message::Signal(Signal::Join));
+        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event_a);
 
-        let event_b = trcb_b.tc_bcast(Message::Signal(Signal::Join));
+        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
         let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
