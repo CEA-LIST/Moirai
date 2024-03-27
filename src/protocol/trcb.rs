@@ -1,3 +1,4 @@
+use anyhow::Result;
 use log::{error, info};
 use std::hash::Hash;
 use std::ops::Add;
@@ -54,7 +55,7 @@ where
     }
 
     /// Deliver an event to the local state.
-    pub fn tc_deliver(&mut self, event: Event<K, C, O>) {
+    pub fn tc_deliver(&mut self, event: Event<K, C, O>) -> Result<()> {
         if self.id != *event.origin() {
             if let Event::ProtocolEvent(ref protocol_event) = event {
                 match protocol_event.cmd {
@@ -71,14 +72,15 @@ where
                     "Event from {:?} with message {:?} received in {:?} is behind the LVV. LVV is {:?} while event VC is {:?}",
                     event.origin(), event.message(), self.id, self.lvv, event.vc()
                 );
-                return;
+                return Err(anyhow::anyhow!("Event from {:?} with message {:?} received in {:?} is behind the LVV. LVV is {:?} while event VC is {:?}",
+                event.origin(), event.message(), self.id, self.lvv, event.vc()));
             }
             if let Some(new_lc) = event.vc().get(event.origin()) {
                 if let Some(old_vc) = self.ltm.get(event.origin()) {
                     if let Some(old_lc) = old_vc.get(event.origin()) {
                         if old_lc.clone() + C::from(1) != new_lc {
                             error!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, old_lc, new_lc);
-                            return;
+                            return Err(anyhow::anyhow!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, old_lc, new_lc));
                         }
                     }
                 }
@@ -97,6 +99,7 @@ where
         }
         let partition = self.tc_stable();
         self.stable(partition);
+        Ok(())
     }
 
     fn tc_stable(&mut self) -> StableUnstable<K, C, O> {

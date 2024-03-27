@@ -1,11 +1,12 @@
 use crate::clocks::vector_clock::VectorClock;
+use serde::{Deserialize, Serialize};
 
 use super::op_rules::OpRules;
 use std::hash::Hash;
 use std::ops::Add;
 use std::{fmt::Debug, ops::AddAssign};
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub enum Event<K, C, O>
 where
     K: PartialOrd + Hash + Eq + Clone + Debug,
@@ -16,7 +17,7 @@ where
     ProtocolEvent(ProtocolEvent<K, C>),
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct ProtocolEvent<K, C>
 where
     K: PartialOrd + Hash + Eq + Clone + Debug,
@@ -26,7 +27,7 @@ where
     pub metadata: Metadata<K, C>,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct OpEvent<K, C, O>
 where
     K: PartialOrd + Hash + Eq + Clone + Debug,
@@ -38,7 +39,7 @@ where
 }
 
 /// Raw event body
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Message<O>
 where
     O: Clone + Debug + OpRules,
@@ -47,7 +48,7 @@ where
     ProtocolCmd(ProtocolCmd),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ProtocolCmd {
     Join,
     Leave,
@@ -115,7 +116,7 @@ where
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct Metadata<K, C>
 where
     K: PartialOrd + Hash + Eq + Clone + Debug,

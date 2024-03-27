@@ -6,11 +6,11 @@ use std::{
 };
 
 use petgraph::graph::DiGraph;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::protocol::{event::OpEvent, op_rules::OpRules};
 
-#[derive(Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum Op<V> {
     AddVertex(V),
     RemoveVertex(V),
@@ -145,21 +145,35 @@ mod tests {
         let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_a.tc_deliver(event_b);
 
-        let event = trcb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
-        trcb_b.tc_deliver(event);
+        let event_a_1 = trcb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        trcb_b.tc_deliver(event_a_1.clone());
 
-        let event = trcb_a.tc_bcast(Message::Op(Op::AddVertex("B")));
-        trcb_b.tc_deliver(event);
+        let event_a_2 = trcb_a.tc_bcast(Message::Op(Op::AddVertex("B")));
+        trcb_b.tc_deliver(event_a_2.clone());
 
-        let event = trcb_a.tc_bcast(Message::Op(Op::AddArc("A", "B")));
+        let id_c = Uuid::new_v4().to_string();
+        let mut trcb_c = Trcb::<&str, u32, Op<&str>>::new(id_c.as_str());
+        let event = trcb_c.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
+        trcb_b.tc_deliver(event.clone());
+        trcb_a.tc_deliver(event);
+        println!("{:#?}", trcb_a.ltm.clock);
+
+        trcb_c.tc_deliver(event_a_1);
+        trcb_c.tc_deliver(event_a_2);
+
+        let event = trcb_c.tc_bcast(Message::Op(Op::AddArc("A", "B")));
+        trcb_c.tc_deliver(event.clone());
         trcb_b.tc_deliver(event);
 
         let event = trcb_a.tc_bcast(Message::Op(Op::RemoveVertex("A")));
-        trcb_b.tc_deliver(event);
+        trcb_b.tc_deliver(event.clone());
+        trcb_c.tc_deliver(event);
 
         let event = trcb_b.tc_bcast(Message::Op(Op::RemoveArc("A", "B")));
-        trcb_a.tc_deliver(event);
+        trcb_a.tc_deliver(event.clone());
+        trcb_c.tc_deliver(event);
 
         assert!(is_isomorphic(&trcb_a.eval(), &trcb_b.eval()));
+        assert!(is_isomorphic(&trcb_a.eval(), &trcb_c.eval()));
     }
 }

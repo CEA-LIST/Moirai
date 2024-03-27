@@ -1,4 +1,5 @@
 use super::vector_clock::VectorClock;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
@@ -7,7 +8,7 @@ use std::{
 };
 
 /// The matrix must ALWAYS be square
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct MatrixClock<K, C>
 where
     K: PartialOrd + Hash + Clone + Eq,
@@ -45,9 +46,13 @@ where
         let mut keys = self.clock.keys().cloned().collect::<Vec<_>>();
         keys.extend([key.clone()]);
         self.clock.insert(
-            key,
+            key.clone(),
             VectorClock::from(&keys, &vec![C::default(); keys.len()]),
         );
+        // add the new key to the vector clocks of the other keys
+        for vc in self.clock.values_mut() {
+            vc.increment(&key.clone())
+        }
     }
 
     pub fn update(&mut self, key: &K, vc: &VectorClock<K, C>) {

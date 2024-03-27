@@ -8,13 +8,15 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct VectorClock<K = usize, C = usize>
 where
     K: Eq + Hash + Clone,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    clock: HashMap<K, C>,
+    pub clock: HashMap<K, C>,
 }
 
 impl<K, C> VectorClock<K, C>
