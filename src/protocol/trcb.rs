@@ -1,4 +1,3 @@
-use anyhow::Result;
 use log::{error, info};
 use std::hash::Hash;
 use std::ops::Add;
@@ -24,7 +23,7 @@ where
     pub po_log: POLog<K, C, O>,
     pub state: Vec<O>,
     pub ltm: MatrixClock<K, C>, // Last Timestamp Matrix (LTM): each row j of the LTM is the version vector of the most recently delivered message from the node j
-    pub lvv: VectorClock<K, C>, // Last Vector Version (LVV): latest known version vector of the node i
+    // pub lvv: VectorClock<K, C>, // Last Vector Version (LVV): latest known version vector of the node i
     pub peers: Vec<K>,
 }
 
@@ -39,7 +38,7 @@ where
             po_log: vec![],
             state: vec![],
             ltm: MatrixClock::new(&[id.clone()]),
-            lvv: VectorClock::new(id.clone()),
+            // lvv: VectorClock::new(id.clone()),
             id,
             peers: vec![],
         }
@@ -47,46 +46,55 @@ where
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
     pub fn tc_bcast(&mut self, message: Message<O>) -> Event<K, C, O> {
-        self.lvv.increment(&self.id);
-        self.ltm.update(&self.id, &self.lvv);
-        let event = Event::new(message, self.lvv.clone(), self.id.clone());
+        // self.lvv.increment(&self.id);
+        let my_vc = self
+            .ltm
+            .get_mut(&self.id)
+            .expect("Local vector clock not found");
+        my_vc.increment(&self.id);
+        let event = Event::new(message, my_vc.clone(), self.id.clone());
         self.tc_deliver(event.clone());
         event
     }
 
     /// Deliver an event to the local state.
-    pub fn tc_deliver(&mut self, event: Event<K, C, O>) -> Result<()> {
+    pub fn tc_deliver(&mut self, event: Event<K, C, O>) {
         if self.id != *event.origin() {
             if let Event::ProtocolEvent(ref protocol_event) = event {
                 match protocol_event.cmd {
                     ProtocolCmd::Join => {
                         self.peers.push(event.origin().clone());
                         self.ltm.add_key(event.origin().clone());
-                        self.lvv.increment(event.origin());
+                        assert!(self.ltm.is_square());
                     }
                     ProtocolCmd::Leave => (),
                 }
             }
-            if *event.vc() < self.lvv {
-                error!(
-                    "Event from {:?} with message {:?} received in {:?} is behind the LVV. LVV is {:?} while event VC is {:?}",
-                    event.origin(), event.message(), self.id, self.lvv, event.vc()
-                );
-                return Err(anyhow::anyhow!("Event from {:?} with message {:?} received in {:?} is behind the LVV. LVV is {:?} while event VC is {:?}",
-                event.origin(), event.message(), self.id, self.lvv, event.vc()));
+            // Events should be received in causal order
+            // That is, a new received event should have a logical clock that is exactly one greater than the last received event from the same node
+            let my_vc = self
+                .ltm
+                .get(&self.id)
+                .expect("Local vector clock not found");
+            let event_lp_in_my_vc = my_vc.get(event.origin()).expect("Vector clock not found");
+            let event_lp_in_event_vc = event
+                .vc()
+                .get(&event.origin())
+                .expect("Vector clock not found");
+            if event_lp_in_my_vc.clone() > event_lp_in_event_vc {
+                error!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, event_lp_in_my_vc, event_lp_in_event_vc);
+                return;
             }
-            if let Some(new_lc) = event.vc().get(event.origin()) {
-                if let Some(old_vc) = self.ltm.get(event.origin()) {
-                    if let Some(old_lc) = old_vc.get(event.origin()) {
-                        if old_lc.clone() + C::from(1) != new_lc {
-                            error!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, old_lc, new_lc);
-                            return Err(anyhow::anyhow!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, old_lc, new_lc));
-                        }
-                    }
-                }
-            }
-            self.lvv.merge(event.vc());
+
             self.ltm.update(event.origin(), event.vc());
+            let mut new_vc = self
+                .ltm
+                .get(event.origin())
+                .expect("Vector clock not found")
+                .clone();
+            new_vc.merge(event.vc());
+            self.ltm.update(&self.id, &new_vc);
+            assert!(self.ltm.is_square());
         } else {
             info!(
                 "Delivering event from {:?} with message {:?} to itself",
@@ -99,7 +107,6 @@ where
         }
         let partition = self.tc_stable();
         self.stable(partition);
-        Ok(())
     }
 
     fn tc_stable(&mut self) -> StableUnstable<K, C, O> {

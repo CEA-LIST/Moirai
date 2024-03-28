@@ -42,16 +42,13 @@ where
     }
 
     /// Add a new key to the matrix clock, set its vector clock to the initial value
+    /// Add the key in the vector clocks of all other keys
     pub fn add_key(&mut self, key: K) {
-        let mut keys = self.clock.keys().cloned().collect::<Vec<_>>();
-        keys.extend([key.clone()]);
-        self.clock.insert(
-            key.clone(),
-            VectorClock::from(&keys, &vec![C::default(); keys.len()]),
-        );
-        // add the new key to the vector clocks of the other keys
+        let keys: Vec<K> = self.clock.keys().cloned().collect();
+        let vc = VectorClock::from(&keys, &vec![C::default(); keys.len()]);
+        self.clock.insert(key.clone(), vc);
         for vc in self.clock.values_mut() {
-            vc.increment(&key.clone())
+            vc.increment(&key.clone());
         }
     }
 
@@ -84,6 +81,12 @@ where
                 .and_modify(|vc2| vc2.merge(vc1))
                 .or_insert_with(|| vc1.clone());
         }
+    }
+
+    /// Check if the matrix clock is square
+    pub fn is_square(&self) -> bool {
+        let n = self.clock.len();
+        self.clock.values().all(|vc| vc.clock.len() == n)
     }
 }
 
@@ -172,6 +175,29 @@ mod tests {
         assert_eq!(
             format!("{}", mc),
             "{\n  A: { A: 0, B: 1, C: 1 }\n  B: { A: 1, B: 0, C: 1 }\n  C: { A: 1, B: 1, C: 0 }\n}"
+        );
+    }
+
+    #[test_log::test]
+    fn test_add_key() {
+        let mut mc = MatrixClock::from(
+            &["A", "B"],
+            &[
+                VectorClock::from(&["A", "B"], &[10, 2]),
+                VectorClock::from(&["A", "B"], &[8, 6]),
+            ],
+        );
+        mc.add_key("C");
+        assert_eq!(
+            mc,
+            MatrixClock::from(
+                &["A", "B", "C"],
+                &[
+                    VectorClock::from(&["A", "B", "C"], &[10, 2, 0]),
+                    VectorClock::from(&["A", "B", "C"], &[8, 6, 0]),
+                    VectorClock::from(&["A", "B", "C"], &[0, 0, 0]),
+                ]
+            )
         );
     }
 }
