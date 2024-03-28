@@ -233,10 +233,10 @@ mod tests {
 
     #[test_log::test]
     fn test_concurrent_clocks() {
-        let mut clock: VectorClock<&str, i32> = VectorClock::new(&"A");
+        let mut clock: VectorClock<&str, i32> = VectorClock::new("A");
         clock.increment(&"B");
         clock.increment(&"A");
-        let mut clock2: VectorClock<&str, i32> = VectorClock::new(&"B");
+        let mut clock2: VectorClock<&str, i32> = VectorClock::new("B");
         clock2.increment(&"B");
         clock2.increment(&"A");
         assert_eq!(clock2.partial_cmp(&clock), None);

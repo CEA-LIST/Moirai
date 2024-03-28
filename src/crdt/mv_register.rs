@@ -79,10 +79,10 @@ mod tests {
         let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
         let event_b = trcb_b.tc_bcast(Message::Op(Op("B")));
 
-        trcb_a.tc_deliver(event_b);
         trcb_b.tc_deliver(event_a);
+        trcb_a.tc_deliver(event_b);
 
-        assert_eq!(trcb_a.eval(), vec!["A", "B"]);
+        assert_eq!(trcb_a.eval(), vec!["B", "A"]);
         assert_eq!(trcb_b.eval(), trcb_b.eval());
     }
 

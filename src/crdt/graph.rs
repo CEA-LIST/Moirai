@@ -140,10 +140,10 @@ mod tests {
         let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
 
         let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_b.tc_deliver(event_a);
+        trcb_b.tc_deliver(event_a.clone());
 
         let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_a.tc_deliver(event_b);
+        trcb_a.tc_deliver(event_b.clone());
 
         let event_a_1 = trcb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
         trcb_b.tc_deliver(event_a_1.clone());
@@ -156,7 +156,9 @@ mod tests {
         let event = trcb_c.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
         trcb_b.tc_deliver(event.clone());
         trcb_a.tc_deliver(event);
-        println!("{:#?}", trcb_a.ltm.clock);
+
+        trcb_c.tc_deliver(event_a);
+        trcb_c.tc_deliver(event_b);
 
         trcb_c.tc_deliver(event_a_1);
         trcb_c.tc_deliver(event_a_2);
