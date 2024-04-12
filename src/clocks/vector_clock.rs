@@ -45,6 +45,10 @@ where
         self.clock.insert(key.clone(), value);
     }
 
+    pub fn remove(&mut self, key: &K) {
+        self.clock.remove(key);
+    }
+
     /// Take the max of the two clocks
     pub fn merge(&mut self, other: &VectorClock<K, C>) {
         for (k, v) in &(other.clock) {
