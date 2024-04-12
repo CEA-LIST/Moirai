@@ -32,6 +32,3 @@ RUST_LOG=debug cargo test -- --nocapture
 
 - [ ] Use Dotted Version Vectors/Inteval Tree Clock to track the history of
       events.
-- [ ] Use a better data structure for the PO-Log of events. Something supporting
-      the inherent DAG properties of the log.
-- [x] Remove LVV?

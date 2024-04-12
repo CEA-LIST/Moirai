@@ -88,6 +88,10 @@ where
         let n = self.clock.len();
         self.clock.values().all(|vc| vc.clock.len() == n)
     }
+
+    pub fn keys(&self) -> Vec<&K> {
+        self.clock.keys().collect()
+    }
 }
 
 impl<K, C> Display for MatrixClock<K, C>
@@ -199,5 +203,17 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test_log::test]
+    fn test_keys() {
+        let mc = MatrixClock::from(
+            &["A", "B"],
+            &[
+                VectorClock::from(&["A", "B"], &[10, 2]),
+                VectorClock::from(&["A", "B"], &[8, 6]),
+            ],
+        );
+        assert!((mc.keys() == &[&"A", &"B"]) || (mc.keys() == &[&"B", &"A"]));
     }
 }

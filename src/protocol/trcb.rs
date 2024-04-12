@@ -9,7 +9,7 @@ use crate::clocks::vector_clock::VectorClock;
 use super::event::{Event, Message, OpEvent, ProtocolCmd};
 use super::op_rules::OpRules;
 
-pub type POLog<K, C, M> = Vec<Event<K, C, M>>;
+pub type POLog<K, C, M> = Vec<Event<K, C, M>>; // TODO: Use a BTreeMap
 pub type StableUnstable<K, C, M> = (Vec<Event<K, C, M>>, Vec<Event<K, C, M>>);
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ where
     pub po_log: POLog<K, C, O>,
     pub state: Vec<O>,          // TODO: Rename to 'stable'?
     pub ltm: MatrixClock<K, C>, // Last Timestamp Matrix (LTM): each row j of the LTM is the version vector of the most recently delivered message from the node j
-    // pub lvv: VectorClock<K, C>, // Last Vector Version (LVV): latest known version vector of the node i
+    pub lsv: VectorClock<K, C>, // Last Stable Version (LSV): the vector clock of the last stabilized event
     pub peers: Vec<K>,
 }
 
@@ -38,15 +38,14 @@ where
             po_log: vec![],
             state: vec![],
             ltm: MatrixClock::new(&[id.clone()]),
-            // lvv: VectorClock::new(id.clone()),
+            lsv: VectorClock::new(id.clone()),
             id,
-            peers: vec![],
+            peers: vec![], // TODO: remove this field because the peers are already stored in the LTM
         }
     }
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
-    pub fn tc_bcast(&mut self, message: Message<O>) -> Event<K, C, O> {
-        // self.lvv.increment(&self.id);
+    pub fn tc_bcast(&mut self, message: Message<K, O>) -> Event<K, C, O> {
         let my_vc = self
             .ltm
             .get_mut(&self.id)
@@ -68,6 +67,7 @@ where
                         assert!(self.ltm.is_square());
                     }
                     ProtocolCmd::Leave => (),
+                    ProtocolCmd::KickOut(_) => todo!(),
                 }
             }
             // Events should be received in causal order
@@ -79,7 +79,7 @@ where
             let event_lp_in_my_vc = my_vc.get(event.origin()).expect("Vector clock not found");
             let event_lp_in_event_vc = event
                 .vc()
-                .get(&event.origin())
+                .get(event.origin())
                 .expect("Vector clock not found");
             if event_lp_in_my_vc.clone() > event_lp_in_event_vc {
                 error!("Event from {:?} with message {:?} received in {:?} is not causally ready. Local clock is {:?} while event clock is {:?}", event.origin(), event.message(), self.id, event_lp_in_my_vc, event_lp_in_event_vc);
@@ -106,9 +106,10 @@ where
             self.effect(op_event);
         }
         let partition = self.tc_stable();
-        self.stable(partition);
+        self.stabilise(partition);
     }
 
+    /// Split the PO-Log into stable and unstable events.
     fn tc_stable(&mut self) -> StableUnstable<K, C, O> {
         self.po_log.iter().cloned().partition(|e| {
             let ord = PartialOrd::partial_cmp(e.vc(), &self.ltm.min());
@@ -116,6 +117,8 @@ where
         })
     }
 
+    /// Apply the effect of an operation to the local state.
+    /// Check if the operation is obsolete and update the PO-Log accordingly.
     fn effect(&mut self, event: OpEvent<K, C, O>) {
         // The state is updated by removing all previous events in the state that are made obsolete by the new event.
         self.state.retain(|o| {
@@ -142,7 +145,7 @@ where
         }
     }
 
-    fn stable(&mut self, partition: StableUnstable<K, C, O>) {
+    fn stabilise(&mut self, partition: StableUnstable<K, C, O>) {
         let (stable, unstable) = partition;
         if !stable.is_empty() {
             info!("Some events have become stable in {:?}", self.id);
