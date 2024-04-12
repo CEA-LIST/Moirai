@@ -21,7 +21,7 @@ where
 {
     pub id: K,
     pub po_log: POLog<K, C, O>,
-    pub state: Vec<O>,
+    pub state: Vec<O>,          // TODO: Rename to 'stable'?
     pub ltm: MatrixClock<K, C>, // Last Timestamp Matrix (LTM): each row j of the LTM is the version vector of the most recently delivered message from the node j
     // pub lvv: VectorClock<K, C>, // Last Vector Version (LVV): latest known version vector of the node i
     pub peers: Vec<K>,
