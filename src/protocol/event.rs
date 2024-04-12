@@ -23,7 +23,7 @@ where
     K: PartialOrd + Hash + Eq + Clone + Debug,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    pub cmd: ProtocolCmd,
+    pub cmd: ProtocolCmd<K>,
     pub metadata: Metadata<K, C>,
 }
 
@@ -40,18 +40,23 @@ where
 
 /// Raw event body
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum Message<O>
+pub enum Message<K, O>
 where
+    K: PartialOrd + Hash + Eq + Clone + Debug,
     O: Clone + Debug + OpRules,
 {
     Op(O),
-    ProtocolCmd(ProtocolCmd),
+    ProtocolCmd(ProtocolCmd<K>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum ProtocolCmd {
+pub enum ProtocolCmd<K>
+where
+    K: PartialOrd + Hash + Eq + Clone + Debug,
+{
     Join,
     Leave,
+    KickOut(K),
 }
 
 impl<K, C, O> Event<K, C, O>
@@ -60,11 +65,11 @@ where
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
     O: Clone + Debug + OpRules,
 {
-    pub fn new(message: Message<O>, vc: VectorClock<K, C>, origin: K) -> Self {
+    pub fn new(message: Message<K, O>, vc: VectorClock<K, C>, origin: K) -> Self {
         let metadata = Metadata {
             vc,
             origin,
-            wc: Self::since_the_epoch(),
+            wc: Metadata::<K, C>::since_the_epoch(),
         };
         match message {
             Message::Op(op) => Self::OpEvent(OpEvent { op, metadata }),
@@ -76,22 +81,9 @@ where
         let metadata = Metadata {
             vc,
             origin,
-            wc: Self::since_the_epoch(),
+            wc: Metadata::<K, C>::since_the_epoch(),
         };
         OpEvent { op, metadata }
-    }
-
-    fn since_the_epoch() -> u128 {
-        #[cfg(feature = "wasm")]
-        return web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
-        #[cfg(not(feature = "wasm"))]
-        return std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
     }
 
     pub fn origin(&self) -> &K {
@@ -125,4 +117,23 @@ where
     pub vc: VectorClock<K, C>,
     pub wc: u128,
     pub origin: K,
+}
+
+impl<K, C> Metadata<K, C>
+where
+    K: PartialOrd + Hash + Eq + Clone + Debug,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+{
+    fn since_the_epoch() -> u128 {
+        #[cfg(feature = "wasm")]
+        return web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+        #[cfg(not(feature = "wasm"))]
+        return std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+    }
 }

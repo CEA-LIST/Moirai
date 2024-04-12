@@ -15,6 +15,7 @@ pub trait OpRules: Clone + Debug {
         is_obsolete: &OpEvent<K, C, Self>,
         other: &OpEvent<K, C, Self>,
     ) -> bool; // Checks if the operation is obsolete.
+
     fn eval<
         K: PartialOrd + Hash + Eq + Clone + Debug,
         C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
