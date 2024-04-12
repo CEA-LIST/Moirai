@@ -52,6 +52,13 @@ where
         }
     }
 
+    pub fn remove_key(&mut self, key: &K) {
+        self.clock.remove(key);
+        for vc in self.clock.values_mut() {
+            vc.remove(key);
+        }
+    }
+
     pub fn update(&mut self, key: &K, vc: &VectorClock<K, C>) {
         self.clock
             .entry(key.clone())

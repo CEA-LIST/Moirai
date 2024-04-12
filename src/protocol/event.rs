@@ -27,6 +27,26 @@ where
     pub metadata: Metadata<K, C>,
 }
 
+impl<K, C> ProtocolEvent<K, C>
+where
+    K: PartialOrd + Hash + Eq + Clone + Debug,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+{
+    pub fn obsolete(is_obsolete: &Self, other: &Self) -> bool {
+        match (&is_obsolete.cmd, &other.cmd) {
+            (ProtocolCmd::Join, ProtocolCmd::Join) => false,
+            (ProtocolCmd::Join, ProtocolCmd::Leave) => false,
+            (ProtocolCmd::Join, ProtocolCmd::KickOut(_)) => false,
+            (ProtocolCmd::Leave, ProtocolCmd::Join) => false,
+            (ProtocolCmd::Leave, ProtocolCmd::Leave) => false,
+            (ProtocolCmd::Leave, ProtocolCmd::KickOut(_)) => false,
+            (ProtocolCmd::KickOut(_), ProtocolCmd::Join) => false,
+            (ProtocolCmd::KickOut(_), ProtocolCmd::Leave) => false,
+            (ProtocolCmd::KickOut(_), ProtocolCmd::KickOut(_)) => false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct OpEvent<K, C, O>
 where
@@ -86,24 +106,17 @@ where
         OpEvent { op, metadata }
     }
 
-    pub fn origin(&self) -> &K {
+    pub fn metadata(&self) -> &Metadata<K, C> {
         match self {
-            Event::OpEvent(op) => &op.metadata.origin,
-            Event::ProtocolEvent(cmd) => &cmd.metadata.origin,
+            Self::OpEvent(op_event) => &op_event.metadata,
+            Self::ProtocolEvent(protocol_event) => &protocol_event.metadata,
         }
     }
 
-    pub fn vc(&self) -> &VectorClock<K, C> {
+    pub fn message(&self) -> Message<K, O> {
         match self {
-            Event::OpEvent(op) => &op.metadata.vc,
-            Event::ProtocolEvent(cmd) => &cmd.metadata.vc,
-        }
-    }
-
-    pub fn message(&self) -> String {
-        match &self {
-            Event::OpEvent(op) => format!("{:?}", op.op),
-            Event::ProtocolEvent(cmd) => format!("{:?}", cmd.cmd),
+            Self::OpEvent(op_event) => Message::Op(op_event.op.clone()),
+            Self::ProtocolEvent(protocol_event) => Message::ProtocolCmd(protocol_event.cmd.clone()),
         }
     }
 }
