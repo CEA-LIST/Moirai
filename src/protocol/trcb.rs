@@ -61,6 +61,7 @@ where
         if self.id != event.metadata().origin {
             if let Event::ProtocolEvent(ref protocol_event) = event {
                 match protocol_event.cmd {
+                    // todo: immediately stabilized in one-node systems!
                     ProtocolCmd::Join => {
                         self.peers.push(event.metadata().origin.clone());
                         self.ltm.add_key(event.metadata().origin.clone());
@@ -70,6 +71,7 @@ where
                     ProtocolCmd::KickOut(_) => todo!(),
                 }
             }
+
             // Skip duplicates
             let my_vc = self
                 .ltm
@@ -111,7 +113,7 @@ where
     }
 
     /// Split the PO-Log into stable and unstable events.
-    fn tc_stable(&mut self) -> StableUnstable<K, C, O> {
+    pub fn tc_stable(&mut self) -> StableUnstable<K, C, O> {
         self.po_log.iter().cloned().partition(|e| {
             let ord = PartialOrd::partial_cmp(&e.metadata().vc, &self.ltm.min());
             matches!(ord, Some(Ordering::Less) | Some(Ordering::Equal))
@@ -126,6 +128,7 @@ where
                 // The state is updated by removing all previous events in the state that are made obsolete by the new event.
                 // No protocol events are stored in the state. Only operation events are stored.
                 self.state.retain(|o| {
+                    // Every value in the bottom vector clock is 0
                     let mut bottom_vc = VectorClock::<K, C>::new(self.id.clone());
                     self.peers.iter().for_each(|p| {
                         bottom_vc.increment(p);
@@ -168,10 +171,11 @@ where
         }
     }
 
-    fn stabilise(&mut self, partition: StableUnstable<K, C, O>) {
+    pub fn stabilise(&mut self, partition: StableUnstable<K, C, O>) {
         let (stable, unstable) = partition;
         if !stable.is_empty() {
             info!("Some events have become stable in {:?}", self.id);
+            self.lsv = self.ltm.min();
         }
         self.state.extend(stable.iter().filter_map(|e| match e {
             Event::OpEvent(op) => Some(op.op.clone()),

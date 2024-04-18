@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::{event::OpEvent, op_rules::OpRules};
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub enum Op<V> {
     AddVertex(V),
     RemoveVertex(V),
@@ -57,6 +57,7 @@ where
     ) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
+        let mut edge_index = HashMap::new();
         for event in stable_events {
             match event {
                 Op::AddVertex(v) => {
@@ -76,8 +77,6 @@ where
                 _ => {}
             }
         }
-        let mut node_index = HashMap::new();
-        let mut edge_index = HashMap::new();
         for event in unstable_events {
             match &event.op {
                 Op::AddVertex(v) => {

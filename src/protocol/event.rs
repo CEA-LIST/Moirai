@@ -137,7 +137,7 @@ where
     K: PartialOrd + Hash + Eq + Clone + Debug,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    fn since_the_epoch() -> u128 {
+    pub fn since_the_epoch() -> u128 {
         #[cfg(feature = "wasm")]
         return web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)

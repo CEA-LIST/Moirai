@@ -173,6 +173,23 @@ mod tests {
         );
     }
 
+    // #[test_log::test]
+    // fn test_merge_2() {
+    //     let mut mc1 = MatrixClock::from(&["A"], &[VectorClock::from(&["A"], &[1])]);
+    //     let mc2 = MatrixClock::from(&["B"], &[VectorClock::from(&["B"], &[1])]);
+    //     mc1.merge(&mc2);
+    //     assert_eq!(
+    //         mc1,
+    //         MatrixClock::from(
+    //             &["A", "B"],
+    //             &[
+    //                 VectorClock::from(&["A", "B"], &[1, 1]),
+    //                 VectorClock::from(&["A", "B"], &[0, 1]),
+    //             ]
+    //         )
+    //     );
+    // }
+
     #[test_log::test]
     fn test_display() {
         let mc = MatrixClock::from(
