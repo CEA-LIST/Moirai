@@ -236,6 +236,15 @@ mod tests {
     }
 
     #[test_log::test]
+    fn test_merge_2() {
+        let mut clock1 = VectorClock::new("A");
+        let clock2 = VectorClock::new("B");
+        clock1.merge(&clock2);
+        assert_eq!(clock1.get(&"A"), Some(0));
+        assert_eq!(clock1.get(&"B"), Some(0));
+    }
+
+    #[test_log::test]
     fn test_concurrent_clocks() {
         let mut clock: VectorClock<&str, i32> = VectorClock::new("A");
         clock.increment(&"B");
