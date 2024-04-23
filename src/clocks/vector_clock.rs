@@ -64,12 +64,12 @@ where
     /// Create a VectorClock from two slices
     /// The first slice is the keys and the second slice is the values
     /// The two slices must have the same length
-    pub fn from(key: &[K], value: &[C]) -> VectorClock<K, C> {
-        if key.len() != value.len() {
+    pub fn from(keys: &[K], values: &[C]) -> VectorClock<K, C> {
+        if keys.len() != values.len() {
             panic!("The two slices must have the same length");
         }
         let mut clock = HashMap::new();
-        for (k, v) in key.iter().zip(value.iter()) {
+        for (k, v) in keys.iter().zip(values.iter()) {
             clock.insert(k.clone(), v.clone());
         }
         VectorClock { clock }

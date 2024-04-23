@@ -1,152 +1,105 @@
 use crate::clocks::vector_clock::VectorClock;
-use serde::{Deserialize, Serialize};
 
-use super::op_rules::OpRules;
-use std::hash::Hash;
-use std::ops::Add;
-use std::{fmt::Debug, ops::AddAssign};
+use super::{
+    metadata::Metadata,
+    pure_crdt::PureCRDT,
+    utils::{Incrementable, Keyable},
+};
+use std::fmt::Debug;
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
-pub enum Event<K, C, O>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    O: Clone + Debug + OpRules,
-{
-    OpEvent(OpEvent<K, C, O>),
-    ProtocolEvent(ProtocolEvent<K, C>),
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
-pub struct ProtocolEvent<K, C>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-{
-    pub cmd: ProtocolCmd<K>,
-    pub metadata: Metadata<K, C>,
-}
-
-impl<K, C> ProtocolEvent<K, C>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-{
-    pub fn obsolete(is_obsolete: &Self, other: &Self) -> bool {
-        match (&is_obsolete.cmd, &other.cmd) {
-            (ProtocolCmd::Join, ProtocolCmd::Join) => false,
-            (ProtocolCmd::Join, ProtocolCmd::Leave) => false,
-            (ProtocolCmd::Join, ProtocolCmd::KickOut(_)) => false,
-            (ProtocolCmd::Leave, ProtocolCmd::Join) => false,
-            (ProtocolCmd::Leave, ProtocolCmd::Leave) => false,
-            (ProtocolCmd::Leave, ProtocolCmd::KickOut(_)) => false,
-            (ProtocolCmd::KickOut(_), ProtocolCmd::Join) => false,
-            (ProtocolCmd::KickOut(_), ProtocolCmd::Leave) => false,
-            (ProtocolCmd::KickOut(_), ProtocolCmd::KickOut(_)) => false,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
-pub struct OpEvent<K, C, O>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    O: Clone + Debug + OpRules,
-{
-    pub op: O,
-    pub metadata: Metadata<K, C>,
-}
-
-/// Raw event body
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Message<K, O>
 where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    O: Clone + Debug + OpRules,
+    K: Keyable,
+    O: PureCRDT,
 {
     Op(O),
-    ProtocolCmd(ProtocolCmd<K>),
+    Membership(Membership<K>),
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum ProtocolCmd<K>
+#[derive(Clone, Debug)]
+pub enum Membership<K>
 where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
+    K: Keyable,
 {
     Join,
     Leave,
     KickOut(K),
 }
 
+#[derive(Clone, Debug)]
+pub struct OpEvent<K, C, O>
+where
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+    O: PureCRDT + Clone + Debug,
+{
+    pub op: O,
+    pub metadata: Metadata<K, C>,
+}
+
+impl<K, C, O> OpEvent<K, C, O>
+where
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+    O: PureCRDT + Clone + Debug,
+{
+    pub fn new(op: O, metadata: Metadata<K, C>) -> Self {
+        Self { op, metadata }
+    }
+}
+
+#[derive(Clone)]
+pub struct MembershipEvent<K, C>
+where
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+{
+    pub cmd: Membership<K>,
+    pub metadata: Metadata<K, C>,
+}
+
+impl<K, C> MembershipEvent<K, C>
+where
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+{
+    pub fn new(cmd: Membership<K>, metadata: Metadata<K, C>) -> Self {
+        Self { cmd, metadata }
+    }
+}
+
+#[derive(Clone)]
+pub enum Event<K, C, O>
+where
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+    O: PureCRDT,
+{
+    OpEvent(OpEvent<K, C, O>),
+    MembershipEvent(MembershipEvent<K, C>),
+}
+
 impl<K, C, O> Event<K, C, O>
 where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    O: Clone + Debug + OpRules,
+    K: Keyable + Clone + Debug,
+    C: Incrementable<C> + Clone + Debug,
+    O: PureCRDT,
 {
     pub fn new(message: Message<K, O>, vc: VectorClock<K, C>, origin: K) -> Self {
-        let metadata = Metadata {
-            vc,
-            origin,
-            wc: Metadata::<K, C>::since_the_epoch(),
-        };
+        let metadata = Metadata::new(vc, origin);
         match message {
-            Message::Op(op) => Self::OpEvent(OpEvent { op, metadata }),
-            Message::ProtocolCmd(cmd) => Self::ProtocolEvent(ProtocolEvent { cmd, metadata }),
+            Message::Op(op) => Event::OpEvent(OpEvent::new(op, metadata)),
+            Message::Membership(membership) => {
+                Event::MembershipEvent(MembershipEvent::new(membership, metadata))
+            }
         }
-    }
-
-    pub fn new_op(op: O, vc: VectorClock<K, C>, origin: K) -> OpEvent<K, C, O> {
-        let metadata = Metadata {
-            vc,
-            origin,
-            wc: Metadata::<K, C>::since_the_epoch(),
-        };
-        OpEvent { op, metadata }
     }
 
     pub fn metadata(&self) -> &Metadata<K, C> {
         match self {
-            Self::OpEvent(op_event) => &op_event.metadata,
-            Self::ProtocolEvent(protocol_event) => &protocol_event.metadata,
+            Event::OpEvent(op_event) => &op_event.metadata,
+            Event::MembershipEvent(membership_event) => &membership_event.metadata,
         }
-    }
-
-    pub fn message(&self) -> Message<K, O> {
-        match self {
-            Self::OpEvent(op_event) => Message::Op(op_event.op.clone()),
-            Self::ProtocolEvent(protocol_event) => Message::ProtocolCmd(protocol_event.cmd.clone()),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
-pub struct Metadata<K, C>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-{
-    pub vc: VectorClock<K, C>,
-    pub wc: u128,
-    pub origin: K,
-}
-
-impl<K, C> Metadata<K, C>
-where
-    K: PartialOrd + Hash + Eq + Clone + Debug,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-{
-    pub fn since_the_epoch() -> u128 {
-        #[cfg(feature = "wasm")]
-        return web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
-        #[cfg(not(feature = "wasm"))]
-        return std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
     }
 }
