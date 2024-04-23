@@ -1,0 +1,27 @@
+{
+	// Utilisez IntelliSense pour en savoir plus sur les attributs possibles.
+	// Pointez pour afficher la description des attributs existants.
+	// Pour plus d'informations, visitez : https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in library 'po_crdt'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--lib",
+					"--package=po-crdt"
+				],
+				"filter": {
+					"name": "po_crdt",
+					"kind": "lib"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		}
+	]
+}

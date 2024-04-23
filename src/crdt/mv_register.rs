@@ -1,115 +1,122 @@
-use crate::protocol::{event::OpEvent, op_rules::OpRules};
-use serde::Serialize;
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    hash::Hash,
-    ops::{Add, AddAssign},
-};
+use crate::clocks::vector_clock::VectorClock;
+use crate::protocol::tcsb::POLog;
+use crate::protocol::utils::{Incrementable, Keyable};
+use crate::protocol::{event::Message, event::OpEvent, pure_crdt::PureCRDT};
+use std::fmt::Debug;
+use std::hash::Hash;
 
 #[derive(Clone, Debug)]
-pub struct Op<V>(pub V);
+pub enum Op<V> {
+    Clear,
+    Write(V),
+}
 
-impl<V> OpRules for Op<V>
+impl<V> PureCRDT for Op<V>
 where
-    V: Debug + Clone + Eq + Hash + Serialize,
+    V: Debug + Clone + Hash + Eq,
 {
     type Value = Vec<V>;
 
-    fn obsolete<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    >(
-        is_obsolete: &OpEvent<K, C, Self>,
-        other: &OpEvent<K, C, Self>,
+    fn r<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
+        event: &OpEvent<K, C, Self>,
+        _: &POLog<K, C, Self>,
     ) -> bool {
-        let cmp = is_obsolete.metadata.vc.partial_cmp(&other.metadata.vc);
-        match cmp {
-            Some(ord) => match ord {
-                Ordering::Less => true,
-                Ordering::Equal | Ordering::Greater => false,
-            },
-            None => false,
-        }
+        matches!(event.op, Op::Clear)
     }
 
-    fn eval<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
+    where
+        K: Keyable + Clone + std::fmt::Debug,
+        C: Incrementable<C> + Clone + std::fmt::Debug,
+    {
+        old_event.metadata.vc < new_event.metadata.vc
+    }
+
+    fn r_one<
+        K: Keyable + Clone + std::fmt::Debug,
+        C: Incrementable<C> + Clone + std::fmt::Debug,
     >(
-        unstable_events: &[&OpEvent<K, C, Self>],
-        stable_events: &[Self],
+        old_event: &OpEvent<K, C, Self>,
+        new_event: &OpEvent<K, C, Self>,
+    ) -> bool {
+        Self::r_zero(old_event, new_event)
+    }
+
+    fn stabilize<
+        K: Keyable + Clone + std::fmt::Debug,
+        C: Incrementable<C> + Clone + std::fmt::Debug,
+    >(
+        _: &VectorClock<K, C>,
+        _state: &mut POLog<K, C, Self>,
+    ) {
+    }
+
+    fn eval<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
+        state: &POLog<K, C, Self>,
     ) -> Self::Value {
-        let mut set = Self::Value::new();
-        for op in stable_events {
-            set.push(op.0.clone());
+        let mut vec = Self::Value::new();
+        for op in &state.0 {
+            if let Op::Write(v) = op {
+                vec.push(v.clone());
+            }
         }
-        for event in unstable_events {
-            set.push(event.op.0.clone());
+        for message in state.1.values() {
+            if let Message::Op(Op::Write(v)) = message {
+                vec.push(v.clone());
+            }
         }
-        set
+        vec
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crdt::mv_register::Op,
-        protocol::{
-            event::{Message, ProtocolCmd},
-            trcb::Trcb,
-        },
-    };
-    use uuid::Uuid;
+    use crate::{crdt::mv_register::Op, protocol::event::Message, protocol::tcsb::Tcsb};
 
     #[test_log::test]
-    fn test_mv_register_concurrent() {
-        let id_a = Uuid::new_v4().to_string();
-        let id_b = Uuid::new_v4().to_string();
+    fn simple_mv_register() {
+        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
+        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
 
-        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
+        let event = tscb_a.tc_bcast(Message::Op(Op::Write("a")));
+        tscb_b.tc_deliver(event);
 
-        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_b.tc_deliver(event_a);
+        assert_eq!(tscb_b.state.0.len(), 1);
 
-        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_a.tc_deliver(event_b);
+        let event = tscb_b.tc_bcast(Message::Op(Op::Write("b")));
+        tscb_a.tc_deliver(event);
 
-        let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
-        let event_b = trcb_b.tc_bcast(Message::Op(Op("B")));
+        assert_eq!(tscb_a.state.0.len(), 1);
 
-        trcb_b.tc_deliver(event_a);
-        trcb_a.tc_deliver(event_b);
-
-        assert_eq!(trcb_a.eval(), vec!["B", "A"]);
-        assert_eq!(trcb_b.eval(), trcb_b.eval());
+        let result = vec!["b"];
+        assert_eq!(tscb_a.eval(), result);
+        assert_eq!(tscb_a.eval(), tscb_b.eval());
     }
 
     #[test_log::test]
-    fn test_mv_register() {
-        let id_a = Uuid::new_v4().to_string();
-        let id_b = Uuid::new_v4().to_string();
+    fn concurrent_mv_register() {
+        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
+        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
 
-        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
+        let event = tscb_a.tc_bcast(Message::Op(Op::Write("c")));
+        tscb_b.tc_deliver(event);
 
-        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_b.tc_deliver(event_a);
+        assert_eq!(tscb_a.eval(), vec!["c"]);
+        assert_eq!(tscb_b.eval(), vec!["c"]);
 
-        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_a.tc_deliver(event_b);
+        let event = tscb_b.tc_bcast(Message::Op(Op::Write("d")));
+        tscb_a.tc_deliver(event);
 
-        let event_a = trcb_a.tc_bcast(Message::Op(Op("A")));
-        trcb_b.tc_deliver(event_a);
+        assert_eq!(tscb_a.eval(), vec!["d"]);
+        assert_eq!(tscb_b.eval(), vec!["d"]);
 
-        let event_b = trcb_b.tc_bcast(Message::Op(Op("B")));
-        trcb_a.tc_deliver(event_b);
+        let event_a = tscb_a.tc_bcast(Message::Op(Op::Write("a")));
+        let event_b = tscb_b.tc_bcast(Message::Op(Op::Write("b")));
+        tscb_b.tc_deliver(event_a);
+        tscb_a.tc_deliver(event_b);
 
-        let event_a = trcb_a.tc_bcast(Message::Op(Op("C")));
-        trcb_b.tc_deliver(event_a);
-
-        assert_eq!(trcb_a.eval(), vec!["C"]);
-        assert_eq!(trcb_b.eval(), trcb_a.eval());
+        let result = vec!["b", "a"];
+        assert_eq!(tscb_a.eval(), result);
+        assert_eq!(tscb_a.eval(), tscb_b.eval());
     }
 }

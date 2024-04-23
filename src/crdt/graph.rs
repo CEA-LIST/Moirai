@@ -1,16 +1,17 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    ops::{Add, AddAssign},
-};
-
 use petgraph::graph::DiGraph;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::{event::OpEvent, op_rules::OpRules};
+use crate::clocks::vector_clock::VectorClock;
+use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::pure_crdt::PureCRDT;
+use crate::protocol::tcsb::POLog;
+use crate::protocol::utils::{Incrementable, Keyable};
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
 
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+/// Add-wins policy
+#[derive(Clone, Debug)]
 pub enum Op<V> {
     AddVertex(V),
     RemoveVertex(V),
@@ -18,48 +19,133 @@ pub enum Op<V> {
     RemoveArc(V, V),
 }
 
-impl<V> OpRules for Op<V>
+impl<V> PureCRDT for Op<V>
 where
-    V: Debug + Clone + Eq + Hash + Serialize,
+    V: Debug + Clone + Hash + Eq,
 {
     type Value = DiGraph<V, ()>;
 
-    // Add-wins policy
-    fn obsolete<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    >(
-        is_obsolete: &OpEvent<K, C, Self>,
-        other: &OpEvent<K, C, Self>,
+    fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
+        event: &OpEvent<K, C, Self>,
+        state: &POLog<K, C, Self>,
     ) -> bool {
-        match (&is_obsolete.op, &other.op) {
-            (Op::AddVertex(v1), Op::AddVertex(v2)) | (Op::AddVertex(v1), Op::RemoveVertex(v2)) => {
-                is_obsolete.metadata.vc < other.metadata.vc && v1 == v2
+        match &event.op {
+            Op::AddVertex(_) => false,
+            Op::RemoveVertex(_) => true,
+            Op::AddArc(v1, v2) => {
+                let mut found_v1 = false;
+                let mut found_v2 = false;
+
+                for op in state.0.iter() {
+                    if found_v1 && found_v2 {
+                        break;
+                    }
+                    if let Op::AddVertex(v) = op {
+                        if v == v1 {
+                            found_v1 = true;
+                        }
+                        if v == v2 {
+                            found_v2 = true;
+                        }
+                    }
+                }
+                for message in state.1.values() {
+                    if found_v1 && found_v2 {
+                        break;
+                    }
+
+                    if let Message::Op(Op::AddVertex(v)) = message {
+                        if v == v1 {
+                            found_v1 = true;
+                        }
+                        if v == v2 {
+                            found_v2 = true;
+                        }
+                    }
+                }
+                !found_v1 || !found_v2
             }
-            (Op::AddVertex(_), Op::AddArc(_, _))
-            | (Op::AddArc(_, _), Op::AddVertex(_))
-            | (Op::AddVertex(_), Op::RemoveArc(_, _)) => false,
-            (Op::RemoveVertex(_), _) | (Op::RemoveArc(_, _), _) => true,
-            (Op::AddArc(v1, v2), Op::AddArc(v3, v4))
-            | (Op::AddArc(v1, v2), Op::RemoveArc(v3, v4)) => {
-                is_obsolete.metadata.vc < other.metadata.vc && v1 == v3 && v2 == v4
-            }
-            (Op::AddArc(v1, v2), Op::RemoveVertex(v3)) => v1 == v3 || v2 == v3,
+            Op::RemoveArc(_, _) => true,
         }
     }
 
-    fn eval<
-        K: PartialOrd + Hash + Eq + Clone + Debug,
-        C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
-    >(
-        unstable_events: &[&OpEvent<K, C, Self>],
-        stable_events: &[Self],
+    fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
+    where
+        K: Keyable + Clone + Debug,
+        C: Incrementable<C> + Clone + Debug,
+    {
+        match (&old_event.op, &new_event.op) {
+            (Op::AddVertex(v1), Op::AddVertex(v2)) => {
+                matches!(
+                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    None | Some(Ordering::Less)
+                ) && v1 == v2
+            }
+            (Op::AddVertex(v1), Op::RemoveVertex(v2)) => {
+                old_event.metadata.vc < new_event.metadata.vc && v1 == v2
+            }
+            (Op::AddVertex(_), Op::AddArc(_, _)) => false,
+            (Op::AddVertex(v1), Op::RemoveArc(v2, v3)) => {
+                old_event.metadata.vc < new_event.metadata.vc && (v1 == v2 || v1 == v3)
+            }
+            (Op::AddArc(_, _), Op::AddVertex(_)) => false,
+            (Op::AddArc(v1, v2), Op::RemoveVertex(v3)) => {
+                matches!(
+                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    None | Some(Ordering::Less)
+                ) && v3 == v1
+                    || v3 == v2
+            }
+            (Op::AddArc(v1, v2), Op::AddArc(v3, v4)) => {
+                matches!(
+                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    None | Some(Ordering::Less)
+                ) && v1 == v3
+                    && v2 == v4
+            }
+            (Op::AddArc(v1, v2), Op::RemoveArc(v3, v4)) => {
+                old_event.metadata.vc < new_event.metadata.vc && v1 == v3 && v2 == v4
+            }
+            // (Op::RemoveArc(v1, v2), Op::AddVertex(v3)) => v3 == v1 || v3 == v2,
+            // (Op::RemoveArc(v1, v2), Op::RemoveVertex(v3)) => false,
+            // (Op::RemoveArc(v1, v2), Op::AddArc(v3, v4)) => v1 == v2 && v3 == v4,
+            // (Op::RemoveArc(v1, v2), Op::RemoveArc(v3, v4)) => v1 == v2 && v3 == v4,
+            // (Op::RemoveVertex(v1), Op::AddVertex(v2)) => v1 == v2,
+            // (Op::RemoveVertex(v1), Op::RemoveVertex(v2)) => {
+            //     matches!(
+            //         old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+            //         None | Some(Ordering::Less)
+            //     ) && v1 == v2
+            // }
+            // (Op::RemoveVertex(v1), Op::AddArc(v2, v3)) => {
+            //     v1 == v2 || v1 == v3
+            // }
+            // (Op::RemoveVertex(v1), Op::RemoveArc(v2, v3)) => false,
+            _ => false,
+        }
+    }
+
+    fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
+        old_event: &OpEvent<K, C, Self>,
+        new_event: &OpEvent<K, C, Self>,
+    ) -> bool {
+        Self::r_zero(old_event, new_event)
+    }
+
+    fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
+        _: &VectorClock<K, C>,
+        _state: &mut POLog<K, C, Self>,
+    ) {
+    }
+
+    fn eval<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
+        state: &POLog<K, C, Self>,
     ) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for event in stable_events {
-            match event {
+        for op in &state.0 {
+            match op {
                 Op::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -68,8 +154,8 @@ where
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     graph.add_edge(
-                        *node_index.get(v1).unwrap(),
-                        *node_index.get(v2).unwrap(),
+                        *node_index.get(&v1).unwrap(),
+                        *node_index.get(&v2).unwrap(),
                         (),
                     );
                 }
@@ -77,13 +163,13 @@ where
                 _ => {}
             }
         }
-        for event in unstable_events {
-            match &event.op {
-                Op::AddVertex(v) => {
+        for message in state.1.values() {
+            match &message {
+                Message::Op(Op::AddVertex(v)) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Op::AddArc(v1, v2) => {
+                Message::Op(Op::AddArc(v1, v2)) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     let idx = graph.add_edge(
@@ -93,18 +179,19 @@ where
                     );
                     edge_index.insert((v1, v2), idx);
                 }
-                Op::RemoveVertex(v) => {
+                Message::Op(Op::RemoveVertex(v)) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = node_index.get(v) {
                         graph.remove_node(*idx);
                     }
                 }
-                Op::RemoveArc(v1, v2) => {
+                Message::Op(Op::RemoveArc(v1, v2)) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = edge_index.get(&(v1, v2)) {
                         graph.remove_edge(*idx);
                     }
                 }
+                _ => (),
             }
         }
         graph
@@ -113,68 +200,49 @@ where
 
 #[cfg(test)]
 mod tests {
+    use petgraph::algo::is_isomorphic;
+
     use crate::{
         crdt::graph::Op,
-        protocol::{
-            event::{Message, ProtocolCmd},
-            trcb::Trcb,
-        },
+        protocol::{event::Message, tcsb::Tcsb},
     };
-    use petgraph::algo::is_isomorphic;
-    use uuid::Uuid;
-
-    #[cfg(feature = "dhat-heap")]
-    #[global_allocator]
-    static ALLOC: dhat::Alloc = dhat::Alloc;
 
     #[test_log::test]
-    fn test_graph() {
-        #[cfg(feature = "dhat-heap")]
-        let _profiler = dhat::Profiler::new_heap();
+    fn simple_graph() {
+        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
+        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
 
-        let id_a = Uuid::new_v4().to_string();
-        let id_b = Uuid::new_v4().to_string();
+        let event = tscb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        tscb_b.tc_deliver(event);
 
-        let mut trcb_a = Trcb::<&str, u32, Op<&str>>::new(id_a.as_str());
-        let mut trcb_b = Trcb::<&str, u32, Op<&str>>::new(id_b.as_str());
+        let event = tscb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        tscb_a.tc_deliver(event);
 
-        let event_a = trcb_a.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_b.tc_deliver(event_a.clone());
+        let event = tscb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        tscb_b.tc_deliver(event);
 
-        let event_b = trcb_b.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_a.tc_deliver(event_b.clone());
+        let event = tscb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
+        tscb_a.tc_deliver(event);
 
-        let event_a_1 = trcb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
-        trcb_b.tc_deliver(event_a_1.clone());
+        assert!(is_isomorphic(&tscb_a.eval(), &tscb_b.eval()));
+    }
 
-        let event_a_2 = trcb_a.tc_bcast(Message::Op(Op::AddVertex("B")));
-        trcb_b.tc_deliver(event_a_2.clone());
+    #[test_log::test]
+    fn concurrent_graph() {
+        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
+        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
 
-        let id_c = Uuid::new_v4().to_string();
-        let mut trcb_c = Trcb::<&str, u32, Op<&str>>::new(id_c.as_str());
-        let event = trcb_c.tc_bcast(Message::ProtocolCmd(ProtocolCmd::Join));
-        trcb_b.tc_deliver(event.clone());
-        trcb_a.tc_deliver(event);
+        let event = tscb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        tscb_b.tc_deliver(event);
 
-        trcb_c.tc_deliver(event_a);
-        trcb_c.tc_deliver(event_b);
+        let event = tscb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        tscb_a.tc_deliver(event);
 
-        trcb_c.tc_deliver(event_a_1);
-        trcb_c.tc_deliver(event_a_2);
+        let event_b = tscb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
+        let event_a = tscb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        tscb_b.tc_deliver(event_a);
+        tscb_a.tc_deliver(event_b);
 
-        let event = trcb_c.tc_bcast(Message::Op(Op::AddArc("A", "B")));
-        trcb_c.tc_deliver(event.clone());
-        trcb_b.tc_deliver(event);
-
-        let event = trcb_a.tc_bcast(Message::Op(Op::RemoveVertex("A")));
-        trcb_b.tc_deliver(event.clone());
-        trcb_c.tc_deliver(event);
-
-        let event = trcb_b.tc_bcast(Message::Op(Op::RemoveArc("A", "B")));
-        trcb_a.tc_deliver(event.clone());
-        trcb_c.tc_deliver(event);
-
-        assert!(is_isomorphic(&trcb_a.eval(), &trcb_b.eval()));
-        assert!(is_isomorphic(&trcb_a.eval(), &trcb_c.eval()));
+        assert!(is_isomorphic(&tscb_a.eval(), &tscb_b.eval()));
     }
 }
