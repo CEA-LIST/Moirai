@@ -1,7 +1,7 @@
 use petgraph::graph::DiGraph;
 
-use crate::clocks::vector_clock::VectorClock;
 use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
 use crate::protocol::utils::{Incrementable, Keyable};
@@ -32,39 +32,7 @@ where
         match &event.op {
             Op::AddVertex(_) => false,
             Op::RemoveVertex(_) => true,
-            Op::AddArc(v1, v2) => {
-                let mut found_v1 = false;
-                let mut found_v2 = false;
-
-                for op in state.0.iter() {
-                    if found_v1 && found_v2 {
-                        break;
-                    }
-                    if let Op::AddVertex(v) = op {
-                        if v == v1 {
-                            found_v1 = true;
-                        }
-                        if v == v2 {
-                            found_v2 = true;
-                        }
-                    }
-                }
-                for message in state.1.values() {
-                    if found_v1 && found_v2 {
-                        break;
-                    }
-
-                    if let Message::Op(Op::AddVertex(v)) = message {
-                        if v == v1 {
-                            found_v1 = true;
-                        }
-                        if v == v2 {
-                            found_v2 = true;
-                        }
-                    }
-                }
-                !found_v1 || !found_v2
-            }
+            Op::AddArc(v1, v2) => Self::lookup(v1, v2, state),
             Op::RemoveArc(_, _) => true,
         }
     }
@@ -93,8 +61,7 @@ where
                 matches!(
                     old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
                     None | Some(Ordering::Less)
-                ) && v3 == v1
-                    || v3 == v2
+                ) && (v3 == v1 || v3 == v2)
             }
             (Op::AddArc(v1, v2), Op::AddArc(v3, v4)) => {
                 matches!(
@@ -106,21 +73,6 @@ where
             (Op::AddArc(v1, v2), Op::RemoveArc(v3, v4)) => {
                 old_event.metadata.vc < new_event.metadata.vc && v1 == v3 && v2 == v4
             }
-            // (Op::RemoveArc(v1, v2), Op::AddVertex(v3)) => v3 == v1 || v3 == v2,
-            // (Op::RemoveArc(v1, v2), Op::RemoveVertex(v3)) => false,
-            // (Op::RemoveArc(v1, v2), Op::AddArc(v3, v4)) => v1 == v2 && v3 == v4,
-            // (Op::RemoveArc(v1, v2), Op::RemoveArc(v3, v4)) => v1 == v2 && v3 == v4,
-            // (Op::RemoveVertex(v1), Op::AddVertex(v2)) => v1 == v2,
-            // (Op::RemoveVertex(v1), Op::RemoveVertex(v2)) => {
-            //     matches!(
-            //         old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
-            //         None | Some(Ordering::Less)
-            //     ) && v1 == v2
-            // }
-            // (Op::RemoveVertex(v1), Op::AddArc(v2, v3)) => {
-            //     v1 == v2 || v1 == v3
-            // }
-            // (Op::RemoveVertex(v1), Op::RemoveArc(v2, v3)) => false,
             _ => false,
         }
     }
@@ -133,8 +85,8 @@ where
     }
 
     fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        _: &VectorClock<K, C>,
-        _state: &mut POLog<K, C, Self>,
+        _: &Metadata<K, C>,
+        _: &mut POLog<K, C, Self>,
     ) {
     }
 
@@ -198,51 +150,91 @@ where
     }
 }
 
+impl<V> Op<V>
+where
+    V: Debug + Clone + Hash + Eq,
+{
+    fn lookup<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
+        v1: &V,
+        v2: &V,
+        state: &POLog<K, C, Self>,
+    ) -> bool {
+        let mut found_v1 = false;
+        let mut found_v2 = false;
+
+        for op in state.0.iter() {
+            if found_v1 && found_v2 {
+                break;
+            }
+            if let Op::AddVertex(v) = op {
+                if v == v1 {
+                    found_v1 = true;
+                }
+                if v == v2 {
+                    found_v2 = true;
+                }
+            }
+        }
+        for message in state.1.values() {
+            if found_v1 && found_v2 {
+                break;
+            }
+            if let Message::Op(Op::AddVertex(v)) = message {
+                if v == v1 {
+                    found_v1 = true;
+                }
+                if v == v2 {
+                    found_v2 = true;
+                }
+            }
+        }
+        !found_v1 || !found_v2
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use petgraph::algo::is_isomorphic;
 
     use crate::{
-        crdt::graph::Op,
-        protocol::{event::Message, tcsb::Tcsb},
+        crdt::{graph::Op, test_util::twins},
+        protocol::event::Message,
     };
 
     #[test_log::test]
     fn simple_graph() {
-        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
-        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
+        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tscb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
-        tscb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        tcsb_b.tc_deliver(event);
 
-        let event = tscb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
-        tscb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        tcsb_a.tc_deliver(event);
 
-        let event = tscb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
-        tscb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        tcsb_b.tc_deliver(event);
 
-        let event = tscb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
-        tscb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
+        tcsb_a.tc_deliver(event);
 
-        assert!(is_isomorphic(&tscb_a.eval(), &tscb_b.eval()));
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
 
     #[test_log::test]
     fn concurrent_graph() {
-        let mut tscb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
-        let mut tscb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
+        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tscb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
-        tscb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        tcsb_b.tc_deliver(event);
 
-        let event = tscb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
-        tscb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        tcsb_a.tc_deliver(event);
 
-        let event_b = tscb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
-        let event_a = tscb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
-        tscb_b.tc_deliver(event_a);
-        tscb_a.tc_deliver(event_b);
+        let event_b = tcsb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
+        let event_a = tcsb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        tcsb_b.tc_deliver(event_a);
+        tcsb_a.tc_deliver(event_b);
 
-        assert!(is_isomorphic(&tscb_a.eval(), &tscb_b.eval()));
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
 }

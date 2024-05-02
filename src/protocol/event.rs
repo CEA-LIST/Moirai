@@ -1,6 +1,7 @@
 use crate::clocks::vector_clock::VectorClock;
 
 use super::{
+    membership::{Membership, MembershipEvent},
     metadata::Metadata,
     pure_crdt::PureCRDT,
     utils::{Incrementable, Keyable},
@@ -8,23 +9,14 @@ use super::{
 use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
-pub enum Message<K, O>
+pub enum Message<K, C, O>
 where
-    K: Keyable,
-    O: PureCRDT,
+    K: Keyable + Debug + Clone,
+    C: Incrementable<C> + Clone + Debug,
+    O: PureCRDT + Clone + Debug,
 {
     Op(O),
-    Membership(Membership<K>),
-}
-
-#[derive(Clone, Debug)]
-pub enum Membership<K>
-where
-    K: Keyable,
-{
-    Join,
-    Leave,
-    KickOut(K),
+    Membership(Membership<K, C, O>),
 }
 
 #[derive(Clone, Debug)]
@@ -49,27 +41,7 @@ where
     }
 }
 
-#[derive(Clone)]
-pub struct MembershipEvent<K, C>
-where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-{
-    pub cmd: Membership<K>,
-    pub metadata: Metadata<K, C>,
-}
-
-impl<K, C> MembershipEvent<K, C>
-where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-{
-    pub fn new(cmd: Membership<K>, metadata: Metadata<K, C>) -> Self {
-        Self { cmd, metadata }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Event<K, C, O>
 where
     K: Keyable + Clone + Debug,
@@ -77,7 +49,7 @@ where
     O: PureCRDT,
 {
     OpEvent(OpEvent<K, C, O>),
-    MembershipEvent(MembershipEvent<K, C>),
+    MembershipEvent(MembershipEvent<K, C, O>),
 }
 
 impl<K, C, O> Event<K, C, O>
@@ -86,7 +58,7 @@ where
     C: Incrementable<C> + Clone + Debug,
     O: PureCRDT,
 {
-    pub fn new(message: Message<K, O>, vc: VectorClock<K, C>, origin: K) -> Self {
+    pub fn new(message: Message<K, C, O>, vc: VectorClock<K, C>, origin: K) -> Self {
         let metadata = Metadata::new(vc, origin);
         match message {
             Message::Op(op) => Event::OpEvent(OpEvent::new(op, metadata)),

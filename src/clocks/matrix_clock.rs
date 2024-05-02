@@ -7,14 +7,13 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-/// The matrix must ALWAYS be square
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct MatrixClock<K, C>
 where
     K: PartialOrd + Hash + Clone + Eq,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    pub clock: HashMap<K, VectorClock<K, C>>,
+    clock: HashMap<K, VectorClock<K, C>>,
 }
 
 impl<K, C> MatrixClock<K, C>
@@ -50,6 +49,7 @@ where
         for vc in self.clock.values_mut() {
             vc.increment(&key.clone());
         }
+        assert!(self.is_square());
     }
 
     pub fn remove_key(&mut self, key: &K) {
@@ -57,12 +57,14 @@ where
         for vc in self.clock.values_mut() {
             vc.remove(key);
         }
+        assert!(self.is_square());
     }
 
     pub fn update(&mut self, key: &K, vc: &VectorClock<K, C>) {
         self.clock
             .entry(key.clone())
             .and_modify(|vc2| vc2.merge(vc));
+        assert!(self.is_square());
     }
 
     pub fn from(keys: &[K], vcs: &[VectorClock<K, C>]) -> MatrixClock<K, C> {
@@ -73,12 +75,17 @@ where
         MatrixClock { clock }
     }
 
-    pub fn min(&self) -> VectorClock<K, C> {
-        let mut min_vc = self.clock.values().next().unwrap().clone();
-        for vc in self.clock.values() {
-            min_vc = min_vc.min(vc);
+    /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
+    /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
+    /// from the POLog, to be added to the sequential data type.
+    pub fn svv(&self, ignore: &[K]) -> VectorClock<K, C> {
+        let mut svv = VectorClock::default();
+        for (k, vc) in &self.clock {
+            if !ignore.contains(k) {
+                svv = svv.min(vc);
+            }
         }
-        min_vc
+        svv
     }
 
     pub fn merge(&mut self, other: &MatrixClock<K, C>) {
@@ -88,6 +95,7 @@ where
                 .and_modify(|vc2| vc2.merge(vc1))
                 .or_insert_with(|| vc1.clone());
         }
+        assert!(self.is_square());
     }
 
     /// Check if the matrix clock is square
@@ -96,8 +104,16 @@ where
         self.clock.values().all(|vc| vc.clock.len() == n)
     }
 
-    pub fn keys(&self) -> Vec<&K> {
-        self.clock.keys().collect()
+    pub fn keys(&self) -> Vec<K> {
+        self.clock.keys().cloned().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.clock.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.clock.is_empty()
     }
 }
 
@@ -133,7 +149,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_min() {
+    fn test_svv() {
         let mc = MatrixClock::from(
             &["A", "B"],
             &[
@@ -141,7 +157,7 @@ mod tests {
                 VectorClock::from(&["A", "B"], &[8, 6]),
             ],
         );
-        assert_eq!(mc.min(), VectorClock::from(&["A", "B"], &[8, 2]));
+        assert_eq!(mc.svv(&[]), VectorClock::from(&["A", "B"], &[8, 2]));
     }
 
     #[test_log::test]
@@ -173,22 +189,21 @@ mod tests {
         );
     }
 
-    // #[test_log::test]
-    // fn test_merge_2() {
-    //     let mut mc1 = MatrixClock::from(&["A"], &[VectorClock::from(&["A"], &[1])]);
-    //     let mc2 = MatrixClock::from(&["B"], &[VectorClock::from(&["B"], &[1])]);
-    //     mc1.merge(&mc2);
-    //     assert_eq!(
-    //         mc1,
-    //         MatrixClock::from(
-    //             &["A", "B"],
-    //             &[
-    //                 VectorClock::from(&["A", "B"], &[1, 1]),
-    //                 VectorClock::from(&["A", "B"], &[0, 1]),
-    //             ]
-    //         )
-    //     );
-    // }
+    #[test_log::test]
+    fn test_svv_ignore() {
+        let mc = MatrixClock::from(
+            &["A", "B", "C"],
+            &[
+                VectorClock::from(&["A", "B", "C"], &[2, 6, 1]),
+                VectorClock::from(&["A", "B", "C"], &[2, 5, 2]),
+                VectorClock::from(&["A", "B", "C"], &[1, 4, 11]),
+            ],
+        );
+        assert_eq!(
+            mc.svv(&["C"]),
+            VectorClock::from(&["A", "B", "C"], &[2, 5, 1]),
+        );
+    }
 
     #[test_log::test]
     fn test_display() {
@@ -238,6 +253,6 @@ mod tests {
                 VectorClock::from(&["A", "B"], &[8, 6]),
             ],
         );
-        assert!((mc.keys() == &[&"A", &"B"]) || (mc.keys() == &[&"B", &"A"]));
+        assert!((mc.keys() == &["A", "B"]) || (mc.keys() == &["B", "A"]));
     }
 }
