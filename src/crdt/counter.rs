@@ -1,5 +1,5 @@
-use crate::clocks::vector_clock::VectorClock;
 use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
 use crate::protocol::utils::{Incrementable, Keyable};
@@ -43,8 +43,8 @@ impl PureCRDT for Op {
         K: Keyable + Clone + std::fmt::Debug,
         C: Incrementable<C> + Clone + std::fmt::Debug,
     >(
-        _: &VectorClock<K, C>,
-        _state: &mut POLog<K, C, Self>,
+        _: &Metadata<K, C>,
+        _: &mut POLog<K, C, Self>,
     ) {
     }
 
@@ -73,23 +73,22 @@ impl PureCRDT for Op {
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::counter::Op,
-        protocol::{event::Message, tcsb::Tcsb},
+        crdt::{counter::Op, test_util::twins},
+        protocol::event::Message,
     };
 
     #[test_log::test]
     pub fn simple_counter() {
-        let mut tscb_a = Tcsb::<&str, u64, Op>::new("a");
-        let mut tscb_b = Tcsb::<&str, u64, Op>::new("b");
+        let (mut tcsb_a, mut tcsb_b) = twins::<Op>();
 
-        let event = tscb_a.tc_bcast(Message::Op(Op::Dec));
-        tscb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast(Message::Op(Op::Dec));
+        tcsb_b.tc_deliver(event);
 
-        let event = tscb_a.tc_bcast(Message::Op(Op::Inc));
-        tscb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast(Message::Op(Op::Inc));
+        tcsb_b.tc_deliver(event);
 
         let result = 0;
-        assert_eq!(tscb_a.eval(), result);
-        assert_eq!(tscb_a.eval(), tscb_b.eval());
+        assert_eq!(tcsb_a.eval(), result);
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
 }

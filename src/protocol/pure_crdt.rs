@@ -1,13 +1,12 @@
-use crate::clocks::vector_clock::VectorClock;
-
 use super::{
     event::{Message, OpEvent},
     metadata::Metadata,
-    tcsb::{POLog, RedundantRelation},
-    utils::{Incrementable, Keyable},
+    tcsb::POLog,
+    utils::{prune_redundant_events, Incrementable, Keyable},
 };
 use std::fmt::Debug;
-/// An op-based CRDT is pure if disseminated mes- sages contain only the operation and its potential arguments.
+
+/// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Clone + Debug {
     type Value: Clone + Debug + Default;
 
@@ -27,31 +26,12 @@ pub trait PureCRDT: Clone + Debug {
     ) {
         if Self::r(&event, state) {
             // The operation is redundant
-            Self::prune_redundant_events(&event, state, Self::r_zero);
+            prune_redundant_events(&event, state, Self::r_zero);
         } else {
             // The operation is not redundant
-            Self::prune_redundant_events(&event, state, Self::r_one);
+            prune_redundant_events(&event, state, Self::r_one);
             state.1.insert(event.metadata, Message::Op(event.op));
         }
-    }
-
-    fn prune_redundant_events<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &OpEvent<K, C, Self>,
-        state: &mut POLog<K, C, Self>,
-        r_relation: RedundantRelation<K, C, Self>,
-    ) {
-        // Keep only the operations that are not made redundant by the new operation
-        state.0.retain(|o| {
-            let old_event: OpEvent<K, C, Self> = OpEvent::new(o.clone(), Metadata::default());
-            !(r_relation(&old_event, event))
-        });
-        state.1.retain(|m, o| {
-            if let Message::Op(op) = o {
-                let old_event: OpEvent<K, C, Self> = OpEvent::new(op.clone(), m.clone());
-                return !(r_relation(&old_event, event));
-            } // TODO: handle the case of a protocol event
-            true
-        });
     }
 
     /// The `stable` handler invokes `stabilize` and then strips
@@ -61,11 +41,11 @@ pub trait PureCRDT: Clone + Debug {
         metadata: &Metadata<K, C>,
         state: &mut POLog<K, C, Self>,
     ) {
-        Self::stabilize(&metadata.vc, state);
+        Self::stabilize(metadata, state);
         if let Some(Message::Op(op)) = state.1.get(metadata) {
             state.0.push(op.clone());
             state.1.remove(metadata);
-        } // TODO: handle the case of a protocol event
+        }
     }
 
     /// Datatype-specific relation used to define causal redundancy.
@@ -98,7 +78,7 @@ pub trait PureCRDT: Clone + Debug {
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
     fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        vc: &VectorClock<K, C>,
+        metadata: &Metadata<K, C>,
         state: &mut POLog<K, C, Self>,
     );
 
