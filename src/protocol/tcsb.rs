@@ -1,4 +1,5 @@
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::Bound;
@@ -79,7 +80,7 @@ where
     }
 
     /// Deliver an event to the local state.
-    pub fn tc_deliver(&mut self, event: Event<K, C, O>) {
+    pub fn tc_deliver(&mut self, mut event: Event<K, C, O>) {
         if let Err(err) = self.guard(&event) {
             eprintln!("Error: {}", err);
             return;
@@ -87,11 +88,12 @@ where
         if let Event::MembershipEvent(ref membership_event) = event {
             Membership::effect(membership_event, self);
         }
+        // If the event is not from the local replica and the sender is known
         if self.id != event.metadata().origin
             && self
                 .my_vc()
-                .clock
                 .keys()
+                .iter()
                 .any(|k| k == &event.metadata().origin)
         {
             // TODO: rejoin is hard
@@ -102,6 +104,29 @@ where
             // Update our own vector clock
             self.my_vc().merge(&event.metadata().vc);
         }
+
+        // S'il manque une entrée que l'on connait dans la vc de l'événement entrant
+        // et qu'il y a un message d'evict pour cette entrée, on ajoute à la vc de l'événement
+        // entrant la valeur de la dernière lamport clock du noeud evict + 1
+        let ltm_keys = self.ltm.keys();
+        let missing_entry: Option<&K> = ltm_keys
+            .iter()
+            .find(|k| event.metadata().vc.get(k).is_none());
+
+        if let Some(missing_entry) = missing_entry {
+            if self.state.1.iter().any(|(_, o)| {
+                if let Message::Membership(Membership::Evict(k)) = o {
+                    return k == missing_entry;
+                }
+                false
+            }) {
+                let last_lamport_clock = self.my_vc().get(missing_entry).unwrap();
+                let mut vc = event.metadata().vc.clone();
+                vc.insert(missing_entry.clone(), last_lamport_clock + 1.into());
+                event.metadata_mut().vc = vc;
+            }
+        }
+
         if let Event::OpEvent(op_event) = event {
             O::effect(op_event, &mut self.state);
         }
@@ -136,30 +161,69 @@ where
             .map(|(m, _)| m.clone())
             .collect::<Vec<Metadata<K, C>>>();
 
-        // TODO: if evict concurrent with other events, it should be the last event processed to avoid inconsistencies (e.g. removing a peer while we still need it to determine causal order)
-
-        for i in 0..ready_to_stabilize.len() {
-            let message = self.state.1.get(&ready_to_stabilize[i]);
-            if let Some(Message::Membership(Membership::Evict(_))) = message {
-                if i != ready_to_stabilize.len() - 1
-                    && matches!(
-                        PartialOrd::partial_cmp(
-                            &ready_to_stabilize[i + 1].vc,
-                            &ready_to_stabilize[i].vc
-                        ),
-                        None
-                    )
-                {
-                    ready_to_stabilize[i] = ready_to_stabilize[i + 1].clone();
-                    ready_to_stabilize[i + 1] = ready_to_stabilize[i].clone();
+        ready_to_stabilize.sort_by(|a, b| {
+            let message_a = self.state.1.get(a);
+            let message_b = self.state.1.get(b);
+            if PartialOrd::partial_cmp(&a.vc, &b.vc).is_none() {
+                if matches!(message_a, Some(Message::Membership(Membership::Evict(_)))) {
+                    return Ordering::Greater;
+                } else if matches!(message_b, Some(Message::Membership(Membership::Evict(_)))) {
+                    return Ordering::Less;
+                } else {
+                    return Ordering::Equal;
                 }
             }
+            Ordering::Equal
+        });
+
+        // for m in ready_to_stabilize.windows(2) {
+        //     if let Some(Message::Membership(Membership::Evict(_))) = self.state.1.get(&m[0]) {
+        //         if PartialOrd::partial_cmp(&m[0].vc, &m[1].vc).is_none() {
+        //             panic!("Not sorted");
+        //         }
+        //     }
+        // }
+
+        println!("--- STABILIZE in {:?} ---", self.id);
+        for m in ready_to_stabilize.iter() {
+            println!("(vc: {:?} ; msg : {:?})", m.vc, self.state.1.get(m));
+        }
+        println!("------");
+
+        // TODO: if evict concurrent with other events, it should be the last event processed to avoid inconsistencies (e.g. removing a peer while we still need it to determine causal order)
+        for metadata in ready_to_stabilize.iter() {
+            let message = self.state.1.get(metadata);
             if let Some(Message::Op(_)) = message {
-                O::stable(&ready_to_stabilize[i], &mut self.state);
+                O::stable(metadata, &mut self.state);
             } else if let Some(Message::Membership(_)) = message {
-                Membership::stable(&ready_to_stabilize[i], self);
+                Membership::stable(metadata, self);
             }
         }
+
+        // for i in 0..ready_to_stabilize.len() {
+        //     let message = self.state.1.get(&ready_to_stabilize[i]);
+        //     println!("Current message {:?}", message);
+        //     if let Some(Message::Membership(Membership::Evict(_))) = message {
+        //         if i != ready_to_stabilize.len() - 1
+        //             && matches!(
+        //                 PartialOrd::partial_cmp(
+        //                     &ready_to_stabilize[i + 1].vc,
+        //                     &ready_to_stabilize[i].vc
+        //                 ),
+        //                 None
+        //             )
+        //         {
+        //             ready_to_stabilize[i] = ready_to_stabilize[i + 1].clone();
+        //             ready_to_stabilize[i + 1] = ready_to_stabilize[i].clone();
+        //             println!("Swapped: {:?}", message);
+        //         }
+        //     }
+        //     if let Some(Message::Op(_)) = message {
+        //         O::stable(&ready_to_stabilize[i], &mut self.state);
+        //     } else if let Some(Message::Membership(_)) = message {
+        //         Membership::stable(&ready_to_stabilize[i], self);
+        //     }
+        // }
     }
 
     /// Shortcut to evaluate the current state of the CRDT.

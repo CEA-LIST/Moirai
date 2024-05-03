@@ -101,7 +101,7 @@ where
     /// Check if the matrix clock is square
     pub fn is_square(&self) -> bool {
         let n = self.clock.len();
-        self.clock.values().all(|vc| vc.clock.len() == n)
+        self.clock.values().all(|vc| vc.len() == n)
     }
 
     pub fn keys(&self) -> Vec<K> {
