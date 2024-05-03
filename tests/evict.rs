@@ -7,7 +7,7 @@ use po_crdt::{
     },
 };
 
-#[test]
+#[test_log::test]
 fn simple_evict() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
@@ -46,8 +46,8 @@ fn simple_evict() {
 }
 
 /// A peer emits events concurrently to its eviction.
-#[test]
-fn evict_concurrent_events() {
+#[test_log::test]
+fn evict_concurrent_whith_another_event() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
     let mut tcsb_c = Tcsb::<&str, u64, Op<&str>>::new("c");
@@ -74,19 +74,9 @@ fn evict_concurrent_events() {
     tcsb_c.tc_deliver(event_write);
     tcsb_c.tc_deliver(event_evict);
 
-    println!("EVAL B {:?}", tcsb_b.eval());
-    println!("EVAL C {:?}", tcsb_c.eval());
-
-    println!("BEFORE STATE C {:?}", tcsb_c.state);
-    println!("BEFORE STATE B {:?}", tcsb_b.state);
     let event = tcsb_c.tc_bcast(Message::Op(Op::Write("z")));
-    println!("STATE C {:?}", tcsb_c.state);
     tcsb_b.tc_deliver(event.clone());
-    println!("STATE B {:?}", tcsb_b.state);
     tcsb_a.tc_deliver(event);
-
-    println!("B LTM {:?}", tcsb_b.ltm);
-    println!("C LTM {:?}", tcsb_c.ltm);
 
     assert_eq!(tcsb_a.ltm.len(), 1);
     assert_eq!(tcsb_b.ltm.len(), 2);
@@ -96,7 +86,7 @@ fn evict_concurrent_events() {
     assert_eq!(tcsb_b.eval(), vec!["z"]);
 }
 
-#[test]
+#[test_log::test]
 fn evict_then_rejoin() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
@@ -105,8 +95,10 @@ fn evict_then_rejoin() {
     let event_a = tcsb_a.tc_bcast(Message::Membership(Membership::Join));
     let event_c = tcsb_c.tc_bcast(Message::Membership(Membership::Join));
 
-    tcsb_b.tc_deliver(event_a);
-    tcsb_b.tc_deliver(event_c);
+    tcsb_b.tc_deliver(event_a.clone());
+    tcsb_b.tc_deliver(event_c.clone());
+    tcsb_a.tc_deliver(event_c);
+    tcsb_c.tc_deliver(event_a);
 
     let welcome = Welcome::new(&tcsb_b);
     let event = tcsb_b.tc_bcast(Message::Membership(Membership::Welcome(welcome)));
@@ -117,11 +109,38 @@ fn evict_then_rejoin() {
     tcsb_a.tc_deliver(event.clone());
     tcsb_c.tc_deliver(event.clone());
 
-    let event = tcsb_b.tc_bcast(Message::Membership(Membership::Join));
-    tcsb_a.tc_deliver(event.clone());
-    tcsb_c.tc_deliver(event.clone());
+    let event = tcsb_c.tc_bcast(Message::Op(Op::Write("z")));
+    tcsb_b.tc_deliver(event.clone());
+    tcsb_a.tc_deliver(event);
 
-    assert_eq!(tcsb_a.ltm.len(), 2);
+    assert_eq!(tcsb_a.ltm.len(), 1);
+    assert_eq!(tcsb_b.ltm.len(), 2);
+    assert_eq!(tcsb_c.ltm.len(), 2);
+
+    let event = tcsb_a.tc_bcast(Message::Membership(Membership::Join));
+    tcsb_b.tc_deliver(event.clone());
+    tcsb_c.tc_deliver(event);
+
+    let welcome = Welcome::new(&tcsb_b);
+    let event = tcsb_b.tc_bcast(Message::Membership(Membership::Welcome(welcome)));
+    tcsb_a.tc_deliver(event);
+
+    assert_eq!(tcsb_a.ltm.len(), 3);
     assert_eq!(tcsb_b.ltm.len(), 3);
     assert_eq!(tcsb_c.ltm.len(), 3);
+}
+
+#[test_log::test]
+fn multiple_concurrent_evicts() {
+    todo!()
+}
+
+#[test_log::test]
+fn evict_while_leave() {
+    todo!()
+}
+
+#[test_log::test]
+fn evict_while_rejoin() {
+    todo!()
 }
