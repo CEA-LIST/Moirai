@@ -238,13 +238,6 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_incrddement() {
-        let clock = VectorClock::from(&["a", "b", "c"], &[3, 2, 2]);
-        let clock2 = VectorClock::from(&["a", "b", "c"], &[2, 1, 1]);
-        println!("{:?}", clock.partial_cmp(&clock2));
-    }
-
-    #[test_log::test]
     fn test_merge() {
         let mut clock1 = VectorClock::new("A");
         clock1.increment(&"A");

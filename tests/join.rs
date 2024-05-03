@@ -7,7 +7,7 @@ use po_crdt::{
     },
 };
 
-#[test]
+#[test_log::test]
 fn simple_join() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
@@ -38,7 +38,7 @@ fn simple_join() {
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
 }
 
-#[test]
+#[test_log::test]
 fn concurrent_join_on_same_node() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
@@ -68,8 +68,5 @@ fn concurrent_join_on_same_node() {
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
 }
 
-#[test]
+#[test_log::test]
 fn concurrent_join_on_different_nodes() {}
-
-#[test]
-fn concurrent_join_on_same_node_with_new_event() {}

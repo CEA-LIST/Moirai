@@ -176,20 +176,6 @@ where
             Ordering::Equal
         });
 
-        // for m in ready_to_stabilize.windows(2) {
-        //     if let Some(Message::Membership(Membership::Evict(_))) = self.state.1.get(&m[0]) {
-        //         if PartialOrd::partial_cmp(&m[0].vc, &m[1].vc).is_none() {
-        //             panic!("Not sorted");
-        //         }
-        //     }
-        // }
-
-        println!("--- STABILIZE in {:?} ---", self.id);
-        for m in ready_to_stabilize.iter() {
-            println!("(vc: {:?} ; msg : {:?})", m.vc, self.state.1.get(m));
-        }
-        println!("------");
-
         // TODO: if evict concurrent with other events, it should be the last event processed to avoid inconsistencies (e.g. removing a peer while we still need it to determine causal order)
         for metadata in ready_to_stabilize.iter() {
             let message = self.state.1.get(metadata);
@@ -199,31 +185,6 @@ where
                 Membership::stable(metadata, self);
             }
         }
-
-        // for i in 0..ready_to_stabilize.len() {
-        //     let message = self.state.1.get(&ready_to_stabilize[i]);
-        //     println!("Current message {:?}", message);
-        //     if let Some(Message::Membership(Membership::Evict(_))) = message {
-        //         if i != ready_to_stabilize.len() - 1
-        //             && matches!(
-        //                 PartialOrd::partial_cmp(
-        //                     &ready_to_stabilize[i + 1].vc,
-        //                     &ready_to_stabilize[i].vc
-        //                 ),
-        //                 None
-        //             )
-        //         {
-        //             ready_to_stabilize[i] = ready_to_stabilize[i + 1].clone();
-        //             ready_to_stabilize[i + 1] = ready_to_stabilize[i].clone();
-        //             println!("Swapped: {:?}", message);
-        //         }
-        //     }
-        //     if let Some(Message::Op(_)) = message {
-        //         O::stable(&ready_to_stabilize[i], &mut self.state);
-        //     } else if let Some(Message::Membership(_)) = message {
-        //         Membership::stable(&ready_to_stabilize[i], self);
-        //     }
-        // }
     }
 
     /// Shortcut to evaluate the current state of the CRDT.
@@ -287,14 +248,4 @@ where
                 }
             }
     }
-
-    // Check that the event is not from an evicted peer
-    // fn guard_against_events_from_evicted_nodes(&self, event: &Event<K, C, O>) -> bool {
-    //     self.state.1.iter().any(|(m, o)| {
-    //         if let Message::Membership(Membership::Evict(k)) = o {
-    //             return k == &event.metadata().origin && event.metadata() > m;
-    //         }
-    //         false
-    //     })
-    // }
 }

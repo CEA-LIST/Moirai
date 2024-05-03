@@ -9,7 +9,7 @@ use po_crdt::{
     },
 };
 
-#[test]
+#[test_log::test]
 fn simple_leave() {
     let mut tcsb_a = Tcsb::<&str, u64, Op<&str>>::new("a");
     let mut tcsb_b = Tcsb::<&str, u64, Op<&str>>::new("b");
