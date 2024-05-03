@@ -82,6 +82,7 @@ fn evict_concurrent_events() {
     let event = tcsb_c.tc_bcast(Message::Op(Op::Write("z")));
     println!("STATE C {:?}", tcsb_c.state);
     tcsb_b.tc_deliver(event.clone());
+    println!("STATE B {:?}", tcsb_b.state);
     tcsb_a.tc_deliver(event);
 
     println!("B LTM {:?}", tcsb_b.ltm);

@@ -16,7 +16,7 @@ where
     K: Eq + Hash + Clone,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
-    pub clock: HashMap<K, C>,
+    clock: HashMap<K, C>,
 }
 
 impl<K, C> VectorClock<K, C>
@@ -43,6 +43,11 @@ where
             None => C::default(),
         };
         self.clock.insert(key.clone(), value);
+    }
+
+    /// Insert a key with a value
+    pub fn insert(&mut self, key: K, value: C) {
+        self.clock.insert(key, value);
     }
 
     pub fn remove(&mut self, key: &K) {
@@ -91,6 +96,18 @@ where
             }
         }
         result
+    }
+
+    pub fn keys(&self) -> Vec<K> {
+        self.clock.keys().cloned().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.clock.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.clock.is_empty()
     }
 }
 
@@ -218,6 +235,13 @@ mod tests {
         clock.increment(&"A");
         clock.increment(&"A");
         assert_eq!(clock.get(&"A"), Some(2));
+    }
+
+    #[test_log::test]
+    fn test_incrddement() {
+        let clock = VectorClock::from(&["a", "b", "c"], &[3, 2, 2]);
+        let clock2 = VectorClock::from(&["a", "b", "c"], &[2, 1, 1]);
+        println!("{:?}", clock.partial_cmp(&clock2));
     }
 
     #[test_log::test]

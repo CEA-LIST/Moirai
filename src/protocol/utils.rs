@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Add;
 use std::ops::AddAssign;
@@ -10,8 +11,8 @@ use super::pure_crdt::PureCRDT;
 use super::tcsb::POLog;
 use super::tcsb::RedundantRelation;
 
-pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default;
-pub trait Keyable = Ord + PartialOrd + Hash + Eq + Default;
+pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Display;
+pub trait Keyable = Ord + PartialOrd + Hash + Eq + Default + Display;
 
 pub(crate) fn prune_redundant_events<
     K: Keyable + Clone + Debug,

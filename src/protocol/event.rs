@@ -74,4 +74,11 @@ where
             Event::MembershipEvent(membership_event) => &membership_event.metadata,
         }
     }
+
+    pub fn metadata_mut(&mut self) -> &mut Metadata<K, C> {
+        match self {
+            Event::OpEvent(op_event) => &mut op_event.metadata,
+            Event::MembershipEvent(membership_event) => &mut membership_event.metadata,
+        }
+    }
 }
