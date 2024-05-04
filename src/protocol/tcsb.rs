@@ -71,7 +71,7 @@ where
             );
         } else {
             let my_id = self.id.clone();
-            let my_vc = self.my_vc();
+            let my_vc = self.my_vc_mut();
             my_vc.increment(&my_id);
             event = Event::new(message, my_vc.clone(), self.id.clone());
         }
@@ -81,6 +81,7 @@ where
 
     /// Deliver an event to the local state.
     pub fn tc_deliver(&mut self, mut event: Event<K, C, O>) {
+        // Check if the event is valid
         if let Err(err) = self.guard(&event) {
             eprintln!("Error: {}", err);
             return;
@@ -96,18 +97,102 @@ where
                 .iter()
                 .any(|k| k == &event.metadata().origin)
         {
-            // TODO: rejoin is hard
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             self.ltm
                 .update(&event.metadata().origin, &event.metadata().vc);
             // Update our own vector clock
-            self.my_vc().merge(&event.metadata().vc);
+            self.my_vc_mut().merge(&event.metadata().vc);
         }
 
-        // S'il manque une entrée que l'on connait dans la vc de l'événement entrant
-        // et qu'il y a un message d'evict pour cette entrée, on ajoute à la vc de l'événement
-        // entrant la valeur de la dernière lamport clock du noeud evict + 1
+        event = self.correct_evict_inconsistencies(event);
+
+        if let Event::OpEvent(op_event) = event {
+            O::effect(op_event, &mut self.state);
+        }
+
+        // Check if some operations are ready to be stabilized
+        self.tc_stable();
+    }
+
+    /// The TCSB middleware can offer this causal stability information through extending its API with tcstablei(τ),
+    /// which informs the upper layers that message with timestamp τ is now known to be causally stable
+    pub fn tc_stable(&mut self) {
+        // If an Evict event is in the PO-Log, the LTM svv() should ignore the evicted peer
+        // We are going to accept all concurrent events from the evicted peer
+        // until the evict message is "partially stable" (i.e., all peers except the evicted one have processed the evict message)
+        let evicted = self
+            .state
+            .1
+            .iter()
+            .filter_map(|(_, o)| match o {
+                Message::Membership(Membership::Evict(k)) => Some(k.to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<K>>();
+
+        let lower_bound = Metadata {
+            vc: self.ltm.svv(evicted.as_slice()),
+            wc: 0,
+            origin: K::default(),
+        };
+
+        let mut ready_to_stabilize = self
+            .state
+            .1
+            .range((Bound::Unbounded, Bound::Included(lower_bound)))
+            .map(|(m, _)| m.clone())
+            .collect::<Vec<Metadata<K, C>>>();
+
+        // If there exists an evict message in the PO-Log along with concurrent events,
+        // the evict message must be processed after all concurrent events
+        ready_to_stabilize.sort_by(|a, b| {
+            let message_a = self.state.1.get(a);
+            let message_b = self.state.1.get(b);
+            if PartialOrd::partial_cmp(&a.vc, &b.vc).is_none() {
+                if matches!(message_a, Some(Message::Membership(Membership::Evict(_)))) {
+                    return Ordering::Greater;
+                } else if matches!(message_b, Some(Message::Membership(Membership::Evict(_)))) {
+                    return Ordering::Less;
+                }
+            }
+            Ordering::Equal
+        });
+
+        for metadata in ready_to_stabilize.iter() {
+            let message = self.state.1.get(metadata);
+            if let Some(Message::Op(_)) = message {
+                O::stable(metadata, &mut self.state);
+            } else if let Some(Message::Membership(_)) = message {
+                Membership::stable(metadata, self);
+            }
+        }
+    }
+
+    /// Shortcut to evaluate the current state of the CRDT.
+    pub fn eval(&self) -> O::Value {
+        O::eval(&self.state)
+    }
+
+    pub(crate) fn my_vc(&self) -> &VectorClock<K, C> {
+        &self
+            .ltm
+            .get(&self.id)
+            .expect("Local vector clock not found")
+    }
+
+    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<K, C> {
+        self.ltm
+            .get_mut(&self.id)
+            .expect("Local vector clock not found")
+    }
+
+    /// If there is a missing entry in the incoming event's vc that we know
+    /// and there is an evict message for this entry, we add to the incoming event's vc
+    /// the value of the last lamport clock of the evict node + 1
+    /// This is to avoid inconsistencies when an event is sent from a node
+    /// that has already processed the evict message
+    fn correct_evict_inconsistencies(&self, mut event: Event<K, C, O>) -> Event<K, C, O> {
         let ltm_keys = self.ltm.keys();
         let missing_entry: Option<&K> = ltm_keys
             .iter()
@@ -126,76 +211,7 @@ where
                 event.metadata_mut().vc = vc;
             }
         }
-
-        if let Event::OpEvent(op_event) = event {
-            O::effect(op_event, &mut self.state);
-        }
-
-        // Check if some operations are ready to be stabilized
-        self.tc_stable();
-    }
-
-    pub fn tc_stable(&mut self) {
-        // If an Evict event is in the PO-Log, the LTM svv() should ignore the evicted peer
-        let evicted = self
-            .state
-            .1
-            .iter()
-            .filter_map(|(_, o)| {
-                if let Message::Membership(Membership::Evict(k)) = o {
-                    return Some(k.to_owned());
-                }
-                None
-            })
-            .collect::<Vec<K>>();
-        let lower_bound = Metadata {
-            vc: self.ltm.svv(evicted.as_slice()),
-            wc: 0,
-            origin: K::default(),
-        };
-
-        let mut ready_to_stabilize = self
-            .state
-            .1
-            .range((Bound::Unbounded, Bound::Included(lower_bound)))
-            .map(|(m, _)| m.clone())
-            .collect::<Vec<Metadata<K, C>>>();
-
-        ready_to_stabilize.sort_by(|a, b| {
-            let message_a = self.state.1.get(a);
-            let message_b = self.state.1.get(b);
-            if PartialOrd::partial_cmp(&a.vc, &b.vc).is_none() {
-                if matches!(message_a, Some(Message::Membership(Membership::Evict(_)))) {
-                    return Ordering::Greater;
-                } else if matches!(message_b, Some(Message::Membership(Membership::Evict(_)))) {
-                    return Ordering::Less;
-                } else {
-                    return Ordering::Equal;
-                }
-            }
-            Ordering::Equal
-        });
-
-        // TODO: if evict concurrent with other events, it should be the last event processed to avoid inconsistencies (e.g. removing a peer while we still need it to determine causal order)
-        for metadata in ready_to_stabilize.iter() {
-            let message = self.state.1.get(metadata);
-            if let Some(Message::Op(_)) = message {
-                O::stable(metadata, &mut self.state);
-            } else if let Some(Message::Membership(_)) = message {
-                Membership::stable(metadata, self);
-            }
-        }
-    }
-
-    /// Shortcut to evaluate the current state of the CRDT.
-    pub fn eval(&self) -> O::Value {
-        O::eval(&self.state)
-    }
-
-    pub(crate) fn my_vc(&mut self) -> &mut VectorClock<K, C> {
-        self.ltm
-            .get_mut(&self.id)
-            .expect("Local vector clock not found")
+        event
     }
 
     fn guard(&self, event: &Event<K, C, O>) -> Result<(), &str> {
@@ -220,7 +236,7 @@ where
             && self
                 .ltm
                 .get(&event.metadata().origin)
-                .map(|ltm_clock| event.metadata().vc <= ltm_clock)
+                .map(|ltm_clock| event.metadata().vc <= *ltm_clock)
                 .unwrap_or(false)
     }
 

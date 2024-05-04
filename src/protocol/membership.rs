@@ -124,7 +124,7 @@ where
                     tcsb.lsv = welcome.lsv.clone();
                     tcsb.ltm = welcome.ltm.clone();
                     let ltm_origin = tcsb.ltm.get(&event.metadata.origin).unwrap().clone();
-                    tcsb.my_vc().merge(&ltm_origin);
+                    tcsb.my_vc_mut().merge(&ltm_origin);
                     tcsb.state = welcome.state.clone();
                 }
             }

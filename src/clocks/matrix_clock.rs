@@ -32,8 +32,8 @@ where
         MatrixClock { clock }
     }
 
-    pub fn get(&self, key: &K) -> Option<VectorClock<K, C>> {
-        self.clock.get(key).cloned()
+    pub fn get(&self, key: &K) -> Option<&VectorClock<K, C>> {
+        self.clock.get(key)
     }
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut VectorClock<K, C>> {
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(mc.clock.len(), 3);
         assert_eq!(
             mc.get(&"A"),
-            Some(VectorClock::from(&["A", "B", "C"], &[0, 0, 0]))
+            Some(&VectorClock::from(&["A", "B", "C"], &[0, 0, 0]))
         );
     }
 
