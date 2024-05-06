@@ -62,6 +62,9 @@ where
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
     pub fn tc_bcast(&mut self, message: Message<K, C, O>) -> Event<K, C, O> {
+        if self.guard_against_bcast_while_wrong_status(&message) {
+            panic!("Wrong status detected");
+        }
         let event: Event<K, C, O>;
         if let Message::Membership(Membership::Welcome(_)) = message {
             event = Event::new(
@@ -83,7 +86,7 @@ where
     pub fn tc_deliver(&mut self, mut event: Event<K, C, O>) {
         // Check if the event is valid
         if let Err(err) = self.guard(&event) {
-            eprintln!("Error: {}", err);
+            eprintln!("{}", err);
             return;
         }
         if let Event::MembershipEvent(ref membership_event) = event {
@@ -174,13 +177,14 @@ where
         O::eval(&self.state)
     }
 
+    /// Return the vector clock of the local replica
     pub(crate) fn my_vc(&self) -> &VectorClock<K, C> {
-        &self
-            .ltm
+        self.ltm
             .get(&self.id)
             .expect("Local vector clock not found")
     }
 
+    /// Return the mutable vector clock of the local replica
     pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<K, C> {
         self.ltm
             .get_mut(&self.id)
@@ -224,9 +228,6 @@ where
         if self.guard_against_out_of_order(event) {
             return Err("Out-of-order event detected");
         }
-        // if self.guard_against_events_from_evicted_nodes(event) {
-        //     return Err("Event from evicted node detected");
-        // }
         Ok(())
     }
 
@@ -263,5 +264,18 @@ where
                         && !matches!(membership_event.cmd, Membership::Welcome(_))
                 }
             }
+    }
+
+    /// Check that the event is authorized to be broadcasted
+    fn guard_against_bcast_while_wrong_status(&self, message: &Message<K, C, O>) -> bool {
+        match message {
+            Message::Op(_) => !matches!(self.status, Status::Peer) && self.ltm.len() > 1,
+            Message::Membership(membership) => match membership {
+                Membership::Join => !matches!(self.status, Status::Disconnected),
+                Membership::Welcome(_) => !matches!(self.status, Status::Peer),
+                Membership::Leave => !matches!(self.status, Status::Peer),
+                Membership::Evict(_) => !matches!(self.status, Status::Peer),
+            },
+        }
     }
 }
