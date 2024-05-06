@@ -7,7 +7,7 @@ use super::{
     tcsb::{POLog, Status, Tcsb},
     utils::{Incrementable, Keyable},
 };
-use std::fmt::Debug;
+use std::{cmp::Ordering, fmt::Debug};
 
 #[derive(Clone, Debug)]
 pub struct MembershipEvent<K, C, O>
@@ -108,6 +108,7 @@ where
         }
     }
 
+    /// Apply the effect of the membership event on the TCSB
     fn membership_handler(event: &MembershipEvent<K, C, O>, tcsb: &mut Tcsb<K, C, O>) {
         match &event.cmd {
             Membership::Join => {
@@ -117,6 +118,7 @@ where
                     // Fill the existing vector clocks with the new peer entry (initially set to 0)
                     // Create a new vector clock for the new peer (initially set to 0)
                     tcsb.ltm.add_key(event.metadata.origin.clone());
+                    tcsb.status = Status::Peer;
                 }
             }
             Membership::Welcome(welcome) => {
@@ -139,7 +141,7 @@ where
                 }
             }
             Membership::Evict(k) => {
-                if k == &tcsb.id {
+                if k == &tcsb.id && !Membership::r(event, &tcsb.state) {
                     tcsb.status = Status::Disconnected;
                     let my_lamport_clock: C = tcsb.my_vc().get(k).unwrap();
                     tcsb.ltm = MatrixClock::from(
@@ -151,18 +153,43 @@ where
         }
     }
 
-    fn r(event: &MembershipEvent<K, C, O>, _: &POLog<K, C, O>) -> bool {
-        matches!(event.cmd, Membership::Welcome(_))
+    fn r(event: &MembershipEvent<K, C, O>, state: &POLog<K, C, O>) -> bool {
+        match &event.cmd {
+            // An Evict event is redundant if there is already an Evict event for the same key OR
+            // if the event comes from a node that is going to be evicted
+            Membership::Evict(k) => state.1.iter().any(|(metadata, message)| {
+                if let Message::Membership(Membership::Evict(k2)) = message {
+                    (k2 == k)
+                        || (event.metadata.origin == *k2
+                            && match Ord::cmp(&metadata.wc, &event.metadata.wc) {
+                                Ordering::Less => true,
+                                Ordering::Equal => event.metadata.origin > metadata.origin,
+                                Ordering::Greater => false,
+                            })
+                } else {
+                    false
+                }
+            }),
+            // A Welcome event is always redundant, as it is only used to initialize the state
+            // Moreover, it has a null vector clock
+            Membership::Welcome(_) => true,
+            _ => false,
+        }
     }
 
     fn r_zero(old_event: &Event<K, C, O>, new_event: &MembershipEvent<K, C, O>) -> bool {
-        if let Membership::Evict(k) = &new_event.cmd {
-            if let Event::OpEvent(_) = old_event {
-                return old_event.metadata().origin == *k
-                    && old_event.metadata().vc > new_event.metadata.vc;
+        match (&old_event, &new_event.cmd) {
+            // An Evict(k) event is redundant if k is leaving
+            (Event::MembershipEvent(membership), Membership::Leave) => {
+                if let Membership::Evict(k) = &membership.cmd {
+                    *k == new_event.metadata.origin
+                        && new_event.metadata.vc > old_event.metadata().vc
+                } else {
+                    false
+                }
             }
+            _ => false,
         }
-        false
     }
 
     fn r_one(old_event: &Event<K, C, O>, new_event: &MembershipEvent<K, C, O>) -> bool {
