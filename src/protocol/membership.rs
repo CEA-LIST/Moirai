@@ -156,7 +156,8 @@ where
     fn r(event: &MembershipEvent<K, C, O>, state: &POLog<K, C, O>) -> bool {
         match &event.cmd {
             // An Evict event is redundant if there is already an Evict event for the same key OR
-            // if the event comes from a node that is going to be evicted
+            // if the event comes from a node that is going to be evicted OR
+            // if the node which is going to be evicted has sent a Leave event
             Membership::Evict(k) => state.1.iter().any(|(metadata, message)| {
                 if let Message::Membership(Membership::Evict(k2)) = message {
                     (k2 == k)
@@ -166,6 +167,8 @@ where
                                 Ordering::Equal => event.metadata.origin > metadata.origin,
                                 Ordering::Greater => false,
                             })
+                } else if let Message::Membership(Membership::Leave) = message {
+                    *k == metadata.origin
                 } else {
                     false
                 }
