@@ -117,6 +117,7 @@ where
                 } else {
                     // Fill the existing vector clocks with the new peer entry (initially set to 0)
                     // Create a new vector clock for the new peer (initially set to 0)
+                    // -> will be updated just after in the deliver() function
                     tcsb.ltm.add_key(event.metadata.origin.clone());
                     tcsb.status = Status::Peer;
                 }
@@ -157,7 +158,7 @@ where
         match &event.cmd {
             // An Evict event is redundant if there is already an Evict event for the same key OR
             // if the event comes from a node that is going to be evicted OR
-            // if the node which is going to be evicted has sent a Leave event
+            // TODO: if the node which is going to be evicted has sent a Leave event
             Membership::Evict(k) => state.1.iter().any(|(metadata, message)| {
                 if let Message::Membership(Membership::Evict(k2)) = message {
                     (k2 == k)
@@ -167,8 +168,6 @@ where
                                 Ordering::Equal => event.metadata.origin > metadata.origin,
                                 Ordering::Greater => false,
                             })
-                } else if let Message::Membership(Membership::Leave) = message {
-                    *k == metadata.origin
                 } else {
                     false
                 }
@@ -215,6 +214,9 @@ where
                 }
             }
             Some(Message::Membership(Membership::Leave)) => {
+                // We need to wait for stabilization before removing the node from the LTM,
+                // as we might receive simultaneous events from other nodes whose vector clocks
+                // still include the departing node
                 if tcsb.id != metadata.origin {
                     tcsb.ltm.remove_key(&metadata.origin);
                 }

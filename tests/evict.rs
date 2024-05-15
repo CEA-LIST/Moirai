@@ -119,7 +119,7 @@ fn evict_then_rejoin() {
 
 /// A node is evicted while it is leaving the network.
 #[test_log::test]
-fn evict_while_leave() {
+fn evict_while_leaving() {
     let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplets::<Op<&str>>();
 
     let event_b = tcsb_b.tc_bcast(Message::Membership(Membership::Evict("a")));

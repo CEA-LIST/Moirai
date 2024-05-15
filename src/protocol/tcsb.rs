@@ -39,7 +39,9 @@ where
 {
     pub id: K,
     pub state: POLog<K, C, O>,
+    /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<K, C>,
+    /// Last Stable Vector (LSV)
     pub lsv: VectorClock<K, C>,
     pub status: Status,
 }
@@ -269,7 +271,7 @@ where
     /// Check that the event is authorized to be broadcasted
     fn guard_against_bcast_while_wrong_status(&self, message: &Message<K, C, O>) -> bool {
         match message {
-            Message::Op(_) => !matches!(self.status, Status::Peer) && self.ltm.len() > 1,
+            Message::Op(_) => matches!(self.status, Status::Connecting),
             Message::Membership(membership) => match membership {
                 Membership::Join => !matches!(self.status, Status::Disconnected),
                 Membership::Welcome(_) => !matches!(self.status, Status::Peer),
