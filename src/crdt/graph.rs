@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// Add-wins policy
 #[derive(Clone, Debug)]
 pub enum Op<V> {
     AddVertex(V),

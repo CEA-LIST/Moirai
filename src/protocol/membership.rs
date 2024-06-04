@@ -163,10 +163,15 @@ where
                 if let Message::Membership(Membership::Evict(k2)) = message {
                     (k2 == k)
                         || (event.metadata.origin == *k2
-                            && match Ord::cmp(&metadata.wc, &event.metadata.wc) {
-                                Ordering::Less => true,
-                                Ordering::Equal => event.metadata.origin > metadata.origin,
-                                Ordering::Greater => false,
+                            // The event is redundant if the new event has a higher vector clock
+                            && match PartialOrd::partial_cmp(&metadata.vc, &event.metadata.vc) {
+                                Some(Ordering::Less) => true,
+                                Some(Ordering::Equal) | None => match Ord::cmp(&metadata.wc, &event.metadata.wc) {
+                                    Ordering::Less => true,
+                                    Ordering::Equal => event.metadata.origin > metadata.origin,
+                                    Ordering::Greater => false,
+                                },
+                                Some(Ordering::Greater) => false,
                             })
                 } else {
                     false

@@ -17,7 +17,7 @@ where
 {
     type Value = Vec<V>;
 
-    fn r<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
+    fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
         event: &OpEvent<K, C, Self>,
         _: &POLog<K, C, Self>,
     ) -> bool {
@@ -26,32 +26,26 @@ where
 
     fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
     where
-        K: Keyable + Clone + std::fmt::Debug,
-        C: Incrementable<C> + Clone + std::fmt::Debug,
+        K: Keyable + Clone + Debug,
+        C: Incrementable<C> + Clone + Debug,
     {
         old_event.metadata.vc < new_event.metadata.vc
     }
 
-    fn r_one<
-        K: Keyable + Clone + std::fmt::Debug,
-        C: Incrementable<C> + Clone + std::fmt::Debug,
-    >(
+    fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
         old_event: &OpEvent<K, C, Self>,
         new_event: &OpEvent<K, C, Self>,
     ) -> bool {
         Self::r_zero(old_event, new_event)
     }
 
-    fn stabilize<
-        K: Keyable + Clone + std::fmt::Debug,
-        C: Incrementable<C> + Clone + std::fmt::Debug,
-    >(
+    fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
         _: &Metadata<K, C>,
         _: &mut POLog<K, C, Self>,
     ) {
     }
 
-    fn eval<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
+    fn eval<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
         state: &POLog<K, C, Self>,
     ) -> Self::Value {
         let mut vec = Self::Value::new();
@@ -71,7 +65,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{crdt::mv_register::Op, crdt::test_util::twins, protocol::event::Message};
+    use crate::{
+        crdt::{
+            mv_register::Op,
+            test_util::{triplets, twins},
+        },
+        protocol::event::Message,
+    };
 
     #[test_log::test]
     fn simple_mv_register() {
@@ -114,6 +114,35 @@ mod tests {
         tcsb_a.tc_deliver(event_b);
 
         let result = vec!["b", "a"];
+        assert_eq!(tcsb_a.eval(), result);
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    fn multiple_concurrent_mv_register() {
+        let (mut tcsb_a, mut tcsb_b, mut _tcsb_c) = triplets::<Op<&str>>();
+
+        let event = tcsb_a.tc_bcast(Message::Op(Op::Write("c")));
+        tcsb_b.tc_deliver(event);
+
+        assert_eq!(tcsb_a.eval(), vec!["c"]);
+        assert_eq!(tcsb_b.eval(), vec!["c"]);
+
+        let event = tcsb_b.tc_bcast(Message::Op(Op::Write("d")));
+        tcsb_a.tc_deliver(event);
+
+        assert_eq!(tcsb_a.eval(), vec!["d"]);
+        assert_eq!(tcsb_b.eval(), vec!["d"]);
+
+        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Write("a")));
+        let event_aa = tcsb_a.tc_bcast(Message::Op(Op::Write("aa")));
+
+        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Write("b")));
+        tcsb_a.tc_deliver(event_b);
+        tcsb_b.tc_deliver(event_a);
+        tcsb_b.tc_deliver(event_aa);
+
+        let result = vec!["b", "aa"];
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
