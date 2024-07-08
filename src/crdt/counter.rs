@@ -1,4 +1,4 @@
-use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
@@ -15,13 +15,13 @@ impl PureCRDT for Op {
     type Value = isize;
 
     fn r<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
-        _event: &OpEvent<K, C, Self>,
+        _event: &Event<K, C, Self>,
         _: &POLog<K, C, Self>,
     ) -> bool {
         false
     }
 
-    fn r_zero<K, C>(_old_event: &OpEvent<K, C, Self>, _new_event: &OpEvent<K, C, Self>) -> bool
+    fn r_zero<K, C>(_old_event: &Event<K, C, Self>, _new_event: &Event<K, C, Self>) -> bool
     where
         K: Keyable + Clone + std::fmt::Debug,
         C: Incrementable<C> + Clone + std::fmt::Debug,
@@ -33,8 +33,8 @@ impl PureCRDT for Op {
         K: Keyable + Clone + std::fmt::Debug,
         C: Incrementable<C> + Clone + std::fmt::Debug,
     >(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool {
         Self::r_zero(old_event, new_event)
     }
@@ -59,10 +59,10 @@ impl PureCRDT for Op {
             }
         }
         for (_, message) in state.1.iter() {
-            if let Message::Op(Op::Inc) = message {
+            if let Op::Inc = message {
                 value += 1;
             }
-            if let Message::Op(Op::Dec) = message {
+            if let Op::Dec = message {
                 value -= 1;
             }
         }
@@ -72,19 +72,16 @@ impl PureCRDT for Op {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crdt::{counter::Op, test_util::twins},
-        protocol::event::Message,
-    };
+    use crate::crdt::{counter::Op, test_util::twins};
 
     #[test_log::test]
     pub fn simple_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Dec));
+        let event = tcsb_a.tc_bcast(Op::Dec);
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Inc));
+        let event = tcsb_a.tc_bcast(Op::Inc);
         tcsb_b.tc_deliver(event);
 
         let result = 0;

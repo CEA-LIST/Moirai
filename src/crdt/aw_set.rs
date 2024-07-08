@@ -1,4 +1,4 @@
-use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
@@ -21,13 +21,13 @@ where
     type Value = HashSet<V>;
 
     fn r<K: Keyable + Clone + std::fmt::Debug, C: Incrementable<C> + Clone + std::fmt::Debug>(
-        event: &OpEvent<K, C, Self>,
+        event: &Event<K, C, Self>,
         _: &POLog<K, C, Self>,
     ) -> bool {
         matches!(event.op, Op::Clear) || matches!(event.op, Op::Remove(_))
     }
 
-    fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
+    fn r_zero<K, C>(old_event: &Event<K, C, Self>, new_event: &Event<K, C, Self>) -> bool
     where
         K: Keyable + Clone + std::fmt::Debug,
         C: Incrementable<C> + Clone + std::fmt::Debug,
@@ -47,8 +47,8 @@ where
         K: Keyable + Clone + std::fmt::Debug,
         C: Incrementable<C> + Clone + std::fmt::Debug,
     >(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool {
         Self::r_zero(new_event, old_event)
     }
@@ -72,7 +72,7 @@ where
             }
         }
         for message in state.1.values() {
-            if let Message::Op(Op::Add(v)) = &message {
+            if let Op::Add(v) = &message {
                 set.insert(v.clone());
             }
         }
@@ -84,26 +84,26 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{crdt::aw_set::Op, crdt::test_util::twins, protocol::event::Message};
+    use crate::{crdt::aw_set::Op, crdt::test_util::twins};
 
     #[test_log::test]
     fn simple_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
+        let event = tcsb_a.tc_bcast(Op::Add("a"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Add("b")));
+        let event = tcsb_b.tc_bcast(Op::Add("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 2);
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Remove("a")));
+        let event = tcsb_a.tc_bcast(Op::Remove("a"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Add("c")));
+        let event = tcsb_b.tc_bcast(Op::Add("c"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 2);
@@ -118,17 +118,17 @@ mod tests {
     fn clear_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
+        let event = tcsb_a.tc_bcast(Op::Add("a"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Add("b")));
+        let event = tcsb_b.tc_bcast(Op::Add("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 2);
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Clear));
+        let event = tcsb_a.tc_bcast(Op::Clear);
         tcsb_b.tc_deliver(event);
 
         let result = HashSet::new();
@@ -140,18 +140,18 @@ mod tests {
     fn concurrent_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
+        let event = tcsb_a.tc_bcast(Op::Add("a"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Add("b")));
+        let event = tcsb_b.tc_bcast(Op::Add("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 2);
 
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Remove("a")));
+        let event_a = tcsb_a.tc_bcast(Op::Add("a"));
+        let event_b = tcsb_b.tc_bcast(Op::Remove("a"));
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
 
@@ -164,18 +164,18 @@ mod tests {
     fn concurrent_add_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Add("c")));
+        let event = tcsb_a.tc_bcast(Op::Add("c"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Add("b")));
+        let event = tcsb_b.tc_bcast(Op::Add("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 2);
 
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Add("a")));
+        let event_a = tcsb_a.tc_bcast(Op::Add("a"));
+        let event_b = tcsb_b.tc_bcast(Op::Add("a"));
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
 
@@ -188,8 +188,8 @@ mod tests {
     fn test_concurrent_add_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Add("a")));
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Add("a")));
+        let event_a = tcsb_a.tc_bcast(Op::Add("a"));
+        let event_b = tcsb_b.tc_bcast(Op::Add("a"));
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
 
