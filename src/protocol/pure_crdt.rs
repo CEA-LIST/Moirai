@@ -1,5 +1,5 @@
 use super::{
-    event::{Message, OpEvent},
+    event::Event,
     metadata::Metadata,
     tcsb::POLog,
     utils::{prune_redundant_events, Incrementable, Keyable},
@@ -21,7 +21,7 @@ pub trait PureCRDT: Clone + Debug {
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
     fn effect<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: OpEvent<K, C, Self>,
+        event: Event<K, C, Self>,
         state: &mut POLog<K, C, Self>,
     ) {
         if Self::r(&event, state) {
@@ -30,7 +30,7 @@ pub trait PureCRDT: Clone + Debug {
         } else {
             // The operation is not redundant
             prune_redundant_events(&event, state, Self::r_one);
-            state.1.insert(event.metadata, Message::Op(event.op));
+            state.1.insert(event.metadata, event.op);
         }
     }
 
@@ -42,7 +42,7 @@ pub trait PureCRDT: Clone + Debug {
         state: &mut POLog<K, C, Self>,
     ) {
         Self::stabilize(metadata, state);
-        if let Some(Message::Op(op)) = state.1.get(metadata) {
+        if let Some(op) = state.1.get(metadata) {
             state.0.push(op.clone());
             state.1.remove(metadata);
         }
@@ -52,7 +52,7 @@ pub trait PureCRDT: Clone + Debug {
     /// R relation defines whether the delivered operation is itself
     /// redundant and does not need to be added itself to the PO-Log.
     fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &OpEvent<K, C, Self>,
+        event: &Event<K, C, Self>,
         state: &POLog<K, C, Self>,
     ) -> bool;
 
@@ -61,8 +61,8 @@ pub trait PureCRDT: Clone + Debug {
     /// given the delivery of the new operation.
     /// R0 is used when the new arrival is discarded being redundant.
     fn r_zero<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
@@ -70,8 +70,8 @@ pub trait PureCRDT: Clone + Debug {
     /// given the delivery of the new operation.
     /// R1 is used when the new arrivalis added to the PO-Log.
     fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool;
 
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and

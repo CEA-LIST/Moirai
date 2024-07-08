@@ -4,8 +4,7 @@ use std::hash::Hash;
 use std::ops::Add;
 use std::ops::AddAssign;
 
-use super::event::Message;
-use super::event::OpEvent;
+use super::event::Event;
 use super::metadata::Metadata;
 use super::pure_crdt::PureCRDT;
 use super::tcsb::POLog;
@@ -19,20 +18,17 @@ pub(crate) fn prune_redundant_events<
     C: Incrementable<C> + Clone + Debug,
     O: PureCRDT,
 >(
-    event: &OpEvent<K, C, O>,
+    event: &Event<K, C, O>,
     state: &mut POLog<K, C, O>,
     r_relation: RedundantRelation<K, C, O>,
 ) {
     // Keep only the operations that are not made redundant by the new operation
     state.0.retain(|o| {
-        let old_event: OpEvent<K, C, O> = OpEvent::new(o.clone(), Metadata::default());
+        let old_event: Event<K, C, O> = Event::new(o.clone(), Metadata::default());
         !(r_relation(&old_event, event))
     });
     state.1.retain(|m, o| {
-        if let Message::Op(op) = o {
-            let old_event: OpEvent<K, C, O> = OpEvent::new(op.clone(), m.clone());
-            return !(r_relation(&old_event, event));
-        }
-        true
+        let old_event: Event<K, C, O> = Event::new(o.clone(), m.clone());
+        !(r_relation(&old_event, event))
     });
 }

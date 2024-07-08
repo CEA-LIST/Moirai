@@ -1,6 +1,6 @@
 use petgraph::graph::DiGraph;
 
-use crate::protocol::event::{Message, OpEvent};
+use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
@@ -25,7 +25,7 @@ where
     type Value = DiGraph<V, ()>;
 
     fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &OpEvent<K, C, Self>,
+        event: &Event<K, C, Self>,
         state: &POLog<K, C, Self>,
     ) -> bool {
         match &event.op {
@@ -36,7 +36,7 @@ where
         }
     }
 
-    fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
+    fn r_zero<K, C>(old_event: &Event<K, C, Self>, new_event: &Event<K, C, Self>) -> bool
     where
         K: Keyable + Clone + Debug,
         C: Incrementable<C> + Clone + Debug,
@@ -77,8 +77,8 @@ where
     }
 
     fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool {
         Self::r_zero(old_event, new_event)
     }
@@ -116,11 +116,11 @@ where
         }
         for message in state.1.values() {
             match &message {
-                Message::Op(Op::AddVertex(v)) => {
+                Op::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Message::Op(Op::AddArc(v1, v2)) => {
+                Op::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     let idx = graph.add_edge(
@@ -130,19 +130,18 @@ where
                     );
                     edge_index.insert((v1, v2), idx);
                 }
-                Message::Op(Op::RemoveVertex(v)) => {
+                Op::RemoveVertex(v) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = node_index.get(v) {
                         graph.remove_node(*idx);
                     }
                 }
-                Message::Op(Op::RemoveArc(v1, v2)) => {
+                Op::RemoveArc(v1, v2) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = edge_index.get(&(v1, v2)) {
                         graph.remove_edge(*idx);
                     }
                 }
-                _ => (),
             }
         }
         graph
@@ -178,7 +177,7 @@ where
             if found_v1 && found_v2 {
                 break;
             }
-            if let Message::Op(Op::AddVertex(v)) = message {
+            if let Op::AddVertex(v) = message {
                 if v == v1 {
                     found_v1 = true;
                 }
@@ -195,25 +194,22 @@ where
 mod tests {
     use petgraph::algo::is_isomorphic;
 
-    use crate::{
-        crdt::{graph::Op, test_util::twins},
-        protocol::event::Message,
-    };
+    use crate::crdt::{graph::Op, test_util::twins};
 
     #[test_log::test]
     fn simple_graph() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        let event = tcsb_a.tc_bcast(Op::AddVertex("A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        let event = tcsb_b.tc_bcast(Op::AddVertex("B"));
         tcsb_a.tc_deliver(event);
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        let event = tcsb_a.tc_bcast(Op::AddArc("B", "A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
+        let event = tcsb_b.tc_bcast(Op::RemoveVertex("B"));
         tcsb_a.tc_deliver(event);
 
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
@@ -223,14 +219,14 @@ mod tests {
     fn concurrent_graph() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::AddVertex("A")));
+        let event = tcsb_a.tc_bcast(Op::AddVertex("A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::AddVertex("B")));
+        let event = tcsb_b.tc_bcast(Op::AddVertex("B"));
         tcsb_a.tc_deliver(event);
 
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::RemoveVertex("B")));
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::AddArc("B", "A")));
+        let event_b = tcsb_b.tc_bcast(Op::RemoveVertex("B"));
+        let event_a = tcsb_a.tc_bcast(Op::AddArc("B", "A"));
         tcsb_b.tc_deliver(event_a);
         tcsb_a.tc_deliver(event_b);
 

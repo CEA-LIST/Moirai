@@ -1,7 +1,7 @@
 use crate::protocol::metadata::Metadata;
 use crate::protocol::tcsb::POLog;
 use crate::protocol::utils::{Incrementable, Keyable};
-use crate::protocol::{event::Message, event::OpEvent, pure_crdt::PureCRDT};
+use crate::protocol::{event::Event, pure_crdt::PureCRDT};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -18,13 +18,13 @@ where
     type Value = Vec<V>;
 
     fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &OpEvent<K, C, Self>,
+        event: &Event<K, C, Self>,
         _: &POLog<K, C, Self>,
     ) -> bool {
         matches!(event.op, Op::Clear)
     }
 
-    fn r_zero<K, C>(old_event: &OpEvent<K, C, Self>, new_event: &OpEvent<K, C, Self>) -> bool
+    fn r_zero<K, C>(old_event: &Event<K, C, Self>, new_event: &Event<K, C, Self>) -> bool
     where
         K: Keyable + Clone + Debug,
         C: Incrementable<C> + Clone + Debug,
@@ -33,8 +33,8 @@ where
     }
 
     fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &OpEvent<K, C, Self>,
-        new_event: &OpEvent<K, C, Self>,
+        old_event: &Event<K, C, Self>,
+        new_event: &Event<K, C, Self>,
     ) -> bool {
         Self::r_zero(old_event, new_event)
     }
@@ -55,7 +55,7 @@ where
             }
         }
         for message in state.1.values() {
-            if let Message::Op(Op::Write(v)) = message {
+            if let Op::Write(v) = message {
                 vec.push(v.clone());
             }
         }
@@ -65,24 +65,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crdt::{
-            mv_register::Op,
-            test_util::{triplets, twins},
-        },
-        protocol::event::Message,
+    use crate::crdt::{
+        mv_register::Op,
+        test_util::{triplets, twins},
     };
 
     #[test_log::test]
     fn simple_mv_register() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Write("a")));
+        let event = tcsb_a.tc_bcast(Op::Write("a"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Write("b")));
+        let event = tcsb_b.tc_bcast(Op::Write("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 1);
@@ -96,20 +93,20 @@ mod tests {
     fn concurrent_mv_register() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Write("c")));
+        let event = tcsb_a.tc_bcast(Op::Write("c"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Write("d")));
+        let event = tcsb_b.tc_bcast(Op::Write("d"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Write("a")));
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Write("b")));
+        let event_a = tcsb_a.tc_bcast(Op::Write("a"));
+        let event_b = tcsb_b.tc_bcast(Op::Write("b"));
         tcsb_b.tc_deliver(event_a);
         tcsb_a.tc_deliver(event_b);
 
@@ -122,22 +119,22 @@ mod tests {
     fn multiple_concurrent_mv_register() {
         let (mut tcsb_a, mut tcsb_b, mut _tcsb_c) = triplets::<Op<&str>>();
 
-        let event = tcsb_a.tc_bcast(Message::Op(Op::Write("c")));
+        let event = tcsb_a.tc_bcast(Op::Write("c"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(Message::Op(Op::Write("d")));
+        let event = tcsb_b.tc_bcast(Op::Write("d"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(Message::Op(Op::Write("a")));
-        let event_aa = tcsb_a.tc_bcast(Message::Op(Op::Write("aa")));
+        let event_a = tcsb_a.tc_bcast(Op::Write("a"));
+        let event_aa = tcsb_a.tc_bcast(Op::Write("aa"));
 
-        let event_b = tcsb_b.tc_bcast(Message::Op(Op::Write("b")));
+        let event_b = tcsb_b.tc_bcast(Op::Write("b"));
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
         tcsb_b.tc_deliver(event_aa);
