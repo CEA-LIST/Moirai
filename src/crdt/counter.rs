@@ -52,17 +52,17 @@ impl PureCRDT for Op {
         state: &POLog<K, C, Self>,
     ) -> Self::Value {
         let mut value = Self::Value::default();
-        for op in state.0.iter() {
-            match op {
+        for n in state.0.iter() {
+            match &n.op {
                 Op::Inc => value += 1,
                 Op::Dec => value -= 1,
             }
         }
-        for (_, message) in state.1.iter() {
-            if let Op::Inc = message {
+        for (_, n) in state.1.iter() {
+            if let Op::Inc = n.op {
                 value += 1;
             }
-            if let Op::Dec = message {
+            if let Op::Dec = n.op {
                 value -= 1;
             }
         }

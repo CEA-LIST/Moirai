@@ -1,8 +1,9 @@
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::Bound;
+use std::{collections::BTreeMap, path::PathBuf};
 
+use super::event::NestedOp;
 use super::{
     event::Event,
     metadata::Metadata,
@@ -16,7 +17,7 @@ pub type RedundantRelation<K, C, O> = fn(&Event<K, C, O>, &Event<K, C, O>) -> bo
 /// preserves all executed operations alongside their respective timestamps.
 /// In actual implementations, the PO-Log can be split in two components:
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
-pub type POLog<K, C, O> = (Vec<O>, BTreeMap<Metadata<K, C>, O>);
+pub type POLog<K, C, O> = (Vec<NestedOp<O>>, BTreeMap<Metadata<K, C>, NestedOp<O>>);
 
 /// A Tagged Causal Stable Broadcast (TCSB) is an extended Reliable Causal Broadcast (RCB)
 /// middleware API designed to offer additional information about causality during message delivery.
@@ -57,7 +58,7 @@ where
         let my_vc = self.my_vc_mut();
         my_vc.increment(&my_id);
         let metadata = Metadata::new(my_vc.clone(), self.id.clone());
-        let event = Event::new(op, metadata);
+        let event = Event::new(PathBuf::default(), op, metadata);
         self.tc_deliver(event.clone());
         event
     }

@@ -23,12 +23,13 @@ pub(crate) fn prune_redundant_events<
     r_relation: RedundantRelation<K, C, O>,
 ) {
     // Keep only the operations that are not made redundant by the new operation
-    state.0.retain(|o| {
-        let old_event: Event<K, C, O> = Event::new(o.clone(), Metadata::default());
+    state.0.retain(|n| {
+        let old_event: Event<K, C, O> =
+            Event::new(n.path.clone(), n.op.clone(), Metadata::default());
         !(r_relation(&old_event, event))
     });
-    state.1.retain(|m, o| {
-        let old_event: Event<K, C, O> = Event::new(o.clone(), m.clone());
+    state.1.retain(|m, n| {
+        let old_event: Event<K, C, O> = Event::new(n.path.clone(), n.op.clone(), m.clone());
         !(r_relation(&old_event, event))
     });
 }

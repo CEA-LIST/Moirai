@@ -95,8 +95,8 @@ where
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for op in &state.0 {
-            match op {
+        for n in &state.0 {
+            match &n.op {
                 Op::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -114,8 +114,8 @@ where
                 _ => {}
             }
         }
-        for message in state.1.values() {
-            match &message {
+        for n in state.1.values() {
+            match &n.op {
                 Op::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -160,11 +160,11 @@ where
         let mut found_v1 = false;
         let mut found_v2 = false;
 
-        for op in state.0.iter() {
+        for n in state.0.iter() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Op::AddVertex(v) = op {
+            if let Op::AddVertex(v) = &n.op {
                 if v == v1 {
                     found_v1 = true;
                 }
@@ -173,11 +173,11 @@ where
                 }
             }
         }
-        for message in state.1.values() {
+        for n in state.1.values() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Op::AddVertex(v) = message {
+            if let Op::AddVertex(v) = &n.op {
                 if v == v1 {
                     found_v1 = true;
                 }
