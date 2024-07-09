@@ -1,5 +1,5 @@
 use super::{
-    event::Event,
+    event::{Event, NestedOp},
     metadata::Metadata,
     tcsb::POLog,
     utils::{prune_redundant_events, Incrementable, Keyable},
@@ -30,7 +30,9 @@ pub trait PureCRDT: Clone + Debug {
         } else {
             // The operation is not redundant
             prune_redundant_events(&event, state, Self::r_one);
-            state.1.insert(event.metadata, event.op);
+            state
+                .1
+                .insert(event.metadata, NestedOp::new(event.path, event.op));
         }
     }
 
@@ -42,8 +44,8 @@ pub trait PureCRDT: Clone + Debug {
         state: &mut POLog<K, C, Self>,
     ) {
         Self::stabilize(metadata, state);
-        if let Some(op) = state.1.get(metadata) {
-            state.0.push(op.clone());
+        if let Some(n) = state.1.get(metadata) {
+            state.0.push(n.clone());
             state.1.remove(metadata);
         }
     }

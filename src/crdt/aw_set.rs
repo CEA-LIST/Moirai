@@ -66,13 +66,13 @@ where
         state: &POLog<K, C, Self>,
     ) -> Self::Value {
         let mut set = Self::Value::new();
-        for op in &state.0 {
-            if let Op::Add(v) = op {
+        for n in &state.0 {
+            if let Op::Add(v) = &n.op {
                 set.insert(v.clone());
             }
         }
-        for message in state.1.values() {
-            if let Op::Add(v) = &message {
+        for n in state.1.values() {
+            if let Op::Add(v) = &n.op {
                 set.insert(v.clone());
             }
         }

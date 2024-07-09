@@ -49,13 +49,13 @@ where
         state: &POLog<K, C, Self>,
     ) -> Self::Value {
         let mut vec = Self::Value::new();
-        for op in &state.0 {
-            if let Op::Write(v) = op {
+        for n in &state.0 {
+            if let Op::Write(v) = &n.op {
                 vec.push(v.clone());
             }
         }
-        for message in state.1.values() {
-            if let Op::Write(v) = message {
+        for n in state.1.values() {
+            if let Op::Write(v) = &n.op {
                 vec.push(v.clone());
             }
         }
