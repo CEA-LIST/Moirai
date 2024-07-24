@@ -1,61 +1,44 @@
 use crate::protocol::metadata::Metadata;
 use crate::protocol::tcsb::POLog;
-use crate::protocol::utils::{Incrementable, Keyable};
 use crate::protocol::{event::Event, pure_crdt::PureCRDT};
 use std::fmt::Debug;
 use std::hash::Hash;
 
 #[derive(Clone, Debug)]
-pub enum Op<V> {
+pub enum MVRegister<V> {
     Clear,
     Write(V),
 }
 
-impl<V> PureCRDT for Op<V>
+impl<V> PureCRDT for MVRegister<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
     type Value = Vec<V>;
 
-    fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &Event<K, C, Self>,
-        _: &POLog<K, C, Self>,
-    ) -> bool {
-        matches!(event.op, Op::Clear)
+    fn r(event: &Event<Self>, _: &POLog<Self>) -> bool {
+        matches!(event.op, MVRegister::Clear)
     }
 
-    fn r_zero<K, C>(old_event: &Event<K, C, Self>, new_event: &Event<K, C, Self>) -> bool
-    where
-        K: Keyable + Clone + Debug,
-        C: Incrementable<C> + Clone + Debug,
-    {
+    fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
         old_event.metadata.vc < new_event.metadata.vc
     }
 
-    fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &Event<K, C, Self>,
-        new_event: &Event<K, C, Self>,
-    ) -> bool {
+    fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
         Self::r_zero(old_event, new_event)
     }
 
-    fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        _: &Metadata<K, C>,
-        _: &mut POLog<K, C, Self>,
-    ) {
-    }
+    fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        state: &POLog<K, C, Self>,
-    ) -> Self::Value {
+    fn eval(state: &POLog<Self>) -> Self::Value {
         let mut vec = Self::Value::new();
-        for n in &state.0 {
-            if let Op::Write(v) = &n.op {
+        for o in &state.0 {
+            if let MVRegister::Write(v) = o {
                 vec.push(v.clone());
             }
         }
-        for n in state.1.values() {
-            if let Op::Write(v) = &n.op {
+        for o in state.1.values() {
+            if let MVRegister::Write(v) = o {
                 vec.push(v.clone());
             }
         }
@@ -66,20 +49,20 @@ where
 #[cfg(test)]
 mod tests {
     use crate::crdt::{
-        mv_register::Op,
+        mv_register::MVRegister,
         test_util::{triplets, twins},
     };
 
     #[test_log::test]
     fn simple_mv_register() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(Op::Write("a"));
+        let event = tcsb_a.tc_bcast(MVRegister::Write("a"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_b.state.0.len(), 1);
 
-        let event = tcsb_b.tc_bcast(Op::Write("b"));
+        let event = tcsb_b.tc_bcast(MVRegister::Write("b"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.state.0.len(), 1);
@@ -91,22 +74,22 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_mv_register() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(Op::Write("c"));
+        let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(Op::Write("d"));
+        let event = tcsb_b.tc_bcast(MVRegister::Write("d"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(Op::Write("a"));
-        let event_b = tcsb_b.tc_bcast(Op::Write("b"));
+        let event_a = tcsb_a.tc_bcast(MVRegister::Write("a"));
+        let event_b = tcsb_b.tc_bcast(MVRegister::Write("b"));
         tcsb_b.tc_deliver(event_a);
         tcsb_a.tc_deliver(event_b);
 
@@ -117,24 +100,24 @@ mod tests {
 
     #[test_log::test]
     fn multiple_concurrent_mv_register() {
-        let (mut tcsb_a, mut tcsb_b, mut _tcsb_c) = triplets::<Op<&str>>();
+        let (mut tcsb_a, mut tcsb_b, mut _tcsb_c) = triplets::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(Op::Write("c"));
+        let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
         tcsb_b.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(Op::Write("d"));
+        let event = tcsb_b.tc_bcast(MVRegister::Write("d"));
         tcsb_a.tc_deliver(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(Op::Write("a"));
-        let event_aa = tcsb_a.tc_bcast(Op::Write("aa"));
+        let event_a = tcsb_a.tc_bcast(MVRegister::Write("a"));
+        let event_aa = tcsb_a.tc_bcast(MVRegister::Write("aa"));
 
-        let event_b = tcsb_b.tc_bcast(Op::Write("b"));
+        let event_b = tcsb_b.tc_bcast(MVRegister::Write("b"));
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
         tcsb_b.tc_deliver(event_aa);

@@ -10,16 +10,12 @@ pub mod test_util {
     };
     use std::fmt::Debug;
 
-    pub type Twins<O> = (Tcsb<&'static str, u64, O>, Tcsb<&'static str, u64, O>);
-    pub type Triplets<O> = (
-        Tcsb<&'static str, u64, O>,
-        Tcsb<&'static str, u64, O>,
-        Tcsb<&'static str, u64, O>,
-    );
+    pub type Twins<O> = (Tcsb<O>, Tcsb<O>);
+    pub type Triplets<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
 
     pub fn twins<O: PureCRDT + Clone + Debug>() -> Twins<O> {
-        let mut tcsb_a = Tcsb::<&str, u64, O>::new("a");
-        let mut tcsb_b = Tcsb::<&str, u64, O>::new("b");
+        let mut tcsb_a = Tcsb::<O>::new("a");
+        let mut tcsb_b = Tcsb::<O>::new("b");
 
         tcsb_a.ltm = MatrixClock::new(&["a", "b"]);
         tcsb_b.ltm = MatrixClock::new(&["a", "b"]);
@@ -28,9 +24,9 @@ pub mod test_util {
     }
 
     pub fn triplets<O: PureCRDT + Clone + Debug>() -> Triplets<O> {
-        let mut tcsb_a = Tcsb::<&str, u64, O>::new("a");
-        let mut tcsb_b = Tcsb::<&str, u64, O>::new("b");
-        let mut tcsb_c = Tcsb::<&str, u64, O>::new("c");
+        let mut tcsb_a = Tcsb::<O>::new("a");
+        let mut tcsb_b = Tcsb::<O>::new("b");
+        let mut tcsb_c = Tcsb::<O>::new("c");
 
         tcsb_a.ltm = MatrixClock::new(&["a", "b", "c"]);
         tcsb_b.ltm = MatrixClock::new(&["a", "b", "c"]);

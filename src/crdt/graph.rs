@@ -4,104 +4,87 @@ use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::pure_crdt::PureCRDT;
 use crate::protocol::tcsb::POLog;
-use crate::protocol::utils::{Incrementable, Keyable};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
 #[derive(Clone, Debug)]
-pub enum Op<V> {
+pub enum Graph<V> {
     AddVertex(V),
     RemoveVertex(V),
     AddArc(V, V),
     RemoveArc(V, V),
 }
 
-impl<V> PureCRDT for Op<V>
+impl<V> PureCRDT for Graph<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
     type Value = DiGraph<V, ()>;
 
-    fn r<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        event: &Event<K, C, Self>,
-        state: &POLog<K, C, Self>,
-    ) -> bool {
+    fn r(event: &Event<Self>, state: &POLog<Self>) -> bool {
         match &event.op {
-            Op::AddVertex(_) => false,
-            Op::RemoveVertex(_) => true,
-            Op::AddArc(v1, v2) => Self::lookup(v1, v2, state),
-            Op::RemoveArc(_, _) => true,
+            Graph::AddVertex(_) => false,
+            Graph::RemoveVertex(_) => true,
+            Graph::AddArc(v1, v2) => Self::lookup(v1, v2, state),
+            Graph::RemoveArc(_, _) => true,
         }
     }
 
-    fn r_zero<K, C>(old_event: &Event<K, C, Self>, new_event: &Event<K, C, Self>) -> bool
-    where
-        K: Keyable + Clone + Debug,
-        C: Incrementable<C> + Clone + Debug,
-    {
+    fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
         match (&old_event.op, &new_event.op) {
-            (Op::AddVertex(v1), Op::AddVertex(v2)) => {
+            (Graph::AddVertex(v1), Graph::AddVertex(v2)) => {
                 matches!(
                     old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
                     None | Some(Ordering::Less)
                 ) && v1 == v2
             }
-            (Op::AddVertex(v1), Op::RemoveVertex(v2)) => {
+            (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => {
                 old_event.metadata.vc < new_event.metadata.vc && v1 == v2
             }
-            (Op::AddVertex(_), Op::AddArc(_, _)) => false,
-            (Op::AddVertex(v1), Op::RemoveArc(v2, v3)) => {
+            (Graph::AddVertex(_), Graph::AddArc(_, _)) => false,
+            (Graph::AddVertex(v1), Graph::RemoveArc(v2, v3)) => {
                 old_event.metadata.vc < new_event.metadata.vc && (v1 == v2 || v1 == v3)
             }
-            (Op::AddArc(_, _), Op::AddVertex(_)) => false,
-            (Op::AddArc(v1, v2), Op::RemoveVertex(v3)) => {
+            (Graph::AddArc(_, _), Graph::AddVertex(_)) => false,
+            (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => {
                 matches!(
                     old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
                     None | Some(Ordering::Less)
                 ) && (v3 == v1 || v3 == v2)
             }
-            (Op::AddArc(v1, v2), Op::AddArc(v3, v4)) => {
+            (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => {
                 matches!(
                     old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
                     None | Some(Ordering::Less)
                 ) && v1 == v3
                     && v2 == v4
             }
-            (Op::AddArc(v1, v2), Op::RemoveArc(v3, v4)) => {
+            (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => {
                 old_event.metadata.vc < new_event.metadata.vc && v1 == v3 && v2 == v4
             }
             _ => false,
         }
     }
 
-    fn r_one<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        old_event: &Event<K, C, Self>,
-        new_event: &Event<K, C, Self>,
-    ) -> bool {
+    fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
         Self::r_zero(old_event, new_event)
     }
 
-    fn stabilize<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        _: &Metadata<K, C>,
-        _: &mut POLog<K, C, Self>,
-    ) {
-    }
+    fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        state: &POLog<K, C, Self>,
-    ) -> Self::Value {
+    fn eval(state: &POLog<Self>) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for n in &state.0 {
-            match &n.op {
-                Op::AddVertex(v) => {
+        for o in &state.0 {
+            match o {
+                Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Op::AddArc(v1, v2) => {
+                Graph::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     graph.add_edge(
@@ -114,13 +97,13 @@ where
                 _ => {}
             }
         }
-        for n in state.1.values() {
-            match &n.op {
-                Op::AddVertex(v) => {
+        for o in state.1.values() {
+            match o {
+                Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Op::AddArc(v1, v2) => {
+                Graph::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
                     let idx = graph.add_edge(
@@ -130,13 +113,13 @@ where
                     );
                     edge_index.insert((v1, v2), idx);
                 }
-                Op::RemoveVertex(v) => {
+                Graph::RemoveVertex(v) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = node_index.get(v) {
                         graph.remove_node(*idx);
                     }
                 }
-                Op::RemoveArc(v1, v2) => {
+                Graph::RemoveArc(v1, v2) => {
                     // the vertex should be already in the node_index map anyway
                     if let Some(idx) = edge_index.get(&(v1, v2)) {
                         graph.remove_edge(*idx);
@@ -148,23 +131,19 @@ where
     }
 }
 
-impl<V> Op<V>
+impl<V> Graph<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
-    fn lookup<K: Keyable + Clone + Debug, C: Incrementable<C> + Clone + Debug>(
-        v1: &V,
-        v2: &V,
-        state: &POLog<K, C, Self>,
-    ) -> bool {
+    fn lookup(v1: &V, v2: &V, state: &POLog<Self>) -> bool {
         let mut found_v1 = false;
         let mut found_v2 = false;
 
-        for n in state.0.iter() {
+        for o in state.0.iter() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Op::AddVertex(v) = &n.op {
+            if let Graph::AddVertex(v) = o {
                 if v == v1 {
                     found_v1 = true;
                 }
@@ -173,11 +152,11 @@ where
                 }
             }
         }
-        for n in state.1.values() {
+        for o in state.1.values() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Op::AddVertex(v) = &n.op {
+            if let Graph::AddVertex(v) = o {
                 if v == v1 {
                     found_v1 = true;
                 }
@@ -194,22 +173,22 @@ where
 mod tests {
     use petgraph::algo::is_isomorphic;
 
-    use crate::crdt::{graph::Op, test_util::twins};
+    use crate::crdt::{graph::Graph, test_util::twins};
 
     #[test_log::test]
     fn simple_graph() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
 
-        let event = tcsb_a.tc_bcast(Op::AddVertex("A"));
+        let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Op::AddVertex("B"));
+        let event = tcsb_b.tc_bcast(Graph::AddVertex("B"));
         tcsb_a.tc_deliver(event);
 
-        let event = tcsb_a.tc_bcast(Op::AddArc("B", "A"));
+        let event = tcsb_a.tc_bcast(Graph::AddArc("B", "A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Op::RemoveVertex("B"));
+        let event = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
         tcsb_a.tc_deliver(event);
 
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
@@ -217,16 +196,16 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_graph() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Op<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
 
-        let event = tcsb_a.tc_bcast(Op::AddVertex("A"));
+        let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Op::AddVertex("B"));
+        let event = tcsb_b.tc_bcast(Graph::AddVertex("B"));
         tcsb_a.tc_deliver(event);
 
-        let event_b = tcsb_b.tc_bcast(Op::RemoveVertex("B"));
-        let event_a = tcsb_a.tc_bcast(Op::AddArc("B", "A"));
+        let event_b = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
+        let event_a = tcsb_a.tc_bcast(Graph::AddArc("B", "A"));
         tcsb_b.tc_deliver(event_a);
         tcsb_a.tc_deliver(event_b);
 

@@ -1,70 +1,59 @@
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-use std::fmt::Debug;
+use std::collections::BTreeMap;
 use std::ops::Bound;
-use std::{collections::BTreeMap, path::PathBuf};
 
-use super::event::NestedOp;
-use super::{
-    event::Event,
-    metadata::Metadata,
-    pure_crdt::PureCRDT,
-    utils::{Incrementable, Keyable},
-};
+use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 
-pub type RedundantRelation<K, C, O> = fn(&Event<K, C, O>, &Event<K, C, O>) -> bool;
+pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
 /// A Partially Ordered Log (PO-Log), is a chronological record that
 /// preserves all executed operations alongside their respective timestamps.
 /// In actual implementations, the PO-Log can be split in two components:
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
-pub type POLog<K, C, O> = (Vec<NestedOp<O>>, BTreeMap<Metadata<K, C>, NestedOp<O>>);
+pub type POLog<O> = (Vec<O>, BTreeMap<Metadata, O>);
 
 /// A Tagged Causal Stable Broadcast (TCSB) is an extended Reliable Causal Broadcast (RCB)
 /// middleware API designed to offer additional information about causality during message delivery.
 /// It also notifies recipients when delivered messages achieve causal stability,
 /// facilitating subsequent compaction within the Partially Ordered Log of operations (PO-Log)
-pub struct Tcsb<K, C, O>
+pub struct Tcsb<O>
 where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-    O: PureCRDT + Clone + Debug,
+    O: PureCRDT,
 {
-    pub id: K,
-    pub state: POLog<K, C, O>,
+    pub id: &'static str,
+    pub state: POLog<O>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
-    pub ltm: MatrixClock<K, C>,
+    pub ltm: MatrixClock<&'static str, usize>,
     /// Last Stable Vector (LSV)
-    pub lsv: VectorClock<K, C>,
+    pub lsv: VectorClock<&'static str, usize>,
 }
 
-impl<K, C, O> Tcsb<K, C, O>
+impl<O> Tcsb<O>
 where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-    O: PureCRDT + Clone + Debug,
+    O: PureCRDT,
 {
-    pub fn new(id: K) -> Self {
+    pub fn new(id: &'static str) -> Self {
         Self {
-            id: id.clone(),
+            id,
             state: (vec![], BTreeMap::new()),
-            ltm: MatrixClock::new(&[id.clone()]),
+            ltm: MatrixClock::new(&[id]),
             lsv: VectorClock::new(id),
         }
     }
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
-    pub fn tc_bcast(&mut self, op: O) -> Event<K, C, O> {
-        let my_id = self.id.clone();
+    pub fn tc_bcast(&mut self, op: O) -> Event<O> {
+        let my_id = self.id;
         let my_vc = self.my_vc_mut();
         my_vc.increment(&my_id);
-        let metadata = Metadata::new(my_vc.clone(), self.id.clone());
-        let event = Event::new(PathBuf::default(), op, metadata);
+        let metadata = Metadata::new(my_vc.clone(), self.id);
+        let event = Event::new(op, metadata);
         self.tc_deliver(event.clone());
         event
     }
 
     /// Deliver an event to the local state.
-    pub fn tc_deliver(&mut self, event: Event<K, C, O>) {
+    pub fn tc_deliver(&mut self, event: Event<O>) {
         // Check if the event is valid
         if let Err(err) = self.guard(&event) {
             eprintln!("{}", err);
@@ -97,8 +86,7 @@ where
     pub fn tc_stable(&mut self) {
         let lower_bound = Metadata {
             vc: self.ltm.svv(&[]),
-            wc: 0,
-            origin: K::default(),
+            origin: "",
         };
 
         let ready_to_stabilize = self
@@ -106,7 +94,7 @@ where
             .1
             .range((Bound::Unbounded, Bound::Included(lower_bound)))
             .map(|(m, _)| m.clone())
-            .collect::<Vec<Metadata<K, C>>>();
+            .collect::<Vec<Metadata>>();
 
         for metadata in ready_to_stabilize.iter() {
             O::stable(metadata, &mut self.state);
@@ -119,20 +107,20 @@ where
     }
 
     /// Return the vector clock of the local replica
-    pub(crate) fn my_vc(&self) -> &VectorClock<K, C> {
+    pub(crate) fn my_vc(&self) -> &VectorClock<&'static str, usize> {
         self.ltm
             .get(&self.id)
             .expect("Local vector clock not found")
     }
 
     /// Return the mutable vector clock of the local replica
-    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<K, C> {
+    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<&'static str, usize> {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
     }
 
-    fn guard(&self, event: &Event<K, C, O>) -> Result<(), &str> {
+    fn guard(&self, event: &Event<O>) -> Result<(), &str> {
         if self.guard_against_unknow_peer(event) {
             return Err("Unknown peer detected");
         }
@@ -146,7 +134,7 @@ where
     }
 
     /// Check that the event has not already been delivered
-    fn guard_against_duplicates(&self, event: &Event<K, C, O>) -> bool {
+    fn guard_against_duplicates(&self, event: &Event<O>) -> bool {
         self.id != event.metadata.origin
             && self
                 .ltm
@@ -156,20 +144,20 @@ where
     }
 
     /// Check that the event is the causal successor of the last event delivered by this same replica
-    fn guard_against_out_of_order(&self, event: &Event<K, C, O>) -> bool {
+    fn guard_against_out_of_order(&self, event: &Event<O>) -> bool {
         self.id != event.metadata.origin && {
             let event_lamport_clock = event.metadata.vc.get(&event.metadata.origin).unwrap();
             let ltm_vc_clock = self.ltm.get(&event.metadata.origin);
             if let Some(ltm_vc_clock) = ltm_vc_clock {
                 let ltm_lamport_lock = ltm_vc_clock.get(&event.metadata.origin).unwrap();
-                return event_lamport_clock != ltm_lamport_lock + 1.into();
+                return event_lamport_clock != ltm_lamport_lock + 1;
             }
             false
         }
     }
 
     /// Check that the event is not from an unknown peer
-    fn guard_against_unknow_peer(&self, event: &Event<K, C, O>) -> bool {
+    fn guard_against_unknow_peer(&self, event: &Event<O>) -> bool {
         self.ltm.get(&event.metadata.origin).is_none()
     }
 }

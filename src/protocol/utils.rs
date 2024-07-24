@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Add;
@@ -13,23 +12,18 @@ use super::tcsb::RedundantRelation;
 pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Display;
 pub trait Keyable = Ord + PartialOrd + Hash + Eq + Default + Display;
 
-pub(crate) fn prune_redundant_events<
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-    O: PureCRDT,
->(
-    event: &Event<K, C, O>,
-    state: &mut POLog<K, C, O>,
-    r_relation: RedundantRelation<K, C, O>,
+pub(crate) fn prune_redundant_events<O: PureCRDT>(
+    event: &Event<O>,
+    state: &mut POLog<O>,
+    r_relation: RedundantRelation<O>,
 ) {
     // Keep only the operations that are not made redundant by the new operation
-    state.0.retain(|n| {
-        let old_event: Event<K, C, O> =
-            Event::new(n.path.clone(), n.op.clone(), Metadata::default());
+    state.0.retain(|o| {
+        let old_event: Event<O> = Event::new(o.clone(), Metadata::default());
         !(r_relation(&old_event, event))
     });
-    state.1.retain(|m, n| {
-        let old_event: Event<K, C, O> = Event::new(n.path.clone(), n.op.clone(), m.clone());
+    state.1.retain(|m, o| {
+        let old_event: Event<O> = Event::new(o.clone(), m.clone());
         !(r_relation(&old_event, event))
     });
 }
