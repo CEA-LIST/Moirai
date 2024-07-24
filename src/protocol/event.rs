@@ -1,41 +1,20 @@
-use super::{
-    metadata::Metadata,
-    pure_crdt::PureCRDT,
-    utils::{Incrementable, Keyable},
-};
-use std::{fmt::Debug, path::PathBuf};
+use super::{metadata::Metadata, pure_crdt::PureCRDT};
+use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
-pub struct Event<K, C, O>
+pub struct Event<O>
 where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-    O: PureCRDT + Clone + Debug,
+    O: PureCRDT,
 {
     pub op: O,
-    pub path: PathBuf,
-    pub metadata: Metadata<K, C>,
+    pub metadata: Metadata,
 }
 
-impl<K, C, O> Event<K, C, O>
+impl<O> Event<O>
 where
-    K: Keyable + Clone + Debug,
-    C: Incrementable<C> + Clone + Debug,
-    O: PureCRDT + Clone + Debug,
+    O: PureCRDT,
 {
-    pub fn new(path: PathBuf, op: O, metadata: Metadata<K, C>) -> Self {
-        Self { path, op, metadata }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NestedOp<O> {
-    pub op: O,
-    pub path: PathBuf,
-}
-
-impl<O> NestedOp<O> {
-    pub fn new(path: PathBuf, op: O) -> Self {
-        Self { path, op }
+    pub fn new(op: O, metadata: Metadata) -> Self {
+        Self { op, metadata }
     }
 }
