@@ -1,4 +1,6 @@
-use super::{event::Event, metadata::Metadata, tcsb::POLog, utils::prune_redundant_events};
+use std::path::{Path, PathBuf};
+
+use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Sized + Clone {
@@ -18,7 +20,7 @@ pub trait PureCRDT: Sized + Clone {
         } else {
             // The operation is not redundant
             prune_redundant_events(&event, state, Self::r_one);
-            state.1.insert(event.metadata, event.op);
+            state.new_event(&event);
         }
     }
 
@@ -27,9 +29,9 @@ pub trait PureCRDT: Sized + Clone {
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
     fn stable(metadata: &Metadata, state: &mut POLog<Self>) {
         Self::stabilize(metadata, state);
-        if let Some(n) = state.1.get(metadata) {
-            state.0.push(n.clone());
-            state.1.remove(metadata);
+        if let Some(n) = state.unstable.get(metadata) {
+            state.stable.push(n.clone());
+            state.unstable.remove(metadata);
         }
     }
 
@@ -57,5 +59,11 @@ pub trait PureCRDT: Sized + Clone {
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
-    fn eval(state: &POLog<Self>) -> Self::Value;
+    fn eval(state: &POLog<Self>, path: &Path) -> Self::Value;
+
+    /// `to_path` returns the path of the operation
+    /// Must be implemented only by container types
+    fn to_path(_op: &Self) -> PathBuf {
+        PathBuf::default()
+    }
 }

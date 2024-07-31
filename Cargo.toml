@@ -17,12 +17,14 @@ dhat = { version = "0.3.3", optional = true }
 env_logger = "0.11.2"
 test-log = "0.2.15"
 serde = { version = "1.0", features = ["derive"] }
+radix_trie = "0.2"
+deepsize = { version = "0.2.0", optional = true }
 
 [features]
 default = ["crdt"]
-crdt = ["dep:petgraph", "dep:uuid"]
-dhat-heap = []                      # if you are doing heap profiling
-dhat-ad-hoc = []                    # if you are doing ad hoc profiling
+crdt = ["dep:petgraph", "dep:uuid", "dep:deepsize"]
+dhat-heap = []                                      # if you are doing heap profiling
+dhat-ad-hoc = []                                    # if you are doing ad hoc profiling
 
 [profile.release]
 debug = 1

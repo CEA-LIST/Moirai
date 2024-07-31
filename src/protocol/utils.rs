@@ -5,8 +5,8 @@ use std::ops::AddAssign;
 
 use super::event::Event;
 use super::metadata::Metadata;
+use super::po_log::POLog;
 use super::pure_crdt::PureCRDT;
-use super::tcsb::POLog;
 use super::tcsb::RedundantRelation;
 
 pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Display;
@@ -18,12 +18,16 @@ pub(crate) fn prune_redundant_events<O: PureCRDT>(
     r_relation: RedundantRelation<O>,
 ) {
     // Keep only the operations that are not made redundant by the new operation
-    state.0.retain(|o| {
-        let old_event: Event<O> = Event::new(o.clone(), Metadata::default());
+    state.stable.retain(|o| {
+        let old_event: Event<O> = Event::new(o.as_ref().clone(), Metadata::default());
         !(r_relation(&old_event, event))
     });
-    state.1.retain(|m, o| {
-        let old_event: Event<O> = Event::new(o.clone(), m.clone());
+    state.unstable.retain(|m, o| {
+        let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
         !(r_relation(&old_event, event))
     });
+    // let path = O::to_path(&event.op);
+    // if let Some(ops) = state.path_trie.get_mut(&path) {
+    //     ops.retain(|op| op.upgrade().is_some());
+    // }
 }

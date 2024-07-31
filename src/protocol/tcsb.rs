@@ -1,16 +1,11 @@
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-use std::collections::BTreeMap;
 use std::ops::Bound;
+use std::path::PathBuf;
 
+use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
-
-/// A Partially Ordered Log (PO-Log), is a chronological record that
-/// preserves all executed operations alongside their respective timestamps.
-/// In actual implementations, the PO-Log can be split in two components:
-/// one that simply stores the set of stable operations and the other stores the timestamped operations.
-pub type POLog<O> = (Vec<O>, BTreeMap<Metadata, O>);
 
 /// A Tagged Causal Stable Broadcast (TCSB) is an extended Reliable Causal Broadcast (RCB)
 /// middleware API designed to offer additional information about causality during message delivery.
@@ -35,7 +30,7 @@ where
     pub fn new(id: &'static str) -> Self {
         Self {
             id,
-            state: (vec![], BTreeMap::new()),
+            state: POLog::default(),
             ltm: MatrixClock::new(&[id]),
             lsv: VectorClock::new(id),
         }
@@ -91,7 +86,7 @@ where
 
         let ready_to_stabilize = self
             .state
-            .1
+            .unstable
             .range((Bound::Unbounded, Bound::Included(lower_bound)))
             .map(|(m, _)| m.clone())
             .collect::<Vec<Metadata>>();
@@ -101,9 +96,9 @@ where
         }
     }
 
-    /// Shortcut to evaluate the current state of the CRDT.
+    /// Utilitary function to evaluate the current state of the CRDT.
     pub fn eval(&self) -> O::Value {
-        O::eval(&self.state)
+        O::eval(&self.state, &PathBuf::default())
     }
 
     /// Return the vector clock of the local replica

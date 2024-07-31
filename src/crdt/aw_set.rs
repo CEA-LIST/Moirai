@@ -1,10 +1,11 @@
 use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
+use crate::protocol::po_log::POLog;
 use crate::protocol::pure_crdt::PureCRDT;
-use crate::protocol::tcsb::POLog;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum AWSet<V> {
@@ -41,15 +42,10 @@ where
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
         let mut set = Self::Value::new();
-        for o in &state.0 {
-            if let AWSet::Add(v) = o {
-                set.insert(v.clone());
-            }
-        }
-        for o in state.1.values() {
-            if let AWSet::Add(v) = o {
+        for o in state.iter() {
+            if let AWSet::Add(v) = o.as_ref() {
                 set.insert(v.clone());
             }
         }
@@ -70,12 +66,12 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.tc_deliver(event);
 
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 2);
+        assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event = tcsb_a.tc_bcast(AWSet::Remove("a"));
         tcsb_b.tc_deliver(event);
@@ -83,8 +79,8 @@ mod tests {
         let event = tcsb_b.tc_bcast(AWSet::Add("c"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 2);
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_a.state.stable.len(), 2);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let result = HashSet::from(["b", "c"]);
         assert_eq!(tcsb_a.eval(), result);
@@ -98,12 +94,12 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.tc_deliver(event);
 
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 2);
+        assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event = tcsb_a.tc_bcast(AWSet::Clear);
         tcsb_b.tc_deliver(event);
@@ -120,12 +116,12 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.tc_deliver(event);
 
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 2);
+        assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event_a = tcsb_a.tc_bcast(AWSet::Add("a"));
         let event_b = tcsb_b.tc_bcast(AWSet::Remove("a"));
@@ -144,12 +140,12 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("c"));
         tcsb_b.tc_deliver(event);
 
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 2);
+        assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event_a = tcsb_a.tc_bcast(AWSet::Add("a"));
         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));

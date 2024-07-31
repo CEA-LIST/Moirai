@@ -1,8 +1,9 @@
 use crate::protocol::metadata::Metadata;
-use crate::protocol::tcsb::POLog;
+use crate::protocol::po_log::POLog;
 use crate::protocol::{event::Event, pure_crdt::PureCRDT};
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum MVRegister<V> {
@@ -30,15 +31,10 @@ where
 
     fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
         let mut vec = Self::Value::new();
-        for o in &state.0 {
-            if let MVRegister::Write(v) = o {
-                vec.push(v.clone());
-            }
-        }
-        for o in state.1.values() {
-            if let MVRegister::Write(v) = o {
+        for op in state.iter() {
+            if let MVRegister::Write(v) = op.as_ref() {
                 vec.push(v.clone());
             }
         }
@@ -60,12 +56,12 @@ mod tests {
         let event = tcsb_a.tc_bcast(MVRegister::Write("a"));
         tcsb_b.tc_deliver(event);
 
-        assert_eq!(tcsb_b.state.0.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(MVRegister::Write("b"));
         tcsb_a.tc_deliver(event);
 
-        assert_eq!(tcsb_a.state.0.len(), 1);
+        assert_eq!(tcsb_a.state.stable.len(), 1);
 
         let result = vec!["b"];
         assert_eq!(tcsb_a.eval(), result);
