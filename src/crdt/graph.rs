@@ -2,12 +2,13 @@ use petgraph::graph::DiGraph;
 
 use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
+use crate::protocol::po_log::POLog;
 use crate::protocol::pure_crdt::PureCRDT;
-use crate::protocol::tcsb::POLog;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum Graph<V> {
@@ -74,12 +75,12 @@ where
 
     fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for o in &state.0 {
-            match o {
+        for o in &state.stable {
+            match o.as_ref() {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -97,8 +98,8 @@ where
                 _ => {}
             }
         }
-        for o in state.1.values() {
-            match o {
+        for o in state.unstable.values() {
+            match o.as_ref() {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -139,11 +140,11 @@ where
         let mut found_v1 = false;
         let mut found_v2 = false;
 
-        for o in state.0.iter() {
+        for o in state.stable.iter() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Graph::AddVertex(v) = o {
+            if let Graph::AddVertex(v) = o.as_ref() {
                 if v == v1 {
                     found_v1 = true;
                 }
@@ -152,11 +153,11 @@ where
                 }
             }
         }
-        for o in state.1.values() {
+        for o in state.unstable.values() {
             if found_v1 && found_v2 {
                 break;
             }
-            if let Graph::AddVertex(v) = o {
+            if let Graph::AddVertex(v) = o.as_ref() {
                 if v == v1 {
                     found_v1 = true;
                 }

@@ -1,6 +1,10 @@
-use std::ops::{Add, AddAssign, SubAssign};
+use std::{
+    borrow::Borrow,
+    ops::{Add, AddAssign, SubAssign},
+    path::Path,
+};
 
-use crate::protocol::{event::Event, metadata::Metadata, pure_crdt::PureCRDT, tcsb::POLog};
+use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
 
 pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
 
@@ -27,16 +31,10 @@ impl<V: Number> PureCRDT for Counter<V> {
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
         let mut counter = Self::Value::default();
-        for op in &state.0 {
-            match op {
-                Counter::Inc(v) => counter += *v,
-                Counter::Dec(v) => counter -= *v,
-            }
-        }
-        for op in state.1.values() {
-            match op {
+        for op in state.iter() {
+            match op.borrow() {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,
             }
