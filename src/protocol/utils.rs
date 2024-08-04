@@ -26,8 +26,8 @@ pub(crate) fn prune_redundant_events<O: PureCRDT>(
         let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
         !(r_relation(&old_event, event))
     });
-    // let path = O::to_path(&event.op);
-    // if let Some(ops) = state.path_trie.get_mut(&path) {
-    //     ops.retain(|op| op.upgrade().is_some());
-    // }
+    let path = O::to_path(&event.op);
+    if let Some(ops) = state.path_trie.get_mut(&path) {
+        ops.retain(|op| op.upgrade().is_some());
+    }
 }

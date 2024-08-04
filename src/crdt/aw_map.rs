@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -11,7 +12,7 @@ use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt
 #[derive(Clone, Debug)]
 pub enum AWMap<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     Insert(&'static str, O),
     Remove(&'static str),
@@ -19,9 +20,9 @@ where
 
 impl<O> PureCRDT for AWMap<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
-    type Value = HashMap<&'static str, O::Value>;
+    type Value = HashMap<String, O::Value>;
 
     fn r(_event: &Event<Self>, _state: &POLog<Self>) -> bool {
         false
@@ -43,20 +44,20 @@ where
         if ops_by_path.is_none() {
             return map;
         }
+        let mut sub_logs: HashMap<&Path, POLog<O>> = HashMap::new();
         for (k, v) in ops_by_path.unwrap().iter() {
-            let mut new_log: POLog<O> = POLog::new();
-            let mut key: &str = "";
+            let key = k.parent().unwrap_or(Path::new(""));
+            let log = sub_logs.entry(key).or_default();
             for weak_op in v {
                 if let Some(rc_op) = weak_op.upgrade() {
-                    if let AWMap::Insert(k, v) = rc_op.as_ref() {
-                        key = k;
-                        new_log.new_stable(Rc::new(v.clone()));
+                    if let AWMap::Insert(_, v) = rc_op.as_ref() {
+                        log.new_stable(Rc::new(v.clone()));
                     }
                 }
             }
-            if !new_log.is_empty() {
-                map.insert(key, O::eval(&new_log, k));
-            }
+        }
+        for (p, log) in sub_logs {
+            map.insert(String::from(p.to_str().unwrap_or("")), O::eval(&log, p));
         }
         map
     }
@@ -71,21 +72,47 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{aw_map::AWMap, counter::Counter, test_util::twins};
+    use std::collections::HashMap;
+
+    use crate::crdt::{aw_map::AWMap, counter::Counter, duet::Duet, test_util::twins};
 
     #[test_log::test]
-    fn simple_duet_counter() {
+    fn simple_aw_map() {
         let (mut tcsb_a, mut tcsb_b) = twins::<AWMap<Counter<i32>>>();
 
-        let event = tcsb_a.tc_bcast(AWMap::Insert("first", Counter::Dec(5)));
+        let event = tcsb_a.tc_bcast(AWMap::Insert("a", Counter::Dec(5)));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_a.tc_bcast(AWMap::Insert("second", Counter::Inc(5)));
+        let event = tcsb_a.tc_bcast(AWMap::Insert("b", Counter::Inc(5)));
         tcsb_b.tc_deliver(event);
 
-        let event = tcsb_a.tc_bcast(AWMap::Insert("first", Counter::Inc(15)));
+        let event = tcsb_a.tc_bcast(AWMap::Insert("a", Counter::Inc(15)));
         tcsb_b.tc_deliver(event);
 
         println!("{:?}", tcsb_a.eval());
+    }
+
+    #[test_log::test]
+    fn aw_map_duet_counter() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<AWMap<Duet<Counter<i32>, Counter<i32>>>>();
+
+        let event = tcsb_a.tc_bcast(AWMap::Insert("a", Duet::First(Counter::Inc(15))));
+        tcsb_b.tc_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWMap::Insert("b", Duet::First(Counter::Inc(5))));
+        tcsb_b.tc_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWMap::Insert("a", Duet::First(Counter::Inc(10))));
+        tcsb_b.tc_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWMap::Insert("b", Duet::Second(Counter::Dec(7))));
+        tcsb_b.tc_deliver(event);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (25, 0));
+        map.insert(String::from("b"), (5, -7));
+        println!("{:?}", tcsb_a.eval());
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
     }
 }

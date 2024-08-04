@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{
     borrow::Borrow,
     ops::{Add, AddAssign, SubAssign},
@@ -14,7 +15,7 @@ pub enum Counter<V: Number> {
     Dec(V),
 }
 
-impl<V: Number> PureCRDT for Counter<V> {
+impl<V: Number + Debug> PureCRDT for Counter<V> {
     type Value = V;
 
     fn r(_event: &Event<Self>, _state: &POLog<Self>) -> bool {

@@ -1,10 +1,11 @@
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Sized + Clone {
-    type Value: Default;
+    type Value: Default + Debug;
 
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters)
     fn prepare(op: Self, _state: POLog<Self>) -> Self {
@@ -61,8 +62,6 @@ pub trait PureCRDT: Sized + Clone {
     /// Note: only supports the `read` query for now.
     fn eval(state: &POLog<Self>, path: &Path) -> Self::Value;
 
-    /// `to_path` returns the path of the operation
-    /// Must be implemented only by container types
     fn to_path(_op: &Self) -> PathBuf {
         PathBuf::default()
     }
