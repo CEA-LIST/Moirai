@@ -1,9 +1,11 @@
-use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-use std::ops::Bound;
-use std::path::PathBuf;
-
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
+use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
+// use crate::crdt::duet::Duet;
+// use crate::crdt::membership_set::MembershipSet;
+use std::fmt::Debug;
+use std::ops::Bound;
+use std::path::PathBuf;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
@@ -13,7 +15,7 @@ pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 /// facilitating subsequent compaction within the Partially Ordered Log of operations (PO-Log)
 pub struct Tcsb<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     pub id: &'static str,
     pub state: POLog<O>,
@@ -25,7 +27,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     pub fn new(id: &'static str) -> Self {
         Self {

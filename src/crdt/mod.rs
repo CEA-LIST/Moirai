@@ -3,6 +3,7 @@ pub mod aw_set;
 pub mod counter;
 pub mod duet;
 pub mod graph;
+pub mod membership_set;
 pub mod mv_register;
 
 pub mod test_util {

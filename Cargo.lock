@@ -353,6 +353,7 @@ dependencies = [
  "log",
  "petgraph",
  "radix_trie",
+ "rand",
  "serde",
  "test-log",
  "uuid",

@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -17,8 +18,8 @@ where
 
 impl<F, S> PureCRDT for Duet<F, S>
 where
-    F: PureCRDT,
-    S: PureCRDT,
+    F: PureCRDT + Debug,
+    S: PureCRDT + Debug,
 {
     type Value = (F::Value, S::Value);
 

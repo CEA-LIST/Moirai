@@ -19,6 +19,7 @@ pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 /// preserves all executed operations alongside their respective timestamps.
 /// In actual implementations, the PO-Log can be split in two components:
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
+#[derive(Debug)]
 pub struct POLog<O>
 where
     O: PureCRDT,
