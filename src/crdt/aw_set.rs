@@ -37,7 +37,7 @@ where
     }
 
     fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        Self::r_zero(new_event, old_event)
+        Self::r_zero(old_event, new_event)
     }
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
@@ -158,16 +158,16 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_concurrent_add_aw_set() {
+    fn concurrent_add_aw_set_2() {
         let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
 
-        let event_a = tcsb_a.tc_bcast(AWSet::Add("a"));
+        let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));
+
         tcsb_a.tc_deliver(event_b);
         tcsb_b.tc_deliver(event_a);
 
-        let result = HashSet::from(["a"]);
-        assert_eq!(tcsb_a.eval(), result);
-        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_a.eval(), vec!["a"].into_iter().collect());
+        assert_eq!(tcsb_b.eval(), tcsb_a.eval());
     }
 }

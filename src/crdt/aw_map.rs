@@ -115,4 +115,27 @@ mod tests {
         assert_eq!(map, tcsb_a.eval());
         assert_eq!(map, tcsb_b.eval());
     }
+
+    // #[derive(Debug)]
+    // pub enum Bar {
+    //     Patate,
+    //     Test,
+    // }
+
+    // #[derive(Debug)]
+    // pub enum Foo {
+    //     Boz(Bar),
+    //     Giz(Bar),
+    // }
+
+    // #[test_log::test]
+    // fn patate() {
+    //     let test = Foo::Boz(Bar::Patate);
+    //     let bar = match test {
+    //         Foo::Boz(ref v) => v,
+    //         Foo::Giz(ref v) => v,
+    //     };
+    //     println!("{:?}", bar);
+    //     println!("{:?}", test);
+    // }
 }
