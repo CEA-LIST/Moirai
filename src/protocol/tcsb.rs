@@ -1,3 +1,5 @@
+use log::info;
+
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
@@ -94,6 +96,7 @@ where
             .collect::<Vec<Metadata>>();
 
         for metadata in ready_to_stabilize.iter() {
+            info!("[{}] - {} is causally stable", self.id, metadata.vc);
             O::stable(metadata, &mut self.state);
         }
     }

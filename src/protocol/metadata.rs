@@ -13,6 +13,13 @@ impl Metadata {
     pub fn new(vc: VectorClock<&'static str, usize>, origin: &'static str) -> Self {
         Self { vc, origin }
     }
+
+    pub fn bot() -> Self {
+        Self {
+            vc: VectorClock::bot(),
+            origin: "",
+        }
+    }
 }
 
 impl PartialOrd for Metadata {

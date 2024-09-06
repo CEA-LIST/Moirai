@@ -1,7 +1,7 @@
-use std::collections::btree_map::Values;
+use std::collections::btree_map::{Values, ValuesMut};
 use std::iter::Chain;
 use std::path::PathBuf;
-use std::slice::Iter;
+use std::slice::{Iter, IterMut};
 use std::{
     collections::BTreeMap,
     rc::{Rc, Weak},
@@ -58,6 +58,21 @@ where
 
     pub fn iter(&self) -> Chain<Iter<Rc<O>>, Values<Metadata, Rc<O>>> {
         self.stable.iter().chain(self.unstable.values())
+    }
+
+    // pub fn iter_event(&self) -> Chain<Iter<(Metadata, Rc<O>)>, Values<Metadata, Rc<O>>> {
+    //     let bot = Metadata::default();
+    //     let stable_as_events: Vec<(&Metadata, &Rc<O>)> =
+    //         self.stable.iter().map(|o| (&bot, o)).collect();
+    //     let chain = stable_as_events
+    //         .iter()
+    //         .map(|(m, o)| (*m, *o))
+    //         .chain(self.unstable.iter());
+    //     chain
+    // }
+
+    pub fn iter_mut(&mut self) -> Chain<IterMut<Rc<O>>, ValuesMut<Metadata, Rc<O>>> {
+        self.stable.iter_mut().chain(self.unstable.values_mut())
     }
 
     pub fn is_empty(&self) -> bool {

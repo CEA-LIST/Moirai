@@ -5,6 +5,7 @@ pub mod duet;
 pub mod graph;
 pub mod membership_set;
 pub mod mv_register;
+pub mod rw_set;
 
 pub mod test_util {
     use crate::{

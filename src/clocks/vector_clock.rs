@@ -106,6 +106,10 @@ where
         self.clock.len()
     }
 
+    pub fn bot() -> VectorClock<K, C> {
+        Self::default()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.clock.is_empty()
     }
@@ -297,5 +301,17 @@ mod tests {
         let clock3 = clock1.min(&clock2);
         assert_eq!(clock3.get(&"A"), Some(2));
         assert_eq!(clock3.get(&"B"), Some(0));
+    }
+
+    #[test_log::test]
+    fn test_bot() {
+        let mut clock1: VectorClock<&str, i32> = VectorClock::new("A");
+        clock1.increment(&"A");
+        clock1.increment(&"A");
+        clock1.increment(&"A");
+        clock1.increment(&"A");
+        clock1.increment(&"B");
+        let clock2: VectorClock<&str, i32> = VectorClock::bot();
+        assert_eq!(clock1 < clock2, true);
     }
 }
