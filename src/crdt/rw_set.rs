@@ -77,17 +77,13 @@ where
         // then this stable `remove` is redundant.
         let mut remove_at: Option<usize> = None;
         for (i, o) in state.stable.iter().enumerate() {
-            match o.as_ref() {
-                RWSet::Remove(v) => match op.as_ref() {
-                    RWSet::Add(v2) => {
-                        if v == v2 {
-                            remove_at = Some(i);
-                            break;
-                        }
+            if let RWSet::Remove(v) = o.as_ref() {
+                if let RWSet::Add(v2) = op.as_ref() {
+                    if v == v2 {
+                        remove_at = Some(i);
+                        break;
                     }
-                    _ => {}
-                },
-                _ => {}
+                }
             }
         }
         if let Some(i) = remove_at {

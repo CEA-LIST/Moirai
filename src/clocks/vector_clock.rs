@@ -312,6 +312,6 @@ mod tests {
         clock1.increment(&"A");
         clock1.increment(&"B");
         let clock2: VectorClock<&str, i32> = VectorClock::bot();
-        assert_eq!(clock1 < clock2, true);
+        assert!(clock2 < clock1);
     }
 }
