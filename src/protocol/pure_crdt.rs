@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
+use super::tcsb::RedundantRelation;
 use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
@@ -14,7 +15,21 @@ pub trait PureCRDT: Sized + Clone {
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
-    fn effect(event: Event<Self>, state: &mut POLog<Self>) {
+    fn effect(event: &Event<Self>, state: &POLog<Self>) -> (bool, Vec<usize>, Vec<Metadata>) {
+        let (keep, prune_fn): (bool, RedundantRelation<Self>) = if Self::r(event, state) {
+            (false, Self::r_zero)
+        } else {
+            (true, Self::r_one)
+        };
+
+        let (remove_stable_by_index, remove_unstable_by_key) =
+            prune_redundant_events(event, state, prune_fn);
+
+        (keep, remove_stable_by_index, remove_unstable_by_key)
+    }
+
+    #[deprecated]
+    fn _effect_mut(event: Event<Self>, state: &mut POLog<Self>) {
         if Self::r(&event, state) {
             // The operation is redundant
             prune_redundant_events(&event, state, Self::r_zero);

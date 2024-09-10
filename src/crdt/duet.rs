@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use crate::protocol::tcsb::RedundantRelation;
+use crate::protocol::utils::prune_redundant_events;
 use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
 
 #[derive(Clone, Debug)]
@@ -33,6 +35,39 @@ where
 
     fn r_one(_old_event: &Event<Self>, _new_event: &Event<Self>) -> bool {
         false
+    }
+
+    fn effect(event: &Event<Self>, state: &POLog<Self>) -> (bool, Vec<usize>, Vec<Metadata>) {
+        let (keep, prune_fn): (bool, RedundantRelation<Self>) = if Self::r(event, state) {
+            (false, Self::r_zero)
+        } else {
+            (true, Self::r_one)
+        };
+
+        let (remove_stable_by_index, remove_unstable_by_key) =
+            prune_redundant_events(event, state, prune_fn);
+
+        let (f_log, s_log) = state.iter().fold(
+            (POLog::new(), POLog::new()),
+            |(mut f_log, mut s_log), op| {
+                match op.as_ref() {
+                    Duet::First(fo) => f_log.new_stable(Rc::new(fo.clone())),
+                    Duet::Second(so) => s_log.new_stable(Rc::new(so.clone())),
+                }
+                (f_log, s_log)
+            },
+        );
+
+        let (nested_keep, stable, unstable) = match &event.op {
+            Duet::First(fo) => F::effect(&Event::new(fo.clone(), event.metadata.clone()), &f_log),
+            Duet::Second(so) => S::effect(&Event::new(so.clone(), event.metadata.clone()), &s_log),
+        };
+
+        (
+            nested_keep && keep,
+            [remove_stable_by_index, stable].concat(),
+            [remove_unstable_by_key, unstable].concat(),
+        )
     }
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
