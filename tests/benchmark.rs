@@ -1,3 +1,7 @@
+fn main() {
+    println!("Hello, world!");
+}
+
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
 // #[test]

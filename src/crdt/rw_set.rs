@@ -141,6 +141,8 @@ mod tests {
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
 
+    // Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
+
     #[test_log::test]
     fn case_one() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();

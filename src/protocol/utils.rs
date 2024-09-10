@@ -12,7 +12,32 @@ use super::tcsb::RedundantRelation;
 pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Display;
 pub trait Keyable = Ord + PartialOrd + Hash + Eq + Default + Display;
 
+/// Returns the index of the stable and unstable events that are redundant according to the relation
 pub(crate) fn prune_redundant_events<O: PureCRDT>(
+    event: &Event<O>,
+    state: &POLog<O>,
+    r_relation: RedundantRelation<O>,
+) -> (Vec<usize>, Vec<Metadata>) {
+    let mut remove_stable_by_index = Vec::<usize>::new();
+    for (i, o) in state.stable.iter().enumerate() {
+        let old_event: Event<O> = Event::new(o.as_ref().clone(), Metadata::default());
+        if r_relation(&old_event, event) {
+            remove_stable_by_index.push(i);
+        }
+    }
+    let mut remove_unstable_by_key = Vec::<Metadata>::new();
+    for (m, o) in state.unstable.iter() {
+        let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
+        if r_relation(&old_event, event) {
+            remove_unstable_by_key.push(m.clone());
+        }
+    }
+
+    (remove_stable_by_index, remove_unstable_by_key)
+}
+
+#[deprecated]
+pub(crate) fn _prune_redundant_events_mut<O: PureCRDT>(
     event: &Event<O>,
     state: &mut POLog<O>,
     r_relation: RedundantRelation<O>,
@@ -26,8 +51,4 @@ pub(crate) fn prune_redundant_events<O: PureCRDT>(
         let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
         !(r_relation(&old_event, event))
     });
-    let path = O::to_path(&event.op);
-    if let Some(ops) = state.path_trie.get_mut(&path) {
-        ops.retain(|op| op.upgrade().is_some());
-    }
 }

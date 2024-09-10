@@ -1,10 +1,9 @@
+use colored::*;
 use log::info;
 
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-// use crate::crdt::duet::Duet;
-// use crate::crdt::membership_set::MembershipSet;
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
@@ -53,6 +52,13 @@ where
 
     /// Deliver an event to the local state.
     pub fn tc_deliver(&mut self, event: Event<O>) {
+        info!(
+            "[{}] - Delivering event {} from {} with timestamp {}",
+            self.id.blue().bold(),
+            format!("{:?}", event.op).green(),
+            event.metadata.origin.blue(),
+            format!("{}", event.metadata.vc).red()
+        );
         // Check if the event is valid
         if let Err(err) = self.guard(&event) {
             eprintln!("{}", err);
@@ -74,7 +80,17 @@ where
         }
 
         // event = self.correct_evict_inconsistencies(event);
-        O::effect(event, &mut self.state);
+        let (keep, stable, unstable) = O::effect(&event, &self.state);
+        self.clean_up(stable, unstable);
+
+        if keep {
+            self.state.new_event(&event);
+            info!(
+                "[{}] - Op {} is added to the log",
+                self.id.blue().bold(),
+                format!("{:?}", event.op).green()
+            );
+        }
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
@@ -96,9 +112,16 @@ where
             .collect::<Vec<Metadata>>();
 
         for metadata in ready_to_stabilize.iter() {
-            info!("[{}] - {} is causally stable", self.id, metadata.vc);
+            info!(
+                "[{}] - {} is causally stable (op: {})",
+                self.id.blue().bold(),
+                format!("{}", metadata.vc).red(),
+                format!("{:?}", self.state.unstable.get(metadata).unwrap())
+            );
             O::stable(metadata, &mut self.state);
         }
+
+        // TODO: garbage collect the path_trie
     }
 
     /// Utilitary function to evaluate the current state of the CRDT.
@@ -118,6 +141,28 @@ where
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
+    }
+
+    /// Clean up the state by removing redundant operations
+    fn clean_up(&mut self, stable: Vec<usize>, unstable: Vec<Metadata>) {
+        for (i, val) in stable.iter().enumerate() {
+            let removed = self.state.stable.remove(val - i);
+            info!(
+                "[{}] - Op {} is redundant",
+                self.id.blue().bold(),
+                format!("{:?}", removed.as_ref()).green()
+            );
+        }
+        for m in unstable {
+            let opt_removed = self.state.unstable.remove(&m);
+            if let Some(removed) = opt_removed {
+                info!(
+                    "[{}] - Op {} is redundant",
+                    self.id.blue().bold(),
+                    format!("{:?}", removed.as_ref()).green()
+                );
+            }
+        }
     }
 
     fn guard(&self, event: &Event<O>) -> Result<(), &str> {
