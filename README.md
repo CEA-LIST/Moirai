@@ -30,6 +30,7 @@ RUST_LOG=debug cargo test -- --nocapture
 - Issue -> peers must know each other before doing any operation, otherwise they
   will not be able to resolve conflicts (they stabilize events while they are
   alone).
+- Weak ptr -> dead/alive = 8 bytes
 
 ## Todo list
 

@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Add;
@@ -13,7 +14,7 @@ pub trait Incrementable<C> = Add<C, Output = C> + AddAssign<C> + From<u8> + Ord 
 pub trait Keyable = Ord + PartialOrd + Hash + Eq + Default + Display;
 
 /// Returns the index of the stable and unstable events that are redundant according to the relation
-pub(crate) fn prune_redundant_events<O: PureCRDT>(
+pub(crate) fn prune_redundant_events<O: PureCRDT + Debug>(
     event: &Event<O>,
     state: &POLog<O>,
     r_relation: RedundantRelation<O>,
@@ -37,7 +38,7 @@ pub(crate) fn prune_redundant_events<O: PureCRDT>(
 }
 
 #[deprecated]
-pub(crate) fn _prune_redundant_events_mut<O: PureCRDT>(
+pub(crate) fn _prune_redundant_events_mut<O: PureCRDT + Debug>(
     event: &Event<O>,
     state: &mut POLog<O>,
     r_relation: RedundantRelation<O>,

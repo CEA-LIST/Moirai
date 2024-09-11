@@ -7,10 +7,12 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use radix_trie::Trie;
-
 use super::event::Event;
 use super::{metadata::Metadata, pure_crdt::PureCRDT};
+use colored::Colorize;
+use log::info;
+use radix_trie::{Trie, TrieCommon};
+use std::fmt::Debug;
 
 pub type PathTrie<O> = Trie<PathBuf, Vec<Weak<O>>>;
 pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
@@ -22,7 +24,7 @@ pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 #[derive(Debug)]
 pub struct POLog<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     pub stable: Vec<Rc<O>>,
     pub unstable: Log<O>,
@@ -31,7 +33,7 @@ where
 
 impl<O> POLog<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -50,8 +52,53 @@ where
         } else {
             self.path_trie.insert(O::to_path(&event.op), vec![weak_op]);
         }
+
+        let path_trie_count = self.path_trie.values().flatten().count();
+        let state_len = self.stable.len() + self.unstable.len();
+        assert!(path_trie_count >= state_len);
     }
 
+    /// Garbage collect dead weak references from the path trie.
+    pub fn garbage_collect_trie(&mut self) {
+        let keys = self.path_trie.keys().cloned().collect::<Vec<PathBuf>>();
+        for key in keys {
+            self.garbage_collect_trie_by_path(&key);
+        }
+    }
+
+    /// Garbage collect dead weak references from the path trie, given a path.
+    pub fn garbage_collect_trie_by_path(&mut self, path: &PathBuf) {
+        if let Some(subtrie) = self.path_trie.get_mut(path) {
+            subtrie.retain(|weak_op| weak_op.upgrade().is_some());
+            if subtrie.is_empty() {
+                self.path_trie.remove(path);
+            }
+        }
+    }
+
+    /// Clean up the state by removing redundant operations
+    pub fn remove_redundant_ops(&mut self, id: &str, stable: Vec<usize>, unstable: Vec<Metadata>) {
+        for (i, val) in stable.iter().enumerate() {
+            let removed = self.stable.remove(val - i);
+            info!(
+                "[{}] - Op {} is redundant",
+                id.blue().bold(),
+                format!("{:?}", removed.as_ref()).green()
+            );
+        }
+        for m in unstable {
+            let opt_removed = self.unstable.remove(&m);
+            if let Some(removed) = opt_removed {
+                info!(
+                    "[{}] - Op {} is redundant",
+                    id.blue().bold(),
+                    format!("{:?}", removed.as_ref()).green()
+                );
+            }
+        }
+    }
+
+    /// Should only be used in `eval()`
     pub fn new_stable(&mut self, op: Rc<O>) {
         self.stable.push(op);
     }
@@ -59,17 +106,6 @@ where
     pub fn iter(&self) -> Chain<Iter<Rc<O>>, Values<Metadata, Rc<O>>> {
         self.stable.iter().chain(self.unstable.values())
     }
-
-    // pub fn iter_event(&self) -> Chain<Iter<(Metadata, Rc<O>)>, Values<Metadata, Rc<O>>> {
-    //     let bot = Metadata::default();
-    //     let stable_as_events: Vec<(&Metadata, &Rc<O>)> =
-    //         self.stable.iter().map(|o| (&bot, o)).collect();
-    //     let chain = stable_as_events
-    //         .iter()
-    //         .map(|(m, o)| (*m, *o))
-    //         .chain(self.unstable.iter());
-    //     chain
-    // }
 
     pub fn iter_mut(&mut self) -> Chain<IterMut<Rc<O>>, ValuesMut<Metadata, Rc<O>>> {
         self.stable.iter_mut().chain(self.unstable.values_mut())
@@ -82,7 +118,7 @@ where
 
 impl<O> Default for POLog<O>
 where
-    O: PureCRDT,
+    O: PureCRDT + Debug,
 {
     fn default() -> Self {
         Self::new()
