@@ -5,7 +5,7 @@ use super::tcsb::RedundantRelation;
 use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
-pub trait PureCRDT: Sized + Clone {
+pub trait PureCRDT: Sized + Clone + Debug {
     type Value: Default + Debug;
 
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters)
