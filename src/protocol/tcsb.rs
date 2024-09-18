@@ -1,5 +1,5 @@
 use colored::*;
-use log::{debug, info};
+use log::{debug, error, info};
 use radix_trie::TrieCommon;
 
 use super::po_log::POLog;
@@ -9,6 +9,7 @@ use crate::crdt::membership_set::MSet;
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
+use std::usize;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
@@ -152,7 +153,7 @@ where
         event
     }
 
-    pub fn tc_deliver_gms(&mut self, event: Event<MSet<&'static str>>) {
+    pub fn tc_deliver_gms(&mut self, mut event: Event<MSet<&'static str>>) {
         info!(
             "[{}][GMS] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -164,6 +165,15 @@ where
         if let Err(err) = self.guard(&event.metadata) {
             eprintln!("{}", err);
             return;
+        }
+        if event.metadata.vc.keys().len() != MSet::eval(&self.gms, &PathBuf::default()).len() {
+            debug!(
+                "[{}] - Timestamp inconsistency detected, fixing...",
+                self.id.blue().bold(),
+            );
+            println!("Incoming vc: {:?}", event.metadata.vc);
+            println!("LTM keys: {:?}", self.ltm.keys());
+            Self::fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
         }
         // If the event is not from the local replica and the sender is known
         if self.id != event.metadata.origin
@@ -292,7 +302,7 @@ where
 
     fn guard(&self, metadata: &Metadata) -> Result<(), &str> {
         if self.guard_against_unknow_peer(metadata) {
-            info!(
+            error!(
                 "[{}] - Unknown peer detected: {}",
                 self.id.blue().bold(),
                 metadata.origin.red()
@@ -300,7 +310,7 @@ where
             return Err("Unknown peer detected");
         }
         if self.guard_against_duplicates(metadata) {
-            info!(
+            error!(
                 "[{}] - Duplicated event detected: {}",
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
@@ -308,7 +318,7 @@ where
             return Err("Duplicated event detected");
         }
         if self.guard_against_out_of_order(metadata) {
-            info!(
+            error!(
                 "[{}] - Out-of-order event detected: {}",
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
@@ -344,5 +354,25 @@ where
     /// Check that the event is not from an unknown peer
     fn guard_against_unknow_peer(&self, metadata: &Metadata) -> bool {
         self.ltm.get(&metadata.origin).is_none()
+    }
+
+    /// Correct the inconsistencies in the vector clocks of two events
+    /// by adding the missing keys and setting the missing values to 0 or usize::MAX
+    /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
+    fn fix_timestamp_inconsistencies(new: &mut Event<MSet<&str>>, ltm_keys: &Vec<&'static str>) {
+        for key in ltm_keys.iter() {
+            if !new.metadata.vc.contains(&key) {
+                let value = match new.op {
+                    MSet::Add(_) => 0,
+                    MSet::Remove(_) => usize::MAX,
+                };
+                new.metadata.vc.insert(key, value);
+            }
+        }
+        for key in new.metadata.vc.keys() {
+            if !ltm_keys.contains(&key) {
+                new.metadata.vc.remove(&key);
+            }
+        }
     }
 }

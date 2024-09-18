@@ -1,8 +1,6 @@
-use std::path::PathBuf;
-
 use po_crdt::{
     crdt::{counter::Counter, membership_set::MSet},
-    protocol::{pure_crdt::PureCRDT, tcsb::Tcsb},
+    protocol::tcsb::Tcsb,
 };
 
 #[test_log::test]
