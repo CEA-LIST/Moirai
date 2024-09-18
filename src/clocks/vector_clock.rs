@@ -98,6 +98,10 @@ where
         result
     }
 
+    pub fn contains(&self, key: &K) -> bool {
+        self.clock.contains_key(key)
+    }
+
     pub fn keys(&self) -> Vec<K> {
         self.clock.keys().cloned().collect()
     }

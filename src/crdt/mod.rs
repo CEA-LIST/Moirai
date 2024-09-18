@@ -46,21 +46,9 @@ pub mod test_util {
         let event_a = tcsb_a.tc_bcast_gms(MSet::Add("c"));
         tcsb_b.tc_deliver_gms(event_a);
 
-        println!("B LTM keys : {:?}", tcsb_b.ltm.keys());
-        println!("B GMS : {:?}", tcsb_b.gms);
-
         tcsb_c.gms = tcsb_b.gms.clone();
         tcsb_c.lsv = tcsb_b.lsv.clone();
         tcsb_c.ltm = tcsb_b.ltm.clone();
-        println!("C LTM keys : {:?}", tcsb_c.ltm.keys());
-        println!(
-            "C eval GMS: {:?}",
-            MSet::eval(&tcsb_c.gms, &PathBuf::from(""))
-        );
-
-        let event_c = tcsb_c.tc_bcast_gms(MSet::Add("a"));
-        tcsb_a.tc_deliver_gms(event_c.clone());
-        tcsb_b.tc_deliver_gms(event_c);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
