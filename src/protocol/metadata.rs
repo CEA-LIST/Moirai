@@ -1,7 +1,10 @@
 use crate::clocks::vector_clock::VectorClock;
 
 use super::utils::{Incrementable, Keyable};
-use std::{cmp::Ordering, fmt::Debug};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display},
+};
 
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
 pub struct Metadata {
@@ -36,5 +39,16 @@ impl Ord for Metadata {
             Some(Ordering::Less) => Ordering::Less,
             Some(Ordering::Greater) => Ordering::Greater,
         }
+    }
+}
+
+impl Display for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let origin = if self.origin.is_empty() {
+            "".to_string()
+        } else {
+            format!("@{}", self.origin)
+        };
+        write!(f, "{}{}", self.vc, origin)
     }
 }

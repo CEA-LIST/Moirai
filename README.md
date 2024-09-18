@@ -20,6 +20,7 @@ cargo flamegraph --root --dev --unit-test po-crdt --  test_graph
 
 ```sh
 RUST_LOG=debug cargo test -- --nocapture
+RUST_LOG=debug cargo test <name> -- --nocapture
 ```
 
 ## Work notes
@@ -27,13 +28,13 @@ RUST_LOG=debug cargo test -- --nocapture
 - PO-CRDTs do not provide history, since stable events can be obsoleted by a new
   event at any time.
 - Receiving two events with the same timestamp is an error in the protocol.
-- Issue -> peers must know each other before doing any operation, otherwise they
+- Issue → peers must know each other before doing any operation, otherwise they
   will not be able to resolve conflicts (they stabilize events while they are
   alone).
-- Weak ptr -> dead/alive = 8 bytes
+- Weak ptr → dead/alive = 8 bytes
 
-## Todo list
+## To-do list
 
-- [ ] Use Dotted Version Vectors/Inteval Tree Clock to track the history of
+- [ ] Use Dotted Version Vectors/Interval Tree Clock to track the history of
       events.
 - [ ] Test with [Maelstrom](https://github.com/jepsen-io/maelstrom).

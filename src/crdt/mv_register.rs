@@ -96,7 +96,11 @@ mod tests {
 
     #[test_log::test]
     fn multiple_concurrent_mv_register() {
-        let (mut tcsb_a, mut tcsb_b, mut _tcsb_c) = triplets::<MVRegister<&str>>();
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplets::<MVRegister<&str>>();
+
+        println!("{:?}", tcsb_a.gms);
+        println!("{:?}", tcsb_c.gms);
+        println!("{:?}", tcsb_b.gms);
 
         let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
         tcsb_b.tc_deliver(event);

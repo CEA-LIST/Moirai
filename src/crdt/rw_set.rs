@@ -43,52 +43,38 @@ where
     fn stabilize(metadata: &Metadata, state: &mut POLog<Self>) {
         let op = state.unstable.get(metadata).unwrap();
 
-        let to_remove: bool = match op.as_ref() {
-            RWSet::Add(v) => {
-                let stable: bool = state.stable.iter().any(|o| match o.as_ref() {
-                    RWSet::Add(v2) => v == v2,
-                    RWSet::Remove(v2) => v == v2,
-                    _ => false,
-                });
-                let unstable: bool = state.unstable.iter().any(|(t, o)| match o.as_ref() {
-                    RWSet::Add(v2) => v == v2 && metadata.vc != t.vc,
-                    RWSet::Remove(v2) => v == v2 && metadata.vc != t.vc,
-                    _ => false,
-                });
-                stable || unstable
-            }
-            // `remove` op is redundant if there exists another `remove`op` for the same value
-            // or if there is no other op for the same value.
-            // `remove` is redundant unless there exists a `add` op for the same value.
-            RWSet::Remove(v) => {
-                let stable: bool = state.stable.iter().any(|o| match o.as_ref() {
-                    RWSet::Add(v2) => v == v2,
-                    _ => false,
-                });
-                let unstable: bool = state.unstable.iter().any(|(t, o)| match o.as_ref() {
-                    RWSet::Add(v2) => v == v2 && metadata.vc != t.vc,
-                    _ => false,
-                });
-                !stable && !unstable
-            }
+        let is_stable_or_unstable = |v: &V| {
+            state.stable.iter().any(|o| match o.as_ref() {
+                RWSet::Add(v2) | RWSet::Remove(v2) => v == v2,
+                _ => false,
+            }) || state.unstable.iter().any(|(t, o)| match o.as_ref() {
+                RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && metadata.vc != t.vc,
+                _ => false,
+            })
+        };
+
+        let to_remove = match op.as_ref() {
+            RWSet::Add(v) => is_stable_or_unstable(v),
+            RWSet::Remove(v) => !state
+                .stable
+                .iter()
+                .any(|o| matches!(o.as_ref(), RWSet::Add(v2) if v == v2))
+                && !state.unstable.iter().any(
+                    |(t, o)| matches!(o.as_ref(), RWSet::Add(v2) if v == v2 && metadata.vc != t.vc),
+                ),
             RWSet::Clear => true,
         };
-        // if the current stabilization is an `add` op and there exists a stable `remove` op for the same value,
-        // then this stable `remove` is redundant.
-        let mut remove_at: Option<usize> = None;
-        for (i, o) in state.stable.iter().enumerate() {
-            if let RWSet::Remove(v) = o.as_ref() {
-                if let RWSet::Add(v2) = op.as_ref() {
-                    if v == v2 {
-                        remove_at = Some(i);
-                        break;
-                    }
-                }
+
+        if let RWSet::Add(v) = op.as_ref() {
+            if let Some(i) = state
+                .stable
+                .iter()
+                .position(|o| matches!(o.as_ref(), RWSet::Remove(v2) if v == v2))
+            {
+                state.stable.remove(i);
             }
         }
-        if let Some(i) = remove_at {
-            state.stable.remove(i);
-        }
+
         if to_remove {
             state.unstable.remove(metadata);
         }
