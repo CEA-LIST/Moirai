@@ -9,7 +9,7 @@ pub mod uw_map;
 
 pub mod test_util {
     use crate::protocol::{pure_crdt::PureCRDT, tcsb::Tcsb};
-    use std::{fmt::Debug, path::PathBuf};
+    use std::fmt::Debug;
 
     use super::membership_set::MSet;
 

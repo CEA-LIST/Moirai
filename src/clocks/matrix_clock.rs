@@ -64,7 +64,6 @@ where
         self.clock
             .entry(key.clone())
             .and_modify(|vc2| vc2.merge(vc));
-        println!("Updated matrix clock: {}", self);
         assert!(self.is_square());
     }
 
