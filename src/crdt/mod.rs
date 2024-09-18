@@ -1,16 +1,17 @@
+pub mod aw_set;
 pub mod counter;
 pub mod duet;
 pub mod graph;
+pub mod membership_set;
 pub mod mv_register;
 pub mod rw_set;
 pub mod uw_map;
 
 pub mod test_util {
-    use crate::{
-        clocks::matrix_clock::MatrixClock,
-        protocol::{pure_crdt::PureCRDT, tcsb::Tcsb},
-    };
-    use std::fmt::Debug;
+    use crate::protocol::{pure_crdt::PureCRDT, tcsb::Tcsb};
+    use std::{fmt::Debug, path::PathBuf};
+
+    use super::membership_set::MSet;
 
     pub type Twins<O> = (Tcsb<O>, Tcsb<O>);
     pub type Triplets<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
@@ -19,8 +20,11 @@ pub mod test_util {
         let mut tcsb_a = Tcsb::<O>::new("a");
         let mut tcsb_b = Tcsb::<O>::new("b");
 
-        tcsb_a.ltm = MatrixClock::new(&["a", "b"]);
-        tcsb_b.ltm = MatrixClock::new(&["a", "b"]);
+        let event_a = tcsb_a.tc_bcast_gms(MSet::Add("b"));
+        let event_b = tcsb_b.tc_bcast_gms(MSet::Add("a"));
+
+        tcsb_b.tc_deliver_gms(event_a);
+        tcsb_a.tc_deliver_gms(event_b);
 
         (tcsb_a, tcsb_b)
     }
@@ -30,9 +34,37 @@ pub mod test_util {
         let mut tcsb_b = Tcsb::<O>::new("b");
         let mut tcsb_c = Tcsb::<O>::new("c");
 
-        tcsb_a.ltm = MatrixClock::new(&["a", "b", "c"]);
-        tcsb_b.ltm = MatrixClock::new(&["a", "b", "c"]);
-        tcsb_c.ltm = MatrixClock::new(&["a", "b", "c"]);
+        let event_a = tcsb_a.tc_bcast_gms(MSet::Add("b"));
+        let event_b = tcsb_b.tc_bcast_gms(MSet::Add("a"));
+
+        tcsb_b.tc_deliver_gms(event_a);
+        tcsb_a.tc_deliver_gms(event_b);
+
+        let event_b = tcsb_b.tc_bcast_gms(MSet::Add("c"));
+        tcsb_a.tc_deliver_gms(event_b);
+
+        let event_a = tcsb_a.tc_bcast_gms(MSet::Add("c"));
+        tcsb_b.tc_deliver_gms(event_a);
+
+        println!("B LTM keys : {:?}", tcsb_b.ltm.keys());
+        println!("B GMS : {:?}", tcsb_b.gms);
+
+        tcsb_c.gms = tcsb_b.gms.clone();
+        tcsb_c.lsv = tcsb_b.lsv.clone();
+        tcsb_c.ltm = tcsb_b.ltm.clone();
+        println!("C LTM keys : {:?}", tcsb_c.ltm.keys());
+        println!(
+            "C eval GMS: {:?}",
+            MSet::eval(&tcsb_c.gms, &PathBuf::from(""))
+        );
+
+        let event_c = tcsb_c.tc_bcast_gms(MSet::Add("a"));
+        tcsb_a.tc_deliver_gms(event_c.clone());
+        tcsb_b.tc_deliver_gms(event_c);
+
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
 
         (tcsb_a, tcsb_b, tcsb_c)
     }

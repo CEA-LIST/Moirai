@@ -5,13 +5,15 @@ use radix_trie::TrieCommon;
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
-use crate::crdt::rw_set::RWSet;
+use crate::crdt::membership_set::MSet;
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
+/// Extended Reliable Causal Broadcast (RCB) middleware API
+///
 /// A Tagged Causal Stable Broadcast (TCSB) is an extended Reliable Causal Broadcast (RCB)
 /// middleware API designed to offer additional information about causality during message delivery.
 /// It also notifies recipients when delivered messages achieve causal stability,
@@ -23,7 +25,7 @@ where
     pub id: &'static str,
     pub state: POLog<O>,
     // Group Membership Service
-    pub gms: POLog<RWSet<&'static str>>,
+    pub gms: POLog<MSet<&'static str>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<&'static str, usize>,
     /// Last Stable Vector (LSV)
@@ -35,10 +37,13 @@ where
     O: PureCRDT + Debug,
 {
     pub fn new(id: &'static str) -> Self {
+        let mut gms = POLog::default();
+        let event = Event::new(MSet::Add(id), Metadata::default());
+        gms.new_event(&event);
         Self {
             id,
             state: POLog::default(),
-            gms: POLog::default(),
+            gms,
             ltm: MatrixClock::new(&[id]),
             lsv: VectorClock::new(id),
         }
@@ -110,6 +115,7 @@ where
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
+        self.tc_stable_gms();
     }
 
     /// The TCSB middleware can offer this causal stability information through extending its API with tcstablei(τ),
@@ -136,7 +142,7 @@ where
 
     // Testing functions for the GMS
 
-    pub fn tc_bcast_gms(&mut self, op: RWSet<&'static str>) -> Event<RWSet<&'static str>> {
+    pub fn tc_bcast_gms(&mut self, op: MSet<&'static str>) -> Event<MSet<&'static str>> {
         let my_id = self.id;
         let my_vc = self.my_vc_mut();
         my_vc.increment(&my_id);
@@ -146,7 +152,7 @@ where
         event
     }
 
-    pub fn tc_deliver_gms(&mut self, event: Event<RWSet<&'static str>>) {
+    pub fn tc_deliver_gms(&mut self, event: Event<MSet<&'static str>>) {
         info!(
             "[{}][GMS] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -174,8 +180,7 @@ where
             self.my_vc_mut().merge(&event.metadata.vc);
         }
 
-        // event = self.correct_evict_inconsistencies(event);
-        let (keep, stable, unstable) = RWSet::effect(&event, &self.gms);
+        let (keep, stable, unstable) = MSet::effect(&event, &self.gms);
         self.gms.remove_redundant_ops(self.id, stable, unstable);
 
         if keep {
@@ -200,23 +205,29 @@ where
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
+        self.tc_stable_gms();
     }
 
     pub fn tc_stable_gms(&mut self) {
-        let ltm_members = self.ltm.keys();
-        let gms_members = RWSet::eval(&self.gms, &PathBuf::default())
-            .into_iter()
-            .collect::<Vec<_>>();
-        // keep only the gms members that are also in the ltm
-        let gms_members_filtered = gms_members
-            .into_iter()
-            .filter(|m| ltm_members.contains(m))
-            .collect::<Vec<_>>();
-        // keep the members that are in the ltm but not in the gms
-        let ignore = ltm_members
-            .into_iter()
-            .filter(|m| !gms_members_filtered.contains(m))
-            .collect::<Vec<_>>();
+        let ignore: Vec<&str> = self
+            .gms
+            .unstable
+            .iter()
+            .filter_map(|(_, o)| match o.as_ref() {
+                MSet::Add(_) => None,
+                MSet::Remove(v) => Some(*v),
+            })
+            .collect();
+        let ignore = if ignore.contains(&self.id) {
+            self.ltm
+                .keys()
+                .iter()
+                .filter(|k| **k != self.id)
+                .copied()
+                .collect()
+        } else {
+            ignore
+        };
 
         let lower_bound = Metadata::new(self.ltm.svv(&ignore), "");
 
@@ -234,7 +245,29 @@ where
                 format!("{}", metadata.vc).red(),
                 format!("{:?}", self.gms.unstable.get(metadata).unwrap()).green()
             );
-            RWSet::stable(metadata, &mut self.gms);
+            MSet::stable(metadata, &mut self.gms);
+        }
+
+        let gms_members = MSet::eval(&self.gms, &PathBuf::default())
+            .into_iter()
+            .collect::<Vec<_>>();
+        for member in &gms_members {
+            if self.ltm.get(member).is_none() {
+                self.ltm.add_key(member);
+            }
+        }
+        for member in self.ltm.keys() {
+            if !gms_members.contains(&member) {
+                if member != self.id {
+                    self.ltm.remove_key(&member);
+                } else {
+                    for key in self.ltm.keys() {
+                        if key != self.id {
+                            self.ltm.remove_key(&key);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -259,12 +292,27 @@ where
 
     fn guard(&self, metadata: &Metadata) -> Result<(), &str> {
         if self.guard_against_unknow_peer(metadata) {
+            info!(
+                "[{}] - Unknown peer detected: {}",
+                self.id.blue().bold(),
+                metadata.origin.red()
+            );
             return Err("Unknown peer detected");
         }
         if self.guard_against_duplicates(metadata) {
+            info!(
+                "[{}] - Duplicated event detected: {}",
+                self.id.blue().bold(),
+                format!("{}", metadata.vc).red()
+            );
             return Err("Duplicated event detected");
         }
         if self.guard_against_out_of_order(metadata) {
+            info!(
+                "[{}] - Out-of-order event detected: {}",
+                self.id.blue().bold(),
+                format!("{}", metadata.vc).red()
+            );
             return Err("Out-of-order event detected");
         }
         Ok(())

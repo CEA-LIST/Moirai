@@ -12,16 +12,18 @@ use super::{metadata::Metadata, pure_crdt::PureCRDT};
 use colored::Colorize;
 use log::info;
 use radix_trie::{Trie, TrieCommon};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 pub type PathTrie<O> = Trie<PathBuf, Vec<Weak<O>>>;
 pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 
+/// Causal DAG operation history
+///
 /// A Partially Ordered Log (PO-Log), is a chronological record that
 /// preserves all executed operations alongside their respective timestamps.
 /// In actual implementations, the PO-Log can be split in two components:
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct POLog<O>
 where
     O: PureCRDT + Debug,
@@ -122,5 +124,30 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<O> Display for POLog<O>
+where
+    O: PureCRDT + Debug + Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Stable: [")?;
+        for (i, op) in self.stable.iter().enumerate() {
+            if i == self.stable.len() - 1 {
+                write!(f, "{}", op)?;
+            } else {
+                write!(f, "{}, ", op)?;
+            }
+        }
+        write!(f, "]\nUnstable: [")?;
+        for (i, (m, op)) in self.unstable.iter().enumerate() {
+            if i == self.unstable.len() - 1 {
+                write!(f, "{}: {}", m, op)?;
+            } else {
+                write!(f, "{}: {}, ", m, op)?;
+            }
+        }
+        write!(f, "]")
     }
 }

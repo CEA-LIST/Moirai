@@ -10,7 +10,7 @@ use std::{
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct MatrixClock<K, C>
 where
-    K: PartialOrd + Hash + Clone + Eq,
+    K: PartialOrd + Hash + Clone + Eq + Ord,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     clock: HashMap<K, VectorClock<K, C>>,
@@ -18,8 +18,8 @@ where
 
 impl<K, C> MatrixClock<K, C>
 where
-    K: PartialOrd + Hash + Clone + Eq,
-    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+    K: PartialOrd + Hash + Clone + Eq + Ord + Display,
+    C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug + Display,
 {
     pub fn new(keys: &[K]) -> MatrixClock<K, C> {
         let mut clock = HashMap::new();
@@ -64,6 +64,7 @@ where
         self.clock
             .entry(key.clone())
             .and_modify(|vc2| vc2.merge(vc));
+        println!("Updated matrix clock: {}", self);
         assert!(self.is_square());
     }
 
@@ -73,6 +74,10 @@ where
             clock.insert(k.clone(), vc.clone());
         }
         MatrixClock { clock }
+    }
+
+    pub fn clear(&mut self) {
+        self.clock.clear();
     }
 
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
@@ -105,7 +110,9 @@ where
     }
 
     pub fn keys(&self) -> Vec<K> {
-        self.clock.keys().cloned().collect()
+        let mut keys: Vec<K> = self.clock.keys().cloned().collect();
+        keys.sort();
+        keys
     }
 
     pub fn len(&self) -> usize {
