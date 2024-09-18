@@ -9,7 +9,6 @@ use crate::crdt::membership_set::MSet;
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
-use std::usize;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
@@ -171,8 +170,6 @@ where
                 "[{}] - Timestamp inconsistency detected, fixing...",
                 self.id.blue().bold(),
             );
-            println!("Incoming vc: {:?}", event.metadata.vc);
-            println!("LTM keys: {:?}", self.ltm.keys());
             Self::fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
         }
         // If the event is not from the local replica and the sender is known
@@ -359,9 +356,9 @@ where
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0 or usize::MAX
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    fn fix_timestamp_inconsistencies(new: &mut Event<MSet<&str>>, ltm_keys: &Vec<&'static str>) {
+    fn fix_timestamp_inconsistencies(new: &mut Event<MSet<&str>>, ltm_keys: &[&'static str]) {
         for key in ltm_keys.iter() {
-            if !new.metadata.vc.contains(&key) {
+            if !new.metadata.vc.contains(key) {
                 let value = match new.op {
                     MSet::Add(_) => 0,
                     MSet::Remove(_) => usize::MAX,
