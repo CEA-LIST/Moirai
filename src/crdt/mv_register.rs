@@ -44,10 +44,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{
-        mv_register::MVRegister,
-        test_util::{triplets, twins},
-    };
+    use crate::crdt::{mv_register::MVRegister, test_util::twins};
 
     #[test_log::test]
     fn simple_mv_register() {
@@ -96,7 +93,7 @@ mod tests {
 
     #[test_log::test]
     fn multiple_concurrent_mv_register() {
-        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplets::<MVRegister<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
 
         let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
         tcsb_b.tc_deliver(event);

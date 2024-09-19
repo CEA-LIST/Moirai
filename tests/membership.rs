@@ -28,6 +28,33 @@ fn join() {
 }
 
 #[test_log::test]
+fn join_multiple_members() {
+    let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
+    let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
+    let mut tcsb_c = Tcsb::<Counter<i32>>::new("c");
+
+    let event_a = tcsb_a.tc_bcast_gms(MSet::Add("b"));
+    let event_b = tcsb_b.tc_bcast_gms(MSet::Add("a"));
+
+    tcsb_b.tc_deliver_gms(event_a);
+    tcsb_a.tc_deliver_gms(event_b);
+
+    let event_b = tcsb_b.tc_bcast_gms(MSet::Add("c"));
+    tcsb_a.tc_deliver_gms(event_b);
+
+    let event_a = tcsb_a.tc_bcast_gms(MSet::Add("c"));
+    tcsb_b.tc_deliver_gms(event_a);
+
+    tcsb_c.gms = tcsb_b.gms.clone();
+    tcsb_c.lsv = tcsb_b.lsv.clone();
+    tcsb_c.ltm = tcsb_b.ltm.clone();
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+}
+
+#[test_log::test]
 fn leave() {
     let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
     let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");

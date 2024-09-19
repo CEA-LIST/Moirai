@@ -142,16 +142,6 @@ where
 
     // Testing functions for the GMS
 
-    pub fn tc_bcast_gms(&mut self, op: MSet<&'static str>) -> Event<MSet<&'static str>> {
-        let my_id = self.id;
-        let my_vc = self.my_vc_mut();
-        my_vc.increment(&my_id);
-        let metadata = Metadata::new(my_vc.clone(), self.id);
-        let event = Event::new(op, metadata);
-        self.tc_deliver_gms(event.clone());
-        event
-    }
-
     pub fn tc_deliver_gms(&mut self, mut event: Event<MSet<&'static str>>) {
         info!(
             "[{}][GMS] - Delivering event {} from {} with timestamp {}",
