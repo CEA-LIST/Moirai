@@ -44,19 +44,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{mv_register::MVRegister, test_util::twins};
+    use crate::crdt::{
+        mv_register::MVRegister,
+        test_util::{triplet, twins},
+    };
 
     #[test_log::test]
     fn simple_mv_register() {
         let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(MVRegister::Write("a"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(MVRegister::Write("a"));
+        tcsb_b.tc_deliver_op(event);
 
         assert_eq!(tcsb_b.state.stable.len(), 1);
 
-        let event = tcsb_b.tc_bcast(MVRegister::Write("b"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(MVRegister::Write("b"));
+        tcsb_a.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.state.stable.len(), 1);
 
@@ -69,22 +72,22 @@ mod tests {
     fn concurrent_mv_register() {
         let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(MVRegister::Write("c"));
+        tcsb_b.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(MVRegister::Write("d"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(MVRegister::Write("d"));
+        tcsb_a.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(MVRegister::Write("a"));
-        let event_b = tcsb_b.tc_bcast(MVRegister::Write("b"));
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
+        let event_a = tcsb_a.tc_bcast_op(MVRegister::Write("a"));
+        let event_b = tcsb_b.tc_bcast_op(MVRegister::Write("b"));
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
 
         let result = vec!["b", "a"];
         assert_eq!(tcsb_a.eval(), result);
@@ -93,27 +96,27 @@ mod tests {
 
     #[test_log::test]
     fn multiple_concurrent_mv_register() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<MVRegister<&str>>();
+        let (mut tcsb_a, mut tcsb_b, _tcsb_c) = triplet::<MVRegister<&str>>();
 
-        let event = tcsb_a.tc_bcast(MVRegister::Write("c"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(MVRegister::Write("c"));
+        tcsb_b.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.eval(), vec!["c"]);
         assert_eq!(tcsb_b.eval(), vec!["c"]);
 
-        let event = tcsb_b.tc_bcast(MVRegister::Write("d"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(MVRegister::Write("d"));
+        tcsb_a.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.eval(), vec!["d"]);
         assert_eq!(tcsb_b.eval(), vec!["d"]);
 
-        let event_a = tcsb_a.tc_bcast(MVRegister::Write("a"));
-        let event_aa = tcsb_a.tc_bcast(MVRegister::Write("aa"));
+        let event_a = tcsb_a.tc_bcast_op(MVRegister::Write("a"));
+        let event_aa = tcsb_a.tc_bcast_op(MVRegister::Write("aa"));
 
-        let event_b = tcsb_b.tc_bcast(MVRegister::Write("b"));
-        tcsb_a.tc_deliver(event_b);
-        tcsb_b.tc_deliver(event_a);
-        tcsb_b.tc_deliver(event_aa);
+        let event_b = tcsb_b.tc_bcast_op(MVRegister::Write("b"));
+        tcsb_a.tc_deliver_op(event_b);
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_b.tc_deliver_op(event_aa);
 
         let result = vec!["b", "aa"];
         assert_eq!(tcsb_a.eval(), result);

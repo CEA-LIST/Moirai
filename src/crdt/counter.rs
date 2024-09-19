@@ -53,11 +53,11 @@ mod tests {
     pub fn simple_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Counter<isize>>();
 
-        let event = tcsb_a.tc_bcast(Counter::Dec(5));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Counter::Dec(5));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(Counter::Inc(5));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Counter::Inc(5));
+        tcsb_b.tc_deliver_op(event);
 
         let result = 0;
         assert_eq!(tcsb_a.eval(), result);
