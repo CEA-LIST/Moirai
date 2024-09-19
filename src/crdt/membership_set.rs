@@ -24,13 +24,6 @@ where
     }
 
     fn r_zero(_: &Event<Self>, _: &Event<Self>) -> bool {
-        // old_event.metadata.vc < new_event.metadata.vc
-        //     && match (&old_event.op, &new_event.op) {
-        //         (MSet::Add(v1), MSet::Add(v2))
-        //         | (MSet::Remove(v1), MSet::Remove(v2))
-        //         | (MSet::Add(v1), MSet::Remove(v2))
-        //         | (MSet::Remove(v1), MSet::Add(v2)) => v1 == v2,
-        //     }
         false
     }
 
