@@ -180,17 +180,17 @@ mod tests {
     fn simple_graph() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
 
-        let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Graph::AddVertex("A"));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_b.tc_bcast(Graph::AddVertex("B"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(Graph::AddVertex("B"));
+        tcsb_a.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(Graph::AddArc("B", "A"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Graph::AddArc("B", "A"));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(Graph::RemoveVertex("B"));
+        tcsb_a.tc_deliver_op(event);
 
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
@@ -199,16 +199,16 @@ mod tests {
     fn concurrent_graph() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
 
-        let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Graph::AddVertex("A"));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_b.tc_bcast(Graph::AddVertex("B"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(Graph::AddVertex("B"));
+        tcsb_a.tc_deliver_op(event);
 
-        let event_b = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
-        let event_a = tcsb_a.tc_bcast(Graph::AddArc("B", "A"));
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
+        let event_b = tcsb_b.tc_bcast_op(Graph::RemoveVertex("B"));
+        let event_a = tcsb_a.tc_bcast_op(Graph::AddArc("B", "A"));
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
 
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }

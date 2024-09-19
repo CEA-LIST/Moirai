@@ -109,18 +109,18 @@ mod tests {
     fn clear_rw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
 
-        let event = tcsb_a.tc_bcast(RWSet::Add("a"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(RWSet::Add("a"));
+        tcsb_b.tc_deliver_op(event);
 
         assert_eq!(tcsb_b.state.stable.len(), 1);
 
-        let event = tcsb_b.tc_bcast(RWSet::Add("b"));
-        tcsb_a.tc_deliver(event);
+        let event = tcsb_b.tc_bcast_op(RWSet::Add("b"));
+        tcsb_a.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.state.stable.len(), 2);
 
-        let event = tcsb_a.tc_bcast(RWSet::Clear);
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(RWSet::Clear);
+        tcsb_b.tc_deliver_op(event);
 
         let result = HashSet::new();
         assert_eq!(tcsb_a.eval(), result);
@@ -132,8 +132,8 @@ mod tests {
     #[test_log::test]
     fn case_one() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
-        let event = tcsb_a.tc_bcast(RWSet::Add("a"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(RWSet::Add("a"));
+        tcsb_b.tc_deliver_op(event);
 
         let result = HashSet::from(["a"]);
         assert_eq!(tcsb_b.eval(), result);
@@ -143,11 +143,11 @@ mod tests {
     #[test_log::test]
     fn case_two() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
-        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-        let event_b = tcsb_b.tc_bcast(RWSet::Add("a"));
+        let event_a = tcsb_a.tc_bcast_op(RWSet::Add("a"));
+        let event_b = tcsb_b.tc_bcast_op(RWSet::Add("a"));
 
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
 
         assert_eq!(tcsb_a.state.stable.len(), 1);
         assert_eq!(tcsb_a.state.unstable.len(), 0);
@@ -163,13 +163,13 @@ mod tests {
     fn case_three() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
 
-        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-        let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
-        let event_a_2 = tcsb_a.tc_bcast(RWSet::Remove("a"));
+        let event_a = tcsb_a.tc_bcast_op(RWSet::Add("a"));
+        let event_b = tcsb_b.tc_bcast_op(RWSet::Remove("a"));
+        let event_a_2 = tcsb_a.tc_bcast_op(RWSet::Remove("a"));
 
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
-        tcsb_b.tc_deliver(event_a_2);
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
+        tcsb_b.tc_deliver_op(event_a_2);
 
         assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.len(), 0);
@@ -184,8 +184,8 @@ mod tests {
     #[test_log::test]
     fn case_five() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
-        let event = tcsb_a.tc_bcast(RWSet::Remove("a"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(RWSet::Remove("a"));
+        tcsb_b.tc_deliver_op(event);
 
         assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.len(), 1);
@@ -201,10 +201,10 @@ mod tests {
     fn test_concurrent_add_remove() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
 
-        let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
-        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
+        let event_b = tcsb_b.tc_bcast_op(RWSet::Remove("a"));
+        let event_a = tcsb_a.tc_bcast_op(RWSet::Add("a"));
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
 
         let result = HashSet::from([]);
         assert_eq!(tcsb_b.eval(), result);

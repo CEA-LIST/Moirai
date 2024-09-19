@@ -103,14 +103,14 @@ mod tests {
     fn simple_duet_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Duet<Counter<i32>, Counter<i32>>>();
 
-        let event = tcsb_a.tc_bcast(Duet::First(Counter::Dec(5)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Duet::First(Counter::Dec(5)));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(Duet::First(Counter::Inc(15)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Duet::First(Counter::Inc(15)));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(Duet::Second(Counter::Inc(5)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(Duet::Second(Counter::Inc(5)));
+        tcsb_b.tc_deliver_op(event);
 
         let result = (10, 5);
         assert_eq!(tcsb_a.eval(), result);

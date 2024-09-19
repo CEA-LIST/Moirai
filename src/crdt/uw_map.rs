@@ -88,14 +88,14 @@ mod tests {
     fn simple_aw_map() {
         let (mut tcsb_a, mut tcsb_b) = twins::<UWMap<Counter<i32>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a", Counter::Dec(5)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("a", Counter::Dec(5)));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b", Counter::Inc(5)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("b", Counter::Inc(5)));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a", Counter::Inc(15)));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("a", Counter::Inc(15)));
+        tcsb_b.tc_deliver_op(event);
 
         let mut map = HashMap::new();
         map.insert(String::from("a"), 10);
@@ -108,17 +108,17 @@ mod tests {
     fn aw_map_duet_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<UWMap<Duet<Counter<i32>, Counter<i32>>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a", Duet::First(Counter::Inc(15))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("a", Duet::First(Counter::Inc(15))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b", Duet::First(Counter::Inc(5))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("b", Duet::First(Counter::Inc(5))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a", Duet::First(Counter::Inc(10))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("a", Duet::First(Counter::Inc(10))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b", Duet::Second(Counter::Dec(7))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("b", Duet::Second(Counter::Dec(7))));
+        tcsb_b.tc_deliver_op(event);
 
         let mut map = HashMap::new();
         map.insert(String::from("a"), (25, 0));
@@ -131,22 +131,22 @@ mod tests {
     fn aw_map_concurrent_duet_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<UWMap<Duet<Counter<i32>, Counter<i32>>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a", Duet::First(Counter::Inc(15))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("a", Duet::First(Counter::Inc(15))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b", Duet::First(Counter::Inc(5))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("b", Duet::First(Counter::Inc(5))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event_a = tcsb_a.tc_bcast(UWMap::Update("a", Duet::First(Counter::Inc(10))));
-        let event_b = tcsb_b.tc_bcast(UWMap::Remove("a"));
-        tcsb_b.tc_deliver(event_a);
-        tcsb_a.tc_deliver(event_b);
+        let event_a = tcsb_a.tc_bcast_op(UWMap::Update("a", Duet::First(Counter::Inc(10))));
+        let event_b = tcsb_b.tc_bcast_op(UWMap::Remove("a"));
+        tcsb_b.tc_deliver_op(event_a);
+        tcsb_a.tc_deliver_op(event_b);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b", Duet::Second(Counter::Dec(7))));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Update("b", Duet::Second(Counter::Dec(7))));
+        tcsb_b.tc_deliver_op(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Remove("b"));
-        tcsb_b.tc_deliver(event);
+        let event = tcsb_a.tc_bcast_op(UWMap::Remove("b"));
+        tcsb_b.tc_deliver_op(event);
 
         let mut map = HashMap::new();
         map.insert(String::from("a"), (10, 0));
