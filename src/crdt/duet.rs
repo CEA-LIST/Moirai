@@ -1,8 +1,6 @@
 use std::fmt::Debug;
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::protocol::tcsb::RedundantRelation;
 use crate::protocol::utils::prune_redundant_events;
@@ -51,8 +49,8 @@ where
             (POLog::new(), POLog::new()),
             |(mut f_log, mut s_log), op| {
                 match op.as_ref() {
-                    Duet::First(fo) => f_log.new_stable(Rc::new(fo.clone())),
-                    Duet::Second(so) => s_log.new_stable(Rc::new(so.clone())),
+                    Duet::First(fo) => f_log.new_stable(Arc::new(fo.clone())),
+                    Duet::Second(so) => s_log.new_stable(Arc::new(so.clone())),
                 }
                 (f_log, s_log)
             },
@@ -77,8 +75,8 @@ where
         let mut s_log: POLog<S> = POLog::new();
         for op in state.iter() {
             match op.as_ref() {
-                Duet::First(fo) => f_log.new_stable(Rc::new(fo.clone())),
-                Duet::Second(so) => s_log.new_stable(Rc::new(so.clone())),
+                Duet::First(fo) => f_log.new_stable(Arc::new(fo.clone())),
+                Duet::Second(so) => s_log.new_stable(Arc::new(so.clone())),
             }
         }
         (

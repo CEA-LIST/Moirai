@@ -13,7 +13,8 @@ hyperfine 'cargo test --release'
 
 ```sh
 cargo install flamegraph
-cargo flamegraph --root --dev --unit-test po-crdt --  test_graph
+cargo flamegraph --root --dev --unit-test po-crdt -- test_graph
+cargo flamegraph --test eval_nested
 ```
 
 ### Logging

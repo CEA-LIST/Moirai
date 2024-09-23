@@ -7,9 +7,11 @@ use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
@@ -39,8 +41,11 @@ where
 {
     pub fn new(id: &'static str) -> Self {
         let mut group_membership = POLog::default();
-        let event = Event::new(MSet::Add(id), Metadata::default());
-        group_membership.new_event(&event);
+        let op = Arc::new(MSet::Add(id));
+        group_membership.stable.push(Arc::clone(&op));
+        group_membership
+            .path_trie
+            .insert(PathBuf::default(), vec![Arc::downgrade(&op)]);
         Self {
             id,
             state: POLog::default(),
@@ -92,12 +97,12 @@ where
         }
         // Check for timestamp inconsistencies
         if matches!(event.op, Duet::First(_))
-            && event.metadata.vc.keys().len()
-                != MSet::eval(&self.group_membership, &PathBuf::default()).len()
+            && event.metadata.vc.keys().len() != self.eval_group_membership().len()
         {
             debug!(
-                "[{}] - Timestamp inconsistency detected, fixing...",
+                "[{}] - Timestamp inconsistency: MSet members: {}",
                 self.id.blue().bold(),
+                format!("{:?}", self.eval_group_membership()).green(),
             );
             Self::fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
         }
@@ -127,7 +132,8 @@ where
                 }
 
                 let trie_size = self.group_membership.path_trie.values().flatten().count();
-                let state_size = self.group_membership.stable.len() + self.state.unstable.len();
+                let state_size =
+                    self.group_membership.stable.len() + self.group_membership.unstable.len();
                 debug!(
                     "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
                     self.id.blue().bold(),
@@ -176,15 +182,25 @@ where
         let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
 
         for metadata in ready_to_stabilize.iter() {
-            info!(
-                "[{}] - {} is causally stable (op: {})",
-                self.id.blue().bold(),
-                format!("{}", metadata.vc).red(),
-                format!("{:?}", self.state.unstable.get(metadata).unwrap()).green()
-            );
             if self.state.unstable.contains_key(metadata) {
+                info!(
+                    "[{}] - {} is causally stable (op: {})",
+                    self.id.blue().bold(),
+                    format!("{}", metadata.vc).red(),
+                    format!("{:?}", self.state.unstable.get(metadata).unwrap()).green()
+                );
                 O::stable(metadata, &mut self.state);
             } else if self.group_membership.unstable.contains_key(metadata) {
+                info!(
+                    "[{}] - {} is causally stable (op: {})",
+                    self.id.blue().bold(),
+                    format!("{}", metadata.vc).red(),
+                    format!(
+                        "{:?}",
+                        self.group_membership.unstable.get(metadata).unwrap()
+                    )
+                    .green()
+                );
                 MSet::stable(metadata, &mut self.group_membership);
             }
         }
@@ -195,6 +211,10 @@ where
     /// Utilitary function to evaluate the current state of the whole CRDT.
     pub fn eval(&self) -> O::Value {
         O::eval(&self.state, &PathBuf::default())
+    }
+
+    pub fn eval_group_membership(&self) -> HashSet<&'static str> {
+        MSet::eval(&self.group_membership, &PathBuf::default())
     }
 
     /// Return the mutable vector clock of the local replica
@@ -211,7 +231,7 @@ where
                 self.id.blue().bold(),
                 metadata.origin.red()
             );
-            return Err("Unknown peer detected");
+            return Err("Unknown peer");
         }
         if self.guard_against_duplicates(metadata) {
             error!(
@@ -219,7 +239,7 @@ where
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
             );
-            return Err("Duplicated event detected");
+            return Err("Duplicated event");
         }
         if self.guard_against_out_of_order(metadata) {
             error!(
@@ -227,7 +247,7 @@ where
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
             );
-            return Err("Out-of-order event detected");
+            return Err("Out-of-order event");
         }
         Ok(())
     }
@@ -249,7 +269,8 @@ where
             let ltm_vc_clock = self.ltm.get(&metadata.origin);
             if let Some(ltm_vc_clock) = ltm_vc_clock {
                 let ltm_lamport_lock = ltm_vc_clock.get(&metadata.origin).unwrap();
-                return event_lamport_clock != ltm_lamport_lock + 1;
+                return event_lamport_clock != ltm_lamport_lock + 1
+                    || event_lamport_clock == usize::MAX;
             }
             false
         }
@@ -340,9 +361,7 @@ where
 
     /// Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
     fn update_ltm_membership(&mut self) {
-        let gms_members = MSet::eval(&self.group_membership, &PathBuf::default())
-            .into_iter()
-            .collect::<Vec<_>>();
+        let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
                 self.ltm.add_key(member);
