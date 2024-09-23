@@ -1,11 +1,9 @@
 use std::collections::btree_map::{Values, ValuesMut};
+use std::collections::BTreeMap;
 use std::iter::Chain;
 use std::path::PathBuf;
 use std::slice::{Iter, IterMut};
-use std::{
-    collections::BTreeMap,
-    rc::{Rc, Weak},
-};
+use std::sync::{Arc, Weak};
 
 use super::event::Event;
 use super::{metadata::Metadata, pure_crdt::PureCRDT};
@@ -15,7 +13,7 @@ use radix_trie::{Trie, TrieCommon};
 use std::fmt::{Debug, Display};
 
 pub type PathTrie<O> = Trie<PathBuf, Vec<Weak<O>>>;
-pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
+pub type Log<O> = BTreeMap<Metadata, Arc<O>>;
 
 /// Causal DAG operation history
 ///
@@ -28,7 +26,7 @@ pub struct POLog<O>
 where
     O: PureCRDT + Debug,
 {
-    pub stable: Vec<Rc<O>>,
+    pub stable: Vec<Arc<O>>,
     pub unstable: Log<O>,
     pub path_trie: PathTrie<O>,
 }
@@ -46,8 +44,8 @@ where
     }
 
     pub fn new_event(&mut self, event: &Event<O>) {
-        let rc_op = Rc::new(event.op.clone());
-        let weak_op = Rc::downgrade(&rc_op);
+        let rc_op = Arc::new(event.op.clone());
+        let weak_op = Arc::downgrade(&rc_op);
         self.unstable.insert(event.metadata.clone(), rc_op);
         if let Some(subtrie) = self.path_trie.get_mut(&O::to_path(&event.op)) {
             subtrie.push(weak_op);
@@ -101,15 +99,15 @@ where
     }
 
     /// Should only be used in `eval()`
-    pub fn new_stable(&mut self, op: Rc<O>) {
+    pub fn new_stable(&mut self, op: Arc<O>) {
         self.stable.push(op);
     }
 
-    pub fn iter(&self) -> Chain<Iter<Rc<O>>, Values<Metadata, Rc<O>>> {
+    pub fn iter(&self) -> Chain<Iter<Arc<O>>, Values<Metadata, Arc<O>>> {
         self.stable.iter().chain(self.unstable.values())
     }
 
-    pub fn iter_mut(&mut self) -> Chain<IterMut<Rc<O>>, ValuesMut<Metadata, Rc<O>>> {
+    pub fn iter_mut(&mut self) -> Chain<IterMut<Arc<O>>, ValuesMut<Metadata, Arc<O>>> {
         self.stable.iter_mut().chain(self.unstable.values_mut())
     }
 
