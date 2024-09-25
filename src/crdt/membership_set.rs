@@ -13,6 +13,16 @@ pub enum MSet<V> {
     Remove(V),
 }
 
+impl MSet<String> {
+    pub fn add(s: &str) -> Self {
+        MSet::Add(s.to_string())
+    }
+
+    pub fn remove(s: &str) -> Self {
+        MSet::Remove(s.to_string())
+    }
+}
+
 impl<V> PureCRDT for MSet<V>
 where
     V: Debug + Clone + Hash + Eq,
