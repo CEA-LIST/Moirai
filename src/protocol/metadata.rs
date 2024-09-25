@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::clocks::vector_clock::VectorClock;
 
 use super::utils::{Incrementable, Keyable};
@@ -7,20 +9,24 @@ use std::{
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
+#[cfg_attr(feature = "utils", derive(Serialize, Deserialize))]
 pub struct Metadata {
-    pub vc: VectorClock<&'static str, usize>,
-    pub origin: &'static str,
+    pub vc: VectorClock<String, usize>,
+    pub origin: String,
 }
 
 impl Metadata {
-    pub fn new(vc: VectorClock<&'static str, usize>, origin: &'static str) -> Self {
-        Self { vc, origin }
+    pub fn new(vc: VectorClock<String, usize>, origin: &str) -> Self {
+        Self {
+            vc,
+            origin: origin.to_string(),
+        }
     }
 
     pub fn bot() -> Self {
         Self {
             vc: VectorClock::bot(),
-            origin: "",
+            origin: String::new(),
         }
     }
 }
@@ -35,7 +41,7 @@ impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
         let clock_cmp: Option<Ordering> = self.vc.partial_cmp(&other.vc);
         match clock_cmp {
-            Some(Ordering::Equal) | None => other.origin.cmp(self.origin),
+            Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
             Some(Ordering::Less) => Ordering::Less,
             Some(Ordering::Greater) => Ordering::Greater,
         }

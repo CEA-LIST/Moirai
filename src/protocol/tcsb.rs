@@ -7,6 +7,8 @@ use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
+#[cfg(feature = "utils")]
+use crate::utils::tracer::Tracer;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::ops::Bound;
@@ -25,34 +27,46 @@ pub struct Tcsb<O>
 where
     O: PureCRDT + Debug,
 {
-    pub id: &'static str,
+    pub id: String,
     pub state: POLog<O>,
     // Group Membership Service
-    pub group_membership: POLog<MSet<&'static str>>,
+    pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
-    pub ltm: MatrixClock<&'static str, usize>,
+    pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
-    pub lsv: VectorClock<&'static str, usize>,
+    pub lsv: VectorClock<String, usize>,
+    /// Trace of events for debugging purposes
+    #[cfg(feature = "utils")]
+    pub tracer: Tracer,
 }
 
 impl<O> Tcsb<O>
 where
     O: PureCRDT + Debug,
 {
-    pub fn new(id: &'static str) -> Self {
+    pub fn new(id: &str) -> Self {
         let mut group_membership = POLog::default();
-        let op = Arc::new(MSet::Add(id));
+        let op = Arc::new(MSet::Add(id.to_string()));
         group_membership.stable.push(Arc::clone(&op));
         group_membership
             .path_trie
             .insert(PathBuf::default(), vec![Arc::downgrade(&op)]);
         Self {
-            id,
+            id: id.to_string(),
             state: POLog::default(),
             group_membership,
-            ltm: MatrixClock::new(&[id]),
-            lsv: VectorClock::new(id),
+            ltm: MatrixClock::new(&[id.to_string()]),
+            lsv: VectorClock::new(id.to_string()),
+            #[cfg(feature = "utils")]
+            tracer: Tracer::new(String::from(id)),
         }
+    }
+
+    #[cfg(feature = "utils")]
+    pub fn new_with_trace(id: &str) -> Self {
+        let mut tcsb = Self::new(id);
+        tcsb.tracer = Tracer::new(String::from(id));
+        tcsb
     }
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
@@ -60,14 +74,18 @@ where
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(Duet::Second(op.clone()), metadata.clone());
         self.tc_deliver(event.clone());
+        #[cfg(feature = "utils")]
+        self.tracer.append(event.clone());
         Event::new(op, metadata)
     }
 
     /// Broadcast a new operation to all peers and deliver it to the local state.
-    pub fn tc_bcast_membership(&mut self, op: MSet<&'static str>) -> Event<MSet<&'static str>> {
+    pub fn tc_bcast_membership(&mut self, op: MSet<String>) -> Event<MSet<String>> {
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(Duet::First(op.clone()), metadata.clone());
         self.tc_deliver(event.clone());
+        #[cfg(feature = "utils")]
+        self.tracer.append(event.clone());
         Event::new(op, metadata)
     }
 
@@ -76,13 +94,13 @@ where
         self.tc_deliver(event);
     }
 
-    pub fn tc_deliver_membership(&mut self, event: Event<MSet<&'static str>>) {
+    pub fn tc_deliver_membership(&mut self, event: Event<MSet<String>>) {
         let event = Event::new(Duet::First(event.op.clone()), event.metadata.clone());
         self.tc_deliver(event);
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, mut event: Event<Duet<MSet<&'static str>, O>>) {
+    fn tc_deliver(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -113,6 +131,8 @@ where
             self.ltm.update(&event.metadata.origin, &event.metadata.vc);
             // Update our own vector clock
             self.my_vc_mut().merge(&event.metadata.vc);
+            #[cfg(feature = "utils")]
+            self.tracer.append(event.clone());
         }
 
         match event.op {
@@ -120,7 +140,7 @@ where
                 let event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = MSet::effect(&event, &self.group_membership);
                 self.group_membership
-                    .remove_redundant_ops(self.id, stable, unstable);
+                    .remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
                     self.group_membership.new_event(&event);
@@ -146,7 +166,7 @@ where
             Duet::Second(op) => {
                 let event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = O::effect(&event, &self.state);
-                self.state.remove_redundant_ops(self.id, stable, unstable);
+                self.state.remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
                     self.state.new_event(&event);
@@ -213,12 +233,12 @@ where
         O::eval(&self.state, &PathBuf::default())
     }
 
-    pub fn eval_group_membership(&self) -> HashSet<&'static str> {
+    pub fn eval_group_membership(&self) -> HashSet<String> {
         MSet::eval(&self.group_membership, &PathBuf::default())
     }
 
     /// Return the mutable vector clock of the local replica
-    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<&'static str, usize> {
+    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<String, usize> {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
@@ -283,19 +303,16 @@ where
 
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
-        let my_id = self.id;
+        let my_id = self.id.clone();
         let my_vc = self.my_vc_mut();
         my_vc.increment(&my_id);
-        Metadata::new(my_vc.clone(), self.id)
+        Metadata::new(my_vc.clone(), &self.id)
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0 or usize::MAX
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    fn fix_timestamp_inconsistencies(
-        new: &mut Event<Duet<MSet<&str>, O>>,
-        ltm_keys: &[&'static str],
-    ) {
+    fn fix_timestamp_inconsistencies(new: &mut Event<Duet<MSet<String>, O>>, ltm_keys: &[String]) {
         let op = match &new.op {
             Duet::First(op) => op,
             Duet::Second(_) => return,
@@ -306,7 +323,7 @@ where
                     MSet::Add(_) => 0,
                     MSet::Remove(_) => usize::MAX,
                 };
-                new.metadata.vc.insert(key, value);
+                new.metadata.vc.insert(key.clone(), value);
             }
         }
         for key in new.metadata.vc.keys() {
@@ -317,14 +334,14 @@ where
     }
 
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
-    fn peers_to_ignore_for_stability(&self) -> Vec<&'static str> {
-        let ignore: Vec<&'static str> = self
+    fn peers_to_ignore_for_stability(&self) -> Vec<String> {
+        let ignore: Vec<String> = self
             .group_membership
             .unstable
             .iter()
             .filter_map(|(_, o)| match o.as_ref() {
                 MSet::Add(_) => None,
-                MSet::Remove(v) => Some(*v),
+                MSet::Remove(v) => Some(v.clone()),
             })
             .collect();
         let ignore = if ignore.contains(&self.id) {
@@ -332,7 +349,7 @@ where
                 .keys()
                 .iter()
                 .filter(|k| **k != self.id)
-                .copied()
+                .cloned()
                 .collect()
         } else {
             ignore
@@ -364,7 +381,7 @@ where
         let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
-                self.ltm.add_key(member);
+                self.ltm.add_key(member.clone());
             }
         }
         for member in self.ltm.keys() {

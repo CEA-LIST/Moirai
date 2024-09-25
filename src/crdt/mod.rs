@@ -17,11 +17,11 @@ pub mod test_util {
     pub type Triplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
 
     pub fn twins<O: PureCRDT + Clone + Debug>() -> Twins<O> {
-        let mut tcsb_a = Tcsb::<O>::new("a");
-        let mut tcsb_b = Tcsb::<O>::new("b");
+        let mut tcsb_a = Tcsb::<O>::new_with_trace("a");
+        let mut tcsb_b = Tcsb::<O>::new_with_trace("b");
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::Add("b"));
-        let event_b = tcsb_b.tc_bcast_membership(MSet::Add("a"));
+        let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
+        let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));
 
         tcsb_b.tc_deliver_membership(event_a);
         tcsb_a.tc_deliver_membership(event_b);
@@ -34,16 +34,16 @@ pub mod test_util {
         let mut tcsb_b = Tcsb::<O>::new("b");
         let mut tcsb_c = Tcsb::<O>::new("c");
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::Add("b"));
-        let event_b = tcsb_b.tc_bcast_membership(MSet::Add("a"));
+        let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
+        let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));
 
         tcsb_b.tc_deliver_membership(event_a);
         tcsb_a.tc_deliver_membership(event_b);
 
-        let event_b = tcsb_b.tc_bcast_membership(MSet::Add("c"));
+        let event_b = tcsb_b.tc_bcast_membership(MSet::add("c"));
         tcsb_a.tc_deliver_membership(event_b);
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::Add("c"));
+        let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
         tcsb_b.tc_deliver_membership(event_a);
 
         tcsb_c.group_membership = tcsb_b.group_membership.clone();
