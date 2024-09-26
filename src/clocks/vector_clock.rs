@@ -36,6 +36,15 @@ where
         self.clock.get(key).cloned()
     }
 
+    /// Get a mutable reference to the value of a key
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut C> {
+        self.clock.get_mut(key)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &C)> {
+        self.clock.iter()
+    }
+
     /// Increment the value of a key
     pub fn increment(&mut self, key: &K) {
         let value = match self.clock.get(key) {

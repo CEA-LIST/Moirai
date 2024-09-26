@@ -9,13 +9,19 @@ use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
+
+pub enum DeliverError {
+    UnknownPeer,
+    DuplicatedEvent,
+    OutOfOrderEvent,
+}
 
 /// Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -29,7 +35,9 @@ where
 {
     pub id: String,
     pub state: POLog<O>,
-    // Group Membership Service
+    /// Buffer of operations to be delivered
+    pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
@@ -44,6 +52,7 @@ impl<O> Tcsb<O>
 where
     O: PureCRDT + Debug,
 {
+    /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
         let mut group_membership = POLog::default();
         let op = Arc::new(MSet::Add(id.to_string()));
@@ -57,12 +66,14 @@ where
             group_membership,
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
+            pending: VecDeque::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
     }
 
     #[cfg(feature = "utils")]
+    /// Create a new TCSB instance with a tracer for debugging purposes.
     pub fn new_with_trace(id: &str) -> Self {
         let mut tcsb = Self::new(id);
         tcsb.tracer = Tracer::new(String::from(id));
@@ -91,16 +102,49 @@ where
 
     pub fn tc_deliver_op(&mut self, event: Event<O>) {
         let event = Event::new(Duet::Second(event.op.clone()), event.metadata.clone());
-        self.tc_deliver(event);
+        self.check_delivery(event);
     }
 
     pub fn tc_deliver_membership(&mut self, event: Event<MSet<String>>) {
         let event = Event::new(Duet::First(event.op.clone()), event.metadata.clone());
-        self.tc_deliver(event);
+        self.check_delivery(event);
+    }
+
+    fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
+        // Check for timestamp inconsistencies
+        if event.metadata.vc.keys().len() != self.eval_group_membership().len() {
+            debug!(
+                "[{}] - Timestamp inconsistency: MSet members: {}",
+                self.id.blue().bold(),
+                format!("{:?}", self.eval_group_membership()).green(),
+            );
+            self.fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
+        }
+        match self.guard(&event.metadata) {
+            Err(DeliverError::UnknownPeer) | Err(DeliverError::DuplicatedEvent) => return,
+            _ => {}
+        }
+        self.pending.push_back(event.clone());
+        // Oldest event first
+        self.pending
+            .make_contiguous()
+            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
+        let mut still_pending = VecDeque::new();
+        while let Some(event) = self.pending.pop_front() {
+            // If the event is causally ready...
+            if !Self::guard_against_out_of_order(self, &event.metadata) {
+                // ...deliver it
+                self.tc_deliver(event);
+            } else {
+                // ...otherwise, keep it in the buffer
+                still_pending.push_back(event);
+            }
+        }
+        self.pending = still_pending;
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
+    fn tc_deliver(&mut self, event: Event<Duet<MSet<String>, O>>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -108,22 +152,6 @@ where
             event.metadata.origin.blue(),
             format!("{}", event.metadata.vc).red()
         );
-        // Check if the event is valid
-        if let Err(err) = self.guard(&event.metadata) {
-            eprintln!("{}", err);
-            return;
-        }
-        // Check for timestamp inconsistencies
-        if matches!(event.op, Duet::First(_))
-            && event.metadata.vc.keys().len() != self.eval_group_membership().len()
-        {
-            debug!(
-                "[{}] - Timestamp inconsistency: MSet members: {}",
-                self.id.blue().bold(),
-                format!("{:?}", self.eval_group_membership()).green(),
-            );
-            Self::fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
-        }
         // If the event is not from the local replica
         if self.id != event.metadata.origin {
             // Update the vector clock of the sender in the LTM
@@ -204,22 +232,24 @@ where
         for metadata in ready_to_stabilize.iter() {
             if self.state.unstable.contains_key(metadata) {
                 info!(
-                    "[{}] - {} is causally stable (op: {})",
+                    "[{}] - {} is causally stable (op: {}) ; {:?} were ignored",
                     self.id.blue().bold(),
                     format!("{}", metadata.vc).red(),
-                    format!("{:?}", self.state.unstable.get(metadata).unwrap()).green()
+                    format!("{:?}", self.state.unstable.get(metadata).unwrap()).green(),
+                    ignore,
                 );
                 O::stable(metadata, &mut self.state);
             } else if self.group_membership.unstable.contains_key(metadata) {
                 info!(
-                    "[{}] - {} is causally stable (op: {})",
+                    "[{}] - {} is causally stable (op: {}) ; {:?} were ignored",
                     self.id.blue().bold(),
                     format!("{}", metadata.vc).red(),
                     format!(
                         "{:?}",
                         self.group_membership.unstable.get(metadata).unwrap()
                     )
-                    .green()
+                    .green(),
+                    ignore,
                 );
                 MSet::stable(metadata, &mut self.group_membership);
             }
@@ -244,14 +274,14 @@ where
             .expect("Local vector clock not found")
     }
 
-    fn guard(&self, metadata: &Metadata) -> Result<(), &str> {
+    fn guard(&self, metadata: &Metadata) -> Result<(), DeliverError> {
         if self.guard_against_unknow_peer(metadata) {
             error!(
                 "[{}] - Unknown peer detected: {}",
                 self.id.blue().bold(),
                 metadata.origin.red()
             );
-            return Err("Unknown peer");
+            return Err(DeliverError::UnknownPeer);
         }
         if self.guard_against_duplicates(metadata) {
             error!(
@@ -259,7 +289,7 @@ where
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
             );
-            return Err("Duplicated event");
+            return Err(DeliverError::DuplicatedEvent);
         }
         if self.guard_against_out_of_order(metadata) {
             error!(
@@ -267,7 +297,7 @@ where
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
             );
-            return Err("Out-of-order event");
+            return Err(DeliverError::OutOfOrderEvent);
         }
         Ok(())
     }
@@ -283,17 +313,28 @@ where
     }
 
     /// Check that the event is the causal successor of the last event delivered by this same replica
+    /// Returns true if the event is out of order
     fn guard_against_out_of_order(&self, metadata: &Metadata) -> bool {
-        self.id != metadata.origin && {
-            let event_lamport_clock = metadata.vc.get(&metadata.origin).unwrap();
-            let ltm_vc_clock = self.ltm.get(&metadata.origin);
-            if let Some(ltm_vc_clock) = ltm_vc_clock {
-                let ltm_lamport_lock = ltm_vc_clock.get(&metadata.origin).unwrap();
-                return event_lamport_clock != ltm_lamport_lock + 1
-                    || event_lamport_clock == usize::MAX;
-            }
-            false
-        }
+        // We assume that the LTM and the event clock have the same number of entries
+        assert_eq!(self.ltm.len(), metadata.vc.len());
+        // We assume that the event clock has an entry for its origin
+        let event_lamport_clock = metadata.vc.get(&metadata.origin).unwrap();
+        // We assume we know this origin
+        let ltm_origin_clock = self.ltm.get(&metadata.origin).unwrap();
+        // We assume that the clock we have for this origin has an entry for this origin
+        let ltm_lamport_lock = ltm_origin_clock.get(&metadata.origin).unwrap();
+        // Either the event is the next in the sequence or the event is causally superior to the origin eviction
+        let is_origin_out_of_order = event_lamport_clock != ltm_lamport_lock + 1;
+        let are_other_entries_out_of_order = metadata
+            .vc
+            .iter()
+            .filter(|(k, _)| *k != &metadata.origin)
+            .any(|(k, v)| {
+                let ltm_clock = self.ltm.get(k).unwrap();
+                let ltm_value = ltm_clock.get(k).unwrap();
+                *v > ltm_value && *v != usize::MAX
+            });
+        is_origin_out_of_order || are_other_entries_out_of_order
     }
 
     /// Check that the event is not from an unknown peer
@@ -312,20 +353,33 @@ where
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0 or usize::MAX
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    fn fix_timestamp_inconsistencies(new: &mut Event<Duet<MSet<String>, O>>, ltm_keys: &[String]) {
-        let op = match &new.op {
-            Duet::First(op) => op,
-            Duet::Second(_) => return,
-        };
+    fn fix_timestamp_inconsistencies(
+        &self,
+        new: &mut Event<Duet<MSet<String>, O>>,
+        ltm_keys: &[String],
+    ) {
         for key in ltm_keys.iter() {
             if !new.metadata.vc.contains(key) {
-                let value = match op {
-                    MSet::Add(_) => 0,
-                    MSet::Remove(_) => usize::MAX,
+                let value = if self
+                    .group_membership
+                    .unstable
+                    .values()
+                    .any(|o| matches!(o.as_ref(), MSet::Remove(v) if v == key))
+                {
+                    usize::MAX
+                } else {
+                    match &new.op {
+                        Duet::First(membership) => match membership {
+                            MSet::Add(_) => 0,
+                            MSet::Remove(_) => usize::MAX,
+                        },
+                        Duet::Second(_) => continue,
+                    }
                 };
                 new.metadata.vc.insert(key.clone(), value);
             }
         }
+        // TODO: Verify if the following code is correct
         for key in new.metadata.vc.keys() {
             if !ltm_keys.contains(&key) {
                 new.metadata.vc.remove(&key);
@@ -397,5 +451,58 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::crdt::{
+        counter::Counter,
+        test_util::{triplet, twins},
+    };
+
+    #[test_log::test]
+    fn causal_delivery() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
+
+        let event_a_1 = tcsb_a.tc_bcast_op(Counter::Inc(1));
+        let event_a_2 = tcsb_a.tc_bcast_op(Counter::Inc(1));
+
+        tcsb_b.tc_deliver_op(event_a_2);
+        tcsb_b.tc_deliver_op(event_a_1);
+
+        assert_eq!(tcsb_b.eval(), 2);
+        assert_eq!(tcsb_a.eval(), 2);
+
+        let event_b_1 = tcsb_b.tc_bcast_op(Counter::Inc(1));
+        let event_b_2 = tcsb_b.tc_bcast_op(Counter::Inc(1));
+        let event_b_3 = tcsb_b.tc_bcast_op(Counter::Inc(1));
+        let event_b_4 = tcsb_b.tc_bcast_op(Counter::Inc(1));
+
+        tcsb_a.tc_deliver_op(event_b_4);
+        tcsb_a.tc_deliver_op(event_b_3);
+        tcsb_a.tc_deliver_op(event_b_1);
+        tcsb_a.tc_deliver_op(event_b_2);
+
+        assert_eq!(tcsb_a.eval(), 6);
+        assert_eq!(tcsb_b.eval(), 6);
+    }
+
+    #[test_log::test]
+    fn causal_delivery_triplet() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+
+        let event_b = tcsb_b.tc_bcast_op(Counter::Inc(2));
+
+        tcsb_a.tc_deliver_op(event_b.clone());
+        let event_a = tcsb_a.tc_bcast_op(Counter::Dec(7));
+
+        tcsb_b.tc_deliver_op(event_a.clone());
+        tcsb_c.tc_deliver_op(event_a.clone());
+        tcsb_c.tc_deliver_op(event_b.clone());
+
+        assert_eq!(tcsb_a.eval(), -5);
+        assert_eq!(tcsb_b.eval(), -5);
+        assert_eq!(tcsb_c.eval(), -5);
     }
 }

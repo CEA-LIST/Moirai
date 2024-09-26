@@ -241,7 +241,64 @@ fn evict() {
         .unwrap();
 }
 
-// #[test_log::test]
-// fn evict_multiple_messages() {
+#[test_log::test]
+fn evict_multiple_messages() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet();
 
-// }
+    let event_d_1 = tcsb_d.tc_bcast_op(Counter::Inc(2));
+    let event_d_2 = tcsb_d.tc_bcast_op(Counter::Dec(8));
+    let event_d_3 = tcsb_d.tc_bcast_op(Counter::Inc(6));
+    let event_d_4 = tcsb_d.tc_bcast_op(Counter::Dec(1));
+
+    tcsb_a.tc_deliver_op(event_d_1.clone());
+    tcsb_c.tc_deliver_op(event_d_1.clone());
+
+    let event_b = tcsb_b.tc_bcast_membership(MSet::remove("d"));
+
+    tcsb_a.tc_deliver_membership(event_b.clone());
+    tcsb_c.tc_deliver_membership(event_b.clone());
+
+    tcsb_b.tc_deliver_op(event_d_1.clone());
+
+    tcsb_a.tc_deliver_op(event_d_2.clone());
+
+    let event_c = tcsb_c.tc_bcast_op(Counter::Inc(14));
+
+    tcsb_b.tc_deliver_op(event_c.clone());
+    tcsb_b.tc_deliver_op(event_d_2.clone());
+
+    tcsb_a.tc_deliver_op(event_d_3.clone());
+    tcsb_a.tc_deliver_op(event_c.clone());
+
+    let event_a = tcsb_a.tc_bcast_op(Counter::Dec(22));
+
+    println!("EVENT A: {}", event_a.metadata.vc);
+    tcsb_b.tc_deliver_op(event_a.clone());
+    tcsb_c.tc_deliver_op(event_d_2.clone());
+    tcsb_c.tc_deliver_op(event_a.clone());
+
+    tcsb_c.tc_deliver_op(event_d_3.clone());
+    tcsb_c.tc_deliver_op(event_d_4.clone());
+
+    tcsb_b.tc_deliver_op(event_d_3.clone());
+    tcsb_b.tc_deliver_op(event_d_4.clone());
+
+    tcsb_a.tc_deliver_op(event_d_4.clone());
+
+    tcsb_d.tc_deliver_membership(event_b.clone());
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
+
+    assert_eq!(tcsb_a.eval(), -8);
+    assert_eq!(tcsb_b.eval(), -14);
+    assert_eq!(tcsb_c.eval(), -14);
+    assert_eq!(tcsb_d.eval(), -1);
+
+    tcsb_b
+        .tracer
+        .serialize_to_file(&PathBuf::from("membership_evict_multiple_msg_b_trace.json"))
+        .unwrap();
+}

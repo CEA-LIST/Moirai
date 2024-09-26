@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clocks::vector_clock::VectorClock;
 
-use super::utils::{Incrementable, Keyable};
+use super::utils::Keyable;
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
