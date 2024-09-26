@@ -15,7 +15,7 @@ pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
     let mut graph: Vec<(usize, usize)> = vec![];
     for (i, event) in tracer.trace.iter().enumerate() {
         graphviz_str.push_str(&format!(
-            "  {} [label=<<FONT FACE=\"monospace\" POINT-SIZE=\"8\">({})</FONT> <B>{}</B>: {}<BR /><I>{}</I>>{}];",
+            "  {} [label=<<FONT FACE=\"monospace\" POINT-SIZE=\"8\">({})</FONT> <B>{}</B>: {}<BR /><I><FONT FACE=\"monospace\" POINT-SIZE=\"10\">{}</FONT></I>>{}];",
             i,
             i + 1,
             event.metadata.origin,
@@ -107,6 +107,20 @@ mod tests {
         let res = graphviz_str_to_svg(
             &graphviz_str,
             &PathBuf::from("concurrent_aw_set_a_trace.svg"),
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test_log::test]
+    fn evict_multiple_msg_trace() {
+        let tracer = Tracer::deserialize_from_file(&PathBuf::from(
+            "membership_evict_multiple_msg_b_trace.json",
+        ))
+        .unwrap();
+        let graphviz_str = tracer_to_graphviz(&tracer);
+        let res = graphviz_str_to_svg(
+            &graphviz_str,
+            &PathBuf::from("membership_evict_multiple_msg_b_trace.svg"),
         );
         assert!(res.is_ok());
     }
