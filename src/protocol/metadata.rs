@@ -29,6 +29,16 @@ impl Metadata {
             origin: String::new(),
         }
     }
+
+    pub fn get_origin_lamport(&self) -> usize {
+        self.vc.get(&self.origin).expect("Origin not found")
+    }
+
+    pub fn get_lamport(&self, origin: &str) -> usize {
+        self.vc
+            .get(&String::from(origin))
+            .expect("Origin not found")
+    }
 }
 
 impl PartialOrd for Metadata {

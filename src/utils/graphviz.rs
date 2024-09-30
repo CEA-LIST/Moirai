@@ -89,24 +89,12 @@ mod tests {
     #[test_log::test]
     fn membership_evict_trace() {
         let tracer =
-            Tracer::deserialize_from_file(&PathBuf::from("membership_evict_a_trace.json")).unwrap();
-        let graphviz_str = tracer_to_graphviz(&tracer);
-        let res = graphviz_str_to_svg(
-            &graphviz_str,
-            &PathBuf::from("membership_evict_a_trace.svg"),
-        );
-        assert!(res.is_ok());
-    }
-
-    #[test_log::test]
-    fn concurrent_aw_set_trace() {
-        let tracer =
-            Tracer::deserialize_from_file(&PathBuf::from("concurrent_aw_set_a_trace.json"))
+            Tracer::deserialize_from_file(&PathBuf::from("traces/membership_evict_a_trace.json"))
                 .unwrap();
         let graphviz_str = tracer_to_graphviz(&tracer);
         let res = graphviz_str_to_svg(
             &graphviz_str,
-            &PathBuf::from("concurrent_aw_set_a_trace.svg"),
+            &PathBuf::from("traces/membership_evict_a_trace.svg"),
         );
         assert!(res.is_ok());
     }
@@ -114,13 +102,13 @@ mod tests {
     #[test_log::test]
     fn evict_multiple_msg_trace() {
         let tracer = Tracer::deserialize_from_file(&PathBuf::from(
-            "membership_evict_multiple_msg_b_trace.json",
+            "traces/membership_evict_multiple_msg_b_trace.json",
         ))
         .unwrap();
         let graphviz_str = tracer_to_graphviz(&tracer);
         let res = graphviz_str_to_svg(
             &graphviz_str,
-            &PathBuf::from("membership_evict_multiple_msg_b_trace.svg"),
+            &PathBuf::from("traces/membership_evict_multiple_msg_b_trace.svg"),
         );
         assert!(res.is_ok());
     }

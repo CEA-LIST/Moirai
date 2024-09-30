@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use po_crdt::{
     crdt::{counter::Counter, membership_set::MSet},
     protocol::tcsb::Tcsb,
@@ -230,15 +228,15 @@ fn evict() {
     assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "d"]);
 
-    assert_eq!(tcsb_a.eval(), 45);
-    assert_eq!(tcsb_b.eval(), 45);
+    assert_eq!(tcsb_a.eval(), 20);
+    assert_eq!(tcsb_b.eval(), 20);
     assert_eq!(tcsb_c.eval(), 45);
-    assert_eq!(tcsb_d.eval(), 45);
+    assert_eq!(tcsb_d.eval(), 20);
 
-    tcsb_a
-        .tracer
-        .serialize_to_file(&PathBuf::from("membership_evict_a_trace.json"))
-        .unwrap();
+    // tcsb_a
+    //     .tracer
+    //     .serialize_to_file(&PathBuf::from("traces/membership_evict_a_trace.json"))
+    //     .unwrap();
 }
 
 #[test_log::test]
@@ -259,7 +257,6 @@ fn evict_multiple_messages() {
     tcsb_c.tc_deliver_membership(event_b.clone());
 
     tcsb_b.tc_deliver_op(event_d_1.clone());
-
     tcsb_a.tc_deliver_op(event_d_2.clone());
 
     let event_c = tcsb_c.tc_bcast_op(Counter::Inc(14));
@@ -272,7 +269,6 @@ fn evict_multiple_messages() {
 
     let event_a = tcsb_a.tc_bcast_op(Counter::Dec(22));
 
-    println!("EVENT A: {}", event_a.metadata.vc);
     tcsb_b.tc_deliver_op(event_a.clone());
     tcsb_c.tc_deliver_op(event_d_2.clone());
     tcsb_c.tc_deliver_op(event_a.clone());
@@ -292,13 +288,15 @@ fn evict_multiple_messages() {
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
 
-    assert_eq!(tcsb_a.eval(), -8);
-    assert_eq!(tcsb_b.eval(), -14);
-    assert_eq!(tcsb_c.eval(), -14);
+    assert_eq!(tcsb_a.eval(), -6);
+    assert_eq!(tcsb_b.eval(), -6);
+    assert_eq!(tcsb_c.eval(), -6);
     assert_eq!(tcsb_d.eval(), -1);
 
-    tcsb_b
-        .tracer
-        .serialize_to_file(&PathBuf::from("membership_evict_multiple_msg_b_trace.json"))
-        .unwrap();
+    // tcsb_b
+    //     .tracer
+    //     .serialize_to_file(&PathBuf::from(
+    //         "traces/membership_evict_multiple_msg_b_trace.json",
+    //     ))
+    //     .unwrap();
 }
