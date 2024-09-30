@@ -1,5 +1,5 @@
 use colored::*;
-use log::{debug, error, info};
+use log::{debug, error, info, log_enabled, Level};
 use radix_trie::TrieCommon;
 
 use super::po_log::POLog;
@@ -9,7 +9,7 @@ use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
-pub enum DeliverError {
+pub enum DeliveryError {
     UnknownPeer,
     DuplicatedEvent,
     OutOfOrderEvent,
@@ -37,6 +37,7 @@ where
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -64,6 +65,7 @@ where
             id: id.to_string(),
             state: POLog::default(),
             group_membership,
+            timestamp_extension: BTreeMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
@@ -121,7 +123,7 @@ where
             self.fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
         }
         match self.guard(&event.metadata) {
-            Err(DeliverError::UnknownPeer) | Err(DeliverError::DuplicatedEvent) => return,
+            Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
             _ => {}
         }
         self.pending.push_back(event.clone());
@@ -132,7 +134,9 @@ where
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready...
-            if !Self::guard_against_out_of_order(self, &event.metadata) {
+            if !Self::guard_against_out_of_order(self, &event.metadata)
+                && !self.guard_against_concurrent_to_remove(&event)
+            {
                 // ...deliver it
                 self.tc_deliver(event);
             } else {
@@ -158,12 +162,13 @@ where
             // Increment the new peer vector clock with its actual value
             self.ltm.update(&event.metadata.origin, &event.metadata.vc);
             // Update our own vector clock
-            self.my_vc_mut().merge(&event.metadata.vc);
+            self.my_clock_mut().merge(&event.metadata.vc);
             #[cfg(feature = "utils")]
             self.tracer.append(event.clone());
         }
 
         match event.op {
+            // Group Membership event
             Duet::First(op) => {
                 let event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = MSet::effect(&event, &self.group_membership);
@@ -179,18 +184,21 @@ where
                     );
                 }
 
-                let trie_size = self.group_membership.path_trie.values().flatten().count();
-                let state_size =
-                    self.group_membership.stable.len() + self.group_membership.unstable.len();
-                debug!(
-                    "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
-                    self.id.blue().bold(),
-                    trie_size - state_size,
-                    trie_size,
-                );
+                if log_enabled!(Level::Debug) {
+                    let trie_size = self.group_membership.path_trie.values().flatten().count();
+                    let state_size =
+                        self.group_membership.stable.len() + self.group_membership.unstable.len();
+                    debug!(
+                        "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
+                        self.id.blue().bold(),
+                        trie_size - state_size,
+                        trie_size,
+                    );
+                }
 
                 self.group_membership.garbage_collect_trie();
             }
+            // Domain-specific CRDT event
             Duet::Second(op) => {
                 let event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = O::effect(&event, &self.state);
@@ -204,15 +212,16 @@ where
                         format!("{:?}", event.op).green()
                     );
                 }
-
-                let trie_size = self.state.path_trie.values().flatten().count();
-                let state_size = self.state.stable.len() + self.state.unstable.len();
-                debug!(
-                    "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
-                    self.id.blue().bold(),
-                    trie_size - state_size,
-                    trie_size,
-                );
+                if log_enabled!(Level::Debug) {
+                    let trie_size = self.state.path_trie.values().flatten().count();
+                    let state_size = self.state.stable.len() + self.state.unstable.len();
+                    debug!(
+                        "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
+                        self.id.blue().bold(),
+                        trie_size - state_size,
+                        trie_size,
+                    );
+                }
 
                 self.state.garbage_collect_trie();
             }
@@ -226,6 +235,7 @@ where
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     fn tc_stable(&mut self) {
         let ignore = self.peers_to_ignore_for_stability();
+        self.lsv = self.ltm.svv(&ignore);
         let lower_bound = Metadata::new(self.ltm.svv(&ignore), "");
         let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
 
@@ -251,6 +261,21 @@ where
                     .green(),
                     ignore,
                 );
+                if let Some(MSet::Remove(v)) = self
+                    .group_membership
+                    .unstable
+                    .get(metadata)
+                    .map(|arc| arc.as_ref())
+                {
+                    let ext_list = self
+                        .timestamp_extension
+                        .entry(Metadata::new(self.lsv.clone(), ""))
+                        .or_default();
+                    let removed_clock = self.ltm.get(&self.id).unwrap().get(v).unwrap();
+                    ext_list.insert(v.clone(), removed_clock);
+                    // Remove every pending events from the removed peer
+                    self.pending.retain(|e| e.metadata.origin != *v);
+                }
                 MSet::stable(metadata, &mut self.group_membership);
             }
         }
@@ -268,20 +293,27 @@ where
     }
 
     /// Return the mutable vector clock of the local replica
-    pub(crate) fn my_vc_mut(&mut self) -> &mut VectorClock<String, usize> {
+    pub(crate) fn my_clock_mut(&mut self) -> &mut VectorClock<String, usize> {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
     }
 
-    fn guard(&self, metadata: &Metadata) -> Result<(), DeliverError> {
+    /// Return the vector clock of the local replica
+    pub(crate) fn my_clock(&self) -> &VectorClock<String, usize> {
+        self.ltm
+            .get(&self.id)
+            .expect("Local vector clock not found")
+    }
+
+    fn guard(&self, metadata: &Metadata) -> Result<(), DeliveryError> {
         if self.guard_against_unknow_peer(metadata) {
             error!(
                 "[{}] - Unknown peer detected: {}",
                 self.id.blue().bold(),
                 metadata.origin.red()
             );
-            return Err(DeliverError::UnknownPeer);
+            return Err(DeliveryError::UnknownPeer);
         }
         if self.guard_against_duplicates(metadata) {
             error!(
@@ -289,15 +321,17 @@ where
                 self.id.blue().bold(),
                 format!("{}", metadata.vc).red()
             );
-            return Err(DeliverError::DuplicatedEvent);
+            return Err(DeliveryError::DuplicatedEvent);
         }
         if self.guard_against_out_of_order(metadata) {
             error!(
-                "[{}] - Out-of-order event detected: {}",
+                "[{}] - Out-of-order event detected: {} from {}. Current local clock is: {}",
                 self.id.blue().bold(),
-                format!("{}", metadata.vc).red()
+                format!("{}", metadata.vc).red(),
+                metadata.origin.blue(),
+                format!("{}", self.my_clock()).red()
             );
-            return Err(DeliverError::OutOfOrderEvent);
+            return Err(DeliveryError::OutOfOrderEvent);
         }
         Ok(())
     }
@@ -342,12 +376,63 @@ where
         self.ltm.get(&metadata.origin).is_none()
     }
 
+    /// Check that the event is not coming from a peer that is going to be removed from the group
+    /// Returns true if the event is not ready to be delivered
+    fn guard_against_concurrent_to_remove(&self, event: &Event<Duet<MSet<String>, O>>) -> bool {
+        // Do not deliver the event if the origin is going to be removed from the group...
+        let will_be_removed = self
+            .group_membership
+            .unstable
+            .iter()
+            .any(|(_, o)| matches!(o.as_ref(), MSet::Remove(v) if v == &event.metadata.origin));
+        // ...unless the event is necessary to deliver other peers events
+        let necessary = self.pending.iter().any(|e| {
+            e.metadata.get_lamport(&event.metadata.origin) >= event.metadata.get_origin_lamport()
+                && e.metadata.origin != event.metadata.origin
+        });
+        will_be_removed && !necessary
+    }
+
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let my_vc = self.my_vc_mut();
-        my_vc.increment(&my_id);
-        Metadata::new(my_vc.clone(), &self.id)
+        let mut vc = {
+            let my_vc = self.my_clock_mut();
+            my_vc.increment(&my_id);
+            my_vc.clone()
+        };
+        self.add_timestamp_extension(&mut vc);
+        Metadata::new(vc, &self.id)
+    }
+
+    fn add_timestamp_extension(&mut self, vc: &mut VectorClock<String, usize>) {
+        let ext_list: Vec<(Metadata, VectorClock<String>)> = self
+            .timestamp_extension
+            .range((
+                Bound::Unbounded,
+                Bound::Included(&Metadata::new(self.lsv.clone(), "")),
+            ))
+            .map(|(m, v)| (m.clone(), v.clone()))
+            .collect();
+        let ext_list_len = ext_list.len();
+        if ext_list_len > 0 {
+            debug!(
+                "[{}] - Adding timestamp extension for {}",
+                self.id.blue().bold(),
+                format!("{}", vc).red()
+            );
+        }
+        for (m, ext) in ext_list {
+            vc.merge(&ext);
+            self.timestamp_extension.remove(&m);
+        }
+        if ext_list_len > 0 {
+            debug!(
+                "[{}] - Timestamp extension added: {}",
+                self.id.blue().bold(),
+                format!("{}", vc).red()
+            );
+        }
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
@@ -385,6 +470,7 @@ where
                 new.metadata.vc.remove(&key);
             }
         }
+        assert_eq!(self.ltm.len(), new.metadata.vc.len());
     }
 
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
