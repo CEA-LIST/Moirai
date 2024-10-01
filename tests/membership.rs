@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use po_crdt::{
     crdt::{counter::Counter, membership_set::MSet},
     protocol::tcsb::Tcsb,
@@ -232,11 +234,6 @@ fn evict() {
     assert_eq!(tcsb_b.eval(), 20);
     assert_eq!(tcsb_c.eval(), 45);
     assert_eq!(tcsb_d.eval(), 20);
-
-    // tcsb_a
-    //     .tracer
-    //     .serialize_to_file(&PathBuf::from("traces/membership_evict_a_trace.json"))
-    //     .unwrap();
 }
 
 #[test_log::test]
@@ -251,10 +248,14 @@ fn evict_multiple_messages() {
     tcsb_a.tc_deliver_op(event_d_1.clone());
     tcsb_c.tc_deliver_op(event_d_1.clone());
 
+    let event_c = tcsb_c.tc_bcast_op(Counter::Inc(10));
     let event_b = tcsb_b.tc_bcast_membership(MSet::remove("d"));
 
     tcsb_a.tc_deliver_membership(event_b.clone());
+    tcsb_a.tc_deliver_op(event_c.clone());
     tcsb_c.tc_deliver_membership(event_b.clone());
+    tcsb_b.tc_deliver_op(event_c.clone());
+    tcsb_d.tc_deliver_op(event_c);
 
     tcsb_b.tc_deliver_op(event_d_1.clone());
     tcsb_a.tc_deliver_op(event_d_2.clone());
@@ -288,15 +289,15 @@ fn evict_multiple_messages() {
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
 
-    assert_eq!(tcsb_a.eval(), -6);
-    assert_eq!(tcsb_b.eval(), -6);
-    assert_eq!(tcsb_c.eval(), -6);
-    assert_eq!(tcsb_d.eval(), -1);
+    assert_eq!(tcsb_a.eval(), 4);
+    assert_eq!(tcsb_b.eval(), 4);
+    assert_eq!(tcsb_c.eval(), 4);
+    assert_eq!(tcsb_d.eval(), 9);
 
-    // tcsb_b
-    //     .tracer
-    //     .serialize_to_file(&PathBuf::from(
-    //         "traces/membership_evict_multiple_msg_b_trace.json",
-    //     ))
-    //     .unwrap();
+    tcsb_b
+        .tracer
+        .serialize_to_file(&PathBuf::from(
+            "traces/membership_evict_multiple_msg_b_trace.json",
+        ))
+        .unwrap();
 }

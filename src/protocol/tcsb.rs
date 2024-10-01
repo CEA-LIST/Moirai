@@ -37,6 +37,8 @@ where
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
+    /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
@@ -114,7 +116,7 @@ where
 
     fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
         // Check for timestamp inconsistencies
-        if event.metadata.vc.keys().len() != self.eval_group_membership().len() {
+        if event.metadata.clock.keys().len() != self.eval_group_membership().len() {
             debug!(
                 "[{}] - Timestamp inconsistency: MSet members: {}",
                 self.id.blue().bold(),
@@ -126,6 +128,7 @@ where
             Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
             _ => {}
         }
+        // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
         // Oldest event first
         self.pending
@@ -154,15 +157,16 @@ where
             self.id.blue().bold(),
             format!("{:?}", event.op).green(),
             event.metadata.origin.blue(),
-            format!("{}", event.metadata.vc).red()
+            format!("{}", event.metadata.clock).red()
         );
         // If the event is not from the local replica
         if self.id != event.metadata.origin {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
-            self.ltm.update(&event.metadata.origin, &event.metadata.vc);
+            self.ltm
+                .update(&event.metadata.origin, &event.metadata.clock);
             // Update our own vector clock
-            self.my_clock_mut().merge(&event.metadata.vc);
+            self.my_clock_mut().merge(&event.metadata.clock);
             #[cfg(feature = "utils")]
             self.tracer.append(event.clone());
         }
@@ -244,7 +248,7 @@ where
                 info!(
                     "[{}] - {} is causally stable (op: {}) ; {:?} were ignored",
                     self.id.blue().bold(),
-                    format!("{}", metadata.vc).red(),
+                    format!("{}", metadata.clock).red(),
                     format!("{:?}", self.state.unstable.get(metadata).unwrap()).green(),
                     ignore,
                 );
@@ -253,7 +257,7 @@ where
                 info!(
                     "[{}] - {} is causally stable (op: {}) ; {:?} were ignored",
                     self.id.blue().bold(),
-                    format!("{}", metadata.vc).red(),
+                    format!("{}", metadata.clock).red(),
                     format!(
                         "{:?}",
                         self.group_membership.unstable.get(metadata).unwrap()
@@ -261,20 +265,23 @@ where
                     .green(),
                     ignore,
                 );
-                if let Some(MSet::Remove(v)) = self
+                let to_remove = self
                     .group_membership
                     .unstable
                     .get(metadata)
                     .map(|arc| arc.as_ref())
-                {
-                    let ext_list = self
-                        .timestamp_extension
-                        .entry(Metadata::new(self.lsv.clone(), ""))
-                        .or_default();
-                    let removed_clock = self.ltm.get(&self.id).unwrap().get(v).unwrap();
-                    ext_list.insert(v.clone(), removed_clock);
+                    .and_then(|op| {
+                        if let MSet::Remove(v) = op {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(id) = to_remove {
+                    self.store_lamport_of_removed_peer(&id);
                     // Remove every pending events from the removed peer
-                    self.pending.retain(|e| e.metadata.origin != *v);
+                    self.pending.retain(|e| e.metadata.origin != *id);
                 }
                 MSet::stable(metadata, &mut self.group_membership);
             }
@@ -319,7 +326,7 @@ where
             error!(
                 "[{}] - Duplicated event detected: {}",
                 self.id.blue().bold(),
-                format!("{}", metadata.vc).red()
+                format!("{}", metadata.clock).red()
             );
             return Err(DeliveryError::DuplicatedEvent);
         }
@@ -327,7 +334,7 @@ where
             error!(
                 "[{}] - Out-of-order event detected: {} from {}. Current local clock is: {}",
                 self.id.blue().bold(),
-                format!("{}", metadata.vc).red(),
+                format!("{}", metadata.clock).red(),
                 metadata.origin.blue(),
                 format!("{}", self.my_clock()).red()
             );
@@ -342,7 +349,7 @@ where
             && self
                 .ltm
                 .get(&metadata.origin)
-                .map(|ltm_clock| metadata.vc <= *ltm_clock)
+                .map(|ltm_clock| metadata.clock <= *ltm_clock)
                 .unwrap_or(false)
     }
 
@@ -350,9 +357,9 @@ where
     /// Returns true if the event is out of order
     fn guard_against_out_of_order(&self, metadata: &Metadata) -> bool {
         // We assume that the LTM and the event clock have the same number of entries
-        assert_eq!(self.ltm.len(), metadata.vc.len());
+        assert_eq!(self.ltm.len(), metadata.clock.len());
         // We assume that the event clock has an entry for its origin
-        let event_lamport_clock = metadata.vc.get(&metadata.origin).unwrap();
+        let event_lamport_clock = metadata.clock.get(&metadata.origin).unwrap();
         // We assume we know this origin
         let ltm_origin_clock = self.ltm.get(&metadata.origin).unwrap();
         // We assume that the clock we have for this origin has an entry for this origin
@@ -360,7 +367,7 @@ where
         // Either the event is the next in the sequence or the event is causally superior to the origin eviction
         let is_origin_out_of_order = event_lamport_clock != ltm_lamport_lock + 1;
         let are_other_entries_out_of_order = metadata
-            .vc
+            .clock
             .iter()
             .filter(|(k, _)| *k != &metadata.origin)
             .any(|(k, v)| {
@@ -396,16 +403,21 @@ where
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let mut vc = {
-            let my_vc = self.my_clock_mut();
-            my_vc.increment(&my_id);
-            my_vc.clone()
+        let mut clock = {
+            let my_clock = self.my_clock_mut();
+            my_clock.increment(&my_id);
+            my_clock.clone()
         };
-        self.add_timestamp_extension(&mut vc);
-        Metadata::new(vc, &self.id)
+        self.add_timestamp_extension(&mut clock);
+        Metadata::new(clock, &self.id)
     }
 
-    fn add_timestamp_extension(&mut self, vc: &mut VectorClock<String, usize>) {
+    /// Add the timestamp extension to the vector clock of the new event.
+    ///
+    /// A peer may stabilize a membership event before the other peers because
+    /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
+    /// should include the lamport clock of the evicted peer.
+    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) {
         let ext_list: Vec<(Metadata, VectorClock<String>)> = self
             .timestamp_extension
             .range((
@@ -419,20 +431,30 @@ where
             debug!(
                 "[{}] - Adding timestamp extension for {}",
                 self.id.blue().bold(),
-                format!("{}", vc).red()
+                format!("{}", clock).red()
             );
         }
         for (m, ext) in ext_list {
-            vc.merge(&ext);
+            clock.merge(&ext);
             self.timestamp_extension.remove(&m);
         }
         if ext_list_len > 0 {
             debug!(
                 "[{}] - Timestamp extension added: {}",
                 self.id.blue().bold(),
-                format!("{}", vc).red()
+                format!("{}", clock).red()
             );
         }
+    }
+
+    /// Store the lamport clock of the removed peer in the timestamp extension list.
+    fn store_lamport_of_removed_peer(&mut self, id: &String) {
+        let ext_list = self
+            .timestamp_extension
+            .entry(Metadata::new(self.lsv.clone(), ""))
+            .or_default();
+        let removed_clock = self.ltm.get(&self.id).unwrap().get(id).unwrap();
+        ext_list.insert(id.clone(), removed_clock);
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
@@ -444,7 +466,7 @@ where
         ltm_keys: &[String],
     ) {
         for key in ltm_keys.iter() {
-            if !new.metadata.vc.contains(key) {
+            if !new.metadata.clock.contains(key) {
                 let value = if self
                     .group_membership
                     .unstable
@@ -461,16 +483,16 @@ where
                         Duet::Second(_) => continue,
                     }
                 };
-                new.metadata.vc.insert(key.clone(), value);
+                new.metadata.clock.insert(key.clone(), value);
             }
         }
         // TODO: Verify if the following code is correct
-        for key in new.metadata.vc.keys() {
+        for key in new.metadata.clock.keys() {
             if !ltm_keys.contains(&key) {
-                new.metadata.vc.remove(&key);
+                new.metadata.clock.remove(&key);
             }
         }
-        assert_eq!(self.ltm.len(), new.metadata.vc.len());
+        assert_eq!(self.ltm.len(), new.metadata.clock.len());
     }
 
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
