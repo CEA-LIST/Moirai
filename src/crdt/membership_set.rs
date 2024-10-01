@@ -48,7 +48,7 @@ where
             state.stable.iter().any(|o| match o.as_ref() {
                 MSet::Add(v2) | MSet::Remove(v2) => v == v2,
             }) || state.unstable.iter().any(|(t, o)| match o.as_ref() {
-                MSet::Add(v2) | MSet::Remove(v2) => v == v2 && metadata.vc != t.vc,
+                MSet::Add(v2) | MSet::Remove(v2) => v == v2 && metadata.clock != t.clock,
             })
         };
 
@@ -59,7 +59,7 @@ where
                 .iter()
                 .any(|o| matches!(o.as_ref(), MSet::Add(v2) if v == v2))
                 && !state.unstable.iter().any(
-                    |(t, o)| matches!(o.as_ref(), MSet::Add(v2) if v == v2 && metadata.vc != t.vc),
+                    |(t, o)| matches!(o.as_ref(), MSet::Add(v2) if v == v2 && metadata.clock != t.clock),
                 ),
         };
 

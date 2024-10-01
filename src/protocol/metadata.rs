@@ -11,31 +11,31 @@ use std::{
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
 #[cfg_attr(feature = "utils", derive(Serialize, Deserialize))]
 pub struct Metadata {
-    pub vc: VectorClock<String, usize>,
+    pub clock: VectorClock<String, usize>,
     pub origin: String,
 }
 
 impl Metadata {
-    pub fn new(vc: VectorClock<String, usize>, origin: &str) -> Self {
+    pub fn new(clock: VectorClock<String, usize>, origin: &str) -> Self {
         Self {
-            vc,
+            clock,
             origin: origin.to_string(),
         }
     }
 
     pub fn bot() -> Self {
         Self {
-            vc: VectorClock::bot(),
+            clock: VectorClock::bot(),
             origin: String::new(),
         }
     }
 
     pub fn get_origin_lamport(&self) -> usize {
-        self.vc.get(&self.origin).expect("Origin not found")
+        self.clock.get(&self.origin).expect("Origin not found")
     }
 
     pub fn get_lamport(&self, origin: &str) -> usize {
-        self.vc
+        self.clock
             .get(&String::from(origin))
             .expect("Origin not found")
     }
@@ -49,7 +49,7 @@ impl PartialOrd for Metadata {
 
 impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
-        let clock_cmp: Option<Ordering> = self.vc.partial_cmp(&other.vc);
+        let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
         match clock_cmp {
             Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
             Some(Ordering::Less) => Ordering::Less,
@@ -65,6 +65,6 @@ impl Display for Metadata {
         } else {
             format!("@{}", self.origin)
         };
-        write!(f, "{}{}", self.vc, origin)
+        write!(f, "{}{}", self.clock, origin)
     }
 }

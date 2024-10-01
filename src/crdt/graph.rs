@@ -37,33 +37,33 @@ where
         match (&old_event.op, &new_event.op) {
             (Graph::AddVertex(v1), Graph::AddVertex(v2)) => {
                 matches!(
-                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && v1 == v2
             }
             (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => {
-                old_event.metadata.vc < new_event.metadata.vc && v1 == v2
+                old_event.metadata.clock < new_event.metadata.clock && v1 == v2
             }
             (Graph::AddVertex(_), Graph::AddArc(_, _)) => false,
             (Graph::AddVertex(v1), Graph::RemoveArc(v2, v3)) => {
-                old_event.metadata.vc < new_event.metadata.vc && (v1 == v2 || v1 == v3)
+                old_event.metadata.clock < new_event.metadata.clock && (v1 == v2 || v1 == v3)
             }
             (Graph::AddArc(_, _), Graph::AddVertex(_)) => false,
             (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => {
                 matches!(
-                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && (v3 == v1 || v3 == v2)
             }
             (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => {
                 matches!(
-                    old_event.metadata.vc.partial_cmp(&new_event.metadata.vc),
+                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && v1 == v3
                     && v2 == v4
             }
             (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => {
-                old_event.metadata.vc < new_event.metadata.vc && v1 == v3 && v2 == v4
+                old_event.metadata.clock < new_event.metadata.clock && v1 == v3 && v2 == v4
             }
             _ => false,
         }

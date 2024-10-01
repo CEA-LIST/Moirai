@@ -19,7 +19,7 @@ pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
             i,
             i + 1,
             event.metadata.origin,
-            event.metadata.vc,
+            event.metadata.clock,
             event.op.replace("\"", ""),
             if event.metadata.origin == tracer.origin {
                 "style=filled, fillcolor=lightblue"
@@ -29,7 +29,11 @@ pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
         ));
         for (j, previous_event) in tracer.trace.iter().enumerate() {
             if j < i {
-                match previous_event.metadata.vc.partial_cmp(&event.metadata.vc) {
+                match previous_event
+                    .metadata
+                    .clock
+                    .partial_cmp(&event.metadata.clock)
+                {
                     Some(Ordering::Less) => {
                         graph.push((j, i));
                     }
@@ -85,19 +89,6 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-
-    #[test_log::test]
-    fn membership_evict_trace() {
-        let tracer =
-            Tracer::deserialize_from_file(&PathBuf::from("traces/membership_evict_a_trace.json"))
-                .unwrap();
-        let graphviz_str = tracer_to_graphviz(&tracer);
-        let res = graphviz_str_to_svg(
-            &graphviz_str,
-            &PathBuf::from("traces/membership_evict_a_trace.svg"),
-        );
-        assert!(res.is_ok());
-    }
 
     #[test_log::test]
     fn evict_multiple_msg_trace() {

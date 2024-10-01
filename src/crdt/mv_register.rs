@@ -22,7 +22,7 @@ where
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        old_event.metadata.vc < new_event.metadata.vc
+        old_event.metadata.clock < new_event.metadata.clock
     }
 
     fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {

@@ -25,7 +25,7 @@ where
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        old_event.metadata.vc < new_event.metadata.vc
+        old_event.metadata.clock < new_event.metadata.clock
             && (matches!(new_event.op, RWSet::Clear)
                 || match (&old_event.op, &new_event.op) {
                     (RWSet::Add(v1), RWSet::Add(v2))
@@ -48,7 +48,7 @@ where
                 RWSet::Add(v2) | RWSet::Remove(v2) => v == v2,
                 _ => false,
             }) || state.unstable.iter().any(|(t, o)| match o.as_ref() {
-                RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && metadata.vc != t.vc,
+                RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && metadata.clock != t.clock,
                 _ => false,
             })
         };
@@ -60,7 +60,7 @@ where
                 .iter()
                 .any(|o| matches!(o.as_ref(), RWSet::Add(v2) if v == v2))
                 && !state.unstable.iter().any(
-                    |(t, o)| matches!(o.as_ref(), RWSet::Add(v2) if v == v2 && metadata.vc != t.vc),
+                    |(t, o)| matches!(o.as_ref(), RWSet::Add(v2) if v == v2 && metadata.clock != t.clock),
                 ),
             RWSet::Clear => true,
         };

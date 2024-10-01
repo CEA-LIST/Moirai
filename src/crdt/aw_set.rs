@@ -25,7 +25,7 @@ where
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        old_event.metadata.vc < new_event.metadata.vc
+        old_event.metadata.clock < new_event.metadata.clock
             && (matches!(new_event.op, AWSet::Clear)
                 || match (&old_event.op, &new_event.op) {
                     (AWSet::Add(v1), AWSet::Add(v2))
