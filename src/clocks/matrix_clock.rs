@@ -1,4 +1,5 @@
 use super::vector_clock::VectorClock;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -7,7 +8,8 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MatrixClock<K, C>
 where
     K: PartialOrd + Hash + Clone + Eq + Ord,

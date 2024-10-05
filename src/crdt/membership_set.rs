@@ -7,7 +7,11 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::path::Path;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum MSet<V> {
     Add(V),
     Remove(V),

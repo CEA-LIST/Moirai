@@ -8,9 +8,11 @@ use std::{
     ops::{Add, AddAssign},
 };
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VectorClock<K = usize, C = usize>
 where
     K: Eq + Hash + Clone,

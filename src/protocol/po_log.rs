@@ -1,16 +1,17 @@
-use std::collections::btree_map::{Values, ValuesMut};
-use std::collections::BTreeMap;
-use std::iter::Chain;
-use std::path::PathBuf;
-use std::slice::{Iter, IterMut};
-use std::sync::{Arc, Weak};
-
 use super::event::Event;
 use super::{metadata::Metadata, pure_crdt::PureCRDT};
 use colored::Colorize;
 use log::info;
 use radix_trie::{Trie, TrieCommon};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use std::collections::btree_map::{Values, ValuesMut};
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
+use std::iter::Chain;
+use std::path::PathBuf;
+use std::slice::{Iter, IterMut};
+use std::sync::{Arc, Weak};
 
 pub type PathTrie<O> = Trie<PathBuf, Vec<Weak<O>>>;
 pub type Log<O> = BTreeMap<Metadata, Arc<O>>;
@@ -22,6 +23,7 @@ pub type Log<O> = BTreeMap<Metadata, Arc<O>>;
 /// In actual implementations, the PO-Log can be split in two components:
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct POLog<O>
 where
     O: PureCRDT + Debug,

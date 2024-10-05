@@ -1,3 +1,6 @@
+use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::{
@@ -6,11 +9,10 @@ use std::{
     path::Path,
 };
 
-use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
-
 pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Counter<V: Number> {
     Inc(V),
     Dec(V),
