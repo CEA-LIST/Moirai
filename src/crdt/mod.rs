@@ -17,8 +17,14 @@ pub mod test_util {
     pub type Triplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
 
     pub fn twins<O: PureCRDT + Clone + Debug>() -> Twins<O> {
+        #[cfg(feature = "utils")]
         let mut tcsb_a = Tcsb::<O>::new_with_trace("a");
+        #[cfg(feature = "utils")]
         let mut tcsb_b = Tcsb::<O>::new_with_trace("b");
+        #[cfg(not(feature = "utils"))]
+        let mut tcsb_a = Tcsb::<O>::new("a");
+        #[cfg(not(feature = "utils"))]
+        let mut tcsb_b = Tcsb::<O>::new("b");
 
         let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
         let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));

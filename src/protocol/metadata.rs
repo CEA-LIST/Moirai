@@ -1,3 +1,4 @@
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::clocks::vector_clock::VectorClock;
@@ -9,7 +10,7 @@ use std::{
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
-#[cfg_attr(feature = "utils", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Metadata {
     pub clock: VectorClock<String, usize>,
     pub origin: String,

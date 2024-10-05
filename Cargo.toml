@@ -6,34 +6,29 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-uuid = { version = "1.7.0", features = [
-	"v4",                # Lets you generate random UUIDs
-	"fast-rng",          # Use a faster (but still sufficiently random) RNG
-	"macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
-], optional = true }
-petgraph = { version = "0.6.4", features = ["serde-1"], optional = true }
 log = "0.4"
 env_logger = "0.11.2"
 test-log = "0.2.15"
-serde = { version = "1.0", features = ["derive"] }
-radix_trie = "0.2"
+serde = { version = "1.0", features = ["derive", "rc"] }
+radix_trie = { version = "0.2", features = ["serde"] }
 colored = "2.1.0"
 serde_json = { version = "1.0.128", optional = true }
 anyhow = { version = "1.0.89", optional = true }
 graphviz-rust = { version = "0.9.0", optional = true }
+petgraph = { version = "0.6.4", features = ["serde-1"], optional = true }
 
 [dev-dependencies]
 deepsize = { version = "0.2.0" }
-rand = { version = "0.8.5" }
-dhat = "0.3.3"
-rayon = "1.10"
+# rand = { version = "0.8.5" }
+# dhat = "0.3.3"
 
 [features]
-default = ["crdt", "utils"]
-crdt = ["dep:petgraph", "dep:uuid"]
-utils = ["dep:serde_json", "dep:anyhow", "dep:graphviz-rust"]
-dhat-heap = []                                                # if you are doing heap profiling
-dhat-ad-hoc = []                                              # if you are doing ad hoc profiling
+default = ["crdt", "serde"]
+crdt = ["dep:petgraph"]
+serde = ["dep:serde_json"]
+utils = ["serde", "dep:anyhow", "dep:graphviz-rust"]
+# dhat-heap = []                                                # if you are doing heap profiling
+# dhat-ad-hoc = []                                              # if you are doing ad hoc profiling
 
 [profile.release]
 debug = 1
