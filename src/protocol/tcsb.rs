@@ -1,7 +1,9 @@
+use camino::Utf8PathBuf;
 use colored::*;
 use log::{debug, error, info, log_enabled, Level};
 use radix_trie::TrieCommon;
 
+use super::pathbuf_key::PathBufKey;
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
@@ -12,7 +14,6 @@ use crate::utils::tracer::Tracer;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
@@ -62,7 +63,7 @@ where
         group_membership.stable.push(Arc::clone(&op));
         group_membership
             .path_trie
-            .insert(PathBuf::default(), vec![Arc::downgrade(&op)]);
+            .insert(PathBufKey::default(), vec![Arc::downgrade(&op)]);
         Self {
             id: id.to_string(),
             state: POLog::default(),
@@ -292,11 +293,11 @@ where
 
     /// Utilitary function to evaluate the current state of the whole CRDT.
     pub fn eval(&self) -> O::Value {
-        O::eval(&self.state, &PathBuf::default())
+        O::eval(&self.state, &Utf8PathBuf::default())
     }
 
     pub fn eval_group_membership(&self) -> HashSet<String> {
-        MSet::eval(&self.group_membership, &PathBuf::default())
+        MSet::eval(&self.group_membership, &Utf8PathBuf::default())
     }
 
     /// Return the mutable vector clock of the local replica

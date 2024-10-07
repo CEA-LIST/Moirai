@@ -1,12 +1,12 @@
 use super::tracer::Tracer;
 use anyhow::Result;
+use camino::Utf8Path;
 use graphviz_rust::cmd::Format;
 use graphviz_rust::exec;
 use graphviz_rust::parse;
 use graphviz_rust::printer::PrinterContext;
 use std::cmp::Ordering;
 use std::fs::write;
-use std::path::Path;
 
 pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
     let mut graphviz_str = String::new();
@@ -53,7 +53,7 @@ pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
     graphviz_str
 }
 
-pub fn graphviz_str_to_svg(graphviz_str: &str, path: &Path) -> Result<()> {
+pub fn graphviz_str_to_svg(graphviz_str: &str, path: &Utf8Path) -> Result<()> {
     let g = parse(graphviz_str).map_err(|e| anyhow::anyhow!(e))?;
     let graph_svg = exec(g, &mut PrinterContext::default(), vec![Format::Svg.into()])?;
     write(path, graph_svg)?;
@@ -86,20 +86,20 @@ fn transitive_reduction(graph: &mut Vec<(usize, usize)>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use camino::Utf8PathBuf;
 
     use super::*;
 
     #[test_log::test]
     fn evict_multiple_msg_trace() {
-        let tracer = Tracer::deserialize_from_file(&PathBuf::from(
+        let tracer = Tracer::deserialize_from_file(&Utf8PathBuf::from(
             "traces/membership_evict_multiple_msg_b_trace.json",
         ))
         .unwrap();
         let graphviz_str = tracer_to_graphviz(&tracer);
         let res = graphviz_str_to_svg(
             &graphviz_str,
-            &PathBuf::from("traces/membership_evict_multiple_msg_b_trace.svg"),
+            &Utf8PathBuf::from("traces/membership_evict_multiple_msg_b_trace.svg"),
         );
         assert!(res.is_ok());
     }
