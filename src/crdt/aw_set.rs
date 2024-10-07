@@ -1,3 +1,5 @@
+use camino::Utf8Path;
+
 use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::po_log::POLog;
@@ -5,7 +7,6 @@ use crate::protocol::pure_crdt::PureCRDT;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum AWSet<V> {
@@ -42,7 +43,7 @@ where
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
         let mut set = Self::Value::new();
         for o in state.iter() {
             if let AWSet::Add(v) = o.as_ref() {

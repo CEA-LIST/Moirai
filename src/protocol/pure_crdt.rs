@@ -1,5 +1,6 @@
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 use super::tcsb::RedundantRelation;
 use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
@@ -75,9 +76,9 @@ pub trait PureCRDT: Sized + Clone + Debug {
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
-    fn eval(state: &POLog<Self>, path: &Path) -> Self::Value;
+    fn eval(state: &POLog<Self>, path: &Utf8Path) -> Self::Value;
 
-    fn to_path(_op: &Self) -> PathBuf {
-        PathBuf::default()
+    fn to_path(_op: &Self) -> Utf8PathBuf {
+        Utf8PathBuf::default()
     }
 }

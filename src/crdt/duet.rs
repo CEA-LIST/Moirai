@@ -1,6 +1,7 @@
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::protocol::tcsb::RedundantRelation;
 use crate::protocol::utils::prune_redundant_events;
@@ -70,7 +71,7 @@ where
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, path: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, path: &Utf8Path) -> Self::Value {
         let mut f_log: POLog<F> = POLog::new();
         let mut s_log: POLog<S> = POLog::new();
         for op in state.iter() {
@@ -85,10 +86,10 @@ where
         )
     }
 
-    fn to_path(op: &Self) -> PathBuf {
+    fn to_path(op: &Self) -> Utf8PathBuf {
         match op {
-            Duet::First(fo) => PathBuf::from("first").join(F::to_path(fo)),
-            Duet::Second(so) => PathBuf::from("second").join(S::to_path(so)),
+            Duet::First(fo) => Utf8PathBuf::from("first").join(F::to_path(fo)),
+            Duet::Second(so) => Utf8PathBuf::from("second").join(S::to_path(so)),
         }
     }
 }

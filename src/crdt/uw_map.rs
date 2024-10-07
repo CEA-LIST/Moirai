@@ -1,13 +1,11 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
+use camino::{Utf8Path, Utf8PathBuf};
 use radix_trie::TrieCommon;
 
-use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
+use crate::protocol::{
+    event::Event, metadata::Metadata, pathbuf_key::PathBufKey, po_log::POLog, pure_crdt::PureCRDT,
+};
 
 #[derive(Clone, Debug)]
 pub enum UWMap<O>
@@ -44,9 +42,9 @@ where
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, path: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, path: &Utf8Path) -> Self::Value {
         let mut map = Self::Value::new();
-        let ops_by_path = state.path_trie.subtrie(path);
+        let ops_by_path = state.path_trie.subtrie(&PathBufKey::new(path));
         if ops_by_path.is_none() {
             return map;
         }
@@ -64,16 +62,16 @@ where
             }
             if let Some(k) = key {
                 let log = logs_by_path.get_mut(&k).unwrap();
-                map.insert(k.clone(), O::eval(log, &PathBuf::from(k)));
+                map.insert(k.clone(), O::eval(log, Utf8Path::new(&k)));
             }
         }
         map
     }
 
-    fn to_path(op: &Self) -> PathBuf {
+    fn to_path(op: &Self) -> Utf8PathBuf {
         match op {
-            UWMap::Update(k, v) => PathBuf::from(k).join(O::to_path(v)),
-            UWMap::Remove(k) => PathBuf::from(k),
+            UWMap::Update(k, v) => Utf8PathBuf::from(k).join(O::to_path(v)),
+            UWMap::Remove(k) => Utf8PathBuf::from(k),
         }
     }
 }

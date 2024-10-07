@@ -1,22 +1,22 @@
 use super::event::Event;
+use super::pathbuf_key::PathBufKey;
 use super::{metadata::Metadata, pure_crdt::PureCRDT};
 use colored::Colorize;
 use log::info;
-use radix_trie::{Trie, TrieCommon};
+use radix_trie::Trie;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::btree_map::{Values, ValuesMut};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::iter::Chain;
-use std::path::PathBuf;
 use std::slice::{Iter, IterMut};
 use std::sync::{Arc, Weak};
 
-pub type PathTrie<O> = Trie<PathBuf, Vec<Weak<O>>>;
+pub type PathTrie<O> = Trie<PathBufKey, Vec<Weak<O>>>;
 pub type Log<O> = BTreeMap<Metadata, Arc<O>>;
 
-/// Causal DAG operation history
+/// # Causal DAG operation history
 ///
 /// A Partially Ordered Log (PO-Log), is a chronological record that
 /// preserves all executed operations alongside their respective timestamps.
@@ -49,27 +49,35 @@ where
         let rc_op = Arc::new(event.op.clone());
         let weak_op = Arc::downgrade(&rc_op);
         self.unstable.insert(event.metadata.clone(), rc_op);
-        if let Some(subtrie) = self.path_trie.get_mut(&O::to_path(&event.op)) {
+        if let Some(subtrie) = self
+            .path_trie
+            .get_mut(&PathBufKey::new(&O::to_path(&event.op)))
+        {
             subtrie.push(weak_op);
         } else {
-            self.path_trie.insert(O::to_path(&event.op), vec![weak_op]);
+            self.path_trie
+                .insert(PathBufKey::new(&O::to_path(&event.op)), vec![weak_op]);
         }
 
-        let path_trie_count = self.path_trie.values().flatten().count();
+        let path_trie_count = radix_trie::TrieCommon::values(&self.path_trie)
+            .flatten()
+            .count();
         let state_len = self.stable.len() + self.unstable.len();
         assert!(path_trie_count >= state_len);
     }
 
     /// Garbage collect dead weak references from the path trie.
     pub fn garbage_collect_trie(&mut self) {
-        let keys = self.path_trie.keys().cloned().collect::<Vec<PathBuf>>();
+        let keys = radix_trie::TrieCommon::keys(&self.path_trie)
+            .cloned()
+            .collect::<Vec<PathBufKey>>();
         for key in keys {
             self.garbage_collect_trie_by_path(&key);
         }
     }
 
     /// Garbage collect dead weak references from the path trie, given a path.
-    pub fn garbage_collect_trie_by_path(&mut self, path: &PathBuf) {
+    pub fn garbage_collect_trie_by_path(&mut self, path: &PathBufKey) {
         if let Some(subtrie) = self.path_trie.get_mut(path) {
             subtrie.retain(|weak_op| weak_op.upgrade().is_some());
             if subtrie.is_empty() {

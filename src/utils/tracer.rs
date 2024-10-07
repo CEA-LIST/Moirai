@@ -1,7 +1,8 @@
 use crate::protocol::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use anyhow::Result;
+use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, fs::File, io::Write, path::Path};
+use std::{fmt::Debug, fs::File, io::Write};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,14 +29,14 @@ impl Tracer {
         serde_json::to_string(&self).map_err(Into::into)
     }
 
-    pub fn serialize_to_file(&self, path: &Path) -> Result<()> {
+    pub fn serialize_to_file(&self, path: &Utf8Path) -> Result<()> {
         let mut file = File::create(path)?;
         let serialized = self.serialize()?;
         file.write_all(serialized.as_bytes())?;
         Ok(())
     }
 
-    pub fn deserialize_from_file(path: &Path) -> Result<Self> {
+    pub fn deserialize_from_file(path: &Utf8Path) -> Result<Self> {
         let file = File::open(path)?;
         let tracer: Self = serde_json::from_reader(file)?;
         Ok(tracer)

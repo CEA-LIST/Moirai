@@ -1,9 +1,10 @@
+use camino::Utf8Path;
+
 use crate::protocol::metadata::Metadata;
 use crate::protocol::po_log::POLog;
 use crate::protocol::{event::Event, pure_crdt::PureCRDT};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum MVRegister<V> {
@@ -31,7 +32,7 @@ where
 
     fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
         let mut vec = Self::Value::new();
         for op in state.iter() {
             if let MVRegister::Write(v) = op.as_ref() {

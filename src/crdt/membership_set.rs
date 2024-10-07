@@ -2,13 +2,12 @@ use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::po_log::POLog;
 use crate::protocol::pure_crdt::PureCRDT;
+use camino::Utf8Path;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::path::Path;
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -82,7 +81,7 @@ where
         }
     }
 
-    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
         let mut set = Self::Value::new();
         for o in &state.stable {
             if let MSet::Add(v) = o.as_ref() {

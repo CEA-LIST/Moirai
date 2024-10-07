@@ -1,3 +1,4 @@
+use camino::Utf8Path;
 use petgraph::graph::DiGraph;
 
 use crate::protocol::event::Event;
@@ -8,7 +9,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub enum Graph<V> {
@@ -37,7 +37,10 @@ where
         match (&old_event.op, &new_event.op) {
             (Graph::AddVertex(v1), Graph::AddVertex(v2)) => {
                 matches!(
-                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
+                    old_event
+                        .metadata
+                        .clock
+                        .partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && v1 == v2
             }
@@ -51,13 +54,19 @@ where
             (Graph::AddArc(_, _), Graph::AddVertex(_)) => false,
             (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => {
                 matches!(
-                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
+                    old_event
+                        .metadata
+                        .clock
+                        .partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && (v3 == v1 || v3 == v2)
             }
             (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => {
                 matches!(
-                    old_event.metadata.clock.partial_cmp(&new_event.metadata.clock),
+                    old_event
+                        .metadata
+                        .clock
+                        .partial_cmp(&new_event.metadata.clock),
                     None | Some(Ordering::Less)
                 ) && v1 == v3
                     && v2 == v4
@@ -75,7 +84,7 @@ where
 
     fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();

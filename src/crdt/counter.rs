@@ -1,4 +1,5 @@
 use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
+use camino::Utf8Path;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -6,7 +7,6 @@ use std::fmt::Display;
 use std::{
     borrow::Borrow,
     ops::{Add, AddAssign, SubAssign},
-    path::Path,
 };
 
 pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
@@ -35,7 +35,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, _: &Path) -> Self::Value {
+    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
         let mut counter = Self::Value::default();
         for op in state.iter() {
             match op.borrow() {
