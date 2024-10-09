@@ -36,20 +36,3 @@ pub(crate) fn prune_redundant_events<O: PureCRDT + Debug>(
 
     (remove_stable_by_index, remove_unstable_by_key)
 }
-
-#[deprecated]
-pub(crate) fn _prune_redundant_events_mut<O: PureCRDT + Debug>(
-    event: &Event<O>,
-    state: &mut POLog<O>,
-    r_relation: RedundantRelation<O>,
-) {
-    // Keep only the operations that are not made redundant by the new operation
-    state.stable.retain(|o| {
-        let old_event: Event<O> = Event::new(o.as_ref().clone(), Metadata::default());
-        !(r_relation(&old_event, event))
-    });
-    state.unstable.retain(|m, o| {
-        let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
-        !(r_relation(&old_event, event))
-    });
-}

@@ -291,6 +291,14 @@ where
         self.update_ltm_membership();
     }
 
+    pub fn state_transfer(&mut self, other: &Tcsb<O>) {
+        self.state = other.state.clone();
+        self.group_membership = other.group_membership.clone();
+        self.ltm = other.ltm.clone();
+        self.ltm.most_update(&self.id);
+        self.lsv = other.lsv.clone();
+    }
+
     /// Utilitary function to evaluate the current state of the whole CRDT.
     pub fn eval(&self) -> O::Value {
         O::eval(&self.state, &Utf8PathBuf::default())
@@ -466,8 +474,11 @@ where
         new: &mut Event<Duet<MSet<String>, O>>,
         ltm_keys: &[String],
     ) {
+        // Missing keys in the new event
         for key in ltm_keys.iter() {
             if !new.metadata.clock.contains(key) {
+                // If a remove is waiting to be stabilized, set the value to usize::MAX
+                // because the incoming message may be the first one after the remove
                 let value = if self
                     .group_membership
                     .unstable
@@ -476,24 +487,25 @@ where
                 {
                     usize::MAX
                 } else {
-                    match &new.op {
-                        Duet::First(membership) => match membership {
-                            MSet::Add(_) => 0,
-                            MSet::Remove(_) => usize::MAX,
-                        },
-                        Duet::Second(_) => continue,
-                    }
+                    0
                 };
                 new.metadata.clock.insert(key.clone(), value);
             }
         }
         // TODO: Verify if the following code is correct
+        // Missing keys in the LTM
         for key in new.metadata.clock.keys() {
             if !ltm_keys.contains(&key) {
                 new.metadata.clock.remove(&key);
             }
         }
-        assert_eq!(self.ltm.len(), new.metadata.clock.len());
+        assert_eq!(
+            self.ltm.len(),
+            new.metadata.clock.len(),
+            "Timestamp inconsistency: LTM keys: {:?}, Event keys: {:?}",
+            ltm_keys,
+            new.metadata.clock.keys()
+        );
     }
 
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
