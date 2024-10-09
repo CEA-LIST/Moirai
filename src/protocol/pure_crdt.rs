@@ -29,18 +29,6 @@ pub trait PureCRDT: Sized + Clone + Debug {
         (keep, remove_stable_by_index, remove_unstable_by_key)
     }
 
-    #[deprecated]
-    fn _effect_mut(event: Event<Self>, state: &mut POLog<Self>) {
-        if Self::r(&event, state) {
-            // The operation is redundant
-            prune_redundant_events(&event, state, Self::r_zero);
-        } else {
-            // The operation is not redundant
-            prune_redundant_events(&event, state, Self::r_one);
-            state.new_event(&event);
-        }
-    }
-
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)

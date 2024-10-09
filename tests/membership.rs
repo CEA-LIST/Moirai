@@ -15,11 +15,11 @@ fn twins() -> (Tcsb<Counter<i32>>, Tcsb<Counter<i32>>) {
     #[cfg(not(feature = "utils"))]
     let mut tcsb_b = Tcsb::new("b");
 
-    let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
-    let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));
+    let _event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
-    tcsb_b.tc_deliver_membership(event_a);
-    tcsb_a.tc_deliver_membership(event_b);
+    // --> Causal stability <--
+    tcsb_b.state_transfer(&tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
@@ -53,17 +53,8 @@ fn quadruplet() -> (
 
     // --> Causal stability <--
 
-    // State transfer
-    tcsb_c.group_membership = tcsb_b.group_membership.clone();
-    tcsb_c.lsv = tcsb_b.lsv.clone();
-    tcsb_c.ltm = tcsb_b.ltm.clone();
-    tcsb_c.state = tcsb_b.state.clone();
-
-    // State transfer
-    tcsb_d.group_membership = tcsb_a.group_membership.clone();
-    tcsb_d.lsv = tcsb_a.lsv.clone();
-    tcsb_d.ltm = tcsb_a.ltm.clone();
-    tcsb_d.state = tcsb_a.state.clone();
+    tcsb_c.state_transfer(&tcsb_b);
+    tcsb_d.state_transfer(&tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
@@ -112,10 +103,7 @@ fn join_multiple_members() {
     let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
     tcsb_b.tc_deliver_membership(event_a);
 
-    // State transfer
-    tcsb_c.group_membership = tcsb_b.group_membership.clone();
-    tcsb_c.lsv = tcsb_b.lsv.clone();
-    tcsb_c.ltm = tcsb_b.ltm.clone();
+    tcsb_c.state_transfer(&tcsb_b);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
@@ -144,17 +132,8 @@ fn concurrent_joins() {
 
     // --> Causal stability <--
 
-    // State transfer
-    tcsb_c.group_membership = tcsb_b.group_membership.clone();
-    tcsb_c.lsv = tcsb_b.lsv.clone();
-    tcsb_c.ltm = tcsb_b.ltm.clone();
-    tcsb_c.state = tcsb_b.state.clone();
-
-    // State transfer
-    tcsb_d.group_membership = tcsb_a.group_membership.clone();
-    tcsb_d.lsv = tcsb_a.lsv.clone();
-    tcsb_d.ltm = tcsb_a.ltm.clone();
-    tcsb_d.state = tcsb_a.state.clone();
+    tcsb_c.state_transfer(&tcsb_b);
+    tcsb_d.state_transfer(&tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
@@ -317,6 +296,29 @@ fn evict_multiple_messages() {
             "traces/membership_evict_multiple_msg_b_trace.json",
         ))
         .unwrap();
+}
+
+#[test_log::test]
+fn join_multiple_members_same_node() {
+    let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
+    let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
+
+    let _ = tcsb_a.tc_bcast_membership(MSet::add("b"));
+
+    tcsb_b.state_transfer(&tcsb_a);
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
+
+    tcsb_b.tc_deliver_membership(event_a);
+    let event_a = tcsb_a.tc_bcast_op(Counter::Inc(5));
+
+    tcsb_b.tc_deliver_op(event_a);
+
+    let event_b = tcsb_b.tc_bcast_op(Counter::Dec(1));
+    tcsb_a.tc_deliver_op(event_b);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_a.ltm.keys(), tcsb_b.ltm.keys())
 }
 
 // #[test_log::test]

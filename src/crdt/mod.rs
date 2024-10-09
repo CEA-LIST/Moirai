@@ -26,11 +26,13 @@ pub mod test_util {
         #[cfg(not(feature = "utils"))]
         let mut tcsb_b = Tcsb::<O>::new("b");
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
-        let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));
+        let _event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
 
-        tcsb_b.tc_deliver_membership(event_a);
-        tcsb_a.tc_deliver_membership(event_b);
+        // --> Causal stability <--
+        tcsb_b.state_transfer(&tcsb_a);
+
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
         (tcsb_a, tcsb_b)
     }

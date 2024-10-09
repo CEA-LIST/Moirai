@@ -104,6 +104,19 @@ where
         assert!(self.is_square());
     }
 
+    /// Update the given key in the matrix clock with the value of the other keys
+    pub fn most_update(&mut self, key: &K) {
+        let keys: Vec<K> = self.clock.keys().cloned().collect();
+        let mut vc = VectorClock::from(&keys, &vec![C::default(); keys.len()]);
+        for k in &keys {
+            if k != key {
+                vc.merge(self.get(k).unwrap());
+            }
+        }
+        self.update(key, &vc);
+        assert!(self.is_square());
+    }
+
     /// Check if the matrix clock is square
     pub fn is_square(&self) -> bool {
         let n = self.clock.len();
