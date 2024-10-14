@@ -58,16 +58,10 @@ where
 {
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
-        let mut group_membership = POLog::default();
-        let op = Arc::new(MSet::Add(id.to_string()));
-        group_membership.stable.push(Arc::clone(&op));
-        group_membership
-            .path_trie
-            .insert(PathBufKey::default(), vec![Arc::downgrade(&op)]);
         Self {
             id: id.to_string(),
             state: POLog::default(),
-            group_membership,
+            group_membership: Self::create_group_membership(id),
             timestamp_extension: BTreeMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
@@ -554,24 +548,41 @@ where
     /// Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
     fn update_ltm_membership(&mut self) {
         let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
+        // Add missing keys
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
                 self.ltm.add_key(member.clone());
             }
         }
+        // Remove keys that are not in the group membership
         for member in self.ltm.keys() {
             if !gms_members.contains(&member) {
                 if member != self.id {
                     self.ltm.remove_key(&member);
                 } else {
+                    // Remove all keys except the local one
+                    // if the local peer is removed from the group
                     for key in self.ltm.keys() {
                         if key != self.id {
                             self.ltm.remove_key(&key);
                         }
                     }
+                    // Re-init the group membership
+                    self.group_membership = Self::create_group_membership(&self.id);
                 }
             }
         }
+    }
+
+    /// Create a new group membership log.
+    fn create_group_membership(id: &str) -> POLog<MSet<String>> {
+        let mut group_membership = POLog::default();
+        let op = Arc::new(MSet::Add(id.to_string()));
+        group_membership.stable.push(Arc::clone(&op));
+        group_membership
+            .path_trie
+            .insert(PathBufKey::default(), vec![Arc::downgrade(&op)]);
+        group_membership
     }
 }
 
