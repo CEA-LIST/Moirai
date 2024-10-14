@@ -32,7 +32,7 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(_: &Event<Self>, _state: &POLog<Self>) -> bool {
+    fn r(_: &Event<Self>, _: &POLog<Self>) -> bool {
         false
     }
 
