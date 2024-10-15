@@ -158,7 +158,14 @@ fn leave() {
     tcsb_a.tc_deliver_op(event);
 
     let event = tcsb_a.tc_bcast_membership(MSet::remove("a"));
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
+
     tcsb_b.tc_deliver_membership(event);
+
+    let event = tcsb_b.tc_bcast_op(Counter::Dec(5));
+    tcsb_a.tc_deliver_op(event);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["b"]);

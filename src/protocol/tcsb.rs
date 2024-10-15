@@ -234,9 +234,11 @@ where
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     fn tc_stable(&mut self) {
         let ignore = self.peers_to_ignore_for_stability();
-        self.lsv = self.ltm.svv(&ignore);
         let lower_bound = Metadata::new(self.ltm.svv(&ignore), "");
         let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
+        if !ready_to_stabilize.is_empty() {
+            self.lsv = self.ltm.svv(&ignore);
+        }
 
         for metadata in ready_to_stabilize.iter() {
             if self.state.unstable.contains_key(metadata) {
@@ -300,6 +302,10 @@ where
 
     pub fn eval_group_membership(&self) -> HashSet<String> {
         MSet::eval(&self.group_membership, &Utf8PathBuf::default())
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 
     /// Return the mutable vector clock of the local replica
@@ -508,9 +514,15 @@ where
             .group_membership
             .unstable
             .iter()
-            .filter_map(|(_, o)| match o.as_ref() {
+            .filter_map(|(m, o)| match o.as_ref() {
                 MSet::Add(_) => None,
-                MSet::Remove(v) => Some(v.clone()),
+                MSet::Remove(v) => {
+                    if &m.origin != v {
+                        Some(v.clone())
+                    } else {
+                        None
+                    }
+                }
             })
             .collect();
         let ignore = if ignore.contains(&self.id) {
