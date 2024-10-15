@@ -514,15 +514,9 @@ where
             .group_membership
             .unstable
             .iter()
-            .filter_map(|(m, o)| match o.as_ref() {
+            .filter_map(|(_, o)| match o.as_ref() {
                 MSet::Add(_) => None,
-                MSet::Remove(v) => {
-                    if &m.origin != v {
-                        Some(v.clone())
-                    } else {
-                        None
-                    }
-                }
+                MSet::Remove(v) => Some(v.clone()),
             })
             .collect();
         let ignore = if ignore.contains(&self.id) {
