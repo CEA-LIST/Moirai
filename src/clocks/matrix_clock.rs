@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     #[test_log::test]
-    fn test_new() {
+    fn new() {
         let mc = MatrixClock::<&str, i32>::new(&["A", "B", "C"]);
         assert_eq!(mc.clock.len(), 3);
         assert_eq!(
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_svv() {
+    fn svv() {
         let mc = MatrixClock::from(
             &["A", "B"],
             &[
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_merge() {
+    fn merge() {
         let mut mc1 = MatrixClock::from(
             &["A", "B"],
             &[
@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_svv_ignore() {
+    fn svv_ignore() {
         let mc = MatrixClock::from(
             &["A", "B", "C"],
             &[
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_display() {
+    fn display() {
         let mc = MatrixClock::from(
             &["A", "B", "C"],
             &[
@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_add_key() {
+    fn add_key() {
         let mut mc = MatrixClock::from(
             &["A", "B"],
             &[
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_keys() {
+    fn keys() {
         let mc = MatrixClock::from(
             &["A", "B"],
             &[

@@ -243,13 +243,13 @@ mod tests {
     use super::*;
 
     #[test_log::test]
-    fn test_new() {
+    fn new() {
         let clock = VectorClock::<i32, i32>::new(0);
         assert_eq!(clock.get(&0), Some(0));
     }
 
     #[test_log::test]
-    fn test_increment() {
+    fn increment() {
         let mut clock = VectorClock::new("A");
         clock.increment(&"A");
         clock.increment(&"A");
@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_merge() {
+    fn merge() {
         let mut clock1 = VectorClock::new("A");
         clock1.increment(&"A");
         let mut clock2 = VectorClock::new("B");
@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_merge_2() {
+    fn merge_2() {
         let mut clock1 = VectorClock::new("A");
         let clock2 = VectorClock::new("B");
         clock1.merge(&clock2);
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_concurrent_clocks() {
+    fn concurrent_clocks() {
         let mut clock: VectorClock<&str, i32> = VectorClock::new("A");
         clock.increment(&"B");
         clock.increment(&"A");
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_display() {
+    fn display() {
         let mut clock: VectorClock<&str, i32> = VectorClock::new("A");
         clock.increment(&"A");
         clock.increment(&"B");
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_min() {
+    fn min() {
         let mut clock1: VectorClock<&str, i32> = VectorClock::new("A");
         clock1.increment(&"A");
         clock1.increment(&"A");
@@ -319,7 +319,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_bot() {
+    fn bot() {
         let mut clock1: VectorClock<&str, i32> = VectorClock::new("A");
         clock1.increment(&"A");
         clock1.increment(&"A");
@@ -328,5 +328,14 @@ mod tests {
         clock1.increment(&"B");
         let clock2: VectorClock<&str, i32> = VectorClock::bot();
         assert!(clock2 < clock1);
+    }
+
+    #[test_log::test]
+    fn lsv() {
+        let mut lsv = VectorClock::from(&["A", "B"], &[12, 16]);
+        let ltm = VectorClock::from(&["A", "B", "C"], &[0, 0, 0]);
+        lsv.merge(&ltm);
+        let merge = VectorClock::from(&["A", "B", "C"], &[12, 16, 0]);
+        assert_eq!(merge, lsv);
     }
 }

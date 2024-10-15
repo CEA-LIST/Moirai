@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_concurrent_add_remove() {
+    fn concurrent_add_remove() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
 
         let event_b = tcsb_b.tc_bcast_op(RWSet::Remove("a"));
