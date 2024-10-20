@@ -2,6 +2,8 @@ use camino::Utf8PathBuf;
 use colored::*;
 use log::{debug, error, info, log_enabled, Level};
 use radix_trie::TrieCommon;
+#[cfg(feature = "wasm")]
+use web_sys::console;
 
 use super::pathbuf_key::PathBufKey;
 use super::po_log::POLog;
@@ -37,7 +39,7 @@ where
     pub id: String,
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
@@ -100,11 +102,29 @@ where
     }
 
     pub fn tc_deliver_op(&mut self, event: Event<O>) {
+        #[cfg(feature = "wasm")]
+        console::log_1(
+            &format!(
+                "{} - Delivering op event {}",
+                self.id,
+                format!("{:?}", event.op)
+            )
+            .into(),
+        );
         let event = Event::new(Duet::Second(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
 
     pub fn tc_deliver_membership(&mut self, event: Event<MSet<String>>) {
+        #[cfg(feature = "wasm")]
+        console::log_1(
+            &format!(
+                "{} - Delivering membership event {}",
+                self.id,
+                format!("{:?}", event.op)
+            )
+            .into(),
+        );
         let event = Event::new(Duet::First(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
@@ -123,6 +143,8 @@ where
             Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
             _ => {}
         }
+        #[cfg(feature = "wasm")]
+        console::log_1(&"Storing the event in the `pending` buffer".into());
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
         // Oldest event first
@@ -169,12 +191,16 @@ where
         match event.op {
             // Group Membership event
             Duet::First(op) => {
-                let event = Event::new(op, event.metadata);
+                let mut event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = MSet::effect(&event, &self.group_membership);
                 self.group_membership
                     .remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
+                    let ext = event.metadata.ext.clone();
+                    for key in ext {
+                        event.metadata.clock.remove(&key);
+                    }
                     self.group_membership.new_event(&event);
                     info!(
                         "[{}] - Op {} is added to the log",
@@ -199,16 +225,38 @@ where
             }
             // Domain-specific CRDT event
             Duet::Second(op) => {
-                let event = Event::new(op, event.metadata);
+                let mut event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = O::effect(&event, &self.state);
+
+                #[cfg(feature = "wasm")]
+                console::log_1(
+                    &format!(
+                        "{} - Effect of the event: keep: {}, stable: {:?}, unstable: {:?}",
+                        self.id, keep, stable, unstable
+                    )
+                    .into(),
+                );
+
                 self.state.remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
+                    let ext = event.metadata.ext.clone();
+                    for key in ext {
+                        event.metadata.clock.remove(&key);
+                    }
                     self.state.new_event(&event);
                     info!(
                         "[{}] - Op {} is added to the log",
                         self.id.blue().bold(),
                         format!("{:?}", event.op).green()
+                    );
+                    #[cfg(feature = "wasm")]
+                    console::log_1(
+                        &format!(
+                            "Add to log. State size: {}",
+                            self.state.stable.len() + self.state.unstable.len()
+                        )
+                        .into(),
                     );
                 }
                 if log_enabled!(Level::Debug) {
@@ -225,6 +273,15 @@ where
                 self.state.garbage_collect_trie();
             }
         }
+
+        #[cfg(feature = "wasm")]
+        console::log_1(
+            &format!(
+                "State size: {}",
+                self.state.stable.len() + self.state.unstable.len()
+            )
+            .into(),
+        );
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
@@ -304,10 +361,6 @@ where
         MSet::eval(&self.group_membership, &Utf8PathBuf::default())
     }
 
-    pub fn pending_count(&self) -> usize {
-        self.pending.len()
-    }
-
     /// Return the mutable vector clock of the local replica
     pub(crate) fn my_clock_mut(&mut self) -> &mut VectorClock<String, usize> {
         self.ltm
@@ -329,6 +382,15 @@ where
                 self.id.blue().bold(),
                 metadata.origin.red()
             );
+            #[cfg(feature = "wasm")]
+            console::error_1(
+                &format!(
+                    "[{}] - Unknown peer detected: {}",
+                    self.id.blue().bold(),
+                    metadata.origin.red()
+                )
+                .into(),
+            );
             return Err(DeliveryError::UnknownPeer);
         }
         if self.guard_against_duplicates(metadata) {
@@ -336,6 +398,15 @@ where
                 "[{}] - Duplicated event detected: {}",
                 self.id.blue().bold(),
                 format!("{}", metadata.clock).red()
+            );
+            #[cfg(feature = "wasm")]
+            console::error_1(
+                &format!(
+                    "[{}] - Duplicated event detected: {}",
+                    self.id.blue().bold(),
+                    format!("{}", metadata.clock).red()
+                )
+                .into(),
             );
             return Err(DeliveryError::DuplicatedEvent);
         }
@@ -346,6 +417,17 @@ where
                 format!("{}", metadata.clock).red(),
                 metadata.origin.blue(),
                 format!("{}", self.my_clock()).red()
+            );
+            #[cfg(feature = "wasm")]
+            console::error_1(
+                &format!(
+                    "[{}] - Out-of-order event detected: {} from {}. Current local clock is: {}",
+                    self.id.blue().bold(),
+                    format!("{}", metadata.clock).red(),
+                    metadata.origin.blue(),
+                    format!("{}", self.my_clock()).red()
+                )
+                .into(),
             );
             return Err(DeliveryError::OutOfOrderEvent);
         }
@@ -417,8 +499,8 @@ where
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        self.add_timestamp_extension(&mut clock);
-        Metadata::new(clock, &self.id)
+        let ext = self.add_timestamp_extension(&mut clock);
+        Metadata::new_with_ext(clock, &self.id, ext)
     }
 
     /// Add the timestamp extension to the vector clock of the new event.
@@ -426,7 +508,7 @@ where
     /// A peer may stabilize a membership event before the other peers because
     /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
     /// should include the lamport clock of the evicted peer.
-    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) {
+    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) -> Vec<String> {
         let ext_list: Vec<(Metadata, VectorClock<String>)> = self
             .timestamp_extension
             .range((
@@ -443,7 +525,13 @@ where
                 format!("{}", clock).red()
             );
         }
+        let mut ext_tracker = Vec::<String>::new();
         for (m, ext) in ext_list {
+            ext.left_difference(clock).keys().iter().for_each(|k| {
+                if !ext_tracker.contains(k) {
+                    ext_tracker.push(k.clone());
+                }
+            });
             clock.merge(&ext);
             self.timestamp_extension.remove(&m);
         }
@@ -454,6 +542,7 @@ where
                 format!("{}", clock).red()
             );
         }
+        ext_tracker
     }
 
     /// Store the lamport clock of the removed peer in the timestamp extension list.

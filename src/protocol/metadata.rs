@@ -13,6 +13,11 @@ use std::{
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Metadata {
     pub clock: VectorClock<String, usize>,
+    /// The clock may contains additional entries to prevent
+    /// inconsistencies due to the dynamic nature of the system.
+    /// These entries should be ignored when storing the clock, after delivery.
+    /// This field keep track of these entries.
+    pub ext: Vec<String>,
     pub origin: String,
 }
 
@@ -20,6 +25,15 @@ impl Metadata {
     pub fn new(clock: VectorClock<String, usize>, origin: &str) -> Self {
         Self {
             clock,
+            ext: Vec::new(),
+            origin: origin.to_string(),
+        }
+    }
+
+    pub fn new_with_ext(clock: VectorClock<String, usize>, origin: &str, ext: Vec<String>) -> Self {
+        Self {
+            clock,
+            ext,
             origin: origin.to_string(),
         }
     }
@@ -27,6 +41,7 @@ impl Metadata {
     pub fn bot() -> Self {
         Self {
             clock: VectorClock::bot(),
+            ext: Vec::new(),
             origin: String::new(),
         }
     }
@@ -51,6 +66,7 @@ impl PartialOrd for Metadata {
 impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
         let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
+        // assert_eq!(false, clock_cmp.is_none() && self.origin == other.origin);
         match clock_cmp {
             Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
             Some(Ordering::Less) => Ordering::Less,

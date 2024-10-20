@@ -46,9 +46,20 @@ where
     }
 
     pub fn new_event(&mut self, event: &Event<O>) {
+        let state_len_before = self.stable.len() + self.unstable.len();
         let rc_op = Arc::new(event.op.clone());
         let weak_op = Arc::downgrade(&rc_op);
-        self.unstable.insert(event.metadata.clone(), rc_op);
+        if self.unstable.contains_key(&event.metadata) {
+            info!(
+                "Event with metadata {:?} already present in the log: {:?}",
+                event.metadata,
+                self.unstable.get(&event.metadata).unwrap()
+            );
+        }
+        let is_key_present = self.unstable.insert(event.metadata.clone(), rc_op);
+        assert!(is_key_present.is_none());
+        let state_len_after = self.stable.len() + self.unstable.len();
+
         if let Some(subtrie) = self
             .path_trie
             .get_mut(&PathBufKey::new(&O::to_path(&event.op)))
@@ -62,8 +73,8 @@ where
         let path_trie_count = radix_trie::TrieCommon::values(&self.path_trie)
             .flatten()
             .count();
-        let state_len = self.stable.len() + self.unstable.len();
-        assert!(path_trie_count >= state_len);
+        assert!(path_trie_count >= state_len_after);
+        assert_eq!(state_len_after, state_len_before + 1);
     }
 
     /// Garbage collect dead weak references from the path trie.
