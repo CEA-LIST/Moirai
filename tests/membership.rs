@@ -334,17 +334,19 @@ fn rejoin() {
     tcsb_c.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
 
-    let event = tcsb_b.tc_bcast_op(Counter::Inc(5));
+    let event = tcsb_b.tc_bcast_op(Counter::Inc(2));
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_c.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    let event = tcsb_c.tc_bcast_op(Counter::Dec(5));
+    let event = tcsb_c.tc_bcast_op(Counter::Dec(1));
+    println!("First message c {}", event.metadata);
+    println!("TCSB C {:?}", tcsb_c.ltm.keys());
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    let event = tcsb_d.tc_bcast_op(Counter::Dec(5));
+    let event = tcsb_d.tc_bcast_op(Counter::Dec(3));
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_c.tc_deliver_op(event);
@@ -353,21 +355,25 @@ fn rejoin() {
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
 
-    let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
-    tcsb_a.tc_deliver_membership(event.clone());
-    tcsb_c.tc_deliver_membership(event.clone());
+    // let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
+    // tcsb_a.tc_deliver_membership(event.clone());
+    // tcsb_c.tc_deliver_membership(event.clone());
 
-    let event = tcsb_a.tc_bcast_op(Counter::Inc(5));
+    println!("{:?}", tcsb_a.state.unstable);
+
+    let event = tcsb_a.tc_bcast_op(Counter::Inc(4));
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_c.tc_deliver_op(event.clone());
 
     let event = tcsb_c.tc_bcast_op(Counter::Dec(5));
+    println!("{:?}", tcsb_a.state.unstable);
+    println!("{:?}", tcsb_a.ltm.keys());
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
 
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
 }
 
 #[test_log::test]

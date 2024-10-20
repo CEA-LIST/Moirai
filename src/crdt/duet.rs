@@ -1,13 +1,15 @@
+use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
-
-use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::protocol::tcsb::RedundantRelation;
 use crate::protocol::utils::prune_redundant_events;
 use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Duet<F, S>
 where
     F: PureCRDT,

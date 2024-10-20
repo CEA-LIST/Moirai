@@ -109,6 +109,18 @@ where
         result
     }
 
+    /// Take the difference of the two clocks
+    /// The difference of two clocks is the clock that has the keys that are ONLY in the first clock
+    pub fn left_difference(&self, other: &VectorClock<K, C>) -> VectorClock<K, C> {
+        let mut result = VectorClock::default();
+        for (k, v) in &(self.clock) {
+            if !other.clock.contains_key(k) {
+                result.clock.insert(k.clone(), v.clone());
+            }
+        }
+        result
+    }
+
     pub fn contains(&self, key: &K) -> bool {
         self.clock.contains_key(key)
     }
@@ -337,5 +349,24 @@ mod tests {
         lsv.merge(&ltm);
         let merge = VectorClock::from(&["A", "B", "C"], &[12, 16, 0]);
         assert_eq!(merge, lsv);
+    }
+
+    #[test_log::test]
+    fn different_number_of_keys() {
+        let clock_1 = VectorClock::from(&["a", "b", "c", "d"], &[4, 2, 1, 0]);
+        let clock_2 = VectorClock::from(&["a", "b", "c"], &[5, 2, 2]);
+
+        assert_eq!(None, clock_1.partial_cmp(&clock_2));
+    }
+
+    #[test_log::test]
+    fn left_difference() {
+        let clock = VectorClock::from(&["a", "b", "c"], &[4, 2, 1]);
+        let ext = VectorClock::from(&["d", "e", "b"], &[2, 51, 4]);
+
+        assert_eq!(
+            ext.left_difference(&clock),
+            VectorClock::from(&["d", "e"], &[2, 51])
+        );
     }
 }
