@@ -66,7 +66,12 @@ impl PartialOrd for Metadata {
 impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
         let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
-        // assert_eq!(false, clock_cmp.is_none() && self.origin == other.origin);
+        assert!(
+            !(clock_cmp.is_none() && self.origin == other.origin),
+            "Self: {}, Other: {}",
+            self,
+            other
+        );
         match clock_cmp {
             Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
             Some(Ordering::Less) => Ordering::Less,

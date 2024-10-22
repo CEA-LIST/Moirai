@@ -340,40 +340,42 @@ fn rejoin() {
     tcsb_d.tc_deliver_op(event);
 
     let event = tcsb_c.tc_bcast_op(Counter::Dec(1));
-    println!("First message c {}", event.metadata);
-    println!("TCSB C {:?}", tcsb_c.ltm.keys());
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    let event = tcsb_d.tc_bcast_op(Counter::Dec(3));
-    tcsb_a.tc_deliver_op(event.clone());
-    tcsb_b.tc_deliver_op(event.clone());
-    tcsb_c.tc_deliver_op(event);
-
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
+    assert_eq!(tcsb_a.eval(), 1);
+    assert_eq!(tcsb_b.eval(), 1);
+    assert_eq!(tcsb_c.eval(), 1);
+    assert_eq!(tcsb_d.eval(), 0);
 
-    // let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
-    // tcsb_a.tc_deliver_membership(event.clone());
-    // tcsb_c.tc_deliver_membership(event.clone());
-
-    println!("{:?}", tcsb_a.state.unstable);
+    let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
+    tcsb_a.tc_deliver_membership(event.clone());
+    tcsb_c.tc_deliver_membership(event.clone());
 
     let event = tcsb_a.tc_bcast_op(Counter::Inc(4));
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_c.tc_deliver_op(event.clone());
 
     let event = tcsb_c.tc_bcast_op(Counter::Dec(5));
-    println!("{:?}", tcsb_a.state.unstable);
-    println!("{:?}", tcsb_a.ltm.keys());
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
 
-    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
-    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
-    // assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    // --> Causal stability <--
+    tcsb_d.state_transfer(&tcsb_b);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_a.eval(), 0);
+    assert_eq!(tcsb_b.eval(), 0);
+    assert_eq!(tcsb_c.eval(), 0);
+    assert_eq!(tcsb_d.eval(), 0);
 }
 
 #[test_log::test]
@@ -390,7 +392,7 @@ fn self_evict() {
 }
 
 // #[test_log::test]
-// fn join_with_same_id() {
+// fn early_rejoin() {
 //     let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet();
 
 //     let event = tcsb_a.tc_bcast_membership(MSet::remove("d"));
@@ -398,22 +400,51 @@ fn self_evict() {
 //     tcsb_c.tc_deliver_membership(event.clone());
 //     tcsb_d.tc_deliver_membership(event);
 
-//     let event = tcsb_b.tc_bcast_op(Counter::Inc(5));
-//     tcsb_a.tc_deliver_op(event.clone());
-//     tcsb_c.tc_deliver_op(event.clone());
-//     tcsb_d.tc_deliver_op(event);
+//     let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
+//     tcsb_a.tc_deliver_membership(event.clone());
+//     tcsb_c.tc_deliver_membership(event.clone());
+//     tcsb_d.tc_deliver_membership(event);
 
-//     let event = tcsb_c.tc_bcast_op(Counter::Dec(5));
+//     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+
+//     println!("{:?}", tcsb_a.group_membership);
+
+//     let event = tcsb_c.tc_bcast_op(Counter::Dec(1));
 //     tcsb_a.tc_deliver_op(event.clone());
 //     tcsb_b.tc_deliver_op(event.clone());
 //     tcsb_d.tc_deliver_op(event);
 
-//     let event = tcsb_d.tc_bcast_op(Counter::Dec(5));
-//     tcsb_a.tc_deliver_op(event.clone());
-//     tcsb_b.tc_deliver_op(event.clone());
-//     tcsb_c.tc_deliver_op(event);
+//     // d is evicted
+
+//     println!("{:?}", tcsb_a.group_membership);
 
 //     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
-//     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
-//     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+//     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+//     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+//     assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
+//     assert_eq!(tcsb_a.eval(), -1);
+//     assert_eq!(tcsb_b.eval(), -1);
+//     assert_eq!(tcsb_c.eval(), -1);
+//     assert_eq!(tcsb_d.eval(), 0);
+
+// let event = tcsb_a.tc_bcast_op(Counter::Inc(4));
+// tcsb_b.tc_deliver_op(event.clone());
+// tcsb_c.tc_deliver_op(event);
+
+// // --> Causal stability. Add d <--
+// tcsb_d.state_transfer(&tcsb_b);
+
+// let event = tcsb_c.tc_bcast_op(Counter::Dec(5));
+// tcsb_a.tc_deliver_op(event.clone());
+// tcsb_b.tc_deliver_op(event.clone());
+// tcsb_d.tc_deliver_op(event);
+
+// assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+// assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+// assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+// assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
+// assert_eq!(tcsb_a.eval(), -2);
+// assert_eq!(tcsb_b.eval(), -2);
+// assert_eq!(tcsb_c.eval(), -2);
+// assert_eq!(tcsb_d.eval(), -2);
 // }

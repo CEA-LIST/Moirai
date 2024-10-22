@@ -57,7 +57,11 @@ where
             );
         }
         let is_key_present = self.unstable.insert(event.metadata.clone(), rc_op);
-        assert!(is_key_present.is_none());
+        assert!(
+            is_key_present.is_none(),
+            "Key already present in the log: {:?}",
+            self.unstable.get(&event.metadata).unwrap()
+        );
         let state_len_after = self.stable.len() + self.unstable.len();
 
         if let Some(subtrie) = self
