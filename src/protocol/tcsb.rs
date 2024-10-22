@@ -42,7 +42,7 @@ where
     pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
-    timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
+    pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -113,7 +113,7 @@ where
 
     fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
         // Check for timestamp inconsistencies
-        if event.metadata.clock.keys().len() != self.eval_group_membership().len() {
+        if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
                 "[{}] - Timestamp inconsistency: MSet members: {}",
                 self.id.blue().bold(),
@@ -292,6 +292,32 @@ where
                     self.store_lamport_of_removed_peer(&id);
                     // Remove every pending events from the removed peer
                     self.pending.retain(|e| e.metadata.origin != *id);
+                    // Remove clock entry from unstable events
+                    let mut key_to_edit = Vec::<Metadata>::new();
+                    for (m, _) in self.state.unstable.iter() {
+                        assert!(m.origin != *id);
+                        if m.clock.contains(&id) {
+                            key_to_edit.push(m.clone());
+                        }
+                    }
+                    for mut m in key_to_edit {
+                        let op = self.state.unstable.remove(&m).unwrap();
+                        m.clock.remove(&id);
+                        self.state.unstable.insert(m, op);
+                    }
+                    // Remove clock entry from timestamp extension
+                    let mut key_to_edit = Vec::<Metadata>::new();
+                    for (m, _) in self.timestamp_extension.iter() {
+                        assert!(m.origin != *id);
+                        if m.clock.contains(&id) {
+                            key_to_edit.push(m.clone());
+                        }
+                    }
+                    for mut m in key_to_edit {
+                        let op = self.timestamp_extension.remove(&m).unwrap();
+                        m.clock.remove(&id);
+                        self.timestamp_extension.insert(m, op);
+                    }
                 }
                 MSet::stable(metadata, &mut self.group_membership);
             }
@@ -473,6 +499,7 @@ where
             ))
             .map(|(m, v)| (m.clone(), v.clone()))
             .collect();
+        println!("ALELELLELELELE");
         let ext_list_len = ext_list.len();
         if ext_list_len > 0 {
             debug!(

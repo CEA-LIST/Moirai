@@ -70,7 +70,7 @@ impl Ord for Metadata {
             !(clock_cmp.is_none() && self.origin == other.origin),
             "Self: {}, Other: {}",
             self,
-            other
+            other,
         );
         match clock_cmp {
             Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
