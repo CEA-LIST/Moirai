@@ -2,7 +2,7 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter, Result},
     hash::Hash,
     ops::{Add, AddAssign},
@@ -121,11 +121,12 @@ where
         result
     }
 
+    /// Check if the clock contains a key
     pub fn contains(&self, key: &K) -> bool {
         self.clock.contains_key(key)
     }
 
-    pub fn keys(&self) -> Vec<K> {
+    pub fn keys(&self) -> HashSet<K> {
         self.clock.keys().cloned().collect()
     }
 
