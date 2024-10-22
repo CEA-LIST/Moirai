@@ -102,29 +102,11 @@ where
     }
 
     pub fn tc_deliver_op(&mut self, event: Event<O>) {
-        #[cfg(feature = "wasm")]
-        console::log_1(
-            &format!(
-                "{} - Delivering op event {}",
-                self.id,
-                format!("{:?}", event.op)
-            )
-            .into(),
-        );
         let event = Event::new(Duet::Second(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
 
     pub fn tc_deliver_membership(&mut self, event: Event<MSet<String>>) {
-        #[cfg(feature = "wasm")]
-        console::log_1(
-            &format!(
-                "{} - Delivering membership event {}",
-                self.id,
-                format!("{:?}", event.op)
-            )
-            .into(),
-        );
         let event = Event::new(Duet::First(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
@@ -143,8 +125,6 @@ where
             Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
             _ => {}
         }
-        #[cfg(feature = "wasm")]
-        console::log_1(&"Storing the event in the `pending` buffer".into());
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
         // Oldest event first
@@ -207,6 +187,7 @@ where
                         self.id.blue().bold(),
                         format!("{:?}", event.op).green()
                     );
+                    assert!(!self.state.unstable.contains_key(&event.metadata));
                 }
 
                 if log_enabled!(Level::Debug) {
@@ -228,15 +209,6 @@ where
                 let mut event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = O::effect(&event, &self.state);
 
-                #[cfg(feature = "wasm")]
-                console::log_1(
-                    &format!(
-                        "{} - Effect of the event: keep: {}, stable: {:?}, unstable: {:?}",
-                        self.id, keep, stable, unstable
-                    )
-                    .into(),
-                );
-
                 self.state.remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
@@ -250,14 +222,7 @@ where
                         self.id.blue().bold(),
                         format!("{:?}", event.op).green()
                     );
-                    #[cfg(feature = "wasm")]
-                    console::log_1(
-                        &format!(
-                            "Add to log. State size: {}",
-                            self.state.stable.len() + self.state.unstable.len()
-                        )
-                        .into(),
-                    );
+                    assert!(!self.group_membership.unstable.contains_key(&event.metadata));
                 }
                 if log_enabled!(Level::Debug) {
                     let trie_size = self.state.path_trie.values().flatten().count();
@@ -273,15 +238,6 @@ where
                 self.state.garbage_collect_trie();
             }
         }
-
-        #[cfg(feature = "wasm")]
-        console::log_1(
-            &format!(
-                "State size: {}",
-                self.state.stable.len() + self.state.unstable.len()
-            )
-            .into(),
-        );
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
@@ -524,6 +480,8 @@ where
                 self.id.blue().bold(),
                 format!("{}", clock).red()
             );
+            #[cfg(feature = "wasm")]
+            console::log_1(&format!("Adding timestamp extension for {}", clock).into());
         }
         let mut ext_tracker = Vec::<String>::new();
         for (m, ext) in ext_list {
@@ -541,6 +499,8 @@ where
                 self.id.blue().bold(),
                 format!("{}", clock).red()
             );
+            #[cfg(feature = "wasm")]
+            console::log_1(&format!("Timestamp extension added: {}", clock).into());
         }
         ext_tracker
     }
@@ -579,6 +539,14 @@ where
                     0
                 };
                 new.metadata.clock.insert(key.clone(), value);
+                #[cfg(feature = "wasm")]
+                console::log_1(
+                    &format!(
+                        "Key {} not found in the event. Adding it to the clock {}",
+                        key, new.metadata.clock
+                    )
+                    .into(),
+                );
             }
         }
         // TODO: Verify if the following code is correct
@@ -586,6 +554,14 @@ where
         for key in new.metadata.clock.keys() {
             if !ltm_keys.contains(&key) {
                 new.metadata.clock.remove(&key);
+                #[cfg(feature = "wasm")]
+                console::log_1(
+                    &format!(
+                        "Key {} not found in the LTM. Removing it from the clock {}",
+                        key, new.metadata.clock
+                    )
+                    .into(),
+                );
             }
         }
         assert_eq!(
