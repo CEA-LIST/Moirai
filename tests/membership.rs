@@ -27,6 +27,26 @@ fn twins() -> (Tcsb<Counter<i32>>, Tcsb<Counter<i32>>) {
     (tcsb_a, tcsb_b)
 }
 
+fn triplet() -> (Tcsb<Counter<i32>>, Tcsb<Counter<i32>>, Tcsb<Counter<i32>>) {
+    let (mut tcsb_a, mut tcsb_b) = twins();
+    let mut tcsb_c = Tcsb::<Counter<i32>>::new("c");
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
+
+    tcsb_b.tc_deliver_membership(event_a);
+
+    let event_b = tcsb_b.tc_bcast_op(Counter::Inc(0));
+    tcsb_a.tc_deliver_op(event_b);
+
+    // --> Causal stability <--
+    tcsb_c.state_transfer(&tcsb_a);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+    (tcsb_a, tcsb_b, tcsb_c)
+}
+
 fn quadruplet() -> (
     Tcsb<Counter<i32>>,
     Tcsb<Counter<i32>>,
@@ -389,4 +409,29 @@ fn self_evict() {
     assert_eq!(tcsb_a.ltm.keys(), vec!["a"]);
     assert_eq!(tcsb_a.eval_group_membership().len(), 1);
     assert_eq!(tcsb_a.eval(), 7);
+}
+
+#[test_log::test]
+fn timestamp_ext() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet();
+
+    let event = tcsb_a.tc_bcast_membership(MSet::remove("c"));
+    tcsb_b.tc_deliver_membership(event.clone());
+    tcsb_c.tc_deliver_membership(event);
+
+    let event = tcsb_a.tc_bcast_op(Counter::Dec(1));
+    tcsb_b.tc_deliver_op(event.clone());
+    tcsb_c.tc_deliver_op(event);
+
+    let event = tcsb_a.tc_bcast_op(Counter::Dec(5));
+    tcsb_b.tc_deliver_op(event.clone());
+    tcsb_c.tc_deliver_op(event);
+
+    let event = tcsb_b.tc_bcast_op(Counter::Inc(3));
+    tcsb_a.tc_deliver_op(event.clone());
+    tcsb_c.tc_deliver_op(event);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
 }

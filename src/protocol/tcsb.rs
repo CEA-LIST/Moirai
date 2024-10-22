@@ -248,12 +248,18 @@ where
     fn tc_stable(&mut self) {
         let ignore = self.peers_to_ignore_for_stability();
         let lower_bound = Metadata::new(self.ltm.svv(&ignore), "");
-        let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
+        let mut ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
         if !ready_to_stabilize.is_empty() {
             self.lsv = self.ltm.svv(&ignore);
         }
 
-        for metadata in ready_to_stabilize.iter() {
+        for metadata in ready_to_stabilize.iter_mut() {
+            // must modify metadata to remove the keys that are not in the group membership
+            for key in metadata.clock.keys() {
+                if !self.eval_group_membership().contains(&key) {
+                    metadata.clock.remove(&key);
+                }
+            }
             if self.state.unstable.contains_key(metadata) {
                 info!(
                     "[{}] - {} is causally stable (op: {}) ; {:?} were ignored",
@@ -320,6 +326,8 @@ where
                     }
                 }
                 MSet::stable(metadata, &mut self.group_membership);
+            } else {
+                panic!("Event with metadata {} not found in the log", metadata);
             }
         }
 
@@ -499,7 +507,6 @@ where
             ))
             .map(|(m, v)| (m.clone(), v.clone()))
             .collect();
-        println!("ALELELLELELELE");
         let ext_list_len = ext_list.len();
         if ext_list_len > 0 {
             debug!(
