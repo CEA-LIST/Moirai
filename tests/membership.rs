@@ -435,3 +435,18 @@ fn timestamp_ext() {
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
     assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
 }
+
+#[test_log::test]
+fn leave_and_evict() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet();
+
+    let event = tcsb_a.tc_bcast_membership(MSet::remove("a"));
+    tcsb_b.tc_deliver_membership(event.clone());
+    tcsb_c.tc_deliver_membership(event.clone());
+    tcsb_d.tc_deliver_membership(event);
+
+    let event = tcsb_c.tc_bcast_membership(MSet::remove("b"));
+    tcsb_a.tc_deliver_membership(event.clone());
+    tcsb_b.tc_deliver_membership(event.clone());
+    tcsb_d.tc_deliver_membership(event);
+}
