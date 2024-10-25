@@ -281,6 +281,7 @@ where
                     .green(),
                     ignore,
                 );
+
                 let to_remove = self
                     .group_membership
                     .unstable
@@ -293,24 +294,12 @@ where
                             None
                         }
                     });
+                MSet::stable(metadata, &mut self.group_membership);
 
                 if let Some(id) = to_remove {
                     self.store_lamport_of_removed_peer(&id);
                     // Remove every pending events from the removed peer
                     self.pending.retain(|e| e.metadata.origin != *id);
-                    // Remove clock entry from unstable events
-                    let mut key_to_edit = Vec::<Metadata>::new();
-                    for (m, _) in self.state.unstable.iter() {
-                        assert!(m.origin != *id);
-                        if m.clock.contains(&id) {
-                            key_to_edit.push(m.clone());
-                        }
-                    }
-                    for mut m in key_to_edit {
-                        let op = self.state.unstable.remove(&m).unwrap();
-                        m.clock.remove(&id);
-                        self.state.unstable.insert(m, op);
-                    }
                     // Remove clock entry from timestamp extension
                     let mut key_to_edit = Vec::<Metadata>::new();
                     for (m, _) in self.timestamp_extension.iter() {
@@ -324,10 +313,39 @@ where
                         m.clock.remove(&id);
                         self.timestamp_extension.insert(m, op);
                     }
+                    // Remove clock entry from unstable state events
+                    let mut clock_to_edit = Vec::<Metadata>::new();
+                    for (m, _) in self.state.unstable.iter() {
+                        // The origin of the event is not the removed peer (the dot guarantee clock uniqueness)
+                        assert!(m.origin != *id || m == metadata);
+                        if m.clock.contains(&id) {
+                            clock_to_edit.push(m.clone());
+                        }
+                    }
+                    for mut m in clock_to_edit {
+                        let op = self.state.unstable.remove(&m).unwrap();
+                        m.clock.remove(&id);
+                        self.state.unstable.insert(m, op);
+                    }
+                    // Remove clock entry from unstable group membership events
+                    let mut key_to_edit = Vec::<Metadata>::new();
+                    for (m, _) in self.group_membership.unstable.iter() {
+                        assert!(m.origin != *id || m == metadata);
+                        if m.clock.contains(&id) {
+                            key_to_edit.push(m.clone());
+                        }
+                    }
+                    for mut m in key_to_edit {
+                        let op = self.group_membership.unstable.remove(&m).unwrap();
+                        m.clock.remove(&id);
+                        self.group_membership.unstable.insert(m, op);
+                    }
                 }
-                MSet::stable(metadata, &mut self.group_membership);
             } else {
-                panic!("Event with metadata {} not found in the log", metadata);
+                panic!(
+                    "[{}] - Event with metadata {} not found in the log",
+                    self.id, metadata
+                );
             }
         }
 
