@@ -26,9 +26,9 @@ pub enum DeliveryError {
     OutOfOrderEvent,
 }
 
-/// Extended Reliable Causal Broadcast (RCB) middleware API
+/// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
-/// A Tagged Causal Stable Broadcast (TCSB) is an extended Reliable Causal Broadcast (RCB)
+/// A **Tagged Causal Stable Broadcast (TCSB)** is an extended Reliable Causal Broadcast (RCB)
 /// middleware API designed to offer additional information about causality during message delivery.
 /// It also notifies recipients when delivered messages achieve causal stability,
 /// facilitating subsequent compaction within the Partially Ordered Log of operations (PO-Log)
@@ -39,10 +39,10 @@ where
     pub id: String,
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    pending: VecDeque<Event<Duet<MSet<String>, O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
-    pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
+    timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -81,7 +81,7 @@ where
         tcsb
     }
 
-    /// Broadcast a new operation to all peers and deliver it to the local state.
+    /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
     pub fn tc_bcast_op(&mut self, op: O) -> Event<O> {
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(Duet::Second(op.clone()), metadata.clone());
@@ -91,7 +91,7 @@ where
         Event::new(op, metadata)
     }
 
-    /// Broadcast a new operation to all peers and deliver it to the local state.
+    /// Broadcast a new membership operation to all peers and deliver it to the local state.
     pub fn tc_bcast_membership(&mut self, op: MSet<String>) -> Event<MSet<String>> {
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(Duet::First(op.clone()), metadata.clone());
@@ -101,16 +101,21 @@ where
         Event::new(op, metadata)
     }
 
+    /// Deliver a domain-specific operation to the local state.
     pub fn tc_deliver_op(&mut self, event: Event<O>) {
         let event = Event::new(Duet::Second(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
 
+    /// Deliver a membership operation to the local state.
     pub fn tc_deliver_membership(&mut self, event: Event<MSet<String>>) {
         let event = Event::new(Duet::First(event.op.clone()), event.metadata.clone());
         self.check_delivery(event);
     }
 
+    /// Reliable Causal Broadcast (RCB) functionality.
+    /// Store a new event in the buffer and check if it is ready to be delivered.
+    /// Check if other pending events are made ready to be delivered by the new event.
     fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
@@ -119,7 +124,7 @@ where
                 self.id.blue().bold(),
                 format!("{:?}", self.eval_group_membership()).green(),
             );
-            self.fix_timestamp_inconsistencies(&mut event, &self.ltm.keys());
+            self.fix_timestamp_inconsistencies_incoming_event(&mut event, &self.ltm.keys());
         }
         match self.guard(&event.metadata) {
             Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
@@ -296,50 +301,26 @@ where
                     });
                 MSet::stable(metadata, &mut self.group_membership);
 
+                // If a remove operation is stable, remove its clock entry from every timestamp stored in the TCSB.
                 if let Some(id) = to_remove {
                     self.store_lamport_of_removed_peer(&id);
                     // Remove every pending events from the removed peer
                     self.pending.retain(|e| e.metadata.origin != *id);
                     // Remove clock entry from timestamp extension
-                    let mut key_to_edit = Vec::<Metadata>::new();
-                    for (m, _) in self.timestamp_extension.iter() {
-                        assert!(m.origin != *id);
-                        if m.clock.contains(&id) {
-                            key_to_edit.push(m.clone());
-                        }
-                    }
-                    for mut m in key_to_edit {
-                        let op = self.timestamp_extension.remove(&m).unwrap();
-                        m.clock.remove(&id);
-                        self.timestamp_extension.insert(m, op);
-                    }
+                    Self::fix_timestamp_inconsistencies_stored_events(
+                        &mut self.timestamp_extension,
+                        &id,
+                    );
                     // Remove clock entry from unstable state events
-                    let mut clock_to_edit = Vec::<Metadata>::new();
-                    for (m, _) in self.state.unstable.iter() {
-                        // The origin of the event is not the removed peer (the dot guarantee clock uniqueness)
-                        assert!(m.origin != *id || m == metadata);
-                        if m.clock.contains(&id) {
-                            clock_to_edit.push(m.clone());
-                        }
-                    }
-                    for mut m in clock_to_edit {
-                        let op = self.state.unstable.remove(&m).unwrap();
-                        m.clock.remove(&id);
-                        self.state.unstable.insert(m, op);
-                    }
+                    Self::fix_timestamp_inconsistencies_stored_events(
+                        &mut self.state.unstable,
+                        &id,
+                    );
                     // Remove clock entry from unstable group membership events
-                    let mut key_to_edit = Vec::<Metadata>::new();
-                    for (m, _) in self.group_membership.unstable.iter() {
-                        assert!(m.origin != *id || m == metadata);
-                        if m.clock.contains(&id) {
-                            key_to_edit.push(m.clone());
-                        }
-                    }
-                    for mut m in key_to_edit {
-                        let op = self.group_membership.unstable.remove(&m).unwrap();
-                        m.clock.remove(&id);
-                        self.group_membership.unstable.insert(m, op);
-                    }
+                    Self::fix_timestamp_inconsistencies_stored_events(
+                        &mut self.group_membership.unstable,
+                        &id,
+                    );
                 }
             } else {
                 panic!(
@@ -352,7 +333,9 @@ where
         self.update_ltm_membership();
     }
 
+    /// Transfer the state of a replica to another replica.
     pub fn state_transfer(&mut self, other: &Tcsb<O>) {
+        assert!(self.id != other.id && other.eval_group_membership().contains(&self.id));
         self.state = other.state.clone();
         self.group_membership = other.group_membership.clone();
         self.ltm = other.ltm.clone();
@@ -365,6 +348,7 @@ where
         O::eval(&self.state, &Utf8PathBuf::default())
     }
 
+    /// Utilitary function to evaluate the current state of the group membership.
     pub fn eval_group_membership(&self) -> HashSet<String> {
         MSet::eval(&self.group_membership, &Utf8PathBuf::default())
     }
@@ -383,6 +367,7 @@ where
             .expect("Local vector clock not found")
     }
 
+    /// Guard against unknown peers, duplicated events, and out-of-order events.
     fn guard(&self, metadata: &Metadata) -> Result<(), DeliveryError> {
         if self.guard_against_unknow_peer(metadata) {
             error!(
@@ -567,10 +552,29 @@ where
         ext_list.insert(id.clone(), removed_clock);
     }
 
+    fn fix_timestamp_inconsistencies_stored_events<T>(
+        state: &mut BTreeMap<Metadata, T>,
+        id: &String,
+    ) {
+        let mut key_to_edit = Vec::<Metadata>::new();
+        for (m, _) in state.iter() {
+            // for unstable group membership only: assert!(m.origin != *id || m == metadata);
+            assert!(m.origin != *id);
+            if m.clock.contains(id) {
+                key_to_edit.push(m.clone());
+            }
+        }
+        for mut m in key_to_edit {
+            let op = state.remove(&m).unwrap();
+            m.clock.remove(id);
+            state.insert(m, op);
+        }
+    }
+
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0 or usize::MAX
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    fn fix_timestamp_inconsistencies(
+    fn fix_timestamp_inconsistencies_incoming_event(
         &self,
         new: &mut Event<Duet<MSet<String>, O>>,
         ltm_keys: &[String],

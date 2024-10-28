@@ -54,9 +54,8 @@ pub mod test_util {
         let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
         tcsb_b.tc_deliver_membership(event_a);
 
-        tcsb_c.group_membership = tcsb_b.group_membership.clone();
-        tcsb_c.lsv = tcsb_b.lsv.clone();
-        tcsb_c.ltm = tcsb_b.ltm.clone();
+        // --> Causal stability <--
+        tcsb_c.state_transfer(&tcsb_a);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
