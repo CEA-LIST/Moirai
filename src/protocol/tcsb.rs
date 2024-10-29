@@ -39,7 +39,7 @@ where
     pub id: String,
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
@@ -117,18 +117,17 @@ where
     /// Store a new event in the buffer and check if it is ready to be delivered.
     /// Check if other pending events are made ready to be delivered by the new event.
     fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
+        if self.guard(&event.metadata).is_err() {
+            return;
+        }
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
-                "[{}] - Timestamp inconsistency: MSet members: {}",
+                "[{}] - Timestamp inconsistency, group members are: {}",
                 self.id.blue().bold(),
                 format!("{:?}", self.eval_group_membership()).green(),
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event, &self.ltm.keys());
-        }
-        match self.guard(&event.metadata) {
-            Err(DeliveryError::UnknownPeer) | Err(DeliveryError::DuplicatedEvent) => return,
-            _ => {}
         }
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
@@ -354,33 +353,78 @@ where
     }
 
     /// Return the mutable vector clock of the local replica
-    pub(crate) fn my_clock_mut(&mut self) -> &mut VectorClock<String, usize> {
+    pub fn my_clock_mut(&mut self) -> &mut VectorClock<String, usize> {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
     }
 
     /// Return the vector clock of the local replica
-    pub(crate) fn my_clock(&self) -> &VectorClock<String, usize> {
+    pub fn my_clock(&self) -> &VectorClock<String, usize> {
         self.ltm
             .get(&self.id)
             .expect("Local vector clock not found")
     }
 
+    // pub fn event_since(
+    //     &self,
+    //     clock: &VectorClock<String, usize>,
+    // ) -> Vec<Event<Duet<MSet<String>, O>>> {
+    // let state_events = self
+    //     .state
+    //     .unstable
+    //     .iter()
+    //     .filter(|(m, _)| m > clock)
+    //     .map(|(m, op)| Event::new(Duet::Second(op.clone()), m.clone()))
+    //     .collect();
+    // let group_membership_events = self
+    //     .group_membership
+    //     .unstable
+    //     .iter()
+    //     .filter(|(m, _)| m > clock)
+    //     .map(|(m, op)| Event::new(Duet::First(op.clone()), m.clone()))
+    //     .collect();
+    // state_events
+    //     .into_iter()
+    //     .chain(group_membership_events.into_iter())
+    //     .collect()
+    // let state_events: Vec<(Metadata, Arc<O>)> = self
+    //     .state
+    //     .unstable
+    //     .range((
+    //         Bound::Unbounded,
+    //         Bound::Included(&Metadata::new(clock.clone(), "")),
+    //     ))
+    //     .map(|(m, v)| (m.clone(), v.clone()))
+    //     .collect();
+    // let group_membership_events: Vec<(Metadata, Arc<MSet<String>>)> = self
+    //     .group_membership
+    //     .unstable
+    //     .range((
+    //         Bound::Unbounded,
+    //         Bound::Included(&Metadata::new(clock.clone(), "")),
+    //     ))
+    //     .map(|(m, v)| (m.clone(), v.clone()))
+    //     .collect();
+
+    // }
+
     /// Guard against unknown peers, duplicated events, and out-of-order events.
     fn guard(&self, metadata: &Metadata) -> Result<(), DeliveryError> {
         if self.guard_against_unknow_peer(metadata) {
             error!(
-                "[{}] - Unknown peer detected: {}",
+                "[{}] - Unknown peer `{}` detected with clock: {}",
                 self.id.blue().bold(),
-                metadata.origin.red()
+                metadata.origin.red(),
+                metadata.clock
             );
             #[cfg(feature = "wasm")]
             console::error_1(
                 &format!(
-                    "[{}] - Unknown peer detected: {}",
+                    "[{}] - Unknown peer `{}` detected with clock: {}",
                     self.id.blue().bold(),
-                    metadata.origin.red()
+                    metadata.origin.red(),
+                    metadata.clock
                 )
                 .into(),
             );
@@ -402,27 +446,6 @@ where
                 .into(),
             );
             return Err(DeliveryError::DuplicatedEvent);
-        }
-        if self.guard_against_out_of_order(metadata) {
-            error!(
-                "[{}] - Out-of-order event detected: {} from {}. Current local clock is: {}",
-                self.id.blue().bold(),
-                format!("{}", metadata.clock).red(),
-                metadata.origin.blue(),
-                format!("{}", self.my_clock()).red()
-            );
-            #[cfg(feature = "wasm")]
-            console::error_1(
-                &format!(
-                    "[{}] - Out-of-order event detected: {} from {}. Current local clock is: {}",
-                    self.id.blue().bold(),
-                    format!("{}", metadata.clock).red(),
-                    metadata.origin.blue(),
-                    format!("{}", self.my_clock()).red()
-                )
-                .into(),
-            );
-            return Err(DeliveryError::OutOfOrderEvent);
         }
         Ok(())
     }
@@ -517,8 +540,6 @@ where
                 self.id.blue().bold(),
                 format!("{}", clock).red()
             );
-            #[cfg(feature = "wasm")]
-            console::log_1(&format!("Adding timestamp extension for {}", clock).into());
         }
         let mut ext_tracker = Vec::<String>::new();
         for (m, ext) in ext_list {
@@ -536,8 +557,6 @@ where
                 self.id.blue().bold(),
                 format!("{}", clock).red()
             );
-            #[cfg(feature = "wasm")]
-            console::log_1(&format!("Timestamp extension added: {}", clock).into());
         }
         ext_tracker
     }
@@ -595,14 +614,6 @@ where
                     0
                 };
                 new.metadata.clock.insert(key.clone(), value);
-                #[cfg(feature = "wasm")]
-                console::log_1(
-                    &format!(
-                        "Key {} not found in the event. Adding it to the clock {}",
-                        key, new.metadata.clock
-                    )
-                    .into(),
-                );
             }
         }
         // TODO: Verify if the following code is correct
@@ -610,14 +621,6 @@ where
         for key in new.metadata.clock.keys() {
             if !ltm_keys.contains(&key) {
                 new.metadata.clock.remove(&key);
-                #[cfg(feature = "wasm")]
-                console::log_1(
-                    &format!(
-                        "Key {} not found in the LTM. Removing it from the clock {}",
-                        key, new.metadata.clock
-                    )
-                    .into(),
-                );
             }
         }
         assert_eq!(
