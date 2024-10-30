@@ -19,7 +19,7 @@ fn twins() -> (Tcsb<Counter<i32>>, Tcsb<Counter<i32>>) {
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
     // --> Causal stability <--
-    tcsb_b.state_transfer(&tcsb_a);
+    tcsb_b.state_transfer(&mut tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
@@ -39,7 +39,7 @@ fn triplet() -> (Tcsb<Counter<i32>>, Tcsb<Counter<i32>>, Tcsb<Counter<i32>>) {
     tcsb_a.tc_deliver_op(event_b);
 
     // --> Causal stability <--
-    tcsb_c.state_transfer(&tcsb_a);
+    tcsb_c.state_transfer(&mut tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
@@ -73,8 +73,8 @@ fn quadruplet() -> (
 
     // --> Causal stability <--
 
-    tcsb_c.state_transfer(&tcsb_b);
-    tcsb_d.state_transfer(&tcsb_a);
+    tcsb_c.state_transfer(&mut tcsb_b);
+    tcsb_d.state_transfer(&mut tcsb_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
@@ -123,7 +123,7 @@ fn join_multiple_members() {
     let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
     tcsb_b.tc_deliver_membership(event_a);
 
-    tcsb_c.state_transfer(&tcsb_b);
+    tcsb_c.state_transfer(&mut tcsb_b);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
@@ -150,13 +150,14 @@ fn concurrent_joins() {
     let event_a = tcsb_a.tc_bcast_op(Counter::Inc(5));
     tcsb_b.tc_deliver_op(event_a);
 
-    // --> Causal stability <--
-
-    tcsb_c.state_transfer(&tcsb_b);
-    tcsb_d.state_transfer(&tcsb_a);
-
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+
+    // --> Causal stability <--
+
+    tcsb_c.state_transfer(&mut tcsb_b);
+    tcsb_d.state_transfer(&mut tcsb_a);
+
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
 
@@ -329,7 +330,7 @@ fn join_multiple_members_same_node() {
 
     let _ = tcsb_a.tc_bcast_membership(MSet::add("b"));
 
-    tcsb_b.state_transfer(&tcsb_a);
+    tcsb_b.state_transfer(&mut tcsb_a);
 
     let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
 
@@ -386,7 +387,7 @@ fn rejoin() {
     tcsb_b.tc_deliver_op(event.clone());
 
     // --> Causal stability <--
-    tcsb_d.state_transfer(&tcsb_b);
+    tcsb_d.state_transfer(&mut tcsb_b);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
@@ -423,7 +424,7 @@ fn early_rejoin() {
     tcsb_d.tc_deliver_op(event);
 
     // --> Causal stability <--
-    tcsb_d.state_transfer(&tcsb_b);
+    tcsb_d.state_transfer(&mut tcsb_b);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);

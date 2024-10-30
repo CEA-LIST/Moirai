@@ -20,10 +20,12 @@ use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
+#[derive(Debug)]
 pub enum DeliveryError {
     UnknownPeer,
     DuplicatedEvent,
     OutOfOrderEvent,
+    StateTransferRequired,
 }
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
@@ -42,7 +44,7 @@ where
     pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
-    timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
+    pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -129,6 +131,27 @@ where
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event, &self.ltm.keys());
         }
+        // Assume that the timestamp is now consistent
+        if self.guard_against_out_of_order(&event.metadata) {
+            error!(
+                "[{}] - Out-of-order event from {} detected with clock {}. Operation: {}",
+                self.id.blue().bold(),
+                event.metadata.origin,
+                format!("{}", event.metadata.clock).red(),
+                format!("{:?}", event.op).green(),
+            );
+            #[cfg(feature = "wasm")]
+            console::error_1(
+                &format!(
+                    "[{}] - Out-of-order event from {} detected with clock {}. Operation: {}",
+                    self.id.blue().bold(),
+                    format!("{}", event.metadata.clock).red(),
+                    event.metadata.origin,
+                    format!("{:?}", event.op).green(),
+                )
+                .into(),
+            );
+        }
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
         // Oldest event first
@@ -138,7 +161,7 @@ where
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready...
-            if !Self::guard_against_out_of_order(self, &event.metadata)
+            if !self.guard_against_out_of_order(&event.metadata)
                 && !self.guard_against_concurrent_to_remove(&event)
             {
                 // ...deliver it
@@ -333,13 +356,18 @@ where
     }
 
     /// Transfer the state of a replica to another replica.
-    pub fn state_transfer(&mut self, other: &Tcsb<O>) {
+    pub fn state_transfer(&mut self, other: &mut Tcsb<O>) {
         assert!(self.id != other.id && other.eval_group_membership().contains(&self.id));
         self.state = other.state.clone();
         self.group_membership = other.group_membership.clone();
         self.ltm = other.ltm.clone();
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
+        self.timestamp_extension = other.timestamp_extension.clone();
+        // TODO: Not sure if this is safe
+        // The peer will have its clock at least as high as the one of the other peer
+        let other_clock = other.my_clock().clone();
+        other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
     }
 
     /// Utilitary function to evaluate the current state of the whole CRDT.
@@ -366,48 +394,36 @@ where
             .expect("Local vector clock not found")
     }
 
-    // pub fn event_since(
-    //     &self,
-    //     clock: &VectorClock<String, usize>,
-    // ) -> Vec<Event<Duet<MSet<String>, O>>> {
-    // let state_events = self
-    //     .state
-    //     .unstable
-    //     .iter()
-    //     .filter(|(m, _)| m > clock)
-    //     .map(|(m, op)| Event::new(Duet::Second(op.clone()), m.clone()))
-    //     .collect();
-    // let group_membership_events = self
-    //     .group_membership
-    //     .unstable
-    //     .iter()
-    //     .filter(|(m, _)| m > clock)
-    //     .map(|(m, op)| Event::new(Duet::First(op.clone()), m.clone()))
-    //     .collect();
-    // state_events
-    //     .into_iter()
-    //     .chain(group_membership_events.into_iter())
-    //     .collect()
-    // let state_events: Vec<(Metadata, Arc<O>)> = self
-    //     .state
-    //     .unstable
-    //     .range((
-    //         Bound::Unbounded,
-    //         Bound::Included(&Metadata::new(clock.clone(), "")),
-    //     ))
-    //     .map(|(m, v)| (m.clone(), v.clone()))
-    //     .collect();
-    // let group_membership_events: Vec<(Metadata, Arc<MSet<String>>)> = self
-    //     .group_membership
-    //     .unstable
-    //     .range((
-    //         Bound::Unbounded,
-    //         Bound::Included(&Metadata::new(clock.clone(), "")),
-    //     ))
-    //     .map(|(m, v)| (m.clone(), v.clone()))
-    //     .collect();
-
-    // }
+    pub fn event_since(
+        &self,
+        since: &VectorClock<String, usize>,
+    ) -> Result<Vec<Event<Duet<MSet<String>, O>>>, DeliveryError> {
+        // If the LSV is greater than the since vector clock, it means the peer needs a state transfer
+        // However, it should not happen because every peer should wait that everyone gets the ops before stabilizing
+        if self.lsv >= *since {
+            return Err(DeliveryError::StateTransferRequired);
+        }
+        // TODO: check if range included or excluded
+        let events: Vec<Event<Duet<MSet<String>, O>>> = self
+            .group_membership
+            .unstable
+            .range((
+                Bound::Included(&Metadata::new(since.clone(), "")),
+                Bound::Unbounded,
+            ))
+            .map(|(m, o)| Event::new(Duet::First(o.as_ref().clone()), m.clone()))
+            .collect::<Vec<_>>();
+        let domain_events: Vec<Event<Duet<MSet<String>, O>>> = self
+            .state
+            .unstable
+            .range((
+                Bound::Included(&Metadata::new(since.clone(), "")),
+                Bound::Unbounded,
+            ))
+            .map(|(m, o)| Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
+            .collect::<Vec<_>>();
+        Ok([events, domain_events].concat())
+    }
 
     /// Guard against unknown peers, duplicated events, and out-of-order events.
     fn guard(&self, metadata: &Metadata) -> Result<(), DeliveryError> {
@@ -432,15 +448,17 @@ where
         }
         if self.guard_against_duplicates(metadata) {
             error!(
-                "[{}] - Duplicated event detected: {}",
+                "[{}] - Duplicated event detected from {} with clock {}",
                 self.id.blue().bold(),
+                metadata.origin.red(),
                 format!("{}", metadata.clock).red()
             );
             #[cfg(feature = "wasm")]
             console::error_1(
                 &format!(
-                    "[{}] - Duplicated event detected: {}",
+                    "[{}] - Duplicated event detected from {} with clock {}",
                     self.id.blue().bold(),
+                    metadata.origin.red(),
                     format!("{}", metadata.clock).red()
                 )
                 .into(),
@@ -456,7 +474,7 @@ where
             && self
                 .ltm
                 .get(&metadata.origin)
-                .map(|ltm_clock| metadata.clock <= *ltm_clock)
+                .map(|other_clock| metadata.clock <= *other_clock)
                 .unwrap_or(false)
     }
 
@@ -699,6 +717,9 @@ where
                     }
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
+                    self.timestamp_extension.clear();
+                    assert_eq!(self.eval_group_membership().len(), 1);
+                    assert_eq!(self.ltm.keys(), vec![self.id.clone()]);
                 }
             }
         }
