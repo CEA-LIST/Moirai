@@ -19,13 +19,13 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
+pub type UnionOp<O> = Duet<MSet<String>, O>;
 
 #[derive(Debug)]
 pub enum DeliveryError {
     UnknownPeer,
     DuplicatedEvent,
     OutOfOrderEvent,
-    StateTransferRequired,
 }
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
@@ -41,7 +41,7 @@ where
     pub id: String,
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pub pending: VecDeque<Event<Duet<MSet<String>, O>>>,
+    pub pending: VecDeque<Event<UnionOp<O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
@@ -118,10 +118,11 @@ where
     /// Reliable Causal Broadcast (RCB) functionality.
     /// Store a new event in the buffer and check if it is ready to be delivered.
     /// Check if other pending events are made ready to be delivered by the new event.
-    fn check_delivery(&mut self, mut event: Event<Duet<MSet<String>, O>>) {
+    fn check_delivery(&mut self, mut event: Event<UnionOp<O>>) {
         if self.guard(&event.metadata).is_err() {
             return;
         }
+        assert_eq!(self.eval_group_membership().len(), self.ltm.keys().len());
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
@@ -175,7 +176,7 @@ where
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, event: Event<Duet<MSet<String>, O>>) {
+    fn tc_deliver(&mut self, event: Event<UnionOp<O>>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -394,17 +395,18 @@ where
             .expect("Local vector clock not found")
     }
 
-    pub fn event_since(
+    pub fn events_since(
         &self,
         since: &VectorClock<String, usize>,
-    ) -> Result<Vec<Event<Duet<MSet<String>, O>>>, DeliveryError> {
-        // If the LSV is greater than the since vector clock, it means the peer needs a state transfer
+    ) -> Result<Vec<Event<UnionOp<O>>>, &str> {
+        // If the LSV is strictly greater than the since vector clock, it means the peer needs a state transfer
         // However, it should not happen because every peer should wait that everyone gets the ops before stabilizing
-        if self.lsv >= *since {
-            return Err(DeliveryError::StateTransferRequired);
+        if self.lsv > *since {
+            return Err("State transfer required");
         }
+        // Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
         // TODO: check if range included or excluded
-        let events: Vec<Event<Duet<MSet<String>, O>>> = self
+        let events: Vec<Event<UnionOp<O>>> = self
             .group_membership
             .unstable
             .range((
@@ -413,7 +415,7 @@ where
             ))
             .map(|(m, o)| Event::new(Duet::First(o.as_ref().clone()), m.clone()))
             .collect::<Vec<_>>();
-        let domain_events: Vec<Event<Duet<MSet<String>, O>>> = self
+        let domain_events: Vec<Event<UnionOp<O>>> = self
             .state
             .unstable
             .range((
@@ -423,6 +425,25 @@ where
             .map(|(m, o)| Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
             .collect::<Vec<_>>();
         Ok([events, domain_events].concat())
+    }
+
+    /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
+    pub fn waiting_from(&self) -> HashSet<String> {
+        // Let consider a distributed systems where nodes exchange messages with a vector clock where process id are maped to integers. Each peer have a pending array of received messages that are not causally ready to be delivered. Give me the algorithm that returns the list of peers whose local peer is waiting for messages to deliver those previously received.
+        let mut waiting_from = HashSet::<String>::new();
+        for event in self.pending.iter() {
+            assert!(
+                event.metadata.origin != self.id,
+                "Local peer should not be in the pending list. Event: {:?}",
+                event
+            );
+            let sending_peer_clock = self.ltm.get(&event.metadata.origin).unwrap();
+            let sending_peer_lamport = sending_peer_clock.get(&event.metadata.origin).unwrap();
+            if event.metadata.get_lamport(&event.metadata.origin) > sending_peer_lamport {
+                waiting_from.insert(event.metadata.origin.clone());
+            }
+        }
+        waiting_from
     }
 
     /// Guard against unknown peers, duplicated events, and out-of-order events.
@@ -470,12 +491,10 @@ where
 
     /// Check that the event has not already been delivered
     fn guard_against_duplicates(&self, metadata: &Metadata) -> bool {
-        self.id != metadata.origin
-            && self
-                .ltm
-                .get(&metadata.origin)
-                .map(|other_clock| metadata.clock <= *other_clock)
-                .unwrap_or(false)
+        self.ltm
+            .get(&metadata.origin)
+            .map(|other_clock| metadata.clock <= *other_clock)
+            .unwrap_or(false)
     }
 
     /// Check that the event is the causal successor of the last event delivered by this same replica
@@ -508,9 +527,9 @@ where
         self.ltm.get(&metadata.origin).is_none()
     }
 
-    /// Check that the event is not coming from a peer that is going to be removed from the group
+    /// Check that the event is not coming from a peer that is going to be removed from the group.
     /// Returns true if the event is not ready to be delivered
-    fn guard_against_concurrent_to_remove(&self, event: &Event<Duet<MSet<String>, O>>) -> bool {
+    fn guard_against_concurrent_to_remove(&self, event: &Event<UnionOp<O>>) -> bool {
         // Do not deliver the event if the origin is going to be removed from the group...
         let will_be_removed = self
             .group_membership
@@ -585,8 +604,11 @@ where
             .timestamp_extension
             .entry(Metadata::new(self.lsv.clone(), ""))
             .or_default();
-        let removed_clock = self.ltm.get(&self.id).unwrap().get(id).unwrap();
-        ext_list.insert(id.clone(), removed_clock);
+        // The removed peer may be already removed from the LTM.
+        // e.g. multiple remove operations from different peers have already been stabilized.
+        if let Some(removed_clock) = self.ltm.get(&self.id).and_then(|clock| clock.get(id)) {
+            ext_list.insert(id.clone(), removed_clock);
+        }
     }
 
     fn fix_timestamp_inconsistencies_stored_events<T>(
@@ -613,7 +635,7 @@ where
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
     fn fix_timestamp_inconsistencies_incoming_event(
         &self,
-        new: &mut Event<Duet<MSet<String>, O>>,
+        new: &mut Event<UnionOp<O>>,
         ltm_keys: &[String],
     ) {
         // Missing keys in the new event
@@ -739,6 +761,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use crate::crdt::{
         counter::Counter,
         test_util::{triplet, twins},
@@ -787,5 +811,22 @@ mod tests {
         assert_eq!(tcsb_a.eval(), -5);
         assert_eq!(tcsb_b.eval(), -5);
         assert_eq!(tcsb_c.eval(), -5);
+    }
+
+    #[test_log::test]
+    fn events_since() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
+
+        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
+        let event = tcsb_a.tc_bcast_op(Counter::Inc(1));
+
+        tcsb_b.tc_deliver_op(event);
+
+        let events = tcsb_a.events_since(&tcsb_b.my_clock()).unwrap();
+        assert_eq!(
+            HashSet::<String>::from(["a".to_string()]),
+            tcsb_b.waiting_from()
+        );
+        assert_eq!(events.len(), 2);
     }
 }
