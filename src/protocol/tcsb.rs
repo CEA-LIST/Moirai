@@ -13,7 +13,7 @@ use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::sync::Arc;
@@ -42,9 +42,6 @@ where
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pub pending: VecDeque<Event<AnyOp<O>>>,
-    // TODO: remove this shit
-    /// Special buffer of operations to be delivered from nodes that are not yet in the group membership
-    pub unknown_pending: VecDeque<Event<AnyOp<O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
@@ -73,7 +70,6 @@ where
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
-            unknown_pending: VecDeque::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -132,21 +128,6 @@ where
             return;
         }
         assert_eq!(self.eval_group_membership().len(), self.ltm.keys().len());
-        if !self
-            .eval_group_membership()
-            .contains(&event.metadata.origin)
-            && self.eval_group_membership().len() < event.metadata.clock.len()
-        {
-            debug!(
-                "[{}] - Event from unknown peer {} with clock {}",
-                self.id.blue().bold(),
-                event.metadata.origin.red(),
-                format!("{}", event.metadata.clock).red()
-            );
-            self.unknown_pending.push_back(event);
-
-            return;
-        }
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
@@ -176,7 +157,6 @@ where
                 .into(),
             );
         }
-        self.check_unknown_pending();
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
         self.check_pending();
@@ -288,6 +268,8 @@ where
             self.lsv = self.ltm.svv(&ignore);
         }
 
+        let mut new_members = HashMap::new();
+
         for metadata in ready_to_stabilize.iter_mut() {
             // must modify metadata to remove the keys that are not in the group membership
             for key in metadata.clock.keys() {
@@ -317,45 +299,43 @@ where
                     ignore,
                 );
 
-                let to_remove = self
+                let event = self
                     .group_membership
                     .unstable
                     .get(metadata)
-                    .map(|arc| arc.as_ref())
-                    .and_then(|op| {
-                        if let MSet::Remove(v) = op {
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .unwrap()
+                    .as_ref()
+                    .clone();
                 MSet::stable(metadata, &mut self.group_membership);
 
-                // If a join operation is stable, maybe unknown peers are now known
-                self.check_unknown_pending();
-                // TODO: If a join operation is stable, add a timestamp to every event?
-
-                // If a remove operation is stable, remove its clock entry from every timestamp stored in the TCSB.
-                if let Some(id) = to_remove {
-                    self.store_lamport_of_removed_peer(&id);
-                    // Remove every pending events from the removed peer
-                    self.pending.retain(|e| e.metadata.origin != *id);
-                    // Remove clock entry from timestamp extension
-                    Self::fix_timestamp_inconsistencies_stored_events(
-                        &mut self.timestamp_extension,
-                        &id,
-                    );
-                    // Remove clock entry from unstable state events
-                    Self::fix_timestamp_inconsistencies_stored_events(
-                        &mut self.state.unstable,
-                        &id,
-                    );
-                    // Remove clock entry from unstable group membership events
-                    Self::fix_timestamp_inconsistencies_stored_events(
-                        &mut self.group_membership.unstable,
-                        &id,
-                    );
+                match event {
+                    MSet::Add(id) => {
+                        new_members.insert(id, metadata.clone());
+                    }
+                    MSet::Remove(id) => {
+                        // If a remove operation is stable, remove its clock entry from every timestamp stored in the TCSB.
+                        self.store_lamport_of_removed_peer(&id);
+                        // Remove every pending events from the removed peer
+                        self.pending.retain(|e| e.metadata.origin != *id);
+                        // Remove clock entry from timestamp extension
+                        Self::fix_timestamp_inconsistencies_stored_events(
+                            &mut self.timestamp_extension,
+                            &id,
+                        );
+                        // Remove clock entry from unstable state events
+                        Self::fix_timestamp_inconsistencies_stored_events(
+                            &mut self.state.unstable,
+                            &id,
+                        );
+                        // Remove clock entry from unstable group membership events
+                        Self::fix_timestamp_inconsistencies_stored_events(
+                            &mut self.group_membership.unstable,
+                            &id,
+                        );
+                    }
                 }
+
+                // TODO: If a join operation is stable, add a timestamp to every event?
             } else {
                 panic!(
                     "[{}] - Event with metadata {} not found in the log",
@@ -364,7 +344,7 @@ where
             }
         }
 
-        self.update_ltm_membership();
+        self.update_ltm_membership(new_members);
     }
 
     /// Transfer the state of a replica to another replica.
@@ -382,10 +362,12 @@ where
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
         self.timestamp_extension = other.timestamp_extension.clone();
-        // TODO: Not sure if this is safe
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
+        assert_eq!(self.my_clock(), other.my_clock());
+        assert_eq!(self.my_clock(), self.ltm.get(&other.id).unwrap());
+        assert_eq!(other.my_clock(), other.ltm.get(&self.id).unwrap());
     }
 
     /// Utilitary function to evaluate the current state of the whole CRDT.
@@ -754,39 +736,16 @@ where
         self.pending = still_pending;
     }
 
-    fn check_unknown_pending(&mut self) {
-        // Oldest event first
-        self.unknown_pending
-            .make_contiguous()
-            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
-        let mut still_unknown_pending = VecDeque::new();
-        while let Some(mut unknown_event) = self.unknown_pending.pop_front() {
-            if self
-                .eval_group_membership()
-                .contains(&unknown_event.metadata.origin)
-            {
-                if unknown_event.metadata.clock.keys() != self.eval_group_membership() {
-                    self.fix_timestamp_inconsistencies_incoming_event(
-                        &mut unknown_event,
-                        &self.ltm.keys(),
-                    );
-                }
-                self.pending.push_back(unknown_event.clone());
-            } else {
-                still_unknown_pending.push_back(unknown_event);
-            }
-        }
-        self.unknown_pending = still_unknown_pending;
-    }
-
     /// Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
-    fn update_ltm_membership(&mut self) {
+    fn update_ltm_membership(&mut self, new_members: HashMap<String, Metadata>) {
         let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
         // Add missing keys
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
                 // The new peer's vector clock should not be an array of 0 but the last vector clock of the peer welcoming it
+                let new_member_clock = &new_members.get(member).unwrap().clock;
                 self.ltm.add_key(member.clone());
+                self.ltm.update(member, new_member_clock);
             }
         }
         // Remove keys that are not in the group membership
