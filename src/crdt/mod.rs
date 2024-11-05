@@ -38,21 +38,14 @@ pub mod test_util {
     }
 
     pub fn triplet<O: PureCRDT + Clone + Debug>() -> Triplet<O> {
-        let mut tcsb_a = Tcsb::<O>::new("a");
-        let mut tcsb_b = Tcsb::<O>::new("b");
+        let (mut tcsb_a, mut tcsb_b) = twins();
         let mut tcsb_c = Tcsb::<O>::new("c");
-
-        let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
-        let event_b = tcsb_b.tc_bcast_membership(MSet::add("a"));
-
-        tcsb_b.tc_deliver_membership(event_a);
-        tcsb_a.tc_deliver_membership(event_b);
-
-        let event_b = tcsb_b.tc_bcast_membership(MSet::add("c"));
-        tcsb_a.tc_deliver_membership(event_b);
 
         let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
         tcsb_b.tc_deliver_membership(event_a);
+
+        let event_b = tcsb_b.tc_bcast_membership(MSet::add("c"));
+        tcsb_a.tc_deliver_membership(event_b);
 
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
