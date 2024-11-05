@@ -19,7 +19,7 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
-pub type UnionOp<O> = Duet<MSet<String>, O>;
+pub type AnyOp<O> = Duet<MSet<String>, O>;
 
 #[derive(Debug)]
 pub enum DeliveryError {
@@ -41,7 +41,10 @@ where
     pub id: String,
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pub pending: VecDeque<Event<UnionOp<O>>>,
+    pub pending: VecDeque<Event<AnyOp<O>>>,
+    // TODO: remove this shit
+    /// Special buffer of operations to be delivered from nodes that are not yet in the group membership
+    pub unknown_pending: VecDeque<Event<AnyOp<O>>>,
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
@@ -70,6 +73,7 @@ where
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
+            unknown_pending: VecDeque::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -118,11 +122,31 @@ where
     /// Reliable Causal Broadcast (RCB) functionality.
     /// Store a new event in the buffer and check if it is ready to be delivered.
     /// Check if other pending events are made ready to be delivered by the new event.
-    fn check_delivery(&mut self, mut event: Event<UnionOp<O>>) {
+    fn check_delivery(&mut self, mut event: Event<AnyOp<O>>) {
+        assert_ne!(
+            self.id, event.metadata.origin,
+            "Local peer {} should not be the origin {} of the event",
+            self.id, event.metadata.origin
+        );
         if self.guard(&event.metadata).is_err() {
             return;
         }
         assert_eq!(self.eval_group_membership().len(), self.ltm.keys().len());
+        if !self
+            .eval_group_membership()
+            .contains(&event.metadata.origin)
+            && self.eval_group_membership().len() < event.metadata.clock.len()
+        {
+            debug!(
+                "[{}] - Event from unknown peer {} with clock {}",
+                self.id.blue().bold(),
+                event.metadata.origin.red(),
+                format!("{}", event.metadata.clock).red()
+            );
+            self.unknown_pending.push_back(event);
+
+            return;
+        }
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
@@ -132,12 +156,11 @@ where
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event, &self.ltm.keys());
         }
-        // Assume that the timestamp is now consistent
         if self.guard_against_out_of_order(&event.metadata) {
             error!(
                 "[{}] - Out-of-order event from {} detected with clock {}. Operation: {}",
                 self.id.blue().bold(),
-                event.metadata.origin,
+                event.metadata.origin.blue(),
                 format!("{}", event.metadata.clock).red(),
                 format!("{:?}", event.op).green(),
             );
@@ -153,30 +176,14 @@ where
                 .into(),
             );
         }
+        self.check_unknown_pending();
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
-        // Oldest event first
-        self.pending
-            .make_contiguous()
-            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
-        let mut still_pending = VecDeque::new();
-        while let Some(event) = self.pending.pop_front() {
-            // If the event is causally ready...
-            if !self.guard_against_out_of_order(&event.metadata)
-                && !self.guard_against_concurrent_to_remove(&event)
-            {
-                // ...deliver it
-                self.tc_deliver(event);
-            } else {
-                // ...otherwise, keep it in the buffer
-                still_pending.push_back(event);
-            }
-        }
-        self.pending = still_pending;
+        self.check_pending();
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, event: Event<UnionOp<O>>) {
+    fn tc_deliver(&mut self, event: Event<AnyOp<O>>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -324,6 +331,10 @@ where
                     });
                 MSet::stable(metadata, &mut self.group_membership);
 
+                // If a join operation is stable, maybe unknown peers are now known
+                self.check_unknown_pending();
+                // TODO: If a join operation is stable, add a timestamp to every event?
+
                 // If a remove operation is stable, remove its clock entry from every timestamp stored in the TCSB.
                 if let Some(id) = to_remove {
                     self.store_lamport_of_removed_peer(&id);
@@ -357,8 +368,14 @@ where
     }
 
     /// Transfer the state of a replica to another replica.
+    /// The peer giving the state should be the one that have welcomed the other peer in its group membership.
     pub fn state_transfer(&mut self, other: &mut Tcsb<O>) {
-        assert!(self.id != other.id && other.eval_group_membership().contains(&self.id));
+        assert!(
+            self.id != other.id && other.eval_group_membership().contains(&self.id),
+            "Peer {} is not in the group membership of peer {}",
+            self.id,
+            other.id
+        );
         self.state = other.state.clone();
         self.group_membership = other.group_membership.clone();
         self.ltm = other.ltm.clone();
@@ -398,7 +415,7 @@ where
     pub fn events_since(
         &self,
         since: &VectorClock<String, usize>,
-    ) -> Result<Vec<Event<UnionOp<O>>>, &str> {
+    ) -> Result<Vec<Event<AnyOp<O>>>, &str> {
         // If the LSV is strictly greater than the since vector clock, it means the peer needs a state transfer
         // However, it should not happen because every peer should wait that everyone gets the ops before stabilizing
         if self.lsv > *since {
@@ -406,7 +423,7 @@ where
         }
         // Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
         // TODO: check if range included or excluded
-        let events: Vec<Event<UnionOp<O>>> = self
+        let events: Vec<Event<AnyOp<O>>> = self
             .group_membership
             .unstable
             .range((
@@ -415,7 +432,7 @@ where
             ))
             .map(|(m, o)| Event::new(Duet::First(o.as_ref().clone()), m.clone()))
             .collect::<Vec<_>>();
-        let domain_events: Vec<Event<UnionOp<O>>> = self
+        let domain_events: Vec<Event<AnyOp<O>>> = self
             .state
             .unstable
             .range((
@@ -429,7 +446,10 @@ where
 
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
     pub fn waiting_from(&self) -> HashSet<String> {
-        // Let consider a distributed systems where nodes exchange messages with a vector clock where process id are maped to integers. Each peer have a pending array of received messages that are not causally ready to be delivered. Give me the algorithm that returns the list of peers whose local peer is waiting for messages to deliver those previously received.
+        // Let consider a distributed systems where nodes exchange messages with a vector clock where
+        // process id are maped to integers. Each peer have a pending array of received messages that are
+        // not causally ready to be delivered. Give me the algorithm that returns the list of peers whose
+        // local peer is waiting for messages to deliver those previously received.
         let mut waiting_from = HashSet::<String>::new();
         for event in self.pending.iter() {
             assert!(
@@ -517,7 +537,7 @@ where
             .any(|(k, v)| {
                 let ltm_clock = self.ltm.get(k).unwrap();
                 let ltm_value = ltm_clock.get(k).unwrap();
-                *v > ltm_value && *v != usize::MAX
+                *v > ltm_value
             });
         is_origin_out_of_order || are_other_entries_out_of_order
     }
@@ -525,11 +545,19 @@ where
     /// Check that the event is not from an unknown peer
     fn guard_against_unknow_peer(&self, metadata: &Metadata) -> bool {
         self.ltm.get(&metadata.origin).is_none()
+            && !self
+                .group_membership
+                .unstable
+                .iter()
+                .any(|(_, o)| match o.as_ref() {
+                    MSet::Add(v) => v == &metadata.origin,
+                    _ => false,
+                })
     }
 
     /// Check that the event is not coming from a peer that is going to be removed from the group.
     /// Returns true if the event is not ready to be delivered
-    fn guard_against_concurrent_to_remove(&self, event: &Event<UnionOp<O>>) -> bool {
+    fn guard_against_concurrent_to_remove(&self, event: &Event<AnyOp<O>>) -> bool {
         // Do not deliver the event if the origin is going to be removed from the group...
         let will_be_removed = self
             .group_membership
@@ -631,35 +659,25 @@ where
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
-    /// by adding the missing keys and setting the missing values to 0 or usize::MAX
+    /// by adding the missing keys and setting the missing values to 0
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
     fn fix_timestamp_inconsistencies_incoming_event(
-        &self,
-        new: &mut Event<UnionOp<O>>,
+        &mut self,
+        new: &mut Event<AnyOp<O>>,
         ltm_keys: &[String],
     ) {
         // Missing keys in the new event
         for key in ltm_keys.iter() {
             if !new.metadata.clock.contains(key) {
-                // If a remove is waiting to be stabilized, set the value to usize::MAX
-                // because the incoming message may be the first one after the remove
-                let value = if self
-                    .group_membership
-                    .unstable
-                    .values()
-                    .any(|o| matches!(o.as_ref(), MSet::Remove(v) if v == key))
-                {
-                    usize::MAX
-                } else {
-                    0
-                };
-                new.metadata.clock.insert(key.clone(), value);
+                new.metadata.clock.insert(key.clone(), 0);
             }
         }
         // TODO: Verify if the following code is correct
         // Missing keys in the LTM
         for key in new.metadata.clock.keys() {
             if !ltm_keys.contains(&key) {
+                // We can't remove the from the event if it is its id
+                assert_ne!(key, new.metadata.origin);
                 new.metadata.clock.remove(&key);
             }
         }
@@ -679,8 +697,8 @@ where
             .unstable
             .iter()
             .filter_map(|(_, o)| match o.as_ref() {
-                MSet::Add(_) => None,
                 MSet::Remove(v) => Some(v.clone()),
+                _ => None,
             })
             .collect();
         let ignore = if ignore.contains(&self.id) {
@@ -715,12 +733,59 @@ where
         state
     }
 
+    fn check_pending(&mut self) {
+        // Oldest event first
+        self.pending
+            .make_contiguous()
+            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
+        let mut still_pending = VecDeque::new();
+        while let Some(event) = self.pending.pop_front() {
+            // If the event is causally ready...
+            if !self.guard_against_out_of_order(&event.metadata)
+                && !self.guard_against_concurrent_to_remove(&event)
+            {
+                // ...deliver it
+                self.tc_deliver(event);
+            } else {
+                // ...otherwise, keep it in the buffer
+                still_pending.push_back(event);
+            }
+        }
+        self.pending = still_pending;
+    }
+
+    fn check_unknown_pending(&mut self) {
+        // Oldest event first
+        self.unknown_pending
+            .make_contiguous()
+            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
+        let mut still_unknown_pending = VecDeque::new();
+        while let Some(mut unknown_event) = self.unknown_pending.pop_front() {
+            if self
+                .eval_group_membership()
+                .contains(&unknown_event.metadata.origin)
+            {
+                if unknown_event.metadata.clock.keys() != self.eval_group_membership() {
+                    self.fix_timestamp_inconsistencies_incoming_event(
+                        &mut unknown_event,
+                        &self.ltm.keys(),
+                    );
+                }
+                self.pending.push_back(unknown_event.clone());
+            } else {
+                still_unknown_pending.push_back(unknown_event);
+            }
+        }
+        self.unknown_pending = still_unknown_pending;
+    }
+
     /// Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
     fn update_ltm_membership(&mut self) {
         let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
         // Add missing keys
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
+                // The new peer's vector clock should not be an array of 0 but the last vector clock of the peer welcoming it
                 self.ltm.add_key(member.clone());
             }
         }
