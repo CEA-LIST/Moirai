@@ -44,7 +44,7 @@ pub mod test_util {
         let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
         tcsb_b.tc_deliver_membership(event_a);
 
-        let event_b = tcsb_b.tc_bcast_membership(MSet::add("c"));
+        let event_b = tcsb_b.tc_bcast_membership(MSet::remove("p"));
         tcsb_a.tc_deliver_membership(event_b);
 
         // --> Causal stability <--

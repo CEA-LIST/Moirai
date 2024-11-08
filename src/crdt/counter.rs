@@ -47,6 +47,18 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
     }
 }
 
+impl<V> Display for Counter<V>
+where
+    V: Number + Debug + Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Counter::Inc(v) => write!(f, "Inc({})", v),
+            Counter::Dec(v) => write!(f, "Dec({})", v),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::crdt::{counter::Counter, test_util::twins};
@@ -64,17 +76,5 @@ mod tests {
         let result = 0;
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-    }
-}
-
-impl<V> Display for Counter<V>
-where
-    V: Number + Debug + Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Counter::Inc(v) => write!(f, "Inc({})", v),
-            Counter::Dec(v) => write!(f, "Dec({})", v),
-        }
     }
 }

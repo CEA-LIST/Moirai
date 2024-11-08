@@ -115,12 +115,16 @@ mod tests {
         let event_aa = tcsb_a.tc_bcast_op(MVRegister::Write("aa"));
 
         let event_b = tcsb_b.tc_bcast_op(MVRegister::Write("b"));
+
         tcsb_a.tc_deliver_op(event_b);
         tcsb_b.tc_deliver_op(event_a);
         tcsb_b.tc_deliver_op(event_aa);
 
+        println!("A: {:?}", tcsb_a.converging_members);
+        println!("B: {:?}", tcsb_b.converging_members);
+
         let result = vec!["b", "aa"];
         assert_eq!(tcsb_a.eval(), result);
-        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_b.eval(), result);
     }
 }
