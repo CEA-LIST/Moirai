@@ -45,6 +45,9 @@ where
     /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
     /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
     pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
+    /// Members whose convergence to the network state is unknown
+    /// Key is the welcoming peer, value is the list of converging members
+    pub converging_members: HashMap<String, Vec<String>>,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -66,6 +69,7 @@ where
             id: id.to_string(),
             state: POLog::default(),
             group_membership: Self::create_group_membership(id),
+            converging_members: HashMap::new(),
             timestamp_extension: BTreeMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
@@ -128,6 +132,7 @@ where
             return;
         }
         assert_eq!(self.eval_group_membership().len(), self.ltm.keys().len());
+        self.check_still_converging_members(&event);
         // Check for timestamp inconsistencies
         if event.metadata.clock.keys() != self.eval_group_membership() {
             debug!(
@@ -179,6 +184,44 @@ where
                 .update(&event.metadata.origin, &event.metadata.clock);
             // Update our own vector clock
             self.my_clock_mut().merge(&event.metadata.clock);
+
+            let is_from_converging = self.converging_members.iter().find_map(|(w, c)| {
+                if c.contains(&event.metadata.origin) {
+                    Some(w.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(w) = is_from_converging {
+                debug!(
+                    "[{}] - Removing {} from converging members welcomed by {}",
+                    self.id.blue().bold(),
+                    event.metadata.origin.red(),
+                    w.blue()
+                );
+                self.converging_members
+                    .get_mut(&w)
+                    .unwrap()
+                    .retain(|c| c != &event.metadata.origin);
+            }
+
+            let is_from_welcoming = self
+                .converging_members
+                .iter()
+                .find(|(w, _)| *w == &event.metadata.origin);
+            if let Some((w, c)) = is_from_welcoming {
+                let w_clock = self.ltm.get(w).unwrap().clone();
+                for id in c {
+                    debug!(
+                        "[{}] - Updating vector clock of converging member {} with the one of {}",
+                        self.id.blue().bold(),
+                        id.blue(),
+                        w.blue()
+                    );
+                    self.ltm.update(id, &w_clock);
+                }
+            }
+
             #[cfg(feature = "utils")]
             self.tracer.append(event.clone());
         }
@@ -268,8 +311,6 @@ where
             self.lsv = self.ltm.svv(&ignore);
         }
 
-        let mut new_members = HashMap::new();
-
         for metadata in ready_to_stabilize.iter_mut() {
             // must modify metadata to remove the keys that are not in the group membership
             for key in metadata.clock.keys() {
@@ -310,7 +351,23 @@ where
 
                 match event {
                     MSet::Add(id) => {
-                        new_members.insert(id, metadata.clone());
+                        // Keep the version vector of the new member + who is welcoming it (i.e. the origin of the event)
+                        // After stabilizing the event, the new member should have the same vector clock as the welcoming peer
+                        // And we should keep updating the vector clock of the new member with the welcoming peer's vector clock
+                        // when we receive new events from the welcoming peer, until we know that the welcoming peer has stabilized
+                        // the new member's `add` event.
+                        if metadata.origin != self.id {
+                            debug!(
+                                "[{}] - Adding {} to converging members welcomed by {}",
+                                self.id.blue().bold(),
+                                id.blue(),
+                                metadata.origin.blue()
+                            );
+                            self.converging_members
+                                .entry(metadata.origin.clone())
+                                .and_modify(|c| c.push(id.clone()))
+                                .or_insert_with(|| vec![id]);
+                        }
                     }
                     MSet::Remove(id) => {
                         // If a remove operation is stable, remove its clock entry from every timestamp stored in the TCSB.
@@ -344,7 +401,7 @@ where
             }
         }
 
-        self.update_ltm_membership(new_members);
+        self.update_ltm_membership();
     }
 
     /// Transfer the state of a replica to another replica.
@@ -362,6 +419,7 @@ where
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
         self.timestamp_extension = other.timestamp_extension.clone();
+        self.converging_members = other.converging_members.clone();
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
@@ -672,6 +730,24 @@ where
         );
     }
 
+    /// Check if the converging members have finally converged to the network state.
+    fn check_still_converging_members(&mut self, new: &Event<AnyOp<O>>) {
+        if let Some(c) = self.converging_members.get_mut(&new.metadata.origin) {
+            // does the new vector clock contains entries for the converging members?
+            let mut indices_to_remove = Vec::new();
+            for (i, member) in c.iter().enumerate() {
+                if new.metadata.clock.contains(member) {
+                    indices_to_remove.push(i);
+                }
+            }
+            // it means the welcoming peer has stabilized the new member
+            // no need to update it anymore
+            for i in indices_to_remove.iter() {
+                c.remove(*i);
+            }
+        }
+    }
+
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
     fn peers_to_ignore_for_stability(&self) -> Vec<String> {
         let ignore: Vec<String> = self
@@ -737,15 +813,30 @@ where
     }
 
     /// Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
-    fn update_ltm_membership(&mut self, new_members: HashMap<String, Metadata>) {
+    fn update_ltm_membership(&mut self) {
         let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
         // Add missing keys
         for member in &gms_members {
             if self.ltm.get(member).is_none() {
                 // The new peer's vector clock should not be an array of 0 but the last vector clock of the peer welcoming it
-                let new_member_clock = &new_members.get(member).unwrap().clock;
-                self.ltm.add_key(member.clone());
-                self.ltm.update(member, new_member_clock);
+                let welcome_peer = self.converging_members.iter().find_map(|(w, c)| {
+                    if c.contains(member) {
+                        Some(w)
+                    } else {
+                        None
+                    }
+                });
+                // either the new peer is welcomed by another peer...
+                if let Some(welcome_peer) = welcome_peer {
+                    let new_member_clock = self.ltm.get(welcome_peer).unwrap().clone();
+                    self.ltm.add_key(member.clone());
+                    self.ltm.update(member, &new_member_clock);
+                } else {
+                    // ...or the new peer is welcomed by the local peer
+                    self.ltm.add_key(member.clone());
+                    let my_clock = self.my_clock().clone();
+                    self.ltm.update(member, &my_clock);
+                }
             }
         }
         // Remove keys that are not in the group membership
@@ -846,7 +937,7 @@ mod tests {
 
         tcsb_b.tc_deliver_op(event);
 
-        let events = tcsb_a.events_since(&tcsb_b.my_clock()).unwrap();
+        let events = tcsb_a.events_since(tcsb_b.my_clock()).unwrap();
         assert_eq!(
             HashSet::<String>::from(["a".to_string()]),
             tcsb_b.waiting_from()

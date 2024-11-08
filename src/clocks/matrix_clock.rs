@@ -274,6 +274,6 @@ mod tests {
                 VectorClock::from(&["A", "B"], &[8, 6]),
             ],
         );
-        assert!((mc.keys() == &["A", "B"]) || (mc.keys() == ["B", "A"]));
+        assert!((mc.keys() == ["A", "B"]) || (mc.keys() == ["B", "A"]));
     }
 }

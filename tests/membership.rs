@@ -489,3 +489,54 @@ fn leave_and_evict() {
     tcsb_b.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
 }
+
+#[test_log::test]
+fn prevent_missing_messages() {
+    let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
+    let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
+    let mut tcsb_c = Tcsb::<Counter<i32>>::new("c");
+    let mut tcsb_d = Tcsb::<Counter<i32>>::new("d");
+    let mut tcsb_e = Tcsb::<Counter<i32>>::new("e");
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
+    tcsb_b.tc_deliver_membership(event_a);
+
+    tcsb_b.state_transfer(&mut tcsb_a);
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
+    tcsb_b.tc_deliver_membership(event_a);
+
+    let event_b = tcsb_b.tc_bcast_membership(MSet::add("d"));
+    tcsb_a.tc_deliver_membership(event_b.clone());
+    tcsb_c.tc_deliver_membership(event_b);
+
+    tcsb_c.state_transfer(&mut tcsb_a);
+
+    let event_b = tcsb_b.tc_bcast_membership(MSet::add("e"));
+    tcsb_a.tc_deliver_membership(event_b.clone());
+    tcsb_c.tc_deliver_membership(event_b);
+
+    let event_a = tcsb_a.tc_bcast_op(Counter::Inc(1));
+    tcsb_b.tc_deliver_op(event_a.clone());
+    tcsb_c.tc_deliver_op(event_a.clone());
+    tcsb_d.tc_deliver_op(event_a);
+
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+
+    let event_c = tcsb_c.tc_bcast_op(Counter::Inc(1));
+    tcsb_a.tc_deliver_op(event_c.clone());
+    tcsb_b.tc_deliver_op(event_c.clone());
+    tcsb_d.tc_deliver_op(event_c.clone());
+    tcsb_e.tc_deliver_op(event_c);
+
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+
+    tcsb_d.state_transfer(&mut tcsb_b);
+    tcsb_e.state_transfer(&mut tcsb_b);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_e.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+}
