@@ -734,17 +734,7 @@ where
     fn check_still_converging_members(&mut self, new: &Event<AnyOp<O>>) {
         if let Some(c) = self.converging_members.get_mut(&new.metadata.origin) {
             // does the new vector clock contains entries for the converging members?
-            let mut indices_to_remove = Vec::new();
-            for (i, member) in c.iter().enumerate() {
-                if new.metadata.clock.contains(member) {
-                    indices_to_remove.push(i);
-                }
-            }
-            // it means the welcoming peer has stabilized the new member
-            // no need to update it anymore
-            for i in indices_to_remove.iter() {
-                c.remove(*i);
-            }
+            c.retain(|member| !new.metadata.clock.contains(member));
         }
     }
 

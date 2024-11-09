@@ -539,4 +539,16 @@ fn prevent_missing_messages() {
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
     assert_eq!(tcsb_e.ltm.keys(), vec!["a", "b", "c", "d", "e"]);
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::remove("a"));
+    tcsb_b.tc_deliver_membership(event_a.clone());
+    tcsb_c.tc_deliver_membership(event_a.clone());
+    tcsb_d.tc_deliver_membership(event_a.clone());
+    tcsb_e.tc_deliver_membership(event_a);
+
+    let event_b = tcsb_b.tc_bcast_membership(MSet::remove("a"));
+    tcsb_a.tc_deliver_membership(event_b.clone());
+    tcsb_c.tc_deliver_membership(event_b.clone());
+    tcsb_d.tc_deliver_membership(event_b.clone());
+    tcsb_e.tc_deliver_membership(event_b);
 }
