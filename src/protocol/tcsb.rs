@@ -462,12 +462,11 @@ where
             return Err("State transfer required");
         }
         // Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
-        // TODO: check if range included or excluded
         let events: Vec<Event<AnyOp<O>>> = self
             .group_membership
             .unstable
             .range((
-                Bound::Included(&Metadata::new(since.clone(), "")),
+                Bound::Excluded(&Metadata::new(since.clone(), "")),
                 Bound::Unbounded,
             ))
             .map(|(m, o)| Event::new(Duet::First(o.as_ref().clone()), m.clone()))
