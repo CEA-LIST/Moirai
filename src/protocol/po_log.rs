@@ -10,11 +10,11 @@ use std::collections::btree_map::{Values, ValuesMut};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::iter::Chain;
+use std::rc::{Rc, Weak};
 use std::slice::{Iter, IterMut};
-use std::sync::{Arc, Weak};
 
 pub type PathTrie<O> = Trie<PathBufKey, Vec<Weak<O>>>;
-pub type Log<O> = BTreeMap<Metadata, Arc<O>>;
+pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 
 /// # Causal DAG operation history
 ///
@@ -28,7 +28,7 @@ pub struct POLog<O>
 where
     O: PureCRDT + Debug,
 {
-    pub stable: Vec<Arc<O>>,
+    pub stable: Vec<Rc<O>>,
     pub unstable: Log<O>,
     pub path_trie: PathTrie<O>,
 }
@@ -47,8 +47,8 @@ where
 
     pub fn new_event(&mut self, event: &Event<O>) {
         let state_len_before = self.stable.len() + self.unstable.len();
-        let rc_op = Arc::new(event.op.clone());
-        let weak_op = Arc::downgrade(&rc_op);
+        let rc_op = Rc::new(event.op.clone());
+        let weak_op = Rc::downgrade(&rc_op);
         if self.unstable.contains_key(&event.metadata) {
             info!(
                 "Event with metadata {:?} already present in the log: {:?}",
@@ -124,15 +124,15 @@ where
     }
 
     /// Should only be used in `eval()`
-    pub fn new_stable(&mut self, op: Arc<O>) {
+    pub fn new_stable(&mut self, op: Rc<O>) {
         self.stable.push(op);
     }
 
-    pub fn iter(&self) -> Chain<Iter<Arc<O>>, Values<Metadata, Arc<O>>> {
+    pub fn iter(&self) -> Chain<Iter<Rc<O>>, Values<Metadata, Rc<O>>> {
         self.stable.iter().chain(self.unstable.values())
     }
 
-    pub fn iter_mut(&mut self) -> Chain<IterMut<Arc<O>>, ValuesMut<Metadata, Arc<O>>> {
+    pub fn iter_mut(&mut self) -> Chain<IterMut<Rc<O>>, ValuesMut<Metadata, Rc<O>>> {
         self.stable.iter_mut().chain(self.unstable.values_mut())
     }
 

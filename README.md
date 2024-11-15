@@ -39,3 +39,4 @@ RUST_LOG=debug cargo test <name> -- --nocapture
 - [ ] Use Dotted Version Vectors/Interval Tree Clock to track the history of
       events.
 - [ ] Test with [Maelstrom](https://github.com/jepsen-io/maelstrom).
+- [ ] USe a DAG rather than a BTreeMap

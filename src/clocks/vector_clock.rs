@@ -2,7 +2,7 @@
 
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
     hash::Hash,
     ops::{Add, AddAssign},
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VectorClock<K = usize, C = usize>
 where
-    K: Eq + Hash + Clone,
+    K: PartialOrd + Hash + Clone + Eq + Ord,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     clock: HashMap<K, C>,
@@ -23,7 +23,7 @@ where
 
 impl<K, C> VectorClock<K, C>
 where
-    K: PartialOrd + Hash + Clone + Eq,
+    K: PartialOrd + Hash + Clone + Eq + Ord,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     /// Create a new VectorClock with a single key and an initial value
@@ -126,8 +126,10 @@ where
         self.clock.contains_key(key)
     }
 
-    pub fn keys(&self) -> HashSet<K> {
-        self.clock.keys().cloned().collect()
+    pub fn keys(&self) -> Vec<K> {
+        let mut keys: Vec<K> = self.clock.keys().cloned().collect();
+        keys.sort();
+        keys
     }
 
     pub fn len(&self) -> usize {
@@ -145,7 +147,7 @@ where
 
 impl<K, C> Default for VectorClock<K, C>
 where
-    K: Eq + Hash + Clone,
+    K: PartialOrd + Hash + Clone + Eq + Ord,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     fn default() -> VectorClock<K, C> {
@@ -174,7 +176,7 @@ where
 
 impl<K, C> PartialOrd for VectorClock<K, C>
 where
-    K: PartialOrd + Hash + Clone + Eq,
+    K: PartialOrd + Hash + Clone + Eq + Ord,
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -291,6 +293,14 @@ mod tests {
         clock1.merge(&clock2);
         assert_eq!(clock1.get(&"A"), Some(0));
         assert_eq!(clock1.get(&"B"), Some(0));
+    }
+
+    #[test_log::test]
+    fn merge_3() {
+        let mut clock1 = VectorClock::from(&["A", "B", "C", "D"], &[1, 1, 0, 1]);
+        let clock2 = VectorClock::from(&["A", "B", "C", "D"], &[0, 0, 2, 0]);
+        clock1.merge(&clock2);
+        assert_eq!(clock1.get(&"C"), Some(2));
     }
 
     #[test_log::test]

@@ -90,9 +90,14 @@ mod tests {
         tcsb_b.tc_deliver_op(event_a);
         tcsb_a.tc_deliver_op(event_b);
 
-        let result = vec!["b", "a"];
-        assert_eq!(tcsb_a.eval(), result);
-        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        let mut result = vec!["b", "a"];
+        result.sort();
+        let mut eval_a = tcsb_a.eval();
+        eval_a.sort();
+        let mut eval_b = tcsb_b.eval();
+        eval_b.sort();
+        assert_eq!(eval_a, result);
+        assert_eq!(eval_a, eval_b);
     }
 
     #[test_log::test]
@@ -120,11 +125,13 @@ mod tests {
         tcsb_b.tc_deliver_op(event_a);
         tcsb_b.tc_deliver_op(event_aa);
 
-        println!("A: {:?}", tcsb_a.converging_members);
-        println!("B: {:?}", tcsb_b.converging_members);
-
-        let result = vec!["b", "aa"];
-        assert_eq!(tcsb_a.eval(), result);
-        assert_eq!(tcsb_b.eval(), result);
+        let mut result = vec!["b", "aa"];
+        result.sort();
+        let mut eval_a = tcsb_a.eval();
+        eval_a.sort();
+        let mut eval_b = tcsb_b.eval();
+        eval_b.sort();
+        assert_eq!(eval_a, result);
+        assert_eq!(eval_a, eval_b);
     }
 }

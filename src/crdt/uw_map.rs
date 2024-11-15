@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, rc::Rc};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use radix_trie::TrieCommon;
@@ -55,7 +55,7 @@ where
                 if let Some(rc_op) = weak_op.upgrade() {
                     if let UWMap::Update(k, v) = rc_op.as_ref() {
                         let log = logs_by_path.entry(k.to_string()).or_default();
-                        log.new_stable(Arc::new(v.clone()));
+                        log.new_stable(Rc::new(v.clone()));
                         key = Some(k.to_string());
                     }
                 }
