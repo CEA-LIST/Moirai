@@ -15,6 +15,7 @@ pub mod test_util {
 
     pub type Twins<O> = (Tcsb<O>, Tcsb<O>);
     pub type Triplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
+    pub type Quadruplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>, Tcsb<O>);
 
     pub fn twins<O: PureCRDT + Clone + Debug>() -> Twins<O> {
         #[cfg(feature = "utils")]
@@ -45,6 +46,7 @@ pub mod test_util {
         tcsb_b.tc_deliver_membership(event_a);
 
         let event_b = tcsb_b.tc_bcast_membership(MSet::remove("p"));
+
         tcsb_a.tc_deliver_membership(event_b);
 
         // --> Causal stability <--

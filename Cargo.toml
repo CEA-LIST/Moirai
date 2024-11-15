@@ -2,6 +2,10 @@
 name = "po-crdt"
 version = "0.1.0"
 edition = "2021"
+authors = ["Léo Olivier <leo.olivier@cea.fr>"]
+description = "A library for Conflict-free Replicated Data Types (CRDTs) in Rust"
+license = "proprietary"
+repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Based_CRDT.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

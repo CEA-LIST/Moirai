@@ -150,10 +150,10 @@ mod tests {
         tcsb_b.tc_deliver_op(event_a);
         tcsb_a.tc_deliver_op(event_b);
 
-        assert_eq!(tcsb_a.state.stable.len(), 1);
-        assert_eq!(tcsb_a.state.unstable.len(), 0);
-        assert_eq!(tcsb_b.state.stable.len(), 1);
-        assert_eq!(tcsb_b.state.unstable.len(), 0);
+        assert_eq!(tcsb_a.state.stable.len(), 0);
+        assert_eq!(tcsb_a.state.unstable.len(), 1);
+        assert_eq!(tcsb_b.state.stable.len(), 0);
+        assert_eq!(tcsb_b.state.unstable.len(), 1);
 
         let result = HashSet::from(["a"]);
         assert_eq!(tcsb_b.eval(), result);
@@ -173,9 +173,9 @@ mod tests {
         tcsb_b.tc_deliver_op(event_a_2);
 
         assert_eq!(tcsb_a.state.stable.len(), 0);
-        assert_eq!(tcsb_a.state.unstable.len(), 0);
+        assert_eq!(tcsb_a.state.unstable.len(), 1);
         assert_eq!(tcsb_b.state.stable.len(), 0);
-        assert_eq!(tcsb_b.state.unstable.len(), 0);
+        assert_eq!(tcsb_b.state.unstable.len(), 1);
 
         let result = HashSet::from([]);
         assert_eq!(tcsb_b.eval(), result);

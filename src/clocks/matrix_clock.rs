@@ -94,6 +94,10 @@ where
         svv
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &VectorClock<K, C>)> {
+        self.clock.iter()
+    }
+
     pub fn merge(&mut self, other: &MatrixClock<K, C>) {
         for (k, vc1) in &(other.clock) {
             self.clock

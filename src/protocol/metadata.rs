@@ -63,9 +63,17 @@ impl PartialOrd for Metadata {
     }
 }
 
+// TODO: garbage
 impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
         let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
+        // assert_eq!(
+        //     self.clock.keys(),
+        //     other.clock.keys(),
+        //     "Self: {}, Other: {}",
+        //     self,
+        //     other
+        // );
         assert!(
             !(clock_cmp.is_none() && self.origin == other.origin),
             "Self: {}, Other: {}",
