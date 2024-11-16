@@ -461,6 +461,39 @@ where
         }
 
         self.update_ltm_membership();
+        let mut keys_to_edit = Vec::new();
+        for (m, _) in &self.state.unstable {
+            if m.clock.keys().len() != self.eval_group_membership().len() {
+                keys_to_edit.push(m.clone());
+            }
+        }
+        for m in &mut keys_to_edit {
+            let o = self.state.unstable.remove(&m).unwrap();
+            for key in self.eval_group_membership() {
+                if m.clock.get(&key).is_none() {
+                    m.clock.insert(key, 0);
+                }
+            }
+            for key in m.clock.keys() {
+                if !self.eval_group_membership().contains(&key) {
+                    m.clock.remove(&key);
+                }
+            }
+            self.state.unstable.insert(m.clone(), o);
+        }
+        for (m, _) in &self.state.unstable {
+            assert_eq!(
+                m.clock.keys().len(),
+                self.eval_group_membership().len(),
+                "Clock keys: {:?}, group membership: {:?}. Ordering: {:?}",
+                m.clock.keys(),
+                self.eval_group_membership(),
+                m.clock
+                    .keys()
+                    .len()
+                    .cmp(&self.eval_group_membership().len())
+            );
+        }
     }
 
     /// Transfer the state of a replica to another replica.
@@ -516,6 +549,10 @@ where
         lsv: &VectorClock<String, usize>,
         since: &VectorClock<String, usize>,
     ) -> Vec<Event<AnyOp<O>>> {
+        assert!(
+            lsv <= since || lsv.partial_cmp(&since).is_none(),
+            "LSV should be inferior, equal or even concurrent to the since clock."
+        );
         let mut metadata_lsv = Metadata::new(lsv.clone(), "");
         let mut metadata_since = Metadata::new(since.clone(), "");
 
@@ -573,7 +610,16 @@ where
             // .iter()
             // .map(|(m, o)| Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
             .collect::<Vec<_>>();
-        [events, domain_events].concat()
+        let events = [events, domain_events].concat();
+        #[cfg(feature = "wasm")]
+        console::log_1(
+            &format!(
+                "Events since LSV {} with clock {}: {:?}",
+                lsv, since, events
+            )
+            .into(),
+        );
+        events
     }
 
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.

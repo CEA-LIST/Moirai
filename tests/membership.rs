@@ -449,10 +449,10 @@ fn early_rejoin() {
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
-    // assert_eq!(tcsb_a.eval(), 1);
-    // assert_eq!(tcsb_b.eval(), 1);
-    // assert_eq!(tcsb_c.eval(), 1);
-    // assert_eq!(tcsb_d.eval(), 0);
+    assert_eq!(tcsb_a.eval(), 1);
+    assert_eq!(tcsb_b.eval(), 1);
+    assert_eq!(tcsb_c.eval(), 1);
+    assert_eq!(tcsb_d.eval(), 1);
 }
 
 #[test_log::test]
