@@ -1,4 +1,4 @@
-#![feature(trait_alias)]
+#![feature(trait_alias, iter_map_windows)]
 
 pub mod clocks;
 #[cfg(feature = "crdt")]
