@@ -393,7 +393,7 @@ where
                 if let MSet::Remove(i) = &event {
                     if let Some(i_clock) = self.ltm.get(i) {
                         let mut remove_exec_clock = svv.clone();
-                        remove_exec_clock.merge(&i_clock);
+                        remove_exec_clock.merge(i_clock);
                         if svv.partial_cmp(&remove_exec_clock).is_none() || svv < remove_exec_clock
                         {
                             debug!(
@@ -462,13 +462,13 @@ where
 
         self.update_ltm_membership();
         let mut keys_to_edit = Vec::new();
-        for (m, _) in &self.state.unstable {
+        for m in self.state.unstable.keys() {
             if m.clock.keys().len() != self.eval_group_membership().len() {
                 keys_to_edit.push(m.clone());
             }
         }
         for m in &mut keys_to_edit {
-            let o = self.state.unstable.remove(&m).unwrap();
+            let o = self.state.unstable.remove(m).unwrap();
             for key in self.eval_group_membership() {
                 if m.clock.get(&key).is_none() {
                     m.clock.insert(key, 0);
@@ -481,7 +481,7 @@ where
             }
             self.state.unstable.insert(m.clone(), o);
         }
-        for (m, _) in &self.state.unstable {
+        for m in self.state.unstable.keys() {
             assert_eq!(
                 m.clock.keys().len(),
                 self.eval_group_membership().len(),
@@ -550,7 +550,7 @@ where
         since: &VectorClock<String, usize>,
     ) -> Vec<Event<AnyOp<O>>> {
         assert!(
-            lsv <= since || lsv.partial_cmp(&since).is_none(),
+            lsv <= since || lsv.partial_cmp(since).is_none(),
             "LSV should be inferior, equal or even concurrent to the since clock."
         );
         let mut metadata_lsv = Metadata::new(lsv.clone(), "");
