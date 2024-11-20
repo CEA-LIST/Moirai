@@ -76,7 +76,6 @@ where
             state: POLog::default(),
             group_membership: Self::create_group_membership(id),
             converging_members: HashMap::new(),
-            // timestamp_extension: BTreeMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
@@ -453,76 +452,6 @@ where
             .expect("Local vector clock not found")
     }
 
-    pub fn events_since(
-        &self,
-        lsv: &VectorClock<String, usize>,
-        since: &VectorClock<String, usize>,
-    ) -> Vec<Event<AnyOp<O>>> {
-        assert!(
-            lsv <= since || lsv.partial_cmp(since).is_none(),
-            "LSV should be inferior, equal or even concurrent to the since clock. LSV: {lsv}, Since clock: {since}",
-        );
-        let mut metadata_lsv = Metadata::new(lsv.clone(), "");
-        let mut metadata_since = Metadata::new(since.clone(), "");
-
-        if self.eval_group_membership() != HashSet::from_iter(metadata_lsv.clock.keys()) {
-            self.fix_timestamp_inconsistencies_incoming_event(&mut metadata_lsv);
-        }
-
-        if self.eval_group_membership() != HashSet::from_iter(metadata_since.clock.keys()) {
-            self.fix_timestamp_inconsistencies_incoming_event(&mut metadata_since);
-        }
-
-        assert_eq!(
-            self.ltm_current_keys(),
-            metadata_since.clock.keys(),
-            "Since: {:?}",
-            metadata_since.clock
-        );
-        assert_eq!(
-            self.ltm_current_keys(),
-            metadata_lsv.clock.keys(),
-            "LSV: {:?}",
-            metadata_lsv.clock
-        );
-        // If the LSV is strictly greater than the since vector clock, it means the peer needs a state transfer
-        // However, it should not happen because every peer should wait that everyone gets the ops before stabilizing
-
-        // TODO: Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
-        let events: Vec<Event<AnyOp<O>>> = self
-            .group_membership
-            .unstable
-            .range((Bound::Excluded(&metadata_lsv), Bound::Unbounded))
-            .filter_map(|(m, o)| {
-                // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > metadata_since.clock.get(&m.origin).unwrap() {
-                    Some(Event::new(Duet::First(o.as_ref().clone()), m.clone()))
-                } else {
-                    None
-                }
-            })
-            // .iter()
-            // .map(|(m, o)| Event::new(Duet::First(o.as_ref().clone()), m.clone()))
-            .collect::<Vec<_>>();
-        let domain_events: Vec<Event<AnyOp<O>>> = self
-            .state
-            .unstable
-            .range((Bound::Excluded(&metadata_lsv), Bound::Unbounded))
-            .filter_map(|(m, o)| {
-                // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > metadata_since.clock.get(&m.origin).unwrap() {
-                    Some(Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
-                } else {
-                    None
-                }
-            })
-            // .iter()
-            // .map(|(m, o)| Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
-            .collect::<Vec<_>>();
-        let events = [events, domain_events].concat();
-        events
-    }
-
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
     pub fn waiting_from(&self) -> HashSet<String> {
         // Let consider a distributed systems where nodes exchange messages with a vector clock where
@@ -826,10 +755,8 @@ mod tests {
             membership_set::MSet,
             test_util::{triplet, twins},
         },
-        protocol::{event::Event, tcsb::Tcsb},
+        protocol::event::Event,
     };
-
-    use super::AnyOp;
 
     #[test_log::test]
     fn causal_delivery() {
@@ -935,36 +862,20 @@ mod tests {
     pub fn events_since_concurrent_remove() {
         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
 
-        let deliver_events =
-            |tcsb: &mut Tcsb<Counter<i32>>, events: Vec<Event<AnyOp<Counter<i32>>>>| {
-                for event in events {
-                    match event.op {
-                        Duet::First(op) => {
-                            let event = Event::new(op, event.metadata);
-                            tcsb.tc_deliver_membership(event);
-                        }
-                        Duet::Second(op) => {
-                            let event = Event::new(op, event.metadata);
-                            tcsb.tc_deliver_op(event);
-                        }
-                    }
-                }
-            };
-
         let _ = tcsb_a.tc_bcast_membership(MSet::remove("c"));
         let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
 
         // B request events from A
         let events = tcsb_a.events_since(&tcsb_b.lsv, tcsb_b.my_clock());
-        deliver_events(&mut tcsb_b, events);
+        tcsb_b.deliver_batch(events);
 
         // A request events from B
         let events = tcsb_b.events_since(&tcsb_a.lsv, tcsb_a.my_clock());
-        deliver_events(&mut tcsb_a, events);
+        tcsb_a.deliver_batch(events);
 
         // C request events from A
         let events = tcsb_a.events_since(&tcsb_c.lsv, tcsb_c.my_clock());
-        deliver_events(&mut tcsb_c, events);
+        tcsb_c.deliver_batch(events);
 
         assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
         assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b"]);
