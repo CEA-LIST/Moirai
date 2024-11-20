@@ -180,76 +180,36 @@ where
     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let mut has_less: bool = false;
-        let mut has_greater: bool = false;
+        let mut less = false;
+        let mut greater = false;
 
-        for (k, v) in &(self.clock) {
-            match other.clock.get(k) {
-                Some(other_v) => {
-                    if v > other_v {
-                        if !has_less {
-                            has_greater = true;
-                        } else {
-                            return None;
-                        }
-                    }
-                    if v < other_v {
-                        if !has_greater {
-                            has_less = true;
-                        } else {
-                            return None;
-                        }
-                    }
-                }
-                None => {
-                    if !has_less {
-                        has_greater = true;
-                    } else {
-                        return None;
-                    }
-                }
+        // Collect all unique keys from both clocks
+        let all_keys: std::collections::HashSet<_> =
+            self.keys().into_iter().chain(other.keys()).collect();
+
+        for key in all_keys {
+            let v1 = self.get(&key).unwrap_or_default();
+            let v2 = other.get(&key).unwrap_or_default();
+
+            match v1.cmp(&v2) {
+                Ordering::Less => less = true,
+                Ordering::Greater => greater = true,
+                _ => (),
+            }
+
+            // If both less and greater are true, the clocks are concurrent
+            if less && greater {
+                return None;
             }
         }
 
-        for (k, v) in &(other.clock) {
-            match self.clock.get(k) {
-                Some(self_v) => {
-                    if v > self_v {
-                        if !has_greater {
-                            has_less = true;
-                        } else {
-                            return None;
-                        }
-                    }
-                    if v < self_v {
-                        if !has_less {
-                            has_greater = true;
-                        } else {
-                            return None;
-                        }
-                    }
-                }
-                None => {
-                    if !has_greater {
-                        has_less = true;
-                    } else {
-                        return None;
-                    }
-                }
-            }
+        if less {
+            Some(Ordering::Less)
+        } else if greater {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Equal)
         }
-        if has_less && !has_greater {
-            return Some(Ordering::Less);
-        }
-        if has_greater && !has_less {
-            return Some(Ordering::Greater);
-        }
-        if has_less && has_greater {
-            // Normally this should be useless as there are shortcuts
-            // before setting has_greater or has_less. But better be safe than sorry.
-            return None;
-        }
-        Some(Ordering::Equal)
     }
 }
 
@@ -367,7 +327,7 @@ mod tests {
         let clock_1 = VectorClock::from(&["a", "b", "c", "d"], &[4, 2, 1, 0]);
         let clock_2 = VectorClock::from(&["a", "b", "c"], &[5, 2, 2]);
 
-        assert_eq!(None, clock_1.partial_cmp(&clock_2));
+        assert_eq!(Some(Ordering::Less), clock_1.partial_cmp(&clock_2));
     }
 
     #[test_log::test]
