@@ -570,3 +570,27 @@ fn prevent_missing_messages() {
     tcsb_d.tc_deliver_membership(event_b.clone());
     tcsb_e.tc_deliver_membership(event_b);
 }
+
+#[test_log::test]
+fn concurrent_evicts() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet();
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::remove("d"));
+    let event_b = tcsb_b.tc_bcast_membership(MSet::remove("d"));
+
+    tcsb_c.tc_deliver_membership(event_b.clone());
+    tcsb_c.tc_deliver_membership(event_a.clone());
+
+    tcsb_a.tc_deliver_membership(event_b);
+    tcsb_b.tc_deliver_membership(event_a);
+}
+
+#[test_log::test]
+fn cross_evict() {
+    let (mut tcsb_a, mut tcsb_c) = twins();
+
+    let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
+    let event_c = tcsb_c.tc_bcast_membership(MSet::remove("a"));
+
+    tcsb_a.tc_deliver_membership(event_c);
+}
