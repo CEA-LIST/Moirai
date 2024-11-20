@@ -19,7 +19,7 @@ fn join() {
     let event = tcsb_b.tc_bcast_op(Counter::Dec(5));
     tcsb_a.tc_deliver_op(event);
 
-    assert_eq!(tcsb_a.ltm_keys(), tcsb_b.ltm_keys());
+    assert_eq!(tcsb_a.ltm_current_keys(), tcsb_b.ltm_current_keys());
 
     let result = 0;
     assert_eq!(tcsb_a.eval(), result);
@@ -41,7 +41,7 @@ fn join_multiple_members_1() {
     let event_b = tcsb_b.tc_bcast_membership(MSet::add("c"));
     tcsb_a.tc_deliver_membership(event_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
 
     // Useless event: just to exchange causal information
     let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
@@ -49,8 +49,8 @@ fn join_multiple_members_1() {
 
     tcsb_c.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c"]);
 }
 
 #[test_log::test]
@@ -69,8 +69,8 @@ fn concurrent_joins() {
     tcsb_a.tc_deliver_membership(event_b);
     tcsb_b.tc_deliver_membership(event_a);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "d"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "d"]);
 
     // Useless event: just to exchange causal information
     let event_a = tcsb_a.tc_bcast_op(Counter::Inc(5));
@@ -78,7 +78,7 @@ fn concurrent_joins() {
     tcsb_c.tc_deliver_op(event_a.clone());
     tcsb_d.tc_deliver_op(event_a);
 
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "d"]);
     tcsb_c.state_transfer(&mut tcsb_b);
 
     let event_b = tcsb_b.tc_bcast_op(Counter::Dec(5));
@@ -86,11 +86,11 @@ fn concurrent_joins() {
     tcsb_c.tc_deliver_op(event_b.clone());
     tcsb_d.tc_deliver_op(event_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "d"]);
     tcsb_d.state_transfer(&mut tcsb_a);
 
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c", "d"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "c", "d"]);
 
     let result = 0;
     assert_eq!(tcsb_a.eval(), result);
@@ -111,13 +111,13 @@ fn leave() {
 
     let event = tcsb_a.tc_bcast_membership(MSet::remove("a"));
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b"]);
 
     tcsb_b.tc_deliver_membership(event);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["b"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["b"]);
 }
 
 #[test_log::test]
@@ -174,7 +174,7 @@ fn evict() {
 
     // c delivers
     tcsb_c.tc_deliver_membership(event_a);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["c"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["c"]);
     tcsb_c.tc_deliver_op(event_d);
 
     // <- AT THIS POINT, A AND B MUST SEND A MESSAGE TO PROVE THEY HAVE RECEIVED THE GOOD NUMBER OF MESSAGES FROM C ->
@@ -189,9 +189,9 @@ fn evict() {
     tcsb_c.tc_deliver_op(event_a.clone());
     tcsb_d.tc_deliver_op(event_a);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "d"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "d"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["a", "b", "d"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "d"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "d"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "d"]);
 
     assert_eq!(tcsb_a.eval(), 20);
     assert_eq!(tcsb_b.eval(), 20);
@@ -247,16 +247,16 @@ fn evict_multiple_messages() {
 
     tcsb_d.tc_deliver_membership(event_b.clone());
 
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["d"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["d"]);
 
     let event_b = tcsb_b.tc_bcast_op(Counter::Inc(1));
     tcsb_a.tc_deliver_op(event_b.clone());
     tcsb_c.tc_deliver_op(event_b.clone());
     tcsb_d.tc_deliver_op(event_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c"]);
 
     assert_eq!(tcsb_a.eval(), 5);
     assert_eq!(tcsb_b.eval(), 5);
@@ -291,8 +291,8 @@ fn join_multiple_members_same_node() {
     let event_b = tcsb_b.tc_bcast_op(Counter::Dec(1));
     tcsb_a.tc_deliver_op(event_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_a.ltm_keys(), tcsb_b.ltm_keys())
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), tcsb_b.ltm_current_keys())
 }
 
 #[test_log::test]
@@ -316,10 +316,10 @@ fn rejoin() {
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["e"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["e"]);
     assert_eq!(tcsb_a.eval(), 1);
     assert_eq!(tcsb_b.eval(), 1);
     assert_eq!(tcsb_c.eval(), 1);
@@ -340,10 +340,10 @@ fn rejoin() {
     // --> Causal stability <--
     tcsb_d.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "c", "e"]);
     assert_eq!(tcsb_a.eval(), 0);
     assert_eq!(tcsb_b.eval(), 0);
     assert_eq!(tcsb_c.eval(), 0);
@@ -377,16 +377,13 @@ fn early_rejoin() {
     tcsb_c.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    println!("B: {:?}", tcsb_b.ltm_keys());
-    println!("GMS unstable: {:?}", tcsb_b.group_membership.unstable);
-
     // --> Causal stability <--
     tcsb_d.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "c", "e"]);
     assert_eq!(tcsb_a.eval(), 1);
     assert_eq!(tcsb_b.eval(), 1);
     assert_eq!(tcsb_c.eval(), 1);
@@ -401,34 +398,9 @@ fn self_evict() {
 
     let _ = tcsb_a.tc_bcast_op(Counter::Inc(7));
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a"]);
     assert_eq!(tcsb_a.eval_group_membership().len(), 1);
     assert_eq!(tcsb_a.eval(), 7);
-}
-
-#[test_log::test]
-fn timestamp_ext() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet();
-
-    let event = tcsb_a.tc_bcast_membership(MSet::remove("c"));
-    tcsb_b.tc_deliver_membership(event.clone());
-    tcsb_c.tc_deliver_membership(event);
-
-    let event = tcsb_a.tc_bcast_op(Counter::Dec(1));
-    tcsb_b.tc_deliver_op(event.clone());
-    tcsb_c.tc_deliver_op(event);
-
-    let event = tcsb_a.tc_bcast_op(Counter::Dec(5));
-    tcsb_b.tc_deliver_op(event.clone());
-    tcsb_c.tc_deliver_op(event);
-
-    let event = tcsb_b.tc_bcast_op(Counter::Inc(3));
-    tcsb_a.tc_deliver_op(event.clone());
-    tcsb_c.tc_deliver_op(event);
-
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["c"]);
 }
 
 #[test_log::test]
@@ -477,7 +449,7 @@ fn prevent_missing_messages() {
     tcsb_c.tc_deliver_op(event_a.clone());
     tcsb_d.tc_deliver_op(event_a);
 
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
 
     let event_c = tcsb_c.tc_bcast_op(Counter::Inc(1));
     tcsb_a.tc_deliver_op(event_c.clone());
@@ -485,16 +457,16 @@ fn prevent_missing_messages() {
     tcsb_d.tc_deliver_op(event_c.clone());
     tcsb_e.tc_deliver_op(event_c);
 
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
 
     tcsb_d.state_transfer(&mut tcsb_b);
     tcsb_e.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_a.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
-    assert_eq!(tcsb_b.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
-    assert_eq!(tcsb_c.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
-    assert_eq!(tcsb_d.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
-    assert_eq!(tcsb_e.ltm_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(tcsb_e.ltm_current_keys(), vec!["a", "b", "c", "d", "e"]);
 
     let event_a = tcsb_a.tc_bcast_membership(MSet::remove("a"));
     tcsb_b.tc_deliver_membership(event_a.clone());
@@ -531,4 +503,68 @@ fn cross_evict() {
     let event_c = tcsb_c.tc_bcast_membership(MSet::remove("a"));
 
     tcsb_a.tc_deliver_membership(event_c);
+}
+
+#[test_log::test]
+fn converging_members() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+
+    let mut tcsb_d = Tcsb::<Counter<i32>>::new("d");
+
+    let event_a = tcsb_a.tc_bcast_membership(MSet::add("d"));
+    tcsb_b.tc_deliver_membership(event_a.clone());
+    tcsb_c.tc_deliver_membership(event_a);
+
+    let event_a = tcsb_a.tc_bcast_op(Counter::Inc(1));
+
+    let event_b = tcsb_b.tc_bcast_op(Counter::Inc(1));
+    tcsb_a.tc_deliver_op(event_b.clone());
+    tcsb_c.tc_deliver_op(event_b);
+
+    let event_c = tcsb_c.tc_bcast_op(Counter::Inc(1));
+    tcsb_a.tc_deliver_op(event_c.clone());
+    tcsb_b.tc_deliver_op(event_c);
+
+    assert_eq!(tcsb_a.converging_members.len(), 0);
+    assert_eq!(tcsb_b.converging_members.len(), 1);
+    assert_eq!(tcsb_c.converging_members.len(), 1);
+    assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(
+        tcsb_a.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_a.ltm.get(&"d".to_string()).unwrap()
+    );
+    assert_eq!(
+        tcsb_b.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_b.ltm.get(&"d".to_string()).unwrap()
+    );
+    assert_eq!(
+        tcsb_c.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_c.ltm.get(&"d".to_string()).unwrap()
+    );
+
+    tcsb_b.tc_deliver_op(event_a.clone());
+    tcsb_c.tc_deliver_op(event_a);
+
+    assert_eq!(
+        tcsb_b.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_b.ltm.get(&"d".to_string()).unwrap()
+    );
+    assert_eq!(
+        tcsb_c.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_c.ltm.get(&"d".to_string()).unwrap()
+    );
+
+    tcsb_d.state_transfer(&mut tcsb_a);
+
+    let event_d = tcsb_d.tc_bcast_op(Counter::Inc(1));
+    tcsb_a.tc_deliver_op(event_d.clone());
+    tcsb_b.tc_deliver_op(event_d.clone());
+    tcsb_c.tc_deliver_op(event_d);
+
+    assert_eq!(tcsb_a.converging_members.len(), 0);
+    assert_eq!(tcsb_b.converging_members.len(), 0);
+    assert_eq!(tcsb_c.converging_members.len(), 0);
+    assert_eq!(tcsb_d.converging_members.len(), 0);
 }

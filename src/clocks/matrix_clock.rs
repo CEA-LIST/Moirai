@@ -2,7 +2,7 @@ use super::vector_clock::VectorClock;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter, Result},
     hash::Hash,
     ops::{Add, AddAssign},
@@ -52,6 +52,14 @@ where
             vc.increment(&key.clone());
         }
         assert!(self.is_square());
+    }
+
+    pub fn filtered_keys(&self, ignore: &HashSet<K>) -> Vec<K> {
+        self.keys()
+            .iter()
+            .filter(|k| !ignore.contains(*k))
+            .cloned()
+            .collect()
     }
 
     pub fn remove_key(&mut self, key: &K) {

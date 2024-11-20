@@ -2,19 +2,22 @@ use camino::Utf8PathBuf;
 use colored::*;
 use log::{debug, error, info, log_enabled, Level};
 use radix_trie::TrieCommon;
-#[cfg(feature = "wasm")]
-use web_sys::console;
 
+use super::guard::guard_against_concurrent_to_remove;
 use super::pathbuf_key::PathBufKey;
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
+use crate::protocol::guard::{
+    guard_against_duplicates, guard_against_evicted, guard_against_out_of_order,
+    guard_against_unknow_peer,
+};
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::rc::Rc;
@@ -46,9 +49,6 @@ where
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pub pending: VecDeque<Event<AnyOp<O>>>,
-    /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
-    /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
-    pub timestamp_extension: BTreeMap<Metadata, VectorClock<String, usize>>,
     /// Members whose convergence to the network state is unknown.
     /// The key is the welcoming peer, value is the list of converging members.
     pub converging_members: Converging,
@@ -76,7 +76,7 @@ where
             state: POLog::default(),
             group_membership: Self::create_group_membership(id),
             converging_members: HashMap::new(),
-            timestamp_extension: BTreeMap::new(),
+            // timestamp_extension: BTreeMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
@@ -138,40 +138,55 @@ where
             self.id, event.metadata.origin
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
-        if self.guard(&event.metadata).is_err() {
+        if guard_against_unknow_peer(&self.ltm, &event.metadata, &self.group_membership) {
+            error!(
+                "[{}] - Event from an unknown peer {} detected with timestsamp {}",
+                self.id.blue().bold(),
+                event.metadata.origin.blue(),
+                format!("{}", event.metadata.clock).red()
+            );
+            return;
+        }
+        if guard_against_duplicates(&self.ltm, &event.metadata) {
+            error!(
+                "[{}] - Duplicated event detected from {} with timestsamp {}",
+                self.id.blue().bold(),
+                event.metadata.origin.red(),
+                format!("{}", event.metadata.clock).red()
+            );
+            return;
+        }
+        if guard_against_evicted(&self.evicted, &event.metadata) {
+            error!(
+                "[{}] - Event from an evicted peer {} detected with timestsamp {}",
+                self.id.blue().bold(),
+                event.metadata.origin.red(),
+                format!("{}", event.metadata.clock).red()
+            );
             return;
         }
         // The LTM should be synchronized with the group membership
-        assert_eq!(self.eval_group_membership().len(), self.ltm_keys().len());
-        // If the event comes from a converging member, it has converged
-        self.check_still_converging_members(&event);
+        assert_eq!(
+            self.eval_group_membership().len(),
+            self.ltm_current_keys().len()
+        );
         // Check for timestamp inconsistencies
         if HashSet::from_iter(event.metadata.clock.keys()) != self.eval_group_membership() {
             debug!(
-                "[{}] - Timestamp inconsistency, group members are: {}",
+                "[{}] - Timestamp inconsistency, group members are {} while the event has {}",
                 self.id.blue().bold(),
                 format!("{:?}", self.eval_group_membership()).green(),
+                format!("{:?}", event.metadata.clock.keys()).green()
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event.metadata);
         }
-        if self.guard_against_out_of_order(&event.metadata) {
+        if guard_against_out_of_order(&self.ltm, &self.evicted, &event.metadata) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestsamp {}. Operation: {}",
                 self.id.blue().bold(),
                 event.metadata.origin.blue(),
                 format!("{}", event.metadata.clock).red(),
                 format!("{:?}", event.op).green(),
-            );
-            #[cfg(feature = "wasm")]
-            console::error_1(
-                &format!(
-                    "[{}] - Out-of-order event from {} detected with timestsamp {}. Operation: {}",
-                    self.id.blue().bold(),
-                    format!("{}", event.metadata.clock).red(),
-                    event.metadata.origin,
-                    format!("{:?}", event.op).green(),
-                )
-                .into(),
             );
         }
         // Store the new event at the end of the causal buffer
@@ -196,64 +211,10 @@ where
                 .update(&event.metadata.origin, &event.metadata.clock);
             // Update our own vector clock
             self.my_clock_mut().merge(&event.metadata.clock);
-
-            // Is the event coming from a new peer from whom we are waiting for proof of convergence to the network state?
-            let is_from_converging = self.converging_members.iter().find_map(|(w, c)| {
-                if c.iter().any(|i| i.0 == event.metadata.origin) {
-                    Some(w.clone())
-                } else {
-                    None
-                }
-            });
-            if let Some(w) = is_from_converging {
-                debug!(
-                    "[{}] - Removing {} from converging members welcomed by {}",
-                    self.id.blue().bold(),
-                    event.metadata.origin.red(),
-                    w.blue()
-                );
-                // The new peer has converged to the network state
-                self.converging_members
-                    .get_mut(&w)
-                    .unwrap()
-                    .retain(|c| c.0 != event.metadata.origin);
-            }
-
-            // Is the event from the peer that must transfer its state to a converging members?
-            let is_from_welcoming = self
-                .converging_members
-                .iter_mut()
-                .find(|(w, _)| *w == &event.metadata.origin);
-            if let Some((w, c)) = is_from_welcoming {
-                let mut to_remove = Vec::new();
-                let w_clock = self.ltm.get(w).unwrap().clone();
-                // We still don't have a proof that the new peer has conv"erged to the network state
-                // We are updating the vector clock of the new peer with the welcoming peer's vector clock
-                for (id, clock) in c.iter() {
-                    // if the event is greater than the clock of the converging member
-                    // it means that the converging member has converged to the network state
-                    debug!(
-                        "[{}] - Updating vector clock of converging member {} with the one of {}",
-                        self.id.blue().bold(),
-                        id.blue(),
-                        w.blue()
-                    );
-                    self.ltm.update(id, &w_clock);
-
-                    // TODO: not precise enough, could cause issues
-                    if &event.metadata.clock >= clock {
-                        debug!(
-                            "[{}] - removing {} from the converging member",
-                            self.id.blue().bold(),
-                            id.blue(),
-                        );
-                        to_remove.push(id.clone());
-                    }
-                }
-                to_remove.iter().for_each(|id| {
-                    c.retain(|(i, _)| i != id);
-                });
-            }
+            // Check if the converging members have finally converged to the network state
+            // It has converged if the event is from a converging member or the welcoming peer has a
+            // vector clock greater than the `add` event of the converging member
+            self.check_still_converging_members(&event);
 
             #[cfg(feature = "utils")]
             self.tracer.append(event.clone());
@@ -262,16 +223,12 @@ where
         match event.op {
             // Group Membership event
             Duet::First(op) => {
-                let mut event = Event::new(op, event.metadata);
+                let event = Event::new(op, event.metadata);
                 let (keep, stable, unstable) = MSet::effect(&event, &self.group_membership);
                 self.group_membership
                     .remove_redundant_ops(&self.id, stable, unstable);
 
                 if keep {
-                    let ext = event.metadata.ext.clone();
-                    for key in ext {
-                        event.metadata.clock.remove(&key);
-                    }
                     self.group_membership.new_event(&event);
                     info!(
                         "[{}] - Op {} is added to the log",
@@ -462,7 +419,6 @@ where
         self.ltm = other.ltm.clone();
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
-        self.timestamp_extension = other.timestamp_extension.clone();
         self.converging_members = other.converging_members.clone();
         self.evicted = other.evicted.clone();
         // The peer will have its clock at least as high as the one of the other peer
@@ -504,7 +460,7 @@ where
     ) -> Vec<Event<AnyOp<O>>> {
         assert!(
             lsv <= since || lsv.partial_cmp(since).is_none(),
-            "LSV should be inferior, equal or even concurrent to the since clock."
+            "LSV should be inferior, equal or even concurrent to the since clock. LSV: {lsv}, Since clock: {since}",
         );
         let mut metadata_lsv = Metadata::new(lsv.clone(), "");
         let mut metadata_since = Metadata::new(since.clone(), "");
@@ -518,13 +474,13 @@ where
         }
 
         assert_eq!(
-            self.ltm_keys(),
+            self.ltm_current_keys(),
             metadata_since.clock.keys(),
             "Since: {:?}",
             metadata_since.clock
         );
         assert_eq!(
-            self.ltm_keys(),
+            self.ltm_current_keys(),
             metadata_lsv.clock.keys(),
             "LSV: {:?}",
             metadata_lsv.clock
@@ -564,14 +520,6 @@ where
             // .map(|(m, o)| Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
             .collect::<Vec<_>>();
         let events = [events, domain_events].concat();
-        #[cfg(feature = "wasm")]
-        console::log_1(
-            &format!(
-                "Events since LSV {} with clock {}: {:?}",
-                lsv, since, events
-            )
-            .into(),
-        );
         events
     }
 
@@ -597,293 +545,111 @@ where
         waiting_from
     }
 
-    /// Guard against unknown peers, duplicated events, and out-of-order events.
-    fn guard(&self, metadata: &Metadata) -> Result<(), DeliveryError> {
-        if self.guard_against_unknow_peer(metadata) {
-            error!(
-                "[{}] - Event from an unknown peer {} detected with timestsamp {}",
-                self.id.blue().bold(),
-                metadata.origin.blue(),
-                format!("{}", metadata.clock).red()
-            );
-            #[cfg(feature = "wasm")]
-            console::error_1(
-                &format!(
-                    "[{}] - Unknown peer {} detected with timestsamp: {}",
-                    self.id.blue().bold(),
-                    metadata.origin.blue(),
-                    format!("{}", metadata.clock).red()
-                )
-                .into(),
-            );
-            return Err(DeliveryError::UnknownPeer);
-        }
-        if self.guard_against_duplicates(metadata) {
-            error!(
-                "[{}] - Duplicated event detected from {} with timestsamp {}",
-                self.id.blue().bold(),
-                metadata.origin.red(),
-                format!("{}", metadata.clock).red()
-            );
-            #[cfg(feature = "wasm")]
-            console::error_1(
-                &format!(
-                    "[{}] - Duplicated event detected from {} with timestsamp {}",
-                    self.id.blue().bold(),
-                    metadata.origin.red(),
-                    format!("{}", metadata.clock).red()
-                )
-                .into(),
-            );
-            return Err(DeliveryError::DuplicatedEvent);
-        }
-        if self.guard_against_evicted(metadata) {
-            error!(
-                "[{}] - Event from an evicted peer {} detected with timestsamp {}",
-                self.id.blue().bold(),
-                metadata.origin.red(),
-                format!("{}", metadata.clock).red()
-            );
-            #[cfg(feature = "wasm")]
-            console::error_1(
-                &format!(
-                    "[{}] - Event from an evicted peer {} detected with timestsamp {}",
-                    self.id.blue().bold(),
-                    metadata.origin.red(),
-                    format!("{}", metadata.clock).red()
-                )
-                .into(),
-            );
-            return Err(DeliveryError::DuplicatedEvent);
-        }
-        Ok(())
-    }
-
-    fn guard_against_evicted(&self, metadata: &Metadata) -> bool {
-        self.evicted.contains(&metadata.origin)
-    }
-
-    /// Check that the event has not already been delivered
-    fn guard_against_duplicates(&self, metadata: &Metadata) -> bool {
-        self.ltm
-            .get(&metadata.origin)
-            .map(|other_clock| metadata.clock <= *other_clock)
-            .unwrap_or(false)
-    }
-
-    /// Check that the event is the causal successor of the last event delivered by this same replica
-    /// Returns true if the event is out of order
-    fn guard_against_out_of_order(&self, metadata: &Metadata) -> bool {
-        // We assume that the LTM and the event clock have the same number of entries
-        assert_eq!(
-            self.ltm_keys(),
-            metadata.clock.keys(),
-            "LTM Keys ({}): {:?}, Event Keys ({}): {:?}",
-            self.ltm_keys().len(),
-            self.ltm_keys(),
-            metadata.clock.len(),
-            metadata.clock.keys()
-        );
-        // We assume that the event clock has an entry for its origin
-        let event_lamport_clock = metadata.clock.get(&metadata.origin).unwrap();
-        // We assume we know this origin
-        let ltm_origin_clock = self.ltm.get(&metadata.origin).unwrap();
-        // We assume that the clock we have for this origin has an entry for this origin
-        let ltm_lamport_lock = ltm_origin_clock.get(&metadata.origin).unwrap();
-        // Either the event is the next in the sequence or the event is causally superior to the origin eviction
-        let is_origin_out_of_order = event_lamport_clock != ltm_lamport_lock + 1;
-        let are_other_entries_out_of_order = metadata
-            .clock
-            .iter()
-            .filter(|(k, _)| *k != &metadata.origin)
-            .any(|(k, v)| {
-                let ltm_clock = self.ltm.get(k).unwrap();
-                let ltm_value = ltm_clock.get(k).unwrap();
-                *v > ltm_value
-            });
-        is_origin_out_of_order || are_other_entries_out_of_order
-    }
-
-    /// Check that the event is not from an unknown peer
-    /// The peer is unknown if it is not in the LTM and there is no unstable `add`
-    /// operation for it in the group membership
-    fn guard_against_unknow_peer(&self, metadata: &Metadata) -> bool {
-        self.ltm.get(&metadata.origin).is_none()
-            && !self
-                .group_membership
-                .unstable
-                .iter()
-                .any(|(_, o)| match o.as_ref() {
-                    MSet::Add(v) => v == &metadata.origin,
-                    _ => false,
-                })
-    }
-
-    /// Check that the event is not coming from a peer that is going to be removed from the group.
-    /// Returns true if the event is not ready to be delivered
-    fn guard_against_concurrent_to_remove(&self, event: &Event<AnyOp<O>>) -> bool {
-        // Do not deliver the event if the origin is going to be removed from the group...
-        let will_be_removed = self
-            .group_membership
-            .unstable
-            .iter()
-            .any(|(_, o)| matches!(o.as_ref(), MSet::Remove(v) if v == &event.metadata.origin));
-        // ...unless the event is necessary to deliver other peers events
-        let necessary = self.pending.iter().any(|e| {
-            e.metadata.get_lamport(&event.metadata.origin) >= event.metadata.get_origin_lamport()
-                && e.metadata.origin != event.metadata.origin
-        });
-        will_be_removed && !necessary
-    }
-
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let mut clock = {
+        let clock = {
             let my_clock = self.my_clock_mut();
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        let ext = self.add_timestamp_extension(&mut clock);
-        Metadata::new_with_ext(clock, &self.id, ext)
+        Metadata::new(clock, &self.id)
     }
 
-    /// Add the timestamp extension to the vector clock of the new event.
-    ///
-    /// A peer may stabilize a membership event before the other peers because
-    /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
-    /// should include the lamport clock of the evicted peer.
-    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) -> Vec<String> {
-        let ext_list: Vec<(Metadata, VectorClock<String>)> = self
-            .timestamp_extension
-            .range((
-                Bound::Unbounded,
-                Bound::Included(&Metadata::new(self.lsv.clone(), "")),
-            ))
-            .filter_map(|(m, v)| {
-                if v <= &self.lsv {
-                    Some((m.clone(), v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let ext_list_len = ext_list.len();
-        if ext_list_len > 0 {
-            debug!(
-                "[{}] - Adding timestamp extension for {}",
-                self.id.blue().bold(),
-                format!("{}", clock).red()
-            );
-        }
-        let mut ext_tracker = Vec::<String>::new();
-        for (m, ext) in ext_list {
-            ext.left_difference(clock).keys().iter().for_each(|k| {
-                if !ext_tracker.contains(k) {
-                    ext_tracker.push(k.clone());
-                }
-            });
-            clock.merge(&ext);
-            self.timestamp_extension.remove(&m);
-        }
-        if ext_list_len > 0 {
-            debug!(
-                "[{}] - Timestamp extension added: {}",
-                self.id.blue().bold(),
-                format!("{}", clock).red()
-            );
-        }
-        ext_tracker
+    pub fn ltm_current_keys(&self) -> Vec<String> {
+        self.ltm.filtered_keys(&self.evicted)
     }
-
-    // Store the lamport clock of the removed peer in the timestamp extension list.
-    // TODO: Except if the `remove` message comes from the local peer.
-    // fn store_lamport_of_removed_peer(&mut self, id: &String) {
-    //     let ext_list = self
-    //         .timestamp_extension
-    //         .entry(Metadata::new(self.lsv.clone(), ""))
-    //         .or_default();
-    //     // The removed peer may be already removed from the LTM.
-    //     // e.g. multiple remove operations from different peers have already been stabilized.
-    //     if let Some(removed_clock) = self.ltm.get(&self.id).and_then(|clock| clock.get(id)) {
-    //         ext_list.insert(id.clone(), removed_clock);
-    //     }
-    // }
-
-    pub fn ltm_keys(&self) -> Vec<String> {
-        self.ltm
-            .keys()
-            .iter()
-            .filter(|k| !self.evicted.contains(*k))
-            .cloned()
-            .collect()
-    }
-
-    // fn fix_timestamp_inconsistencies_stored_events<T: Debug>(
-    //     state: &mut BTreeMap<Metadata, T>,
-    //     id: &String,
-    // ) {
-    //     let mut key_to_edit = Vec::<Metadata>::new();
-
-    //     for (m, _) in state.iter() {
-    //         // for unstable group membership only: assert!(m.origin != *id || m == metadata);
-    //         assert!(m.origin != *id);
-    //         if m.clock.contains(id) {
-    //             key_to_edit.push(m.clone());
-    //         }
-    //     }
-    //     for mut m in key_to_edit {
-    //         let op = state.remove(&m).unwrap();
-    //         m.clock.remove(id);
-    //         state.insert(m, op);
-    //     }
-    // }
 
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
     pub fn fix_timestamp_inconsistencies_incoming_event(&self, metadata: &mut Metadata) {
         // Missing keys in the new event
-        for key in &self.ltm_keys() {
+        for key in &self.ltm_current_keys() {
             if !metadata.clock.contains(key) {
                 metadata.clock.insert(key.clone(), 0);
             }
         }
-        // TODO: Verify if the following code is correct
         // Missing keys in the LTM
         for key in metadata.clock.keys() {
-            if !&self.ltm_keys().contains(&key) {
+            if !&self.ltm_current_keys().contains(&key) {
                 // We can't remove the from the event if it is its id
                 assert_ne!(key, metadata.origin);
+                assert!(metadata.clock.get(&key) == Some(0));
                 metadata.clock.remove(&key);
             }
         }
         assert_eq!(
-            self.ltm_keys().len(),
+            self.ltm_current_keys().len(),
             metadata.clock.len(),
             "Timestamp inconsistency: LTM keys ({}): {:?}, Event keys ({}): {:?}",
-            &self.ltm_keys().len(),
-            &self.ltm_keys(),
+            &self.ltm_current_keys().len(),
+            &self.ltm_current_keys(),
             metadata.clock.keys().len(),
             metadata.clock.keys(),
         );
     }
 
     /// Check if the converging members have finally converged to the network state.
-    fn check_still_converging_members(&mut self, new: &Event<AnyOp<O>>) {
-        let mut to_remove = Vec::new();
-        for (w, cs) in &mut self.converging_members {
-            // If the event comes from a converging member, remove it from the list (we have the proof it has converged)
-            if cs.iter().any(|c| c.0 == new.metadata.origin) {
-                cs.retain(|c| c.0 != new.metadata.origin);
-                if cs.is_empty() {
-                    to_remove.push(w.clone());
+    fn check_still_converging_members(&mut self, event: &Event<AnyOp<O>>) {
+        // Is the event coming from a new peer from whom we are waiting for proof of convergence to the network state?
+        let is_from_converging = self.converging_members.iter().find_map(|(w, c)| {
+            if c.iter().any(|i| i.0 == event.metadata.origin) {
+                Some(w.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(w) = is_from_converging {
+            debug!(
+                "[{}] - Removing {} from converging members welcomed by {}",
+                self.id.blue().bold(),
+                event.metadata.origin.red(),
+                w.blue()
+            );
+            // The new peer has converged to the network state
+            self.converging_members
+                .get_mut(&w)
+                .unwrap()
+                .retain(|c| c.0 != event.metadata.origin);
+        }
+
+        // Is the event from the peer that must transfer its state to a converging members?
+        let is_from_welcoming = self
+            .converging_members
+            .iter_mut()
+            .find(|(w, _)| *w == &event.metadata.origin);
+        if let Some((w, c)) = is_from_welcoming {
+            let mut to_remove = Vec::new();
+            let w_clock = self.ltm.get(w).unwrap().clone();
+            // We still don't have a proof that the new peer has conv"erged to the network state
+            // We are updating the vector clock of the new peer with the welcoming peer's vector clock
+            for (id, clock) in c.iter() {
+                // if the event is greater than the clock of the converging member
+                // it means that the converging member has converged to the network state
+                debug!(
+                    "[{}] - Updating vector clock of converging member {} with the one of {}",
+                    self.id.blue().bold(),
+                    id.blue(),
+                    w.blue()
+                );
+                self.ltm.update(id, &w_clock);
+
+                // TODO: not precise enough, could cause issues
+                if &event.metadata.clock > clock {
+                    debug!(
+                        "[{}] - removing {} from the converging member",
+                        self.id.blue().bold(),
+                        id.blue(),
+                    );
+                    to_remove.push(id.clone());
                 }
             }
+            to_remove.iter().for_each(|id| {
+                c.retain(|(i, _)| i != id);
+            });
         }
-        for w in to_remove {
-            self.converging_members.remove(&w);
-        }
+        self.converging_members.retain(|_, c| !c.is_empty());
     }
 
     /// Returns a subset of peers that can be safely ignored when checking for causal stability.
@@ -949,8 +715,12 @@ where
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready...
-            if !self.guard_against_out_of_order(&event.metadata)
-                && !self.guard_against_concurrent_to_remove(&event)
+            if !guard_against_out_of_order(&self.ltm, &self.evicted, &event.metadata)
+                && !guard_against_concurrent_to_remove(
+                    &event,
+                    &self.group_membership,
+                    &self.pending,
+                )
             {
                 // ...deliver it
                 self.tc_deliver(event);
@@ -990,7 +760,7 @@ where
             }
         }
         // Remove keys that are not in the group membership
-        for member in self.ltm_keys() {
+        for member in self.ltm_current_keys() {
             if !gms_members.contains(&member) {
                 if member != self.id {
                     self.evicted.insert(member.clone());
@@ -1005,11 +775,10 @@ where
                     }
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
-                    self.timestamp_extension.clear();
                     self.evicted.clear();
                     self.converging_members.clear();
                     assert_eq!(self.eval_group_membership().len(), 1);
-                    assert_eq!(self.ltm_keys(), &[self.id.clone()]);
+                    assert_eq!(self.ltm_current_keys(), &[self.id.clone()]);
                 }
             }
         }
@@ -1054,10 +823,13 @@ mod tests {
         crdt::{
             counter::Counter,
             duet::Duet,
+            membership_set::MSet,
             test_util::{triplet, twins},
         },
-        protocol::event::Event,
+        protocol::{event::Event, tcsb::Tcsb},
     };
+
+    use super::AnyOp;
 
     #[test_log::test]
     fn causal_delivery() {
@@ -1157,5 +929,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test_log::test]
+    pub fn events_since_concurrent_remove() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+
+        let deliver_events =
+            |tcsb: &mut Tcsb<Counter<i32>>, events: Vec<Event<AnyOp<Counter<i32>>>>| {
+                for event in events {
+                    match event.op {
+                        Duet::First(op) => {
+                            let event = Event::new(op, event.metadata);
+                            tcsb.tc_deliver_membership(event);
+                        }
+                        Duet::Second(op) => {
+                            let event = Event::new(op, event.metadata);
+                            tcsb.tc_deliver_op(event);
+                        }
+                    }
+                }
+            };
+
+        let _ = tcsb_a.tc_bcast_membership(MSet::remove("c"));
+        let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
+
+        // B request events from A
+        let events = tcsb_a.events_since(&tcsb_b.lsv, tcsb_b.my_clock());
+        deliver_events(&mut tcsb_b, events);
+
+        // A request events from B
+        let events = tcsb_b.events_since(&tcsb_a.lsv, tcsb_a.my_clock());
+        deliver_events(&mut tcsb_a, events);
+
+        // C request events from A
+        let events = tcsb_a.events_since(&tcsb_c.lsv, tcsb_c.my_clock());
+        deliver_events(&mut tcsb_c, events);
+
+        assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
+        assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b"]);
     }
 }
