@@ -316,13 +316,6 @@ where
         // Timestamp rewwriting during stabilization: necessary for early rejoin.
 
         for metadata in ready_to_stabilize.iter_mut() {
-            // must modify metadata to remove the keys that are not in the group membership
-            // for key in metadata.clock.keys() {
-            //     if !self.eval_group_membership().contains(&key) {
-            //         assert_ne!(key, self.id);
-            //         metadata.clock.remove(&key);
-            //     }
-            // }
             if self.state.unstable.contains_key(metadata) {
                 info!(
                     "[{}] - Op {} with timestamp {} is causally stable",
