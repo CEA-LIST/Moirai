@@ -3,6 +3,7 @@ use crate::{
     crdt::{duet::Duet, membership_set::MSet},
     protocol::{event::Event, metadata::Metadata, tcsb::AnyOp},
 };
+use log::error;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +13,7 @@ use super::{
     pure_crdt::PureCRDT,
     tcsb::{Converging, Tcsb},
 };
-use std::{collections::HashSet, fmt::Debug, ops::Bound, rc::Rc};
+use std::{collections::HashSet, fmt::Debug, rc::Rc};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -20,14 +21,14 @@ pub struct StateTransfer<O>
 where
     O: PureCRDT,
 {
-    group_membership_stable: Vec<Rc<MSet<String>>>,
-    group_membership_unstable: Log<MSet<String>>,
-    log_stable: Vec<Rc<O>>,
-    log_unstable: Log<O>,
-    lsv: VectorClock<String, usize>,
-    ltm: MatrixClock<String, usize>,
-    converging_members: Converging,
-    evicted: HashSet<String>,
+    pub group_membership_stable: Vec<Rc<MSet<String>>>,
+    pub group_membership_unstable: Log<MSet<String>>,
+    pub log_stable: Vec<Rc<O>>,
+    pub log_unstable: Log<O>,
+    pub lsv: VectorClock<String, usize>,
+    pub ltm: MatrixClock<String, usize>,
+    pub converging_members: Converging,
+    pub removed_members: HashSet<String>,
 }
 
 impl<O> StateTransfer<O>
@@ -44,7 +45,7 @@ where
             lsv: tcsb.lsv.clone(),
             ltm: tcsb.ltm.clone(),
             converging_members: tcsb.converging_members.clone(),
-            evicted: tcsb.evicted.clone(),
+            removed_members: tcsb.removed_members.clone(),
         }
     }
 }
@@ -55,8 +56,26 @@ pub struct Batch<O>
 where
     O: PureCRDT,
 {
-    events: Vec<Event<AnyOp<O>>>,
-    metadata: Metadata,
+    pub events: Vec<Event<AnyOp<O>>>,
+    pub metadata: Metadata,
+}
+
+impl<O> Batch<O>
+where
+    O: PureCRDT,
+{
+    pub fn new(events: Vec<Event<AnyOp<O>>>, metadata: Metadata) -> Self {
+        Self { events, metadata }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum DeliveryError {
+    UnknownPeer,
+    DuplicatedEvent,
+    OutOfOrderEvent,
+    EvictedPeer,
 }
 
 impl<O> Tcsb<O>
@@ -140,49 +159,30 @@ where
         }
     }
 
-    pub fn events_since(
-        &self,
-        lsv: &VectorClock<String, usize>,
-        since: &VectorClock<String, usize>,
-    ) -> Vec<Event<AnyOp<O>>> {
-        assert!(
-            lsv <= since || lsv.partial_cmp(since).is_none(),
-            "LSV should be inferior, equal or even concurrent to the since clock. LSV: {lsv}, Since clock: {since}",
-        );
-        let mut metadata_lsv = Metadata::new(lsv.clone(), "");
-        let mut metadata_since = Metadata::new(since.clone(), "");
-
-        if self.eval_group_membership() != HashSet::from_iter(metadata_lsv.clock.keys()) {
-            self.fix_timestamp_inconsistencies_incoming_event(&mut metadata_lsv);
+    pub fn events_since(&self, metadata: &Metadata) -> Result<Batch<O>, DeliveryError> {
+        if !self.eval_group_membership().contains(&metadata.origin) {
+            error!(
+                "The origin {} of the metadata is not part of the group membership: {:?}",
+                metadata.origin,
+                self.eval_group_membership()
+            );
+            if self.removed_members.contains(&metadata.origin) {
+                return Err(DeliveryError::EvictedPeer);
+            } else {
+                return Err(DeliveryError::UnknownPeer);
+            }
         }
 
-        if self.eval_group_membership() != HashSet::from_iter(metadata_since.clock.keys()) {
-            self.fix_timestamp_inconsistencies_incoming_event(&mut metadata_since);
-        }
-
-        assert_eq!(
-            self.ltm_current_keys(),
-            metadata_since.clock.keys(),
-            "Since: {:?}",
-            metadata_since.clock
-        );
-        assert_eq!(
-            self.ltm_current_keys(),
-            metadata_lsv.clock.keys(),
-            "LSV: {:?}",
-            metadata_lsv.clock
-        );
-        // If the LSV is strictly greater than the since vector clock, it means the peer needs a state transfer
-        // However, it should not happen because every peer should wait that everyone gets the ops before stabilizing
+        let since = Metadata::new(metadata.clock.clone(), "");
 
         // TODO: Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
-        let events: Vec<Event<AnyOp<O>>> = self
+        let gms_events: Vec<Event<AnyOp<O>>> = self
             .group_membership
             .unstable
-            .range((Bound::Excluded(&metadata_lsv), Bound::Unbounded))
+            .iter()
             .filter_map(|(m, o)| {
                 // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > metadata_since.clock.get(&m.origin).unwrap() {
+                if m.clock.get(&m.origin).unwrap() > since.clock.get(&m.origin).unwrap() {
                     Some(Event::new(Duet::First(o.as_ref().clone()), m.clone()))
                 } else {
                     None
@@ -192,29 +192,67 @@ where
         let domain_events: Vec<Event<AnyOp<O>>> = self
             .state
             .unstable
-            .range((Bound::Excluded(&metadata_lsv), Bound::Unbounded))
+            .iter()
             .filter_map(|(m, o)| {
                 // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > metadata_since.clock.get(&m.origin).unwrap() {
+                if m.clock.get(&m.origin).unwrap() > since.clock.get(&m.origin).unwrap() {
                     Some(Event::new(Duet::Second(o.as_ref().clone()), m.clone()))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        [events, domain_events].concat()
+        let events = [gms_events, domain_events].concat();
+        Ok(Batch::new(
+            events,
+            Metadata::new(self.my_clock().clone(), &self.id),
+        ))
     }
 
-    pub fn deliver_batch(&mut self, events: Vec<Event<AnyOp<O>>>) {
-        for event in events {
-            match event.op {
-                Duet::First(op) => {
-                    let event = Event::new(op, event.metadata);
-                    self.tc_deliver_membership(event);
+    pub fn deliver_batch(&mut self, batch: Result<Batch<O>, DeliveryError>) {
+        match batch {
+            Ok(mut batch) => {
+                for event in batch.events {
+                    match event.op {
+                        Duet::First(op) => {
+                            let event = Event::new(op, event.metadata);
+                            self.tc_deliver_membership(event);
+                        }
+                        Duet::Second(op) => {
+                            let event = Event::new(op, event.metadata);
+                            self.tc_deliver_op(event);
+                        }
+                    }
                 }
-                Duet::Second(op) => {
-                    let event = Event::new(op, event.metadata);
-                    self.tc_deliver_op(event);
+                // We may have delivered a `remove(self)` event.
+                if self
+                    .eval_group_membership()
+                    .contains(&batch.metadata.origin)
+                {
+                    self.fix_timestamp_inconsistencies_incoming_event(&mut batch.metadata);
+                    assert_eq!(self.ltm.keys(), batch.metadata.clock.keys());
+                    self.ltm
+                        .update(&batch.metadata.origin, &batch.metadata.clock);
+                    self.tc_stable();
+                }
+            }
+            Err(e) => {
+                match e {
+                    DeliveryError::EvictedPeer => {
+                        for key in self.ltm.keys() {
+                            if key != self.id {
+                                self.ltm.remove_key(&key);
+                            }
+                        }
+                        // Re-init the group membership
+                        self.group_membership = Self::create_group_membership(&self.id);
+                        self.removed_members.clear();
+                        self.converging_members.clear();
+                    }
+                    DeliveryError::UnknownPeer => {}
+                    _ => {
+                        panic!("Unexpected error: {:?}", e);
+                    }
                 }
             }
         }
