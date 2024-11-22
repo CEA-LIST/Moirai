@@ -11,7 +11,7 @@ use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
 use crate::protocol::guard::{
-    guard_against_duplicates, guard_against_evicted, guard_against_out_of_order,
+    guard_against_duplicates, guard_against_out_of_order, guard_against_removed_members,
     guard_against_unknow_peer,
 };
 #[cfg(feature = "utils")]
@@ -24,15 +24,8 @@ use std::rc::Rc;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 pub type AnyOp<O> = Duet<MSet<String>, O>;
+/// Key is the welcoming peer, value is the list of converging members with their `add` event vector clock
 pub type Converging = HashMap<String, Vec<(String, VectorClock<String, usize>)>>;
-
-#[derive(Debug)]
-pub enum DeliveryError {
-    UnknownPeer,
-    DuplicatedEvent,
-    OutOfOrderEvent,
-    EvictedPeer,
-}
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -54,8 +47,8 @@ where
     pub converging_members: Converging,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
-    /// Peers that have been evicted from the group
-    pub evicted: HashSet<String>,
+    /// Peers that left from the group
+    pub removed_members: HashSet<String>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -79,7 +72,7 @@ where
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
-            evicted: HashSet::new(),
+            removed_members: HashSet::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -129,15 +122,14 @@ where
     /// Store a new event in the buffer and check if it is ready to be delivered.
     /// Check if other pending events are made ready to be delivered by the new event.
     fn check_delivery(&mut self, mut event: Event<AnyOp<O>>) {
-        // An event from the local peer should not be the origin of the event
-        // Because the local peer should not call this function for its own events
+        // The local peer should not call this function for its own events
         assert_ne!(
             self.id, event.metadata.origin,
             "Local peer {} should not be the origin {} of the event",
             self.id, event.metadata.origin
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
-        if guard_against_unknow_peer(&self.ltm, &event.metadata, &self.group_membership) {
+        if guard_against_unknow_peer(&event.metadata, &self.group_membership) {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestsamp {}",
                 self.id.blue().bold(),
@@ -155,9 +147,9 @@ where
             );
             return;
         }
-        if guard_against_evicted(&self.evicted, &event.metadata) {
+        if guard_against_removed_members(&self.removed_members, &event.metadata) {
             error!(
-                "[{}] - Event from an evicted peer {} detected with timestsamp {}",
+                "[{}] - Event from an removed peer {} detected with timestsamp {}",
                 self.id.blue().bold(),
                 event.metadata.origin.red(),
                 format!("{}", event.metadata.clock).red()
@@ -179,7 +171,7 @@ where
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event.metadata);
         }
-        if guard_against_out_of_order(&self.ltm, &self.evicted, &event.metadata) {
+        if guard_against_out_of_order(&self.ltm, &self.removed_members, &event.metadata) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestsamp {}. Operation: {}",
                 self.id.blue().bold(),
@@ -412,7 +404,7 @@ where
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
         self.converging_members = other.converging_members.clone();
-        self.evicted = other.evicted.clone();
+        self.removed_members = other.removed_members.clone();
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
@@ -479,7 +471,7 @@ where
     }
 
     pub fn ltm_current_keys(&self) -> Vec<String> {
-        self.ltm.filtered_keys(&self.evicted)
+        self.ltm.filtered_keys(&self.removed_members)
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
@@ -487,26 +479,35 @@ where
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
     pub fn fix_timestamp_inconsistencies_incoming_event(&self, metadata: &mut Metadata) {
         // Missing keys in the new event
-        for key in &self.ltm_current_keys() {
+        for key in &self.ltm.keys() {
             if !metadata.clock.contains(key) {
                 metadata.clock.insert(key.clone(), 0);
             }
         }
         // Missing keys in the LTM
         for key in metadata.clock.keys() {
-            if !&self.ltm_current_keys().contains(&key) {
+            if !&self.ltm.keys().contains(&key) {
                 // We can't remove the from the event if it is its id
-                assert_ne!(key, metadata.origin);
-                assert!(metadata.clock.get(&key) == Some(0));
+                assert_ne!(
+                    key, metadata.origin,
+                    "The origin `{}` of the event should not be removed.",
+                    metadata.origin
+                );
+                assert!(
+                    metadata.clock.get(&key) == Some(0),
+                    "The missing key `{}` should have a value of 0. Instead, it has a value of {}",
+                    key,
+                    metadata.clock.get(&key).unwrap()
+                );
                 metadata.clock.remove(&key);
             }
         }
         assert_eq!(
-            self.ltm_current_keys().len(),
+            self.ltm.keys().len(),
             metadata.clock.len(),
             "Timestamp inconsistency: LTM keys ({}): {:?}, Event keys ({}): {:?}",
-            &self.ltm_current_keys().len(),
-            &self.ltm_current_keys(),
+            &self.ltm.keys().len(),
+            &self.ltm.keys(),
             metadata.clock.keys().len(),
             metadata.clock.keys(),
         );
@@ -595,7 +596,11 @@ where
         } else {
             ignore
         };
-        [self.evicted.iter().cloned().collect::<Vec<_>>(), ignore].concat()
+        [
+            self.removed_members.iter().cloned().collect::<Vec<_>>(),
+            ignore,
+        ]
+        .concat()
     }
 
     /// Returns a list of operations that are ready to be stabilized.
@@ -637,7 +642,7 @@ where
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready...
-            if !guard_against_out_of_order(&self.ltm, &self.evicted, &event.metadata)
+            if !guard_against_out_of_order(&self.ltm, &self.removed_members, &event.metadata)
                 && !guard_against_concurrent_to_remove(
                     &event,
                     &self.group_membership,
@@ -685,11 +690,10 @@ where
         for member in self.ltm_current_keys() {
             if !gms_members.contains(&member) {
                 if member != self.id {
-                    self.evicted.insert(member.clone());
-                    // self.ltm.remove_key(&member);
+                    self.removed_members.insert(member.clone());
                 } else {
-                    // Remove all keys except the local one
-                    // if the local peer is removed from the group
+                    // If the local peer is removed from the group...
+                    // remove all keys except the local one
                     for key in self.ltm.keys() {
                         if key != self.id {
                             self.ltm.remove_key(&key);
@@ -697,10 +701,18 @@ where
                     }
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
-                    self.evicted.clear();
+                    self.removed_members.clear();
                     self.converging_members.clear();
+                    let unstable_keys: Vec<Metadata> =
+                        self.state.unstable.keys().cloned().collect();
+                    for m in unstable_keys {
+                        O::stable(&m, &mut self.state);
+                    }
+                    self.lsv = VectorClock::new(self.id.clone());
                     assert_eq!(self.eval_group_membership().len(), 1);
                     assert_eq!(self.ltm_current_keys(), &[self.id.clone()]);
+                    assert_eq!(self.state.unstable.len(), 0);
+                    assert_eq!(self.group_membership.unstable.len(), 0);
                 }
             }
         }
@@ -727,7 +739,7 @@ where
     }
 
     /// Create a new group membership log.
-    fn create_group_membership(id: &str) -> POLog<MSet<String>> {
+    pub(crate) fn create_group_membership(id: &str) -> POLog<MSet<String>> {
         let mut group_membership = POLog::default();
         let op = Rc::new(MSet::Add(id.to_string()));
         group_membership.stable.push(Rc::clone(&op));
@@ -744,11 +756,10 @@ mod tests {
     use crate::{
         crdt::{
             counter::Counter,
-            duet::Duet,
             membership_set::MSet,
             test_util::{triplet, twins},
         },
-        protocol::event::Event,
+        protocol::metadata::Metadata,
     };
 
     #[test_log::test]
@@ -797,7 +808,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn events_since_concurrent() {
+    fn events_since_concurrent_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
 
         let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
@@ -818,37 +829,15 @@ mod tests {
         assert_eq!(-6, tcsb_b.eval());
         assert_eq!(6, tcsb_b.state.unstable.len());
 
-        let events = tcsb_a.events_since(&tcsb_b.lsv, tcsb_b.my_clock());
-        assert_eq!(6, events.len());
+        let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
+        assert_eq!(6, batch.clone().unwrap().events.len());
 
-        for event in events {
-            match event.op {
-                Duet::First(op) => {
-                    let event = Event::new(op, event.metadata);
-                    tcsb_b.tc_deliver_membership(event);
-                }
-                Duet::Second(op) => {
-                    let event = Event::new(op, event.metadata);
-                    tcsb_b.tc_deliver_op(event);
-                }
-            }
-        }
+        tcsb_b.deliver_batch(batch);
 
-        let events = tcsb_b.events_since(&tcsb_a.lsv, tcsb_a.my_clock());
-        assert_eq!(6, events.len());
+        let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
+        assert_eq!(6, batch.clone().unwrap().events.len());
 
-        for event in events {
-            match event.op {
-                Duet::First(op) => {
-                    let event = Event::new(op, event.metadata);
-                    tcsb_a.tc_deliver_membership(event);
-                }
-                Duet::Second(op) => {
-                    let event = Event::new(op, event.metadata);
-                    tcsb_a.tc_deliver_op(event);
-                }
-            }
-        }
+        tcsb_a.deliver_batch(batch);
     }
 
     #[test_log::test]
@@ -859,16 +848,19 @@ mod tests {
         let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
 
         // B request events from A
-        let events = tcsb_a.events_since(&tcsb_b.lsv, tcsb_b.my_clock());
-        tcsb_b.deliver_batch(events);
+        let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
+        assert_eq!(batch.clone().unwrap().events.len(), 1);
+        tcsb_b.deliver_batch(batch);
 
         // A request events from B
-        let events = tcsb_b.events_since(&tcsb_a.lsv, tcsb_a.my_clock());
-        tcsb_a.deliver_batch(events);
+        let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
+        assert_eq!(batch.clone().unwrap().events.len(), 1);
+        tcsb_a.deliver_batch(batch);
 
         // C request events from A
-        let events = tcsb_a.events_since(&tcsb_c.lsv, tcsb_c.my_clock());
-        tcsb_c.deliver_batch(events);
+        let batch = tcsb_a.events_since(&Metadata::new(tcsb_c.my_clock().clone(), &tcsb_c.id));
+        assert!(batch.is_err());
+        tcsb_c.deliver_batch(batch);
 
         assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
         assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b"]);

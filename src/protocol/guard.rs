@@ -1,12 +1,17 @@
 use std::collections::{HashSet, VecDeque};
 
+use camino::Utf8PathBuf;
+
 use crate::{clocks::matrix_clock::MatrixClock, crdt::membership_set::MSet};
 
 use super::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT, tcsb::AnyOp};
 
 /// Check that the event is not from an evicted peer
-pub fn guard_against_evicted(evicted: &HashSet<String>, metadata: &Metadata) -> bool {
-    evicted.contains(&metadata.origin)
+pub fn guard_against_removed_members(
+    removed_members: &HashSet<String>,
+    metadata: &Metadata,
+) -> bool {
+    removed_members.contains(&metadata.origin)
 }
 
 /// Check that the event has not already been delivered
@@ -20,19 +25,9 @@ pub fn guard_against_duplicates(ltm: &MatrixClock<String, usize>, metadata: &Met
 /// Returns true if the event is out of order
 pub fn guard_against_out_of_order(
     ltm: &MatrixClock<String, usize>,
-    evicted: &HashSet<String>,
+    _evicted: &HashSet<String>,
     metadata: &Metadata,
 ) -> bool {
-    // We assume that the LTM and the event clock have the same number of entries
-    assert_eq!(
-        ltm.filtered_keys(evicted),
-        metadata.clock.keys(),
-        "LTM Keys ({}): {:?}, Event Keys ({}): {:?}",
-        ltm.filtered_keys(evicted).len(),
-        ltm.filtered_keys(evicted),
-        metadata.clock.len(),
-        metadata.clock.keys()
-    );
     // We assume that the event clock has an entry for its origin
     let event_lamport_clock = metadata.clock.get(&metadata.origin).unwrap();
     // We assume we know this origin
@@ -57,18 +52,10 @@ pub fn guard_against_out_of_order(
 /// The peer is unknown if it is not in the LTM and there is no unstable `add`
 /// operation for it in the group membership
 pub fn guard_against_unknow_peer(
-    ltm: &MatrixClock<String, usize>,
     metadata: &Metadata,
     group_membership: &POLog<MSet<String>>,
 ) -> bool {
-    ltm.get(&metadata.origin).is_none()
-        && !group_membership
-            .unstable
-            .iter()
-            .any(|(_, o)| match o.as_ref() {
-                MSet::Add(v) => v == &metadata.origin,
-                _ => false,
-            })
+    !MSet::eval(group_membership, &Utf8PathBuf::default()).contains(&metadata.origin)
 }
 
 /// Check that the event is not coming from a peer that is going to be removed from the group.
