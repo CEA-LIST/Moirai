@@ -38,12 +38,13 @@ pub struct Tcsb<O>
 where
     O: PureCRDT + Debug,
 {
+    /// Unique peer id
     pub id: String,
+    /// Domain-specific CRDT
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pub pending: VecDeque<Event<AnyOp<O>>>,
     /// Members whose convergence to the network state is unknown.
-    /// The key is the welcoming peer, value is the list of converging members.
     pub converging_members: Converging,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
@@ -752,7 +753,6 @@ where
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         crdt::{
             counter::Counter,
