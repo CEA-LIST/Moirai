@@ -49,7 +49,7 @@ where
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Peers that left from the group
-    pub removed_members: HashSet<String>,
+    // pub removed_members: HashSet<String>,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -73,7 +73,7 @@ where
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
-            removed_members: HashSet::new(),
+            // removed_members: HashSet::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -148,15 +148,15 @@ where
             );
             return;
         }
-        if guard_against_removed_members(&self.removed_members, &event.metadata) {
-            error!(
-                "[{}] - Event from an removed peer {} detected with timestsamp {}",
-                self.id.blue().bold(),
-                event.metadata.origin.red(),
-                format!("{}", event.metadata.clock).red()
-            );
-            return;
-        }
+        // if guard_against_removed_members(&self.removed_members, &event.metadata) {
+        //     error!(
+        //         "[{}] - Event from an removed peer {} detected with timestsamp {}",
+        //         self.id.blue().bold(),
+        //         event.metadata.origin.red(),
+        //         format!("{}", event.metadata.clock).red()
+        //     );
+        //     return;
+        // }
         // The LTM should be synchronized with the group membership
         assert_eq!(
             self.eval_group_membership().len(),
@@ -172,7 +172,7 @@ where
             );
             self.fix_timestamp_inconsistencies_incoming_event(&mut event.metadata);
         }
-        if guard_against_out_of_order(&self.ltm, &self.removed_members, &event.metadata) {
+        if guard_against_out_of_order(&self.ltm, &event.metadata) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestsamp {}. Operation: {}",
                 self.id.blue().bold(),
@@ -405,7 +405,7 @@ where
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
         self.converging_members = other.converging_members.clone();
-        self.removed_members = other.removed_members.clone();
+        // self.removed_members = other.removed_members.clone();
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
@@ -472,7 +472,8 @@ where
     }
 
     pub fn ltm_current_keys(&self) -> Vec<String> {
-        self.ltm.filtered_keys(&self.removed_members)
+        // self.ltm.filtered_keys(&self.removed_members)
+        self.ltm.keys()
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
@@ -598,7 +599,7 @@ where
             ignore
         };
         [
-            self.removed_members.iter().cloned().collect::<Vec<_>>(),
+            // self.removed_members.iter().cloned().collect::<Vec<_>>(),
             ignore,
         ]
         .concat()
@@ -643,7 +644,7 @@ where
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready...
-            if !guard_against_out_of_order(&self.ltm, &self.removed_members, &event.metadata)
+            if !guard_against_out_of_order(&self.ltm, &event.metadata)
                 && !guard_against_concurrent_to_remove(
                     &event,
                     &self.group_membership,
@@ -702,7 +703,7 @@ where
                     }
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
-                    self.removed_members.clear();
+                    // self.removed_members.clear();
                     self.converging_members.clear();
                     let unstable_keys: Vec<Metadata> =
                         self.state.unstable.keys().cloned().collect();

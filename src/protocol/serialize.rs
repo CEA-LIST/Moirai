@@ -28,7 +28,7 @@ where
     pub lsv: VectorClock<String, usize>,
     pub ltm: MatrixClock<String, usize>,
     pub converging_members: Converging,
-    pub removed_members: HashSet<String>,
+    // pub removed_members: HashSet<String>,
 }
 
 impl<O> StateTransfer<O>
@@ -45,7 +45,7 @@ where
             lsv: tcsb.lsv.clone(),
             ltm: tcsb.ltm.clone(),
             converging_members: tcsb.converging_members.clone(),
-            removed_members: tcsb.removed_members.clone(),
+            // removed_members: tcsb.removed_members.clone(),
         }
     }
 }
@@ -166,11 +166,11 @@ where
                 metadata.origin,
                 self.eval_group_membership()
             );
-            if self.removed_members.contains(&metadata.origin) {
-                return Err(DeliveryError::EvictedPeer);
-            } else {
-                return Err(DeliveryError::UnknownPeer);
-            }
+            // if self.removed_members.contains(&metadata.origin) {
+            // return Err(DeliveryError::EvictedPeer);
+            // } else {
+            return Err(DeliveryError::UnknownPeer);
+            // }
         }
 
         let since = Metadata::new(metadata.clock.clone(), "");
@@ -246,7 +246,7 @@ where
                         }
                         // Re-init the group membership
                         self.group_membership = Self::create_group_membership(&self.id);
-                        self.removed_members.clear();
+                        // self.removed_members.clear();
                         self.converging_members.clear();
                     }
                     DeliveryError::UnknownPeer => {}
