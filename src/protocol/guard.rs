@@ -23,11 +23,7 @@ pub fn guard_against_duplicates(ltm: &MatrixClock<String, usize>, metadata: &Met
 
 /// Check that the event is the causal successor of the last event delivered by this same replica
 /// Returns true if the event is out of order
-pub fn guard_against_out_of_order(
-    ltm: &MatrixClock<String, usize>,
-    _evicted: &HashSet<String>,
-    metadata: &Metadata,
-) -> bool {
+pub fn guard_against_out_of_order(ltm: &MatrixClock<String, usize>, metadata: &Metadata) -> bool {
     // We assume that the event clock has an entry for its origin
     let event_lamport_clock = metadata.clock.get(&metadata.origin).unwrap();
     // We assume we know this origin
