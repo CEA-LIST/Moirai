@@ -13,7 +13,7 @@ use super::{
     pure_crdt::PureCRDT,
     tcsb::{Converging, Tcsb},
 };
-use std::{collections::HashSet, fmt::Debug, rc::Rc};
+use std::{fmt::Debug, rc::Rc};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

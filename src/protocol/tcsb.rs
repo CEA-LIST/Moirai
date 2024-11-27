@@ -11,8 +11,7 @@ use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
 use crate::crdt::membership_set::MSet;
 use crate::protocol::guard::{
-    guard_against_duplicates, guard_against_out_of_order, guard_against_removed_members,
-    guard_against_unknow_peer,
+    guard_against_duplicates, guard_against_out_of_order, guard_against_unknow_peer,
 };
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
@@ -692,7 +691,7 @@ where
         for member in self.ltm_current_keys() {
             if !gms_members.contains(&member) {
                 if member != self.id {
-                    self.removed_members.insert(member.clone());
+                    // self.removed_members.insert(member.clone());
                 } else {
                     // If the local peer is removed from the group...
                     // remove all keys except the local one
