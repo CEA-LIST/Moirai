@@ -703,6 +703,7 @@ where
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
                     self.removed_members.clear();
+                    self.pending.clear();
                     self.converging_members.clear();
                     let unstable_keys: Vec<Metadata> =
                         self.state.unstable.keys().cloned().collect();
@@ -714,6 +715,9 @@ where
                     assert_eq!(self.ltm_current_keys(), &[self.id.clone()]);
                     assert_eq!(self.state.unstable.len(), 0);
                     assert_eq!(self.group_membership.unstable.len(), 0);
+                    assert_eq!(self.converging_members.len(), 0);
+                    assert_eq!(self.removed_members.len(), 0);
+                    assert_eq!(self.pending.len(), 0);
                 }
             }
         }
