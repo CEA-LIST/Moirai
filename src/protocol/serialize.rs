@@ -229,7 +229,7 @@ where
                     .eval_group_membership()
                     .contains(&batch.metadata.origin)
                 {
-                    self.fix_timestamp_inconsistencies_incoming_event(&mut batch.metadata);
+                    self.fix_timestamp_inconsistencies_event(&mut batch.metadata);
                     assert_eq!(self.ltm.keys(), batch.metadata.clock.keys());
                     self.ltm
                         .update(&batch.metadata.origin, &batch.metadata.clock);

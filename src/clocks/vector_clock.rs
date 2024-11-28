@@ -61,8 +61,8 @@ where
         self.clock.insert(key, value);
     }
 
-    pub fn remove(&mut self, key: &K) {
-        self.clock.remove(key);
+    pub fn remove(&mut self, key: &K) -> Option<C> {
+        self.clock.remove(key)
     }
 
     /// Take the max of the two clocks

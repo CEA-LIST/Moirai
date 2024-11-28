@@ -5,7 +5,7 @@ use radix_trie::TrieCommon;
 
 use super::guard::guard_against_concurrent_to_remove;
 use super::pathbuf_key::PathBufKey;
-use super::po_log::POLog;
+use super::po_log::{Log, POLog};
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::crdt::duet::Duet;
@@ -25,6 +25,7 @@ pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 pub type AnyOp<O> = Duet<MSet<String>, O>;
 /// Key is the welcoming peer, value is the list of converging members with their `add` event vector clock
 pub type Converging = HashMap<String, Vec<(String, VectorClock<String, usize>)>>;
+pub type Hideout = HashMap<(String, usize), VectorClock<String, usize>>;
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -49,6 +50,7 @@ where
     pub group_membership: POLog<MSet<String>>,
     /// Peers that left from the group
     // pub removed_members: HashSet<String>,
+    hideout: Hideout,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -72,6 +74,7 @@ where
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
+            hideout: HashMap::new(),
             // removed_members: HashSet::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
@@ -169,7 +172,7 @@ where
                 format!("{:?}", self.eval_group_membership()).green(),
                 format!("{:?}", event.metadata.clock.keys()).green()
             );
-            self.fix_timestamp_inconsistencies_incoming_event(&mut event.metadata);
+            self.fix_timestamp_inconsistencies_event(&mut event.metadata);
         }
         if guard_against_out_of_order(&self.ltm, &event.metadata) {
             error!(
@@ -308,64 +311,39 @@ where
         // Timestamp rewwriting during stabilization: necessary for early rejoin.
 
         for metadata in ready_to_stabilize.iter_mut() {
-            if self.state.unstable.contains_key(metadata) {
+            // Match the metadata with the group membership
+            self.fix_timestamp_inconsistencies_event(metadata);
+
+            if let Some(op) = self.state.unstable.get(metadata) {
                 info!(
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
-                    format!("{:?}", self.state.unstable.get(metadata).unwrap()).green(),
+                    format!("{:?}", op).green(),
                     format!("{}", metadata.clock).red(),
                 );
                 O::stable(metadata, &mut self.state);
-            } else if self.group_membership.unstable.contains_key(metadata) {
+            } else if let Some(op) = self.group_membership.unstable.get(&metadata).cloned() {
                 info!(
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
-                    format!(
-                        "{:?}",
-                        self.group_membership.unstable.get(metadata).unwrap()
-                    )
-                    .green(),
+                    format!("{:?}", op).green(),
                     format!("{}", metadata.clock).red(),
                 );
 
-                let event = self
-                    .group_membership
-                    .unstable
-                    .get(metadata)
-                    .unwrap()
-                    .as_ref()
-                    .clone();
-
-                // We cannot remove a peer from the LTM before all its events have been stabilized
-                // Otherwise, we would process events from a peer we don't know and it's forbidden
-                // To avoir that, we just skip a stabilization opportunity until all events from the peer can be stabilized
-                if let MSet::Remove(i) = &event {
-                    if let Some(i_clock) = self.ltm.get(i) {
-                        let mut remove_exec_clock = svv.clone();
-                        remove_exec_clock.merge(i_clock);
-                        if svv.partial_cmp(&remove_exec_clock).is_none() || svv < remove_exec_clock
-                        {
-                            debug!(
-                            "[{}] - Skipping stabilization of remove event for peer {}. Remove will not be stabilized before {}. Current SVV is {}",
-                            self.id.blue().bold(),
-                            i.blue(),
-                            format!("{}", remove_exec_clock).red(),
-                            format!("{}", svv).red()
-                        );
-                            continue;
-                        }
-                    }
+                if self.should_skip_stabilization(&op, &svv) {
+                    continue;
                 }
 
-                MSet::stable(metadata, &mut self.group_membership);
+                MSet::stable(&metadata, &mut self.group_membership);
 
-                if let MSet::Add(id) = event {
-                    // Keep the version vector of the new member + who is welcoming it (i.e. the origin of the event)
-                    // After stabilizing the event, the new member should have the same vector clock as the welcoming peer
-                    // And we should keep updating the vector clock of the new member with the welcoming peer's vector clock
-                    // when we receive new events from the welcoming peer, until we know that the welcoming peer has stabilized
-                    // the new member's `add` event.
-                    if metadata.origin != self.id {
+                match op.as_ref() {
+                    MSet::Add(id) => {
+                        assert!(metadata.origin != self.id);
+                        // Keep the version vector of the new member + who is welcoming it (i.e. the origin of the event)
+                        // After stabilizing the event, the new member should have the same vector clock as the welcoming peer
+                        // And we should keep updating the vector clock of the new member with the welcoming peer's vector clock
+                        // when we receive new events from the welcoming peer, until we know that the welcoming peer has stabilized
+                        // the new member's `add` event.
                         debug!(
                             "[{}] - Adding {} to converging members welcomed by {}",
                             self.id.blue().bold(),
@@ -376,6 +354,80 @@ where
                             .entry(metadata.origin.clone())
                             .and_modify(|c| c.push((id.clone(), metadata.clock.clone())))
                             .or_insert_with(|| vec![(id.clone(), metadata.clock.clone())]);
+                        //* Add a new entry to the LTM
+                        let new_member_clock = self.ltm.get(&metadata.origin).unwrap().clone();
+                        self.ltm.add_key(id.clone());
+                        self.ltm.update(id, &new_member_clock);
+                        //* Add a new entry to unstable events
+                        // Not necessary because the partialOrd implementation add a 0 value for missing keys
+                        // If the entry exist in the hideout for an event, it should be 0.
+                        // Because before a join stabilize, no other peer should have received events from the new peer.
+                        // Could be != 0 if the peer has been removed and rejoin the group (it's an issue).
+                        let mut to_remove = Vec::new();
+                        for m in self.group_membership.unstable.keys() {
+                            if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
+                                to_remove.push(m.clone());
+                            }
+                        }
+                        for m in to_remove.iter_mut() {
+                            let v = self.group_membership.unstable.remove(&m);
+                            if let Some(v) = v {
+                                self.fix_timestamp_inconsistencies_event(m);
+                                self.group_membership.unstable.insert(m.clone(), v);
+                            }
+                        }
+                        let mut to_remove = Vec::new();
+                        for m in self.state.unstable.keys() {
+                            if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
+                                to_remove.push(m.clone());
+                            }
+                        }
+                        for m in to_remove.iter_mut() {
+                            let v = self.state.unstable.remove(&m);
+                            if let Some(v) = v {
+                                self.fix_timestamp_inconsistencies_event(m);
+                                self.state.unstable.insert(m.clone(), v);
+                            }
+                        }
+                        //* Add a new entry to pending events
+                        // Not necessary because the partialOrd implementation add a 0 value for missing keys
+                        //* Add a new entry to converging members
+                        // Not necessary because the partialOrd implementation add a 0 value for missing keys
+                    }
+                    MSet::Remove(id) => {
+                        if metadata.origin != self.id {
+                            //* Remove entry from the LTM
+                            //* Remove entry from every unstable events
+                            //* Remove entry from the LSV
+                            //* Remove entry from pending events
+                            //* Remove events from pending belonging to the removed peer
+                        } else {
+                            // If the local peer is removed from the group...
+                            // remove all keys except the local one
+                            for key in self.ltm.keys() {
+                                if key != self.id {
+                                    self.ltm.remove_key(&key);
+                                }
+                            }
+                            // Re-init the group membership
+                            self.group_membership = Self::create_group_membership(&self.id);
+                            self.pending.clear();
+                            self.converging_members.clear();
+                            let unstable_keys: Vec<Metadata> =
+                                self.state.unstable.keys().cloned().collect();
+                            for m in unstable_keys {
+                                O::stable(&m, &mut self.state);
+                            }
+                            self.lsv = VectorClock::new(self.id.clone());
+                            self.hideout.clear();
+                            assert_eq!(self.eval_group_membership().len(), 1);
+                            assert_eq!(self.ltm_current_keys(), &[self.id.clone()]);
+                            assert_eq!(self.state.unstable.len(), 0);
+                            assert_eq!(self.group_membership.unstable.len(), 0);
+                            assert_eq!(self.converging_members.len(), 0);
+                            assert_eq!(self.pending.len(), 0);
+                            assert_eq!(self.hideout.len(), 0);
+                        }
                     }
                 }
             } else {
@@ -384,9 +436,65 @@ where
                     self.id, metadata
                 );
             }
+            self.hideout.remove(&metadata.dot());
         }
+        // if self.state.unstable.contains_key(metadata) {
+        //     info!(
+        //         "[{}] - Op {} with timestamp {} is causally stable",
+        //         self.id.blue().bold(),
+        //         format!("{:?}", self.state.unstable.get(metadata).unwrap()).green(),
+        //         format!("{}", metadata.clock).red(),
+        //     );
+        //     O::stable(metadata, &mut self.state);
+        // } else if self.group_membership.unstable.contains_key(metadata) {
+        //     info!(
+        //         "[{}] - Op {} with timestamp {} is causally stable",
+        //         self.id.blue().bold(),
+        //         format!(
+        //             "{:?}",
+        //             self.group_membership.unstable.get(metadata).unwrap()
+        //         )
+        //         .green(),
+        //         format!("{}", metadata.clock).red(),
+        //     );
 
-        self.update_ltm_membership();
+        //     let event = self
+        //         .group_membership
+        //         .unstable
+        //         .get(metadata)
+        //         .unwrap()
+        //         .as_ref()
+        //         .clone();
+
+        //     MSet::stable(metadata, &mut self.group_membership);
+
+        //     if let MSet::Add(id) = event {
+        //         // Keep the version vector of the new member + who is welcoming it (i.e. the origin of the event)
+        //         // After stabilizing the event, the new member should have the same vector clock as the welcoming peer
+        //         // And we should keep updating the vector clock of the new member with the welcoming peer's vector clock
+        //         // when we receive new events from the welcoming peer, until we know that the welcoming peer has stabilized
+        //         // the new member's `add` event.
+        //         if metadata.origin != self.id {
+        //             debug!(
+        //                 "[{}] - Adding {} to converging members welcomed by {}",
+        //                 self.id.blue().bold(),
+        //                 id.blue(),
+        //                 metadata.origin.blue()
+        //             );
+        //             self.converging_members
+        //                 .entry(metadata.origin.clone())
+        //                 .and_modify(|c| c.push((id.clone(), metadata.clock.clone())))
+        //                 .or_insert_with(|| vec![(id.clone(), metadata.clock.clone())]);
+        //         }
+        //     }
+        // } else {
+        //     panic!(
+        //         "[{}] - Event with metadata {} not found in the log",
+        //         self.id, metadata
+        //     );
+        // }
+
+        // self.update_ltm_membership();
     }
 
     /// Transfer the state of a replica to another replica.
@@ -437,6 +545,33 @@ where
             .expect("Local vector clock not found")
     }
 
+    // We cannot remove a peer from the LTM before all its events have been stabilized
+    // Otherwise, we would process events from a peer we don't know and it's forbidden
+    // To avoir that, we just skip a stabilization opportunity until all events from the peer can be stabilized
+    pub fn should_skip_stabilization(
+        &self,
+        op: &MSet<String>,
+        svv: &VectorClock<String, usize>,
+    ) -> bool {
+        if let MSet::Remove(i) = &op {
+            if let Some(i_clock) = self.ltm.get(i) {
+                let mut remove_exec_clock = svv.clone();
+                remove_exec_clock.merge(i_clock);
+                if svv.partial_cmp(&remove_exec_clock).is_none() || svv < &remove_exec_clock {
+                    debug!(
+                            "[{}] - Skipping stabilization of remove event for peer {}. Remove will not be stabilized before {}. Current SVV is {}",
+                            self.id.blue().bold(),
+                            i.blue(),
+                            format!("{}", remove_exec_clock).red(),
+                            format!("{}", svv).red()
+                        );
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
     pub fn waiting_from(&self) -> HashSet<String> {
         // Let consider a distributed systems where nodes exchange messages with a vector clock where
@@ -478,15 +613,22 @@ where
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    pub fn fix_timestamp_inconsistencies_incoming_event(&self, metadata: &mut Metadata) {
+    pub fn fix_timestamp_inconsistencies_event(&mut self, metadata: &mut Metadata) {
+        assert_eq!(
+            self.eval_group_membership(),
+            HashSet::from_iter(self.ltm.keys())
+        );
         // Missing keys in the new event
-        for key in &self.ltm.keys() {
-            if !metadata.clock.contains(key) {
-                metadata.clock.insert(key.clone(), 0);
+        for key in self.eval_group_membership() {
+            if !metadata.clock.contains(&key) {
+                let from_hideout = self.hideout.get(&metadata.dot()).and_then(|c| c.get(&key));
+                metadata
+                    .clock
+                    .insert(key.clone(), from_hideout.unwrap_or(0));
             }
         }
         // Missing keys in the LTM
-        for key in metadata.clock.keys() {
+        for key in self.eval_group_membership() {
             if !&self.ltm.keys().contains(&key) {
                 // We can't remove the from the event if it is its id
                 assert_ne!(
@@ -494,24 +636,33 @@ where
                     "The origin `{}` of the event should not be removed.",
                     metadata.origin
                 );
-                assert!(
-                    metadata.clock.get(&key) == Some(0),
-                    "The missing key `{}` should have a value of 0. Instead, it has a value of {}",
-                    key,
-                    metadata.clock.get(&key).unwrap()
-                );
-                metadata.clock.remove(&key);
+                // assert!(
+                //     metadata.clock.get(&key) == Some(0),
+                //     "The missing key `{}` should have a value of 0. Instead, it has a value of {}",
+                //     key,
+                //     metadata.clock.get(&key).unwrap()
+                // );
+                //* Metadata clock = 0 || Metadata clock = join.origin current clock
+                self.hideout
+                    .entry(metadata.dot())
+                    .and_modify(|c| c.insert(key.clone(), metadata.clock.remove(&key).unwrap()))
+                    .or_insert_with(|| {
+                        let mut clock = VectorClock::new(metadata.origin.clone());
+                        clock.insert(key.clone(), metadata.clock.remove(&key).unwrap());
+                        clock
+                    });
             }
         }
         assert_eq!(
-            self.ltm.keys().len(),
-            metadata.clock.len(),
+            self.eval_group_membership(),
+            HashSet::from_iter(metadata.clock.keys()),
             "Timestamp inconsistency: LTM keys ({}): {:?}, Event keys ({}): {:?}",
             &self.ltm.keys().len(),
             &self.ltm.keys(),
             metadata.clock.keys().len(),
             metadata.clock.keys(),
         );
+        assert!(!(&metadata.clock > self.my_clock()));
     }
 
     /// Check if the converging members have finally converged to the network state.

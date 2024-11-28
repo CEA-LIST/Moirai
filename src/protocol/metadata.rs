@@ -31,6 +31,10 @@ impl Metadata {
         }
     }
 
+    pub fn dot(&self) -> (String, usize) {
+        (self.origin.clone(), self.get_origin_lamport())
+    }
+
     pub fn get_origin_lamport(&self) -> usize {
         self.clock.get(&self.origin).expect("Origin not found")
     }
