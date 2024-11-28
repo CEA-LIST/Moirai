@@ -62,6 +62,8 @@ where
             .collect()
     }
 
+    /// Remove a key from the matrix clock.
+    /// The matrix clock remains square.
     pub fn remove_key(&mut self, key: &K) {
         self.clock.remove(key);
         for vc in self.clock.values_mut() {
