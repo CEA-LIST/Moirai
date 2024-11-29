@@ -328,7 +328,7 @@ where
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
                     format!("{:?}", op).green(),
-                    format!("{}", metadata.clock).red(),
+                    format!("{}", metadata).red(),
                 );
                 O::stable(metadata, &mut self.state);
             } else if let Some(op) = self.group_membership.unstable.get(metadata).cloned() {
@@ -336,7 +336,7 @@ where
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
                     format!("{:?}", op).green(),
-                    format!("{}", metadata.clock).red(),
+                    format!("{}", metadata).red(),
                 );
 
                 if self.should_skip_stabilization(&op, &svv) {
@@ -345,7 +345,7 @@ where
 
                 MSet::stable(metadata, &mut self.group_membership);
 
-                self.sync_state_with_membership(&metadata);
+                self.sync_state_with_membership(metadata);
             } else {
                 debug!(
                     "[{}] - Group membership: {}",
@@ -450,6 +450,10 @@ where
         for id in self.ltm.keys() {
             if !self.eval_group_membership().contains(&id) {
                 if id != self.id {
+                    //* Remove entry from the LSV
+                    self.lsv.remove(&id);
+                    //* Store the vector clock of the removed peer
+                    self.store_clock_of_removed_peer(&id);
                     //* Remove entry from the LTM
                     self.ltm.remove_key(&id);
                     //* Remove entry from every unstable events
@@ -479,8 +483,6 @@ where
                             self.state.unstable.insert(m.clone(), v);
                         }
                     }
-                    //* Remove entry from the LSV
-                    self.lsv.remove(&id);
                     //* Remove entry from pending events and those that belong to the removed peer
                     let mut still_pending = VecDeque::new();
                     while let Some(mut event) = self.pending.pop_front() {
@@ -605,6 +607,25 @@ where
         }
     }
 
+    /// Store the lamport clock of the removed peer in the timestamp extension list.
+    /// TODO: Except if the `remove` message comes from the local peer.
+    fn store_clock_of_removed_peer(&mut self, id: &String) {
+        println!(
+            "[{}] - Storing clock of removed peer {}",
+            self.id.blue().bold(),
+            id.blue()
+        );
+        let ext_list = self
+            .timestamp_extension
+            .entry(Metadata::new(self.lsv.clone(), ""))
+            .or_default();
+        // The removed peer may be already removed from the LTM.
+        // e.g. multiple remove operations from different peers have already been stabilized.
+        if let Some(removed_clock) = self.ltm.get(&self.id).and_then(|clock| clock.get(id)) {
+            ext_list.insert(id.clone(), removed_clock);
+        }
+    }
+
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
     pub fn waiting_from(&self) -> HashSet<String> {
         // Let consider a distributed systems where nodes exchange messages with a vector clock where
@@ -635,7 +656,12 @@ where
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        let ext = self.add_timestamp_extension(&mut clock);
+        let _ = self.add_timestamp_extension(&mut clock);
+        println!(
+            "[{}] - ext: {:?}",
+            self.id.blue().bold(),
+            self.timestamp_extension,
+        );
         Metadata::new(clock, &self.id)
     }
 
@@ -645,20 +671,23 @@ where
     /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
     /// should include the lamport clock of the evicted peer.
     fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) -> Vec<String> {
+        println!("timestamp extension -> LSV is : {}", self.lsv);
         let ext_list: Vec<(Metadata, VectorClock<String>)> = self
             .timestamp_extension
             .range((
                 Bound::Unbounded,
                 Bound::Included(&Metadata::new(self.lsv.clone(), "")),
             ))
-            .filter_map(|(m, v)| {
-                if v <= &self.lsv {
-                    Some((m.clone(), v.clone()))
-                } else {
-                    None
-                }
-            })
+            // .filter_map(|(m, v)| {
+            //     if m <= &self.lsv {
+            //         Some((m.clone(), v.clone()))
+            //     } else {
+            //         None
+            //     }
+            // })
+            .map(|(m, v)| (m.clone(), v.clone()))
             .collect();
+        println!("[{}] - ext_list: {:?}", self.id.blue().bold(), ext_list);
         let ext_list_len = ext_list.len();
         if ext_list_len > 0 {
             debug!(
@@ -699,9 +728,10 @@ where
         for key in self.eval_group_membership() {
             if !metadata.clock.contains(&key) {
                 let from_hideout = self.hideout.get(&metadata.dot()).and_then(|c| c.get(&key));
-                metadata
-                    .clock
-                    .insert(key.clone(), from_hideout.unwrap_or(0));
+                let lamport = from_hideout
+                    .or_else(|| self.ltm.get(&metadata.origin).unwrap().get(&key))
+                    .unwrap_or(0);
+                metadata.clock.insert(key.clone(), lamport);
             }
         }
         // Missing keys in the GMS
@@ -992,6 +1022,7 @@ mod tests {
     use crate::{
         crdt::{
             counter::Counter,
+            membership_set::MSet,
             test_util::{triplet, twins},
         },
         protocol::metadata::Metadata,
@@ -1075,30 +1106,30 @@ mod tests {
         tcsb_a.deliver_batch(batch);
     }
 
-    // #[test_log::test]
-    // pub fn events_since_concurrent_remove() {
-    //     let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+    #[test_log::test]
+    pub fn events_since_concurrent_remove() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
 
-    //     let _ = tcsb_a.tc_bcast_membership(MSet::remove("c"));
-    //     let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
+        let _ = tcsb_a.tc_bcast_membership(MSet::remove("c"));
+        let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
 
-    //     // B request events from A
-    //     let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
-    //     assert_eq!(batch.clone().unwrap().events.len(), 1);
-    //     tcsb_b.deliver_batch(batch);
+        // B request events from A
+        let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
+        assert_eq!(batch.clone().unwrap().events.len(), 1);
+        tcsb_b.deliver_batch(batch);
 
-    //     // A request events from B
-    //     let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
-    //     assert_eq!(batch.clone().unwrap().events.len(), 1);
-    //     tcsb_a.deliver_batch(batch);
+        // A request events from B
+        let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
+        assert_eq!(batch.clone().unwrap().events.len(), 1);
+        tcsb_a.deliver_batch(batch);
 
-    //     // C request events from A
-    //     let batch = tcsb_a.events_since(&Metadata::new(tcsb_c.my_clock().clone(), &tcsb_c.id));
-    //     assert!(batch.is_err());
-    //     tcsb_c.deliver_batch(batch);
+        // C request events from A
+        let batch = tcsb_a.events_since(&Metadata::new(tcsb_c.my_clock().clone(), &tcsb_c.id));
+        assert!(batch.is_err());
+        tcsb_c.deliver_batch(batch);
 
-    //     assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
-    //     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
-    //     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
-    // }
+        assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
+    }
 }

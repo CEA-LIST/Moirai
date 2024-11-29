@@ -131,8 +131,6 @@ fn rejoin() {
     tcsb_c.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
 
-    tcsb_d.new_id("e");
-
     let event = tcsb_b.tc_bcast_op(Counter::Inc(2));
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_c.tc_deliver_op(event.clone());
@@ -146,13 +144,13 @@ fn rejoin() {
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
-    assert_eq!(tcsb_d.ltm.keys(), vec!["e"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
     assert_eq!(tcsb_a.eval(), 1);
     assert_eq!(tcsb_b.eval(), 1);
     assert_eq!(tcsb_c.eval(), 1);
     assert_eq!(tcsb_d.eval(), 0);
 
-    let event = tcsb_b.tc_bcast_membership(MSet::add("e"));
+    let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
     tcsb_a.tc_deliver_membership(event.clone());
     tcsb_c.tc_deliver_membership(event.clone());
 
@@ -167,10 +165,10 @@ fn rejoin() {
     // --> Causal stability <--
     tcsb_d.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_a.eval(), 0);
     assert_eq!(tcsb_b.eval(), 0);
     assert_eq!(tcsb_c.eval(), 0);
@@ -186,10 +184,7 @@ fn early_rejoin() {
     tcsb_c.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
 
-    // Change its identity to be able to rejoin
-    tcsb_d.new_id("e");
-
-    let event = tcsb_b.tc_bcast_membership(MSet::add("e"));
+    let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
     tcsb_a.tc_deliver_membership(event.clone());
     tcsb_c.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
@@ -207,10 +202,10 @@ fn early_rejoin() {
     // --> Causal stability <--
     tcsb_d.state_transfer(&mut tcsb_b);
 
-    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "e"]);
-    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "e"]);
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_a.eval(), 1);
     assert_eq!(tcsb_b.eval(), 1);
     assert_eq!(tcsb_c.eval(), 1);
