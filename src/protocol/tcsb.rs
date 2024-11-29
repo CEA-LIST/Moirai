@@ -16,7 +16,7 @@ use crate::protocol::guard::{
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::Bound;
 use std::rc::Rc;
@@ -25,6 +25,7 @@ pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 pub type AnyOp<O> = Duet<MSet<String>, O>;
 pub type Converging = HashMap<String, Vec<(String, VectorClock<String, usize>)>>;
 pub type Hideout = HashMap<(String, usize), VectorClock<String, usize>>;
+pub type TimestampExtension = BTreeMap<Metadata, VectorClock<String, usize>>;
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -46,6 +47,9 @@ where
     /// Members whose convergence to the network state is unknown.
     /// Key is the welcoming peer, value is the list of converging members with their `add` event vector clock
     pub converging_members: Converging,
+    /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
+    /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
+    pub timestamp_extension: TimestampExtension,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
     /// Peers that left from the group
@@ -72,6 +76,7 @@ where
             group_membership: Self::create_group_membership(id),
             converging_members: HashMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
+            timestamp_extension: BTreeMap::new(),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
             hideout: HashMap::new(),
@@ -505,6 +510,7 @@ where
                     // Re-init the group membership
                     self.group_membership = Self::create_group_membership(&self.id);
                     self.pending.clear();
+                    self.timestamp_extension.clear();
                     self.converging_members.clear();
                     let unstable_keys: Vec<Metadata> =
                         self.state.unstable.keys().cloned().collect();
@@ -624,12 +630,61 @@ where
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let clock = {
+        let mut clock = {
             let my_clock = self.my_clock_mut();
             my_clock.increment(&my_id);
             my_clock.clone()
         };
+        let ext = self.add_timestamp_extension(&mut clock);
         Metadata::new(clock, &self.id)
+    }
+
+    /// Add the timestamp extension to the vector clock of the new event.
+    ///
+    /// A peer may stabilize a membership event before the other peers because
+    /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
+    /// should include the lamport clock of the evicted peer.
+    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) -> Vec<String> {
+        let ext_list: Vec<(Metadata, VectorClock<String>)> = self
+            .timestamp_extension
+            .range((
+                Bound::Unbounded,
+                Bound::Included(&Metadata::new(self.lsv.clone(), "")),
+            ))
+            .filter_map(|(m, v)| {
+                if v <= &self.lsv {
+                    Some((m.clone(), v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let ext_list_len = ext_list.len();
+        if ext_list_len > 0 {
+            debug!(
+                "[{}] - Adding timestamp extension for {}",
+                self.id.blue().bold(),
+                format!("{}", clock).red()
+            );
+        }
+        let mut ext_tracker = Vec::<String>::new();
+        for (m, ext) in ext_list {
+            ext.left_difference(clock).keys().iter().for_each(|k| {
+                if !ext_tracker.contains(k) {
+                    ext_tracker.push(k.clone());
+                }
+            });
+            clock.merge(&ext);
+            self.timestamp_extension.remove(&m);
+        }
+        if ext_list_len > 0 {
+            debug!(
+                "[{}] - Timestamp extension added: {}",
+                self.id.blue().bold(),
+                format!("{}", clock).red()
+            );
+        }
+        ext_tracker
     }
 
     /// Correct the inconsistencies in the vector clocks of two events

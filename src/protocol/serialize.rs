@@ -11,7 +11,7 @@ use super::{
     pathbuf_key::PathBufKey,
     po_log::{Log, PathTrie},
     pure_crdt::PureCRDT,
-    tcsb::{Converging, Tcsb},
+    tcsb::{Converging, Tcsb, TimestampExtension},
 };
 use std::{fmt::Debug, rc::Rc};
 
@@ -28,6 +28,7 @@ where
     pub lsv: VectorClock<String, usize>,
     pub ltm: MatrixClock<String, usize>,
     pub converging_members: Converging,
+    pub timestamp_extension: TimestampExtension,
     // pub removed_members: HashSet<String>,
 }
 
@@ -45,6 +46,7 @@ where
             lsv: tcsb.lsv.clone(),
             ltm: tcsb.ltm.clone(),
             converging_members: tcsb.converging_members.clone(),
+            timestamp_extension: tcsb.timestamp_extension.clone(),
             // removed_members: tcsb.removed_members.clone(),
         }
     }
@@ -91,6 +93,7 @@ where
         self.group_membership.stable = state.group_membership_stable;
         self.group_membership.unstable = state.group_membership_unstable;
         self.converging_members = state.converging_members;
+        self.timestamp_extension = state.timestamp_extension;
 
         self.state.path_trie = PathTrie::new();
 
