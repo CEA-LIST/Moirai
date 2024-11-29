@@ -31,13 +31,13 @@ pub mod test_util {
         let mut tcsb_b = Tcsb::new("b");
 
         let _event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
-        assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
         // --> Causal stability <--
         tcsb_b.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b"]);
-        assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
@@ -62,9 +62,9 @@ pub mod test_util {
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c"]);
-        assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c"]);
-        assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
@@ -95,13 +95,13 @@ pub mod test_util {
         tcsb_a.tc_deliver_membership(event_c.clone());
         tcsb_b.tc_deliver_membership(event_c);
 
-        assert_eq!(tcsb_a.ltm_current_keys(), vec!["a", "b", "c", "d"]);
-        assert_eq!(tcsb_b.ltm_current_keys(), vec!["a", "b", "c", "d"]);
-        assert_eq!(tcsb_c.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
 
         tcsb_d.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_d.ltm_current_keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
