@@ -213,6 +213,91 @@ where
     }
 }
 
+// impl<K, C> PartialOrd for VectorClock<K, C>
+// where
+//     K: PartialOrd + Hash + Clone + Eq + Ord + Debug,
+//     C: Add<C, Output = C> + AddAssign<C> + From<u8> + Ord + Default + Clone + Debug,
+// {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         // assert!(
+//         //     self.clock.len() == other.clock.len(),
+//         //     "Different number of keys. Self: {:?}, Other: {:?}",
+//         //     self.keys(),
+//         //     other.keys()
+//         // );
+//         let mut has_less: bool = false;
+//         let mut has_greater: bool = false;
+
+//         for (k, v) in &(self.clock) {
+//             match other.clock.get(k) {
+//                 Some(other_v) => {
+//                     if v > other_v {
+//                         if !has_less {
+//                             has_greater = true;
+//                         } else {
+//                             return None;
+//                         }
+//                     }
+//                     if v < other_v {
+//                         if !has_greater {
+//                             has_less = true;
+//                         } else {
+//                             return None;
+//                         }
+//                     }
+//                 }
+//                 None => {
+//                     if !has_less {
+//                         has_greater = true;
+//                     } else {
+//                         return None;
+//                     }
+//                 }
+//             }
+//         }
+
+//         for (k, v) in &(other.clock) {
+//             match self.clock.get(k) {
+//                 Some(self_v) => {
+//                     if v > self_v {
+//                         if !has_greater {
+//                             has_less = true;
+//                         } else {
+//                             return None;
+//                         }
+//                     }
+//                     if v < self_v {
+//                         if !has_less {
+//                             has_greater = true;
+//                         } else {
+//                             return None;
+//                         }
+//                     }
+//                 }
+//                 None => {
+//                     if !has_greater {
+//                         has_less = true;
+//                     } else {
+//                         return None;
+//                     }
+//                 }
+//             }
+//         }
+//         if has_less && !has_greater {
+//             return Some(Ordering::Less);
+//         }
+//         if has_greater && !has_less {
+//             return Some(Ordering::Greater);
+//         }
+//         if has_less && has_greater {
+//             // Normally this should be useless as there are shortcuts
+//             // before setting has_greater or has_less. But better be safe than sorry.
+//             return None;
+//         }
+//         Some(Ordering::Equal)
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
     use super::*;
