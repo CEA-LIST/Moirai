@@ -36,7 +36,7 @@ fn simple_evict() {
 }
 
 #[test_log::test]
-fn evict() {
+fn evict_full_scenario() {
     let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet();
 
     let event = tcsb_a.tc_bcast_op(Counter::Inc(5));
@@ -100,18 +100,15 @@ fn evict() {
     tcsb_d.tc_deliver_op(event_b);
 
     let event_a = tcsb_a.tc_bcast_op(Counter::Dec(5));
-    println!("event a: {:?}", event_a);
-    println!("tcsb b ltm: {}", tcsb_b.ltm);
-    println!("tcsb b unstable state: {:?}", tcsb_b.state.unstable);
-    println!(
-        "tcsb b unstable GMS: {:?}",
-        tcsb_b.group_membership.unstable
-    );
+    println!("EVENT A : {:?}", event_a);
+
     tcsb_b.tc_deliver_op(event_a.clone());
     tcsb_c.tc_deliver_op(event_a.clone());
     tcsb_d.tc_deliver_op(event_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "d"]);
+    println!("TCSB B PENDING{:?}", tcsb_b.pending);
+    println!("TCSB B LTM: {}", tcsb_b.ltm);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "d"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "d"]);
 
