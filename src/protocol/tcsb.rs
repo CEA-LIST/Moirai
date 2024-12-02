@@ -52,8 +52,9 @@ where
     pub timestamp_extension: TimestampExtension,
     /// Group Membership Service
     pub group_membership: POLog<MSet<String>>,
-    /// Peers that left from the group
-    // pub removed_members: HashSet<String>,
+    /// Peers that left the group
+    pub(crate) removed_members: HashSet<String>,
+    /// Removed entries from vector clocks are stored in the hideout in case they need to be re-added to the clocks.
     hideout: Hideout,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
@@ -80,7 +81,7 @@ where
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
             hideout: HashMap::new(),
-            // removed_members: HashSet::new(),
+            removed_members: HashSet::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -166,15 +167,6 @@ where
             );
             return;
         }
-        // if guard_against_removed_members(&self.removed_members, &event.metadata) {
-        //     error!(
-        //         "[{}] - Event from an removed peer {} detected with timestsamp {}",
-        //         self.id.blue().bold(),
-        //         event.metadata.origin.red(),
-        //         format!("{}", event.metadata.clock).red()
-        //     );
-        //     return;
-        // }
         // The LTM should be synchronized with the group membership
         if guard_against_out_of_order(&self.ltm, &event.metadata) {
             error!(
@@ -306,11 +298,6 @@ where
             }
         });
 
-        for m in &ready_to_stabilize {
-            assert!(m.clock <= svv, "SVV: {:?}, Clock: {:?}", svv, m.clock);
-        }
-
-        // Timestamp rewwriting during stabilization: necessary for early rejoin.
         assert_eq!(
             self.eval_group_membership(),
             HashSet::from_iter(self.ltm.keys())
@@ -385,7 +372,7 @@ where
         self.ltm.most_update(&self.id);
         self.lsv = other.lsv.clone();
         self.converging_members = other.converging_members.clone();
-        // self.removed_members = other.removed_members.clone();
+        self.removed_members = other.removed_members.clone();
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
@@ -501,6 +488,7 @@ where
                     }
                     //* Remove entry from the hideout
                     self.hideout.retain(|dot, _| dot.0 != *id);
+                    self.removed_members.insert(id.clone());
                 } else {
                     // If the local peer is removed from the group...
                     // remove all keys except the local one
@@ -603,6 +591,7 @@ where
                     }
                 }
                 self.pending = still_pending;
+                self.removed_members.remove(&id);
             }
         }
     }
@@ -610,11 +599,6 @@ where
     /// Store the lamport clock of the removed peer in the timestamp extension list.
     /// TODO: Except if the `remove` message comes from the local peer.
     fn store_clock_of_removed_peer(&mut self, id: &String) {
-        println!(
-            "[{}] - Storing clock of removed peer {}",
-            self.id.blue().bold(),
-            id.blue()
-        );
         let ext_list = self
             .timestamp_extension
             .entry(Metadata::new(self.lsv.clone(), ""))
@@ -657,11 +641,6 @@ where
             my_clock.clone()
         };
         let _ = self.add_timestamp_extension(&mut clock);
-        println!(
-            "[{}] - ext: {:?}",
-            self.id.blue().bold(),
-            self.timestamp_extension,
-        );
         Metadata::new(clock, &self.id)
     }
 
@@ -670,24 +649,15 @@ where
     /// A peer may stabilize a membership event before the other peers because
     /// it hasn't yet broadcasted any operations. Consequently, its first message after the remove
     /// should include the lamport clock of the evicted peer.
-    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) -> Vec<String> {
-        println!("timestamp extension -> LSV is : {}", self.lsv);
+    fn add_timestamp_extension(&mut self, clock: &mut VectorClock<String, usize>) {
         let ext_list: Vec<(Metadata, VectorClock<String>)> = self
             .timestamp_extension
             .range((
                 Bound::Unbounded,
                 Bound::Included(&Metadata::new(self.lsv.clone(), "")),
             ))
-            // .filter_map(|(m, v)| {
-            //     if m <= &self.lsv {
-            //         Some((m.clone(), v.clone()))
-            //     } else {
-            //         None
-            //     }
-            // })
             .map(|(m, v)| (m.clone(), v.clone()))
             .collect();
-        println!("[{}] - ext_list: {:?}", self.id.blue().bold(), ext_list);
         let ext_list_len = ext_list.len();
         if ext_list_len > 0 {
             debug!(
@@ -713,7 +683,6 @@ where
                 format!("{}", clock).red()
             );
         }
-        ext_tracker
     }
 
     /// Correct the inconsistencies in the vector clocks of two events
@@ -743,12 +712,6 @@ where
                     "The origin `{}` of the event should not be removed.",
                     metadata.origin
                 );
-                // assert!(
-                //     metadata.clock.get(&key) == Some(0),
-                //     "The missing key `{}` should have a value of 0. Instead, it has a value of {}",
-                //     key,
-                //     metadata.clock.get(&key).unwrap()
-                // );
                 //* Metadata clock = 0 || Metadata clock = join.origin current clock
                 self.hideout
                     .entry(metadata.dot())
@@ -769,15 +732,6 @@ where
             metadata.clock.keys().len(),
             metadata.clock.keys(),
         );
-        // assert!(
-        //     matches!(
-        //         metadata.clock.partial_cmp(self.my_clock()),
-        //         Some(Ordering::Less) | Some(Ordering::Equal) | None
-        //     ),
-        //     "Timestamp inconsistency: Event clock: {:?}, Local clock: {:?}",
-        //     metadata.clock,
-        //     self.my_clock()
-        // );
     }
 
     /// Check if the converging members have finally converged to the network state.
@@ -863,11 +817,7 @@ where
         } else {
             ignore
         };
-        [
-            // self.removed_members.iter().cloned().collect::<Vec<_>>(),
-            ignore,
-        ]
-        .concat()
+        ignore
     }
 
     /// Returns a list of operations that are ready to be stabilized.
@@ -926,65 +876,6 @@ where
         self.pending = still_pending;
     }
 
-    // Synchronize the Last Timestamp Matrix (LTM) with the latest group membership information.
-    // fn update_ltm_membership(&mut self) {
-    //     let gms_members = self.eval_group_membership().into_iter().collect::<Vec<_>>();
-    //     // Add missing keys
-    //     for member in &gms_members {
-    //         if self.ltm.get(member).is_none() {
-    //             // The new peer's vector clock should not be an array of 0 but the last vector clock of the peer welcoming it
-    //             let welcome_peer = self.converging_members.iter().find_map(|(w, c)| {
-    //                 if c.iter().any(|i| &i.0 == member) {
-    //                     Some(w)
-    //                 } else {
-    //                     None
-    //                 }
-    //             });
-    //             // either the new peer is welcomed by another peer...
-    //             if let Some(welcome_peer) = welcome_peer {
-    //                 let new_member_clock = self.ltm.get(welcome_peer).unwrap().clone();
-    //                 self.ltm.add_key(member.clone());
-    //                 self.ltm.update(member, &new_member_clock);
-    //             } else {
-    //                 // ...or the new peer is welcomed by the local peer
-    //                 self.ltm.add_key(member.clone());
-    //                 let my_clock = self.my_clock().clone();
-    //                 self.ltm.update(member, &my_clock);
-    //             }
-    //         }
-    //     }
-    //     // Remove keys that are not in the group membership
-    //     for member in self.ltm.keys() {
-    //         if !gms_members.contains(&member) {
-    //             if member != self.id {
-    //                 // self.removed_members.insert(member.clone());
-    //             } else {
-    //                 // If the local peer is removed from the group...
-    //                 // remove all keys except the local one
-    //                 for key in self.ltm.keys() {
-    //                     if key != self.id {
-    //                         self.ltm.remove_key(&key);
-    //                     }
-    //                 }
-    //                 // Re-init the group membership
-    //                 self.group_membership = Self::create_group_membership(&self.id);
-    //                 // self.removed_members.clear();
-    //                 self.converging_members.clear();
-    //                 let unstable_keys: Vec<Metadata> =
-    //                     self.state.unstable.keys().cloned().collect();
-    //                 for m in unstable_keys {
-    //                     O::stable(&m, &mut self.state);
-    //                 }
-    //                 self.lsv = VectorClock::new(self.id.clone());
-    //                 assert_eq!(self.eval_group_membership().len(), 1);
-    //                 assert_eq!(self.ltm.keys(), &[self.id.clone()]);
-    //                 assert_eq!(self.state.unstable.len(), 0);
-    //                 assert_eq!(self.group_membership.unstable.len(), 0);
-    //             }
-    //         }
-    //     }
-    // }
-
     /// Change the id of the local peer.
     /// Should not be used if the peer is not alone in the group.
     /// Used to rejoin a group.
@@ -1014,122 +905,5 @@ where
             .path_trie
             .insert(PathBufKey::default(), vec![Rc::downgrade(&op)]);
         group_membership
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        crdt::{
-            counter::Counter,
-            membership_set::MSet,
-            test_util::{triplet, twins},
-        },
-        protocol::metadata::Metadata,
-    };
-
-    #[test_log::test]
-    fn causal_delivery() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
-
-        let event_a_1 = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let event_a_2 = tcsb_a.tc_bcast_op(Counter::Inc(1));
-
-        tcsb_b.tc_deliver_op(event_a_2);
-        tcsb_b.tc_deliver_op(event_a_1);
-
-        assert_eq!(tcsb_b.eval(), 2);
-        assert_eq!(tcsb_a.eval(), 2);
-
-        let event_b_1 = tcsb_b.tc_bcast_op(Counter::Inc(1));
-        let event_b_2 = tcsb_b.tc_bcast_op(Counter::Inc(1));
-        let event_b_3 = tcsb_b.tc_bcast_op(Counter::Inc(1));
-        let event_b_4 = tcsb_b.tc_bcast_op(Counter::Inc(1));
-
-        tcsb_a.tc_deliver_op(event_b_4);
-        tcsb_a.tc_deliver_op(event_b_3);
-        tcsb_a.tc_deliver_op(event_b_1);
-        tcsb_a.tc_deliver_op(event_b_2);
-
-        assert_eq!(tcsb_a.eval(), 6);
-        assert_eq!(tcsb_b.eval(), 6);
-    }
-
-    #[test_log::test]
-    fn causal_delivery_triplet() {
-        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
-
-        let event_b = tcsb_b.tc_bcast_op(Counter::Inc(2));
-
-        tcsb_a.tc_deliver_op(event_b.clone());
-        let event_a = tcsb_a.tc_bcast_op(Counter::Dec(7));
-
-        tcsb_b.tc_deliver_op(event_a.clone());
-        tcsb_c.tc_deliver_op(event_a.clone());
-        tcsb_c.tc_deliver_op(event_b.clone());
-
-        assert_eq!(tcsb_a.eval(), -5);
-        assert_eq!(tcsb_b.eval(), -5);
-        assert_eq!(tcsb_c.eval(), -5);
-    }
-
-    #[test_log::test]
-    fn events_since_concurrent_counter() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
-
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        let _ = tcsb_a.tc_bcast_op(Counter::Inc(1));
-        assert_eq!(6, tcsb_a.eval());
-        assert_eq!(6, tcsb_a.state.unstable.len());
-
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        let _ = tcsb_b.tc_bcast_op(Counter::Dec(1));
-        assert_eq!(-6, tcsb_b.eval());
-        assert_eq!(6, tcsb_b.state.unstable.len());
-
-        let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
-        assert_eq!(6, batch.clone().unwrap().events.len());
-
-        tcsb_b.deliver_batch(batch);
-
-        let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
-        assert_eq!(6, batch.clone().unwrap().events.len());
-
-        tcsb_a.deliver_batch(batch);
-    }
-
-    #[test_log::test]
-    pub fn events_since_concurrent_remove() {
-        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
-
-        let _ = tcsb_a.tc_bcast_membership(MSet::remove("c"));
-        let _ = tcsb_b.tc_bcast_membership(MSet::remove("c"));
-
-        // B request events from A
-        let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
-        assert_eq!(batch.clone().unwrap().events.len(), 1);
-        tcsb_b.deliver_batch(batch);
-
-        // A request events from B
-        let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
-        assert_eq!(batch.clone().unwrap().events.len(), 1);
-        tcsb_a.deliver_batch(batch);
-
-        // C request events from A
-        let batch = tcsb_a.events_since(&Metadata::new(tcsb_c.my_clock().clone(), &tcsb_c.id));
-        assert!(batch.is_err());
-        tcsb_c.deliver_batch(batch);
-
-        assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
-        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
-        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
     }
 }

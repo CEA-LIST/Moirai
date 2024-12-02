@@ -164,7 +164,7 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let mut keys: Vec<&K> = self.clock.keys().collect();
-        keys.sort(); // Sort the keys
+        keys.sort();
         let result = keys
             .iter()
             .map(|key| format!("{}: {}", key, self.clock[key]))
