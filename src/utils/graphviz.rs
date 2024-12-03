@@ -103,4 +103,18 @@ mod tests {
         );
         assert!(res.is_ok());
     }
+
+    #[test_log::test]
+    fn evict_full_scenario() {
+        let tracer = Tracer::deserialize_from_file(&Utf8PathBuf::from(
+            "traces/membership_evict_full_scenario.json",
+        ))
+        .unwrap();
+        let graphviz_str = tracer_to_graphviz(&tracer);
+        let res = graphviz_str_to_svg(
+            &graphviz_str,
+            &Utf8PathBuf::from("traces/membership_evict_full_scenario.svg"),
+        );
+        assert!(res.is_ok());
+    }
 }

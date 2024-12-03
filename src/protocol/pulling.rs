@@ -110,7 +110,12 @@ where
                     .eval_group_membership()
                     .contains(&batch.metadata.origin)
                 {
-                    self.fix_timestamp_inconsistencies_event(&mut batch.metadata);
+                    Self::fix_timestamp_inconsistencies_event(
+                        &mut batch.metadata,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
                     assert_eq!(self.ltm.keys(), batch.metadata.clock.keys());
                     self.ltm
                         .update(&batch.metadata.origin, &batch.metadata.clock);

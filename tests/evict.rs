@@ -100,12 +100,12 @@ fn evict_full_scenario() {
     tcsb_d.tc_deliver_op(event_b);
 
     let event_a = tcsb_a.tc_bcast_op(Counter::Dec(5));
-
     tcsb_b.tc_deliver_op(event_a.clone());
     tcsb_c.tc_deliver_op(event_a.clone());
     tcsb_d.tc_deliver_op(event_a);
 
     assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "d"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "d"]);
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "d"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "d"]);
 

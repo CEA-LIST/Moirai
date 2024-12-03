@@ -55,7 +55,7 @@ where
     /// Peers that left the group
     pub(crate) removed_members: HashSet<String>,
     /// Removed entries from vector clocks are stored in the hideout in case they need to be re-added to the clocks.
-    hideout: Hideout,
+    pub(crate) hideout: Hideout,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -97,9 +97,10 @@ where
 
     /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
     pub fn tc_bcast_op(&mut self, op: O) -> Event<O> {
-        let metadata = self.generate_metadata_for_new_event();
+        let mut metadata = self.generate_metadata_for_new_event();
         let event = Event::new(Duet::Second(op.clone()), metadata.clone());
         self.tc_deliver(event.clone());
+        self.add_timestamp_extension(&mut metadata.clock);
         #[cfg(feature = "utils")]
         self.tracer.append(event.clone());
         Event::new(op, metadata)
@@ -156,7 +157,12 @@ where
                 format!("{:?}", self.eval_group_membership()).green(),
                 format!("{:?}", event.metadata.clock.keys()).green()
             );
-            self.fix_timestamp_inconsistencies_event(&mut event.metadata);
+            Self::fix_timestamp_inconsistencies_event(
+                &mut event.metadata,
+                &self.eval_group_membership(),
+                &self.ltm,
+                &mut self.hideout,
+            );
         }
         if guard_against_duplicates(&self.ltm, &event.metadata) {
             error!(
@@ -308,7 +314,12 @@ where
                 continue;
             }
             // Match the metadata with the group membership
-            self.fix_timestamp_inconsistencies_event(metadata);
+            Self::fix_timestamp_inconsistencies_event(
+                metadata,
+                &self.eval_group_membership(),
+                &self.ltm,
+                &mut self.hideout,
+            );
 
             if let Some(op) = self.state.unstable.get(metadata) {
                 info!(
@@ -439,42 +450,41 @@ where
                 if id != self.id {
                     //* Remove entry from the LSV
                     self.lsv.remove(&id);
+                    //* Correct timestamp extension
+                    //* must happen before removing the key from the LTM
+                    self.timestamp_extension = Self::fix_metadata_log(
+                        &self.timestamp_extension,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
                     //* Store the vector clock of the removed peer
                     self.store_clock_of_removed_peer(&id);
                     //* Remove entry from the LTM
                     self.ltm.remove_key(&id);
                     //* Remove entry from every unstable events
-                    let mut to_remove = Vec::new();
-                    for m in self.group_membership.unstable.keys() {
-                        if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
-                            to_remove.push(m.clone());
-                        }
-                    }
-                    for m in to_remove.iter_mut() {
-                        let v = self.group_membership.unstable.remove(m);
-                        if let Some(v) = v {
-                            self.fix_timestamp_inconsistencies_event(m);
-                            self.group_membership.unstable.insert(m.clone(), v);
-                        }
-                    }
-                    let mut to_remove = Vec::new();
-                    for m in self.state.unstable.keys() {
-                        if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
-                            to_remove.push(m.clone());
-                        }
-                    }
-                    for m in to_remove.iter_mut() {
-                        let v = self.state.unstable.remove(m);
-                        if let Some(v) = v {
-                            self.fix_timestamp_inconsistencies_event(m);
-                            self.state.unstable.insert(m.clone(), v);
-                        }
-                    }
+                    self.group_membership.unstable = Self::fix_metadata_log(
+                        &self.group_membership.unstable,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
+                    self.state.unstable = Self::fix_metadata_log(
+                        &self.state.unstable,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
                     //* Remove entry from pending events and those that belong to the removed peer
                     let mut still_pending = VecDeque::new();
                     while let Some(mut event) = self.pending.pop_front() {
                         if event.metadata.origin != *id {
-                            self.fix_timestamp_inconsistencies_event(&mut event.metadata);
+                            Self::fix_timestamp_inconsistencies_event(
+                                &mut event.metadata,
+                                &self.eval_group_membership(),
+                                &self.ltm,
+                                &mut self.hideout,
+                            );
                             still_pending.push_back(event);
                         }
                     }
@@ -541,6 +551,8 @@ where
                         .and_modify(|c| c.push((id.clone(), metadata.clock.clone())))
                         .or_insert_with(|| vec![(id.clone(), metadata.clock.clone())]);
                 }
+                //* Add to the LSV
+                self.lsv.insert(id.clone(), 0);
                 //* Add a new entry to converging members
                 for (_, converging) in self.converging_members.iter_mut() {
                     for (_, c) in converging.iter_mut() {
@@ -556,37 +568,35 @@ where
                 // If the entry exist in the hideout for an event, it should be 0.
                 // Because before a join stabilize, no other peer should have received events from the new peer.
                 // Could be != 0 if the peer has been removed and rejoin the group (it's an issue).
-                let mut to_remove = Vec::new();
-                for m in self.group_membership.unstable.keys() {
-                    if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
-                        to_remove.push(m.clone());
-                    }
-                }
-                for m in to_remove.iter_mut() {
-                    let v = self.group_membership.unstable.remove(m);
-                    if let Some(v) = v {
-                        self.fix_timestamp_inconsistencies_event(m);
-                        self.group_membership.unstable.insert(m.clone(), v);
-                    }
-                }
-                let mut to_remove = Vec::new();
-                for m in self.state.unstable.keys() {
-                    if HashSet::from_iter(m.clock.keys()) != self.eval_group_membership() {
-                        to_remove.push(m.clone());
-                    }
-                }
-                for m in to_remove.iter_mut() {
-                    let v = self.state.unstable.remove(m);
-                    if let Some(v) = v {
-                        self.fix_timestamp_inconsistencies_event(m);
-                        self.state.unstable.insert(m.clone(), v);
-                    }
-                }
+                self.group_membership.unstable = Self::fix_metadata_log(
+                    &self.group_membership.unstable,
+                    &self.eval_group_membership(),
+                    &self.ltm,
+                    &mut self.hideout,
+                );
+                self.state.unstable = Self::fix_metadata_log(
+                    &self.state.unstable,
+                    &self.eval_group_membership(),
+                    &self.ltm,
+                    &mut self.hideout,
+                );
+                //* Correct timestamp extension
+                self.timestamp_extension = Self::fix_metadata_log(
+                    &self.timestamp_extension,
+                    &self.eval_group_membership(),
+                    &self.ltm,
+                    &mut self.hideout,
+                );
                 //* Add a new entry to pending events
                 let mut still_pending = VecDeque::new();
                 while let Some(mut event) = self.pending.pop_front() {
                     if event.metadata.origin != *id {
-                        self.fix_timestamp_inconsistencies_event(&mut event.metadata);
+                        Self::fix_timestamp_inconsistencies_event(
+                            &mut event.metadata,
+                            &self.eval_group_membership(),
+                            &self.ltm,
+                            &mut self.hideout,
+                        );
                         still_pending.push_back(event);
                     }
                 }
@@ -625,7 +635,7 @@ where
             );
             let sending_peer_clock = self.ltm.get(&event.metadata.origin).unwrap();
             let sending_peer_lamport = sending_peer_clock.get(&event.metadata.origin).unwrap();
-            if event.metadata.get_lamport(&event.metadata.origin) > sending_peer_lamport {
+            if event.metadata.get_lamport(&event.metadata.origin).unwrap() > sending_peer_lamport {
                 waiting_from.insert(event.metadata.origin.clone());
             }
         }
@@ -635,12 +645,11 @@ where
     /// Returns the update clock new event of this [`Tcsb<O>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let mut clock = {
+        let clock = {
             let my_clock = self.my_clock_mut();
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        let _ = self.add_timestamp_extension(&mut clock);
         Metadata::new(clock, &self.id)
     }
 
@@ -685,27 +694,46 @@ where
         }
     }
 
+    fn fix_metadata_log<T: Clone>(
+        log: &BTreeMap<Metadata, T>,
+        peers: &HashSet<String>,
+        ltm: &MatrixClock<String, usize>,
+        hideout: &mut Hideout,
+    ) -> BTreeMap<Metadata, T> {
+        let mut new_log = BTreeMap::new();
+        for (metadata, op) in log.iter() {
+            let mut new_metadata = metadata.clone();
+            if HashSet::from_iter(metadata.clock.keys()) != *peers {
+                Self::fix_timestamp_inconsistencies_event(&mut new_metadata, peers, ltm, hideout);
+            }
+            new_log.insert(new_metadata, op.clone());
+        }
+        new_log
+    }
+
     /// Correct the inconsistencies in the vector clocks of two events
     /// by adding the missing keys and setting the missing values to 0
     /// Timestamp inconsistencies can occur when a peer has stablized a membership event before the other peers.
-    pub fn fix_timestamp_inconsistencies_event(&mut self, metadata: &mut Metadata) {
-        assert_eq!(
-            self.eval_group_membership(),
-            HashSet::from_iter(self.ltm.keys())
-        );
+    pub fn fix_timestamp_inconsistencies_event(
+        metadata: &mut Metadata,
+        peers: &HashSet<String>,
+        ltm: &MatrixClock<String, usize>,
+        hideout: &mut Hideout,
+    ) {
         // Missing keys in the new event
-        for key in self.eval_group_membership() {
-            if !metadata.clock.contains(&key) {
-                let from_hideout = self.hideout.get(&metadata.dot()).and_then(|c| c.get(&key));
+        for key in peers {
+            if !metadata.clock.contains(key) {
+                let from_hideout = hideout.get(&metadata.dot()).and_then(|c| c.get(key));
                 let lamport = from_hideout
-                    .or_else(|| self.ltm.get(&metadata.origin).unwrap().get(&key))
+                    .or_else(|| ltm.get(&metadata.origin).and_then(|c| c.get(key)))
+                    // TODO: when unwrap or?
                     .unwrap_or(0);
                 metadata.clock.insert(key.clone(), lamport);
             }
         }
         // Missing keys in the GMS
         for key in metadata.clock.keys() {
-            if !self.eval_group_membership().contains(&key) {
+            if !peers.contains(&key) {
                 // We can't remove the from the event if it is its id
                 assert_ne!(
                     key, metadata.origin,
@@ -713,7 +741,7 @@ where
                     metadata.origin
                 );
                 //* Metadata clock = 0 || Metadata clock = join.origin current clock
-                self.hideout
+                hideout
                     .entry(metadata.dot())
                     .and_modify(|c| c.insert(key.clone(), metadata.clock.remove(&key).unwrap()))
                     .or_insert_with(|| {
@@ -724,11 +752,11 @@ where
             }
         }
         assert_eq!(
-            self.eval_group_membership(),
-            HashSet::from_iter(metadata.clock.keys()),
+            peers,
+            &HashSet::from_iter(metadata.clock.keys()),
             "Timestamp inconsistency: LTM keys ({}): {:?}, Event keys ({}): {:?}",
-            &self.ltm.keys().len(),
-            &self.ltm.keys(),
+            &ltm.keys().len(),
+            &ltm.keys(),
             metadata.clock.keys().len(),
             metadata.clock.keys(),
         );
@@ -866,6 +894,10 @@ where
                     &self.pending,
                 )
             {
+                assert_eq!(
+                    self.eval_group_membership(),
+                    HashSet::from_iter(event.metadata.clock.keys())
+                );
                 // ...deliver it
                 self.tc_deliver(event);
             } else {

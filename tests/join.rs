@@ -1,5 +1,3 @@
-#[cfg(feature = "utils")]
-use camino::Utf8PathBuf;
 use po_crdt::{
     crdt::{
         counter::Counter,
@@ -162,6 +160,11 @@ fn rejoin() {
     tcsb_a.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
 
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
+
     // --> Causal stability <--
     tcsb_d.state_transfer(&mut tcsb_b);
 
@@ -177,12 +180,14 @@ fn rejoin() {
 
 #[test_log::test]
 fn early_rejoin() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c, mut tcsb_d) = quadruplet::<Counter<i32>>();
 
     let event = tcsb_a.tc_bcast_membership(MSet::remove("d"));
     tcsb_b.tc_deliver_membership(event.clone());
     tcsb_c.tc_deliver_membership(event.clone());
     tcsb_d.tc_deliver_membership(event);
+
+    assert_eq!(tcsb_d.ltm.keys(), vec!["d"]);
 
     let event = tcsb_b.tc_bcast_membership(MSet::add("d"));
     tcsb_a.tc_deliver_membership(event.clone());
@@ -194,9 +199,13 @@ fn early_rejoin() {
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
-    let event = tcsb_a.tc_bcast_op(Counter::Inc(2));
-    tcsb_b.tc_deliver_op(event.clone());
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+
+    let event = tcsb_a.tc_bcast_op(Counter::Dec(1));
     tcsb_c.tc_deliver_op(event.clone());
+    tcsb_b.tc_deliver_op(event.clone());
     tcsb_d.tc_deliver_op(event);
 
     // --> Causal stability <--
@@ -206,10 +215,11 @@ fn early_rejoin() {
     assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
     assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
-    assert_eq!(tcsb_a.eval(), 1);
-    assert_eq!(tcsb_b.eval(), 1);
-    assert_eq!(tcsb_c.eval(), 1);
-    assert_eq!(tcsb_d.eval(), 1);
+
+    let event = tcsb_d.tc_bcast_op(Counter::Dec(10));
+    tcsb_c.tc_deliver_op(event.clone());
+    tcsb_b.tc_deliver_op(event.clone());
+    tcsb_a.tc_deliver_op(event);
 }
 
 #[test_log::test]
