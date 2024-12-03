@@ -32,17 +32,19 @@ impl Metadata {
     }
 
     pub fn dot(&self) -> (String, usize) {
-        (self.origin.clone(), self.get_origin_lamport())
+        if self.origin == "" {
+            (String::new(), 0)
+        } else {
+            (self.origin.clone(), self.clock.get(&self.origin).unwrap())
+        }
     }
 
-    pub fn get_origin_lamport(&self) -> usize {
-        self.clock.get(&self.origin).expect("Origin not found")
+    pub fn get_origin_lamport(&self) -> Option<usize> {
+        self.clock.get(&self.origin)
     }
 
-    pub fn get_lamport(&self, origin: &str) -> usize {
-        self.clock
-            .get(&String::from(origin))
-            .expect("Origin not found")
+    pub fn get_lamport(&self, origin: &str) -> Option<usize> {
+        self.clock.get(&String::from(origin))
     }
 }
 

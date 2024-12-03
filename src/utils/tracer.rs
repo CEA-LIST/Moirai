@@ -4,7 +4,7 @@ use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, fs::File, io::Write};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Tracer {
     pub(super) origin: String,
@@ -47,7 +47,7 @@ impl Tracer {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TracerEvent {
     pub(super) metadata: Metadata,

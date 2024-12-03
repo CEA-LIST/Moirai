@@ -1,5 +1,3 @@
-#[cfg(feature = "utils")]
-use camino::Utf8PathBuf;
 use po_crdt::{
     crdt::{counter::Counter, membership_set::MSet, test_util::triplet},
     protocol::tcsb::Tcsb,
