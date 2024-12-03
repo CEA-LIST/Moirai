@@ -1,7 +1,6 @@
 use camino::Utf8PathBuf;
 use colored::*;
-use log::{debug, error, info, log_enabled, Level};
-use radix_trie::TrieCommon;
+use log::{debug, error, info};
 
 use super::guard::guard_against_concurrent_to_remove;
 use super::pathbuf_key::PathBufKey;
@@ -15,6 +14,7 @@ use crate::protocol::guard::{
 };
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -232,18 +232,6 @@ where
                     assert!(!self.state.unstable.contains_key(&event.metadata));
                 }
 
-                if log_enabled!(Level::Debug) {
-                    let trie_size = self.group_membership.path_trie.values().flatten().count();
-                    let state_size =
-                        self.group_membership.stable.len() + self.group_membership.unstable.len();
-                    debug!(
-                        "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
-                        self.id.blue().bold(),
-                        trie_size - state_size,
-                        trie_size,
-                    );
-                }
-
                 self.group_membership.garbage_collect_trie();
             }
             // Domain-specific CRDT event
@@ -261,16 +249,6 @@ where
                         format!("{:?}", event.op).green()
                     );
                     assert!(!self.group_membership.unstable.contains_key(&event.metadata));
-                }
-                if log_enabled!(Level::Debug) {
-                    let trie_size = self.state.path_trie.values().flatten().count();
-                    let state_size = self.state.stable.len() + self.state.unstable.len();
-                    debug!(
-                        "[{}] - `path_trie`: {}/{} weak pointers waiting to be cleaned",
-                        self.id.blue().bold(),
-                        trie_size - state_size,
-                        trie_size,
-                    );
                 }
 
                 self.state.garbage_collect_trie();
@@ -295,8 +273,8 @@ where
         // Events from a peer that is going to be removed must be stabilized before the remove operation is stable.
         ready_to_stabilize.sort_by(|a, b| {
             // Membership ops are always causally stable after domain-specific ops
-            if self.group_membership.unstable.contains_key(a)
-                && a.clock.partial_cmp(&b.clock).is_none()
+            if self.group_membership.unstable.contains_key(&a.borrow())
+                && a.borrow().clock.partial_cmp(&b.borrow().clock).is_none()
             {
                 Ordering::Greater
             } else {
@@ -304,64 +282,66 @@ where
             }
         });
 
-        assert_eq!(
-            self.eval_group_membership(),
-            HashSet::from_iter(self.ltm.keys())
-        );
-
-        for metadata in ready_to_stabilize.iter_mut() {
-            if !self.eval_group_membership().contains(&metadata.origin) {
+        for (i, metadata) in ready_to_stabilize.iter().enumerate() {
+            if !self
+                .eval_group_membership()
+                .contains(&metadata.borrow().origin)
+            {
                 continue;
             }
             // Match the metadata with the group membership
             Self::fix_timestamp_inconsistencies_event(
-                metadata,
+                &mut metadata.borrow_mut(),
                 &self.eval_group_membership(),
                 &self.ltm,
                 &mut self.hideout,
             );
 
-            if let Some(op) = self.state.unstable.get(metadata) {
+            if let Some(op) = self.state.unstable.get(&metadata.borrow()) {
                 info!(
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
                     format!("{:?}", op).green(),
-                    format!("{}", metadata).red(),
+                    format!("{}", metadata.borrow()).red(),
                 );
-                O::stable(metadata, &mut self.state);
-            } else if let Some(op) = self.group_membership.unstable.get(metadata).cloned() {
+                O::stable(&metadata.borrow(), &mut self.state);
+            } else if let Some(op) = self
+                .group_membership
+                .unstable
+                .get(&metadata.borrow())
+                .cloned()
+            {
                 info!(
                     "[{}] - Op {} with timestamp {} is causally stable",
                     self.id.blue().bold(),
                     format!("{:?}", op).green(),
-                    format!("{}", metadata).red(),
+                    format!("{}", metadata.borrow()).red(),
                 );
 
                 if self.should_skip_stabilization(&op, &svv) {
                     continue;
                 }
 
-                MSet::stable(metadata, &mut self.group_membership);
+                MSet::stable(&metadata.borrow(), &mut self.group_membership);
 
-                self.sync_state_with_membership(metadata);
+                for m in i + 1..ready_to_stabilize.len() {
+                    Self::fix_timestamp_inconsistencies_event(
+                        &mut ready_to_stabilize[m].borrow_mut(),
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
+                }
+                self.sync_state_with_membership(&metadata.borrow());
             } else {
-                debug!(
-                    "[{}] - Group membership: {}",
-                    self.id.blue().bold(),
-                    format!("{:?}", self.eval_group_membership()).green(),
-                );
                 panic!(
                     "[{}] - Event with metadata {} not found in the log",
-                    self.id, metadata
+                    self.id,
+                    metadata.borrow()
                 );
             }
-            self.hideout.remove(&metadata.dot());
+            self.hideout.remove(&metadata.borrow().dot());
         }
-        debug!(
-            "[{}] - Group membership: {}",
-            self.id.blue().bold(),
-            format!("{:?}", self.eval_group_membership()).green(),
-        );
         assert_eq!(
             self.eval_group_membership(),
             HashSet::from_iter(self.ltm.keys())
@@ -444,92 +424,6 @@ where
     }
 
     pub fn sync_state_with_membership(&mut self, metadata: &Metadata) {
-        // REMOVE
-        for id in self.ltm.keys() {
-            if !self.eval_group_membership().contains(&id) {
-                if id != self.id {
-                    //* Remove entry from the LSV
-                    self.lsv.remove(&id);
-                    //* Correct timestamp extension
-                    //* must happen before removing the key from the LTM
-                    self.timestamp_extension = Self::fix_metadata_log(
-                        &self.timestamp_extension,
-                        &self.eval_group_membership(),
-                        &self.ltm,
-                        &mut self.hideout,
-                    );
-                    //* Store the vector clock of the removed peer
-                    self.store_clock_of_removed_peer(&id);
-                    //* Remove entry from the LTM
-                    self.ltm.remove_key(&id);
-                    //* Remove entry from every unstable events
-                    self.group_membership.unstable = Self::fix_metadata_log(
-                        &self.group_membership.unstable,
-                        &self.eval_group_membership(),
-                        &self.ltm,
-                        &mut self.hideout,
-                    );
-                    self.state.unstable = Self::fix_metadata_log(
-                        &self.state.unstable,
-                        &self.eval_group_membership(),
-                        &self.ltm,
-                        &mut self.hideout,
-                    );
-                    //* Remove entry from pending events and those that belong to the removed peer
-                    let mut still_pending = VecDeque::new();
-                    while let Some(mut event) = self.pending.pop_front() {
-                        if event.metadata.origin != *id {
-                            Self::fix_timestamp_inconsistencies_event(
-                                &mut event.metadata,
-                                &self.eval_group_membership(),
-                                &self.ltm,
-                                &mut self.hideout,
-                            );
-                            still_pending.push_back(event);
-                        }
-                    }
-                    self.pending = still_pending;
-                    //* Remove entry from converging members and remove the welcoming peer if it's the leaving peer
-                    self.converging_members.remove(&id);
-                    for (_, converging) in self.converging_members.iter_mut() {
-                        for (_, c) in converging.iter_mut() {
-                            c.remove(&id);
-                        }
-                    }
-                    //* Remove entry from the hideout
-                    self.hideout.retain(|dot, _| dot.0 != *id);
-                    self.removed_members.insert(id.clone());
-                } else {
-                    // If the local peer is removed from the group...
-                    // remove all keys except the local one
-                    for key in self.ltm.keys() {
-                        if key != self.id {
-                            self.ltm.remove_key(&key);
-                        }
-                    }
-                    // Re-init the group membership
-                    self.group_membership = Self::create_group_membership(&self.id);
-                    self.pending.clear();
-                    self.timestamp_extension.clear();
-                    self.converging_members.clear();
-                    let unstable_keys: Vec<Metadata> =
-                        self.state.unstable.keys().cloned().collect();
-                    for m in unstable_keys {
-                        O::stable(&m, &mut self.state);
-                    }
-                    self.lsv = VectorClock::new(self.id.clone());
-                    self.hideout.clear();
-                    assert_eq!(self.eval_group_membership().len(), 1);
-                    assert_eq!(self.ltm.keys(), &[self.id.clone()]);
-                    assert_eq!(self.state.unstable.len(), 0);
-                    assert_eq!(self.group_membership.unstable.len(), 0);
-                    assert_eq!(self.converging_members.len(), 0);
-                    assert_eq!(self.pending.len(), 0);
-                    assert_eq!(self.hideout.len(), 0);
-                }
-            }
-        }
-
         // ADD
         for id in self.eval_group_membership() {
             if !self.ltm.keys().contains(&id) {
@@ -604,6 +498,106 @@ where
                 self.removed_members.remove(&id);
             }
         }
+
+        // REMOVE
+        for id in self.ltm.keys() {
+            if !self.eval_group_membership().contains(&id) {
+                if id != self.id {
+                    debug!(
+                        "[{}] - Removing {} from every clock",
+                        self.id.blue().bold(),
+                        id.blue()
+                    );
+                    //* Remove entry from the LSV
+                    self.lsv.remove(&id);
+                    //* Correct timestamp extension
+                    //* must happen before removing the key from the LTM
+                    self.timestamp_extension = Self::fix_metadata_log(
+                        &self.timestamp_extension,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
+                    //* Store the vector clock of the removed peer
+                    self.store_clock_of_removed_peer(&id);
+                    //* Remove entry from the LTM
+                    self.ltm.remove_key(&id);
+                    //* Remove entry from every unstable events
+                    self.group_membership.unstable = Self::fix_metadata_log(
+                        &self.group_membership.unstable,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
+                    self.state.unstable = Self::fix_metadata_log(
+                        &self.state.unstable,
+                        &self.eval_group_membership(),
+                        &self.ltm,
+                        &mut self.hideout,
+                    );
+                    //* Remove entry from pending events and those that belong to the removed peer
+                    let mut still_pending = VecDeque::new();
+                    while let Some(mut event) = self.pending.pop_front() {
+                        if event.metadata.origin != *id {
+                            Self::fix_timestamp_inconsistencies_event(
+                                &mut event.metadata,
+                                &self.eval_group_membership(),
+                                &self.ltm,
+                                &mut self.hideout,
+                            );
+                            still_pending.push_back(event);
+                        }
+                    }
+                    self.pending = still_pending;
+                    //* Remove entry from converging members and remove the welcoming peer if it's the leaving peer
+                    self.converging_members.remove(&id);
+                    for (_, converging) in self.converging_members.iter_mut() {
+                        for (_, c) in converging.iter_mut() {
+                            c.remove(&id);
+                        }
+                    }
+                    self.removed_members.insert(id.clone());
+                    //* Remove entry from the hideout
+                    self.hideout.retain(|dot, _| dot.0 != *id);
+                    for (_, clock) in self.hideout.iter_mut() {
+                        clock.remove(&id);
+                    }
+                } else {
+                    // If the local peer is removed from the group...
+                    // remove all keys except the local one
+                    for key in self.ltm.keys() {
+                        if key != self.id {
+                            self.ltm.remove_key(&key);
+                        }
+                    }
+                    // Re-init the group membership
+                    self.group_membership = Self::create_group_membership(&self.id);
+                    self.pending.clear();
+                    self.timestamp_extension.clear();
+                    self.converging_members.clear();
+                    let unstable_keys: Vec<Metadata> =
+                        self.state.unstable.keys().cloned().collect();
+                    for m in unstable_keys {
+                        O::stable(&m, &mut self.state);
+                    }
+                    self.lsv = VectorClock::new(self.id.clone());
+                    self.hideout.clear();
+                    assert_eq!(self.eval_group_membership().len(), 1);
+                    assert_eq!(self.ltm.keys(), &[self.id.clone()]);
+                    assert_eq!(self.state.unstable.len(), 0);
+                    assert_eq!(self.group_membership.unstable.len(), 0);
+                    assert_eq!(self.converging_members.len(), 0);
+                    assert_eq!(self.pending.len(), 0);
+                    assert_eq!(self.hideout.len(), 0);
+                }
+            }
+        }
+
+        debug!(
+            "[{}] - Group membership: {}",
+            self.id.blue().bold(),
+            format!("{:?}", self.eval_group_membership()).green(),
+        );
     }
 
     /// Store the lamport clock of the removed peer in the timestamp extension list.
@@ -849,33 +843,32 @@ where
     }
 
     /// Returns a list of operations that are ready to be stabilized.
-    fn collect_stabilizable_events(&self, lower_bound: &Metadata) -> Vec<Metadata> {
+    fn collect_stabilizable_events(&self, lower_bound: &Metadata) -> Vec<RefCell<Metadata>> {
         let mut state = self
             .state
             .unstable
             .range((Bound::Unbounded, Bound::Included(lower_bound)))
             .filter_map(|(m, _)| {
                 if m.clock <= lower_bound.clock {
-                    Some(m.clone())
+                    Some(RefCell::new(m.clone()))
                 } else {
                     None
                 }
             })
-            .collect::<Vec<Metadata>>();
+            .collect::<Vec<RefCell<Metadata>>>();
         let group_membership = self
             .group_membership
             .unstable
             .range((Bound::Unbounded, Bound::Included(lower_bound)))
             .filter_map(|(m, _)| {
                 if m.clock <= lower_bound.clock {
-                    Some(m.clone())
+                    Some(RefCell::new(m.clone()))
                 } else {
                     None
                 }
             })
-            .collect::<Vec<Metadata>>();
+            .collect::<Vec<RefCell<Metadata>>>();
         state.extend(group_membership);
-        state.sort();
         state
     }
 
