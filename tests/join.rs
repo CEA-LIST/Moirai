@@ -2,7 +2,7 @@ use po_crdt::{
     crdt::{
         counter::Counter,
         membership_set::MSet,
-        test_util::{quadruplet, twins},
+        test_util::{quadruplet, triplet, twins},
     },
     protocol::tcsb::Tcsb,
 };
@@ -220,6 +220,38 @@ fn early_rejoin() {
     tcsb_c.tc_deliver_op(event.clone());
     tcsb_b.tc_deliver_op(event.clone());
     tcsb_a.tc_deliver_op(event);
+}
+
+#[test_log::test]
+fn early_rejoin_triplet() {
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+
+    let event = tcsb_c.tc_bcast_membership(MSet::remove("c"));
+    tcsb_a.tc_deliver_membership(event.clone());
+    tcsb_b.tc_deliver_membership(event);
+
+    assert_eq!(tcsb_c.ltm.keys(), vec!["c"]);
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+
+    let event = tcsb_a.tc_bcast_membership(MSet::add("c"));
+    tcsb_b.tc_deliver_membership(event.clone());
+
+    let event = tcsb_a.tc_bcast_op(Counter::Inc(1));
+    tcsb_b.tc_deliver_op(event.clone());
+
+    let event = tcsb_b.tc_bcast_op(Counter::Dec(1));
+    tcsb_a.tc_deliver_op(event);
+
+    assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
+    assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
+
+    // --> Causal stability <--
+    tcsb_c.state_transfer(&mut tcsb_a);
+
+    assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+
+    let _ = tcsb_a.tc_bcast_op(Counter::Dec(1));
 }
 
 #[test_log::test]
