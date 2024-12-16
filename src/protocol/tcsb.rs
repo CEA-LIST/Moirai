@@ -141,7 +141,7 @@ where
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if guard_against_unknow_peer(&event.metadata, &self.group_membership) {
             error!(
-                "[{}] - Event from an unknown peer {} detected with timestsamp {}",
+                "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
                 event.metadata.origin.blue(),
                 format!("{}", event.metadata.clock).red()
@@ -166,7 +166,7 @@ where
         }
         if guard_against_duplicates(&self.ltm, &event.metadata) {
             error!(
-                "[{}] - Duplicated event detected from {} with timestsamp {}",
+                "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
                 event.metadata.origin.red(),
                 format!("{}", event.metadata.clock).red()
@@ -176,7 +176,7 @@ where
         // The LTM should be synchronized with the group membership
         if guard_against_out_of_order(&self.ltm, &event.metadata) {
             error!(
-                "[{}] - Out-of-order event from {} detected with timestsamp {}. Operation: {}",
+                "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
                 event.metadata.origin.blue(),
                 format!("{}", event.metadata.clock).red(),
@@ -199,16 +199,16 @@ where
         );
         // If the event is not from the local replica
         if self.id != event.metadata.origin {
+            // Check if the converging members have finally converged to the network state
+            // It has converged if the event is from a converging member or the welcoming peer has a
+            // vector clock greater than the `add` event of the converging member
+            self.check_still_converging_members(&event);
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             self.ltm
                 .update(&event.metadata.origin, &event.metadata.clock);
             // Update our own vector clock
             self.my_clock_mut().merge(&event.metadata.clock);
-            // Check if the converging members have finally converged to the network state
-            // It has converged if the event is from a converging member or the welcoming peer has a
-            // vector clock greater than the `add` event of the converging member
-            self.check_still_converging_members(&event);
 
             #[cfg(feature = "utils")]
             self.tracer.append(event.clone());
@@ -324,9 +324,9 @@ where
 
                 MSet::stable(&metadata.borrow(), &mut self.group_membership);
 
-                for m in i + 1..ready_to_stabilize.len() {
+                for m in ready_to_stabilize.iter().skip(i + 1) {
                     Self::fix_timestamp_inconsistencies_event(
-                        &mut ready_to_stabilize[m].borrow_mut(),
+                        &mut m.borrow_mut(),
                         &self.eval_group_membership(),
                         &self.ltm,
                         &mut self.hideout,
@@ -788,7 +788,7 @@ where
         if let Some((w, c)) = is_from_welcoming {
             let mut to_remove = Vec::new();
             let w_clock = self.ltm.get(w).unwrap().clone();
-            // We still don't have a proof that the new peer has conv"erged to the network state
+            // We still don't have a proof that the new peer has converged to the network state
             // We are updating the vector clock of the new peer with the welcoming peer's vector clock
             for (id, clock) in c.iter() {
                 // if the event is greater than the clock of the converging member

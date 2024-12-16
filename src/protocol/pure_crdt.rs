@@ -34,6 +34,7 @@ pub trait PureCRDT: Sized + Clone + Debug {
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
     fn stable(metadata: &Metadata, state: &mut POLog<Self>) {
         Self::stabilize(metadata, state);
+        // The operation may have been removed by `stabilize`
         if let Some(n) = state.unstable.get(metadata) {
             state.stable.push(n.clone());
             state.unstable.remove(metadata);
