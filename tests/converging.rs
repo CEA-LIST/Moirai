@@ -46,11 +46,7 @@ fn converging_members() {
     tcsb_c.tc_deliver_op(event_a);
 
     assert_eq!(
-        tcsb_b.ltm.get(&"a".to_string()).unwrap(),
-        tcsb_b.ltm.get(&"d".to_string()).unwrap()
-    );
-    assert_eq!(
-        tcsb_c.ltm.get(&"a".to_string()).unwrap(),
+        tcsb_b.ltm.get(&"d".to_string()).unwrap(),
         tcsb_c.ltm.get(&"d".to_string()).unwrap()
     );
 

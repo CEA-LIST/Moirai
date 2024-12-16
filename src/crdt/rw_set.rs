@@ -42,20 +42,27 @@ where
     }
 
     fn stabilize(metadata: &Metadata, state: &mut POLog<Self>) {
+        // Get the op
         let op = state.unstable.get(metadata).unwrap();
 
         let is_stable_or_unstable = |v: &V| {
+            // Is there an already stable op (add or rmv) with the same value?
             state.stable.iter().any(|o| match o.as_ref() {
                 RWSet::Add(v2) | RWSet::Remove(v2) => v == v2,
                 _ => false,
-            }) || state.unstable.iter().any(|(t, o)| match o.as_ref() {
+            })
+            // Is there another unstable op (add or rmv, not the current op) with the same value?
+            || state.unstable.iter().any(|(t, o)| match o.as_ref() {
                 RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && metadata.clock != t.clock,
                 _ => false,
             })
         };
 
+        // Should we remove the op?
         let to_remove = match op.as_ref() {
+            // If it's a 'add' op, remove it if another operation with the same value exists
             RWSet::Add(v) => is_stable_or_unstable(v),
+            // If it's a 'remove' op, remove it if there is no 'add' op with the same value
             RWSet::Remove(v) => !state
                 .stable
                 .iter()
@@ -66,6 +73,7 @@ where
             RWSet::Clear => true,
         };
 
+        // If it's a 'add' op and there exists a stable remove op with the same value, remove it
         if let RWSet::Add(v) = op.as_ref() {
             if let Some(i) = state
                 .stable
@@ -104,7 +112,7 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{crdt::rw_set::RWSet, crdt::test_util::twins};
+    use crate::crdt::{rw_set::RWSet, test_util::twins};
 
     #[test_log::test]
     fn clear_rw_set() {

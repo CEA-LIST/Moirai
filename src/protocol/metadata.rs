@@ -32,7 +32,7 @@ impl Metadata {
     }
 
     pub fn dot(&self) -> (String, usize) {
-        if self.origin == "" {
+        if self.origin.is_empty() {
             (String::new(), 0)
         } else {
             (self.origin.clone(), self.clock.get(&self.origin).unwrap())
