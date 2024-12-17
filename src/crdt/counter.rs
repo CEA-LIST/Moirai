@@ -1,5 +1,4 @@
 use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
-use camino::Utf8Path;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -35,7 +34,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>, _: &Utf8Path) -> Self::Value {
+    fn eval(state: &POLog<Self>) -> Self::Value {
         let mut counter = Self::Value::default();
         for op in state.iter() {
             match op.borrow() {
@@ -67,11 +66,11 @@ mod tests {
     pub fn simple_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<Counter<isize>>();
 
-        let event = tcsb_a.tc_bcast_op(Counter::Dec(5));
-        tcsb_b.tc_deliver_op(event);
+        let event = tcsb_a.tc_bcast(Counter::Dec(5));
+        tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast_op(Counter::Inc(5));
-        tcsb_b.tc_deliver_op(event);
+        let event = tcsb_a.tc_bcast(Counter::Inc(5));
+        tcsb_b.try_deliver(event);
 
         let result = 0;
         assert_eq!(tcsb_a.eval(), result);

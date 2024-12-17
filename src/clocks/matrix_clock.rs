@@ -94,10 +94,10 @@ where
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
-    pub fn svv(&self, ignore: &[K]) -> VectorClock<K, C> {
+    pub fn svv(&self, ignore: &[&K]) -> VectorClock<K, C> {
         let mut svv = VectorClock::default();
         for (k, vc) in &self.clock {
-            if !ignore.contains(k) {
+            if !ignore.contains(&k) {
                 svv = svv.min(vc);
             }
         }
@@ -235,7 +235,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            mc.svv(&["C"]),
+            mc.svv(&[&"C"]),
             VectorClock::from(&["A", "B", "C"], &[2, 5, 1]),
         );
     }

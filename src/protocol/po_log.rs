@@ -1,19 +1,16 @@
 use super::event::Event;
-use super::pathbuf_key::PathBufKey;
 use super::{metadata::Metadata, pure_crdt::PureCRDT};
 use colored::Colorize;
 use log::info;
-use radix_trie::Trie;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::btree_map::{Values, ValuesMut};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::iter::Chain;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::slice::{Iter, IterMut};
 
-pub type PathTrie<O> = Trie<PathBufKey, Vec<Weak<O>>>;
 pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 
 /// # Causal DAG operation history
@@ -30,7 +27,7 @@ where
 {
     pub stable: Vec<Rc<O>>,
     pub unstable: Log<O>,
-    pub path_trie: PathTrie<O>,
+    // pub path_trie: PathTrie<O>,
 }
 
 impl<O> POLog<O>
@@ -41,14 +38,12 @@ where
         Self {
             stable: vec![],
             unstable: BTreeMap::new(),
-            path_trie: Trie::new(),
+            // path_trie: Trie::new(),
         }
     }
 
     pub fn new_event(&mut self, event: &Event<O>) {
-        let state_len_before = self.stable.len() + self.unstable.len();
         let rc_op = Rc::new(event.op.clone());
-        let weak_op = Rc::downgrade(&rc_op);
         if self.unstable.contains_key(&event.metadata) {
             info!(
                 "Event with metadata {:?} already present in the log: {:?}",
@@ -62,43 +57,6 @@ where
             "Key already present in the log with value {:?}",
             self.unstable.get(&event.metadata).unwrap()
         );
-        let state_len_after = self.stable.len() + self.unstable.len();
-
-        if let Some(subtrie) = self
-            .path_trie
-            .get_mut(&PathBufKey::new(&O::to_path(&event.op)))
-        {
-            subtrie.push(weak_op);
-        } else {
-            self.path_trie
-                .insert(PathBufKey::new(&O::to_path(&event.op)), vec![weak_op]);
-        }
-
-        let path_trie_count = radix_trie::TrieCommon::values(&self.path_trie)
-            .flatten()
-            .count();
-        assert!(path_trie_count >= state_len_after);
-        assert_eq!(state_len_after, state_len_before + 1);
-    }
-
-    /// Garbage collect dead weak references from the path trie.
-    pub fn garbage_collect_trie(&mut self) {
-        let keys = radix_trie::TrieCommon::keys(&self.path_trie)
-            .cloned()
-            .collect::<Vec<PathBufKey>>();
-        for key in keys {
-            self.garbage_collect_trie_by_path(&key);
-        }
-    }
-
-    /// Garbage collect dead weak references from the path trie, given a path.
-    pub fn garbage_collect_trie_by_path(&mut self, path: &PathBufKey) {
-        if let Some(subtrie) = self.path_trie.get_mut(path) {
-            subtrie.retain(|weak_op| weak_op.upgrade().is_some());
-            if subtrie.is_empty() {
-                self.path_trie.remove(path);
-            }
-        }
     }
 
     /// Clean up the state by removing redundant operations

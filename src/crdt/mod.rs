@@ -1,11 +1,8 @@
 pub mod aw_set;
 pub mod counter;
-pub mod duet;
 pub mod graph;
-pub mod membership_set;
 pub mod mv_register;
 pub mod rw_set;
-pub mod uw_map;
 
 pub mod test_util {
     use colored::Colorize;
@@ -13,8 +10,6 @@ pub mod test_util {
 
     use crate::protocol::{pure_crdt::PureCRDT, tcsb::Tcsb};
     use std::fmt::Debug;
-
-    use super::membership_set::MSet;
 
     pub type Twins<O> = (Tcsb<O>, Tcsb<O>);
     pub type Triplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
@@ -30,7 +25,7 @@ pub mod test_util {
         #[cfg(not(feature = "utils"))]
         let mut tcsb_b = Tcsb::new("b");
 
-        let _event_a = tcsb_a.tc_bcast_membership(MSet::add("b"));
+        tcsb_a.install_view(vec!["a", "b"]);
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
         // --> Causal stability <--
@@ -53,11 +48,8 @@ pub mod test_util {
         let (mut tcsb_a, mut tcsb_b) = twins::<O>();
         let mut tcsb_c = Tcsb::<O>::new("c");
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::add("c"));
-        tcsb_b.tc_deliver_membership(event_a);
-
-        let event_b = tcsb_b.tc_bcast_membership(MSet::remove("p"));
-        tcsb_a.tc_deliver_membership(event_b);
+        tcsb_a.install_view(vec!["a", "b", "c"]);
+        tcsb_b.install_view(vec!["a", "b", "c"]);
 
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
@@ -82,18 +74,9 @@ pub mod test_util {
 
         let mut tcsb_d = Tcsb::<O>::new("d");
 
-        let event_a = tcsb_a.tc_bcast_membership(MSet::add("d"));
-        tcsb_b.tc_deliver_membership(event_a.clone());
-        tcsb_c.tc_deliver_membership(event_a);
-
-        // Useless event: just to exchange causal information
-        let event_b = tcsb_b.tc_bcast_membership(MSet::remove("p"));
-        tcsb_a.tc_deliver_membership(event_b.clone());
-        tcsb_c.tc_deliver_membership(event_b);
-
-        let event_c = tcsb_c.tc_bcast_membership(MSet::remove("i"));
-        tcsb_a.tc_deliver_membership(event_c.clone());
-        tcsb_b.tc_deliver_membership(event_c);
+        tcsb_a.install_view(vec!["a", "b", "c", "d"]);
+        tcsb_b.install_view(vec!["a", "b", "c", "d"]);
+        tcsb_c.install_view(vec!["a", "b", "c", "d"]);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
