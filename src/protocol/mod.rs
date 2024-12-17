@@ -1,7 +1,7 @@
 pub mod event;
 pub mod guard;
+pub mod membership;
 pub mod metadata;
-pub mod pathbuf_key;
 pub mod po_log;
 pub mod pulling;
 pub mod pure_crdt;

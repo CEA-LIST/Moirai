@@ -1,10 +1,8 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
-use camino::Utf8PathBuf;
+use crate::clocks::matrix_clock::MatrixClock;
 
-use crate::{clocks::matrix_clock::MatrixClock, crdt::membership_set::MSet};
-
-use super::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT, tcsb::AnyOp};
+use super::metadata::Metadata;
 
 /// Check that the event is not from an evicted peer
 pub fn guard_against_removed_members(
@@ -42,34 +40,4 @@ pub fn guard_against_out_of_order(ltm: &MatrixClock<String, usize>, metadata: &M
             *v > ltm_value
         });
     is_origin_out_of_order || are_other_entries_out_of_order
-}
-
-/// Check that the event is not from an unknown peer
-/// The peer is unknown if it is not in the LTM and there is no unstable `add`
-/// operation for it in the group membership
-pub fn guard_against_unknow_peer(
-    metadata: &Metadata,
-    group_membership: &POLog<MSet<String>>,
-) -> bool {
-    !MSet::eval(group_membership, &Utf8PathBuf::default()).contains(&metadata.origin)
-}
-
-/// Check that the event is not coming from a peer that is going to be removed from the group.
-/// Returns true if the event is not ready to be delivered
-pub fn guard_against_concurrent_to_remove<O: PureCRDT>(
-    event: &Event<AnyOp<O>>,
-    group_membership: &POLog<MSet<String>>,
-    pending: &VecDeque<Event<AnyOp<O>>>,
-) -> bool {
-    // Do not deliver the event if the origin is going to be removed from the group...
-    let will_be_removed = group_membership
-        .unstable
-        .iter()
-        .any(|(_, o)| matches!(o.as_ref(), MSet::Remove(v) if v == &event.metadata.origin));
-    // ...unless the event is necessary to deliver other peers events
-    let necessary = pending.iter().any(|e| {
-        e.metadata.get_lamport(&event.metadata.origin) >= event.metadata.get_origin_lamport()
-            && e.metadata.origin != event.metadata.origin
-    });
-    will_be_removed && !necessary
 }

@@ -1,8 +1,5 @@
 use std::fmt::Debug;
 
-use camino::{Utf8Path, Utf8PathBuf};
-
-use super::tcsb::RedundantRelation;
 use super::{event::Event, metadata::Metadata, po_log::POLog, utils::prune_redundant_events};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
@@ -16,17 +13,15 @@ pub trait PureCRDT: Sized + Clone + Debug {
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
-    fn effect(event: &Event<Self>, state: &POLog<Self>) -> (bool, Vec<usize>, Vec<Metadata>) {
-        let (keep, prune_fn): (bool, RedundantRelation<Self>) = if Self::r(event, state) {
-            (false, Self::r_zero)
+    fn effect(event: Event<Self>, state: &mut POLog<Self>) {
+        if Self::r(&event, state) {
+            // The operation is redundant
+            prune_redundant_events(&event, state, Self::r_zero);
         } else {
-            (true, Self::r_one)
-        };
-
-        let (remove_stable_by_index, remove_unstable_by_key) =
-            prune_redundant_events(event, state, prune_fn);
-
-        (keep, remove_stable_by_index, remove_unstable_by_key)
+            // The operation is not redundant
+            prune_redundant_events(&event, state, Self::r_one);
+            state.new_event(&event);
+        }
     }
 
     /// The `stable` handler invokes `stabilize` and then strips
@@ -65,9 +60,5 @@ pub trait PureCRDT: Sized + Clone + Debug {
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
-    fn eval(state: &POLog<Self>, path: &Utf8Path) -> Self::Value;
-
-    fn to_path(_op: &Self) -> Utf8PathBuf {
-        Utf8PathBuf::default()
-    }
+    fn eval(state: &POLog<Self>) -> Self::Value;
 }
