@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ViewStatus {
     Installing,
     Installed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct View {
     pub id: usize,
@@ -33,7 +33,11 @@ impl View {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Invariants:
+/// - There is always at least one view in the list
+/// - There may be zero or one view being installed
+/// - A view marked as installing is always the last one
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Views {
     views: Vec<View>,
@@ -44,21 +48,33 @@ impl Views {
         Self { views: Vec::new() }
     }
 
+    /// Create and install a new view with the given members and status
     pub fn install(&mut self, members: Vec<String>, status: ViewStatus) {
         let id = self.views.len();
         self.views.push(View::new(id, members, status));
     }
 
+    /// Install the view given in parameter
     pub fn install_view(&mut self, view: View) {
         self.views.push(view);
     }
 
-    pub fn get_current_view(&self) -> &View {
+    /// Mark as installed the last view
+    pub fn mark_installed(&mut self) {
+        self.views.last_mut().unwrap().status = ViewStatus::Installed;
+    }
+
+    /// Returns the last installed view (not the one being installed)
+    pub fn current_installed_view(&self) -> &View {
         if matches!(self.views.last().unwrap().status, ViewStatus::Installed) {
             self.views.last().unwrap()
         } else {
             self.views.get(self.views.len() - 2).unwrap()
         }
+    }
+
+    pub fn last_view(&self) -> &View {
+        self.views.last().unwrap()
     }
 
     pub fn members(&self) -> &Vec<String> {
@@ -90,10 +106,6 @@ impl Views {
         } else {
             Vec::new()
         }
-    }
-
-    pub fn installed(&mut self) {
-        self.views.last_mut().unwrap().status = ViewStatus::Installed;
     }
 
     pub fn is_member(&self, id: &String) -> bool {

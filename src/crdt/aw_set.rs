@@ -65,11 +65,6 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
 
-        println!("LTM B: {}", tcsb_b.ltm);
-        println!("LTM A: {}", tcsb_a.ltm);
-        println!("State B: {:?}", tcsb_b.state);
-        println!("State A: {:?}", tcsb_a.state);
-
         assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
@@ -95,7 +90,13 @@ mod tests {
     fn clear_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
 
+        assert_eq!(
+            tcsb_a.group_membership.current_installed_view(),
+            tcsb_b.group_membership.current_installed_view()
+        );
+
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
+
         tcsb_b.try_deliver(event);
 
         assert_eq!(tcsb_b.state.stable.len(), 1);
@@ -107,8 +108,6 @@ mod tests {
 
         let event = tcsb_a.tc_bcast(AWSet::Clear);
         tcsb_b.try_deliver(event);
-
-        println!("state A: {:?}", tcsb_a.state);
 
         let result = HashSet::new();
         assert_eq!(tcsb_a.eval(), result);

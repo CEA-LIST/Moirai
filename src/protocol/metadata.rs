@@ -14,13 +14,15 @@ use std::{
 pub struct Metadata {
     pub clock: VectorClock<String, usize>,
     pub origin: String,
+    pub view_id: usize,
 }
 
 impl Metadata {
-    pub fn new(clock: VectorClock<String, usize>, origin: &str) -> Self {
+    pub fn new(clock: VectorClock<String, usize>, origin: &str, view_id: usize) -> Self {
         Self {
             clock,
             origin: origin.to_string(),
+            view_id,
         }
     }
 
@@ -28,6 +30,7 @@ impl Metadata {
         Self {
             clock: VectorClock::bot(),
             origin: String::new(),
+            view_id: 0,
         }
     }
 

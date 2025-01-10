@@ -2,7 +2,6 @@ use colored::*;
 use log::{error, info};
 
 use super::membership::{View, ViewStatus, Views};
-// use super::guard::guard_against_concurrent_to_remove;
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
@@ -15,9 +14,6 @@ use std::fmt::Debug;
 use std::ops::Bound;
 
 pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
-// pub type Converging = HashMap<String, Vec<(String, VectorClock<String, usize>)>>;
-// pub type Hideout = HashMap<(String, usize), VectorClock<String, usize>>;
-// pub type TimestampExtension = BTreeMap<Metadata, VectorClock<String, usize>>;
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -36,18 +32,8 @@ where
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
     pub pending: VecDeque<Event<O>>,
-    /// Members whose convergence to the network state is unknown.
-    /// Key is the welcoming peer, value is the list of converging members with their `add` event vector clock
-    // pub converging_members: Converging,
-    /// A peer might stabilize a remove operation ahead of others if it hasn't yet broadcasted any operations.
-    /// Consequently, its first message after the remove should include the lamport clock of the evicted peer.
-    // pub timestamp_extension: TimestampExtension,
-    /// Group Membership Service
+    /// Group Membership views
     pub group_membership: Views,
-    /// Peers that left the group
-    // pub(crate) removed_members: HashSet<String>,
-    /// Removed entries from vector clocks are stored in the hideout in case they need to be re-added to the clocks.
-    // pub(crate) hideout: Hideout,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -116,6 +102,15 @@ where
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
                 event.metadata.origin.blue(),
+                format!("{}", event.metadata.clock).red()
+            );
+        }
+        if self.group_membership.current_installed_view().id > event.metadata.view_id {
+            error!(
+                "[{}] - Event from {} with an old view id {} detected with timestamp {}",
+                self.id.blue().bold(),
+                event.metadata.origin.blue(),
+                format!("{}", event.metadata.view_id).blue(),
                 format!("{}", event.metadata.clock).red()
             );
             return;
@@ -191,7 +186,7 @@ where
     pub fn tc_stable(&mut self) {
         let ignore = self.group_membership.leaving_members();
         let svv = self.ltm.svv(&ignore.as_slice());
-        let lower_bound = Metadata::new(svv.clone(), "");
+        let lower_bound = Metadata::new(svv.clone(), "", 0);
         let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
         if !ready_to_stabilize.is_empty() {
             self.lsv = self.ltm.svv(&ignore);
@@ -244,19 +239,32 @@ where
     }
 
     pub fn install_view(&mut self, members: Vec<&str>) {
-        self.group_membership.install(
-            members.iter().map(|m| m.to_string()).collect(),
-            ViewStatus::Installing,
-        );
+        self.installing_view(members);
+        self.installed_view();
+    }
+
+    pub fn installing_view(&mut self, members: Vec<&str>) {
+        if members.contains(&self.id.as_str()) {
+            self.group_membership.install(
+                members.iter().map(|m| m.to_string()).collect(),
+                ViewStatus::Installing,
+            );
+        } else {
+            self.group_membership
+                .install(vec![self.id.clone()], ViewStatus::Installing);
+        }
+    }
+
+    pub fn installed_view(&mut self) {
         self.tc_stable();
-        assert!(self.state.is_empty());
+        assert!(self.state.unstable.is_empty());
         for member in self.group_membership.joining_members() {
             self.ltm.add_key(member.clone());
         }
         for member in self.group_membership.leaving_members() {
             self.ltm.remove_key(member);
         }
-        self.group_membership.installed();
+        self.group_membership.mark_installed();
     }
 
     /// Return the mutable vector clock of the local replica
@@ -303,7 +311,11 @@ where
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        Metadata::new(clock, &self.id)
+        Metadata::new(
+            clock,
+            &self.id,
+            self.group_membership.current_installed_view().id,
+        )
     }
 
     /// Returns a list of operations that are ready to be stabilized.
