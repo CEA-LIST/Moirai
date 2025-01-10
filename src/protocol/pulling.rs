@@ -1,5 +1,8 @@
-use super::{membership::View, pure_crdt::PureCRDT, tcsb::Tcsb};
-use crate::protocol::{event::Event, metadata::Metadata};
+use super::{pure_crdt::PureCRDT, tcsb::Tcsb};
+use crate::{
+    clocks::vector_clock::VectorClock,
+    protocol::{event::Event, metadata::Metadata},
+};
 use log::error;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -30,37 +33,67 @@ pub enum DeliveryError {
     UnknownPeer,
     DuplicatedEvent,
     OutOfOrderEvent,
-    EvictedPeer,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Since {
+    pub clock: VectorClock<String, usize>,
+    pub origin: String,
+    pub view_id: usize,
+    pub exclude: Vec<(String, usize)>,
+}
+
+impl Since {
+    pub fn new(
+        clock: VectorClock<String, usize>,
+        origin: String,
+        exclude: Vec<(String, usize)>,
+        view_id: usize,
+    ) -> Self {
+        Since {
+            clock,
+            origin,
+            exclude,
+            view_id,
+        }
+    }
+
+    pub fn new_from(tcsb: &Tcsb<impl PureCRDT>) -> Self {
+        Since {
+            clock: tcsb.my_clock().clone(),
+            origin: tcsb.id.clone(),
+            exclude: tcsb.pending.iter().map(|e| e.metadata.dot()).collect(),
+            view_id: tcsb.group_membership.current_installed_view().id,
+        }
+    }
 }
 
 impl<O> Tcsb<O>
 where
     O: PureCRDT + Debug,
 {
-    pub fn events_since(&self, metadata: &Metadata) -> Result<Batch<O>, DeliveryError> {
-        if !self.group_membership.members().contains(&metadata.origin) {
+    pub fn events_since(&self, since: &Since) -> Result<Batch<O>, DeliveryError> {
+        if !self.group_membership.members().contains(&since.origin) {
             error!(
                 "The origin {} of the metadata is not part of the group membership: {:?}",
-                metadata.origin,
+                since.origin,
                 self.group_membership.members()
             );
-            // if self.removed_members.contains(&metadata.origin) {
-            //     return Err(DeliveryError::EvictedPeer);
-            // } else {
             return Err(DeliveryError::UnknownPeer);
-            // }
         }
 
-        let since = Metadata::new(metadata.clock.clone(), "");
+        let boundary = Metadata::new(since.clock.clone(), "", since.view_id);
 
-        // TODO: Rather than just `since`, the requesting peer should precise if it has received other events in its pending buffer.
         let events: Vec<Event<O>> = self
             .state
             .unstable
             .iter()
             .filter_map(|(m, o)| {
                 // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > since.clock.get(&m.origin).unwrap() {
+                if m.clock.get(&m.origin).unwrap() > boundary.clock.get(&m.origin).unwrap()
+                    && !since.exclude.contains(&m.dot())
+                {
                     Some(Event::new(o.as_ref().clone(), m.clone()))
                 } else {
                     None
@@ -69,7 +102,7 @@ where
             .collect::<Vec<_>>();
         Ok(Batch::new(
             events,
-            Metadata::new(self.my_clock().clone(), &self.id),
+            Metadata::new(self.my_clock().clone(), &self.id, 0),
         ))
     }
 
@@ -79,37 +112,19 @@ where
                 for event in batch.events {
                     self.try_deliver(event);
                 }
-                // We may have delivered a `remove(self)` event.
-                if self
-                    .group_membership
-                    .members()
-                    .contains(&batch.metadata.origin)
-                {
-                    assert_eq!(self.ltm.keys(), batch.metadata.clock.keys());
-                    self.ltm
-                        .update(&batch.metadata.origin, &batch.metadata.clock);
-                    self.tc_stable();
-                }
+                self.ltm
+                    .get_mut(&batch.metadata.origin.clone())
+                    .unwrap()
+                    .merge(&batch.metadata.clock);
             }
-            Err(e) => {
-                match e {
-                    DeliveryError::EvictedPeer => {
-                        for key in self.ltm.keys() {
-                            if key != self.id {
-                                self.ltm.remove_key(&key);
-                            }
-                        }
-                        // Re-init the group membership
-                        self.group_membership.install_view(View::init(&self.id));
-                        // self.removed_members.clear();
-                        // self.converging_members.clear();
-                    }
-                    DeliveryError::UnknownPeer => {}
-                    _ => {
-                        panic!("Unexpected error: {:?}", e);
-                    }
+            Err(e) => match e {
+                DeliveryError::UnknownPeer => {
+                    error!("Pull request failed: receiver peer does know us.");
                 }
-            }
+                _ => {
+                    panic!("Unexpected error: {:?}", e);
+                }
+            },
         }
     }
 }

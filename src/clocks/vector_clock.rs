@@ -381,18 +381,6 @@ mod tests {
         assert_eq!(clock3.get(&"B"), Some(0));
     }
 
-    // #[test_log::test]
-    // fn bot() {
-    //     let mut clock1: VectorClock<&str, i32> = VectorClock::new("A");
-    //     clock1.increment(&"A");
-    //     clock1.increment(&"A");
-    //     clock1.increment(&"A");
-    //     clock1.increment(&"A");
-    //     clock1.increment(&"B");
-    //     let clock2: VectorClock<&str, i32> = VectorClock::bot();
-    //     assert!(clock2 < clock1);
-    // }
-
     #[test_log::test]
     fn lsv() {
         let mut lsv = VectorClock::from(&["A", "B"], &[12, 16]);

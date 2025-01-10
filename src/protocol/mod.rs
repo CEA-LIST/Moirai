@@ -2,6 +2,7 @@ pub mod event;
 pub mod guard;
 pub mod membership;
 pub mod metadata;
+pub mod multilog;
 pub mod po_log;
 pub mod pulling;
 pub mod pure_crdt;

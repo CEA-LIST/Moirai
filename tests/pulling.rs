@@ -1,6 +1,6 @@
 use po_crdt::{
     crdt::{counter::Counter, test_util::twins},
-    protocol::metadata::Metadata,
+    protocol::pulling::Since,
 };
 
 #[test_log::test]
@@ -25,12 +25,12 @@ fn events_since_concurrent_counter() {
     assert_eq!(-6, tcsb_b.eval());
     assert_eq!(6, tcsb_b.state.unstable.len());
 
-    let batch = tcsb_a.events_since(&Metadata::new(tcsb_b.my_clock().clone(), &tcsb_b.id));
+    let batch = tcsb_a.events_since(&Since::new_from(&tcsb_b));
     assert_eq!(6, batch.clone().unwrap().events.len());
 
     tcsb_b.deliver_batch(batch);
 
-    let batch = tcsb_b.events_since(&Metadata::new(tcsb_a.my_clock().clone(), &tcsb_a.id));
+    let batch = tcsb_b.events_since(&Since::new_from(&tcsb_a));
     assert_eq!(6, batch.clone().unwrap().events.len());
 
     tcsb_a.deliver_batch(batch);

@@ -32,6 +32,12 @@ pub mod test_util {
         tcsb_b.state_transfer(&mut tcsb_a);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_a.state.stable.len(), tcsb_b.state.stable.len());
+        assert_eq!(tcsb_a.state.unstable.len(), tcsb_b.state.unstable.len());
+        assert_eq!(
+            tcsb_a.group_membership.current_installed_view(),
+            tcsb_b.group_membership.current_installed_view()
+        );
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
         let left = "<<<".bold().yellow();
