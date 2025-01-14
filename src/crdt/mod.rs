@@ -25,7 +25,9 @@ pub mod test_util {
         #[cfg(not(feature = "utils"))]
         let mut tcsb_b = Tcsb::new("b");
 
-        tcsb_a.install_view(vec!["a", "b"]);
+        tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+        tcsb_a.start_installing_view();
+        tcsb_a.mark_installed_view();
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
         // --> Causal stability <--
@@ -34,10 +36,7 @@ pub mod test_util {
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
         assert_eq!(tcsb_a.state.stable.len(), tcsb_b.state.stable.len());
         assert_eq!(tcsb_a.state.unstable.len(), tcsb_b.state.unstable.len());
-        assert_eq!(
-            tcsb_a.group_membership.current_installed_view(),
-            tcsb_b.group_membership.current_installed_view()
-        );
+        assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
         let left = "<<<".bold().yellow();
@@ -54,8 +53,13 @@ pub mod test_util {
         let (mut tcsb_a, mut tcsb_b) = twins::<O>();
         let mut tcsb_c = Tcsb::<O>::new("c");
 
-        tcsb_a.install_view(vec!["a", "b", "c"]);
-        tcsb_b.install_view(vec!["a", "b", "c"]);
+        tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        tcsb_a.start_installing_view();
+        tcsb_a.mark_installed_view();
+
+        tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        tcsb_b.start_installing_view();
+        tcsb_b.mark_installed_view();
 
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
@@ -80,9 +84,32 @@ pub mod test_util {
 
         let mut tcsb_d = Tcsb::<O>::new("d");
 
-        tcsb_a.install_view(vec!["a", "b", "c", "d"]);
-        tcsb_b.install_view(vec!["a", "b", "c", "d"]);
-        tcsb_c.install_view(vec!["a", "b", "c", "d"]);
+        tcsb_a.add_pending_view(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ]);
+        tcsb_a.start_installing_view();
+        tcsb_a.mark_installed_view();
+
+        tcsb_b.add_pending_view(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ]);
+        tcsb_b.start_installing_view();
+        tcsb_b.mark_installed_view();
+
+        tcsb_c.add_pending_view(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ]);
+        tcsb_c.start_installing_view();
+        tcsb_c.mark_installed_view();
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);

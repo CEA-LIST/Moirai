@@ -1,7 +1,8 @@
 use colored::*;
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 
-use super::membership::{View, ViewStatus, Views};
+use super::membership::Views;
 use super::po_log::POLog;
 use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
@@ -33,7 +34,7 @@ where
     /// Buffer of operations to be delivered
     pub(crate) pending: VecDeque<Event<O>>,
     /// Group Membership views
-    pub group_membership: Views,
+    group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -49,12 +50,10 @@ where
 {
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
-        let mut group_membership = Views::new();
-        group_membership.install_view(View::init(id));
         Self {
             id: id.to_string(),
             state: POLog::default(),
-            group_membership,
+            group_membership: Views::new(vec![id.to_string()]),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
@@ -95,7 +94,7 @@ where
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if !self
             .group_membership
-            .current_installed_view()
+            .installed_view()
             .members
             .contains(&event.metadata.origin)
         {
@@ -106,7 +105,7 @@ where
                 format!("{}", event.metadata.clock).red()
             );
         }
-        if self.group_membership.current_installed_view().id > event.metadata.view_id {
+        if self.view_id() > event.metadata.view_id {
             error!(
                 "[{}] - Event from {} with an old view id {} detected with timestamp {}",
                 self.id.blue().bold(),
@@ -187,11 +186,7 @@ where
     pub fn tc_stable(&mut self) {
         let ignore = self.group_membership.leaving_members();
         let svv = self.ltm.svv(ignore.as_slice());
-        let upper_bound = Metadata::new(
-            svv.clone(),
-            "",
-            self.group_membership.current_installed_view().id,
-        );
+        let upper_bound = Metadata::new(svv.clone(), "", self.view_id());
         let ready_to_stabilize = self.collect_stabilizable_events(&upper_bound);
         if !ready_to_stabilize.is_empty() {
             self.lsv = self.ltm.svv(&ignore);
@@ -217,22 +212,18 @@ where
     }
 
     /// Transfer the state of a replica to another replica.
+    /// `self` is the peer that will receive the state of the `other` peer.
     /// The peer giving the state should be the one that have welcomed the other peer in its group membership.
     pub fn state_transfer(&mut self, other: &mut Tcsb<O>) {
-        assert!(
-            self.id != other.id && other.group_membership.members().contains(&self.id),
-            "Peer {} is not in the group membership of peer {}",
-            self.id,
-            other.id
-        );
-        self.state = other.state.clone();
-        self.group_membership = other.group_membership.clone();
-        self.ltm = other.ltm.clone();
+        let state_transfer = StateTransfer::new(other, &self.id);
+
+        self.deliver_state(state_transfer);
         self.ltm.most_update(&self.id);
-        self.lsv = other.lsv.clone();
+
         // The peer will have its clock at least as high as the one of the other peer
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
+
         assert_eq!(self.my_clock(), other.my_clock());
         assert_eq!(self.my_clock(), self.ltm.get(&other.id).unwrap());
         assert_eq!(other.my_clock(), other.ltm.get(&self.id).unwrap());
@@ -243,22 +234,16 @@ where
         O::eval(&self.state)
     }
 
-    /// Install directly a new view with the given members.
-    pub fn install_view(&mut self, members: Vec<&str>) {
-        self.installing_view(members);
-        self.installed_view();
+    pub fn add_pending_view(&mut self, members: Vec<String>) {
+        self.group_membership.add_pending_view(members);
     }
 
-    /// Start a new view installation.
-    pub fn installing_view(&mut self, members: Vec<&str>) {
-        self.group_membership.install(
-            members.iter().map(|m| m.to_string()).collect(),
-            ViewStatus::Installing,
-        );
+    pub fn start_installing_view(&mut self) {
+        self.group_membership.start_installing();
     }
 
     /// Start a stability phase and mark the current view as installed.
-    pub fn installed_view(&mut self) {
+    pub fn mark_installed_view(&mut self) {
         self.tc_stable();
         assert!(self.state.unstable.is_empty());
         for member in self.group_membership.joining_members() {
@@ -268,14 +253,8 @@ where
             self.ltm.remove_key(member);
         }
         self.group_membership.mark_installed();
-        if !self
-            .group_membership
-            .current_installed_view()
-            .members
-            .contains(&self.id)
-        {
-            self.group_membership
-                .install(vec![self.id.clone()], ViewStatus::Installed);
+        if !self.group_members().contains(&self.id) {
+            self.group_membership = Views::new(vec![self.id.to_string()]);
         }
     }
 
@@ -323,11 +302,7 @@ where
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        Metadata::new(
-            clock,
-            &self.id,
-            self.group_membership.current_installed_view().id,
-        )
+        Metadata::new(clock, &self.id, self.view_id())
     }
 
     /// Returns a list of operations that are ready to be stabilized.
@@ -345,5 +320,53 @@ where
             })
             .collect::<Vec<RefCell<Metadata>>>();
         state
+    }
+
+    pub fn group_members(&self) -> &Vec<String> {
+        &self.group_membership.installed_view().members
+    }
+
+    pub fn view_id(&self) -> usize {
+        self.group_membership.installed_view().id
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct StateTransfer<O>
+where
+    O: PureCRDT,
+{
+    pub group_membership: Views,
+    pub state: POLog<O>,
+    pub lsv: VectorClock<String, usize>,
+    pub ltm: MatrixClock<String, usize>,
+}
+
+impl<O> StateTransfer<O>
+where
+    O: PureCRDT,
+{
+    pub fn new(tcsb: &Tcsb<O>, to: &String) -> Self {
+        assert!(&tcsb.id != to && tcsb.group_members().contains(to));
+        StateTransfer {
+            group_membership: tcsb.group_membership.clone(),
+            state: tcsb.state.clone(),
+            lsv: tcsb.lsv.clone(),
+            ltm: tcsb.ltm.clone(),
+        }
+    }
+}
+
+impl<O> Tcsb<O>
+where
+    O: PureCRDT + Debug,
+{
+    pub fn deliver_state(&mut self, state: StateTransfer<O>) {
+        self.lsv = state.lsv;
+        self.ltm = state.ltm;
+        self.ltm.most_update(&self.id);
+        self.state = state.state;
+        self.group_membership = state.group_membership;
     }
 }

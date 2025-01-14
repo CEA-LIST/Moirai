@@ -16,13 +16,12 @@ fn join_new_group() {
     let _ = tcsb_b.tc_bcast(Counter::Dec(11));
     let _ = tcsb_b.tc_bcast(Counter::Dec(9));
 
-    tcsb_a.install_view(vec!["a", "b"]);
+    tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_a.start_installing_view();
+    tcsb_a.mark_installed_view();
     tcsb_b.state_transfer(&mut tcsb_a);
 
-    assert_eq!(
-        tcsb_a.group_membership.members(),
-        tcsb_b.group_membership.members()
-    );
+    assert_eq!(tcsb_a.group_members(), tcsb_a.group_members(),);
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
 }
 
@@ -32,8 +31,13 @@ fn join_existing_group() {
     let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
     let mut tcsb_c = Tcsb::<Counter<i32>>::new("c");
 
-    tcsb_a.install_view(vec!["a", "b"]);
-    tcsb_b.install_view(vec!["a", "b"]);
+    tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_a.start_installing_view();
+    tcsb_a.mark_installed_view();
+
+    tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_b.start_installing_view();
+    tcsb_b.mark_installed_view();
 
     let event_a_1 = tcsb_a.tc_bcast(Counter::Inc(1));
     let event_b_1 = tcsb_b.tc_bcast(Counter::Inc(7));
@@ -53,8 +57,11 @@ fn join_existing_group() {
 
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
 
-    tcsb_a.installing_view(vec!["a", "b", "c"]);
-    tcsb_b.installing_view(vec!["a", "b", "c"]);
+    tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    tcsb_a.start_installing_view();
+
+    tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    tcsb_b.start_installing_view();
 
     let batch_from_a = tcsb_a.events_since(&Since::new_from(&tcsb_b));
     tcsb_b.deliver_batch(batch_from_a);
@@ -62,19 +69,13 @@ fn join_existing_group() {
     let batch_from_b = tcsb_b.events_since(&Since::new_from(&tcsb_a));
     tcsb_a.deliver_batch(batch_from_b);
 
-    tcsb_a.installed_view();
-    tcsb_b.installed_view();
+    tcsb_a.mark_installed_view();
+    tcsb_b.mark_installed_view();
 
     tcsb_c.state_transfer(&mut tcsb_a);
 
-    assert_eq!(
-        tcsb_a.group_membership.members(),
-        tcsb_b.group_membership.members()
-    );
-    assert_eq!(
-        tcsb_a.group_membership.members(),
-        tcsb_c.group_membership.members()
-    );
+    assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
+    assert_eq!(tcsb_a.group_members(), tcsb_c.group_members());
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
 }
@@ -91,15 +92,19 @@ fn leave() {
     tcsb_c.try_deliver(event_a);
     tcsb_c.try_deliver(event_b);
 
-    tcsb_a.installing_view(vec!["a", "b"]);
+    tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_a.start_installing_view();
 
     let event_c = tcsb_c.tc_bcast(Counter::Inc(3));
 
     tcsb_b.try_deliver(event_c.clone());
     tcsb_a.try_deliver(event_c);
 
-    tcsb_b.installing_view(vec!["a", "b"]);
-    tcsb_c.installing_view(vec!["a", "b"]);
+    tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_b.start_installing_view();
+
+    tcsb_c.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+    tcsb_c.start_installing_view();
 
     let batch_from_a_b = tcsb_a.events_since(&Since::new_from(&tcsb_b));
     let batch_from_a_c = tcsb_a.events_since(&Since::new_from(&tcsb_c));
@@ -119,15 +124,12 @@ fn leave() {
     tcsb_c.deliver_batch(batch_from_a_c);
     tcsb_c.deliver_batch(batch_from_b_c);
 
-    tcsb_a.installed_view();
-    tcsb_b.installed_view();
-    tcsb_c.installed_view();
+    tcsb_a.mark_installed_view();
+    tcsb_b.mark_installed_view();
+    tcsb_c.mark_installed_view();
 
-    assert_eq!(
-        tcsb_a.group_membership.members(),
-        tcsb_b.group_membership.members()
-    );
-    assert_eq!(&vec!["c".to_string()], tcsb_c.group_membership.members());
+    assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
+    assert_eq!(&vec!["c".to_string()], tcsb_c.group_members());
     assert_eq!(tcsb_c.eval(), 11);
     assert_eq!(tcsb_a.eval(), 11);
     assert_eq!(tcsb_b.eval(), 11);
