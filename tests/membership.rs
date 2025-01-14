@@ -101,13 +101,27 @@ fn leave() {
     tcsb_b.installing_view(vec!["a", "b"]);
     tcsb_c.installing_view(vec!["a", "b"]);
 
-    let batch_from_a = tcsb_a.events_since(&Since::new_from(&tcsb_b));
-    let batch_from_b = tcsb_b.events_since(&Since::new_from(&tcsb_a));
-    tcsb_b.deliver_batch(batch_from_a);
-    tcsb_a.deliver_batch(batch_from_b);
+    let batch_from_a_b = tcsb_a.events_since(&Since::new_from(&tcsb_b));
+    let batch_from_a_c = tcsb_a.events_since(&Since::new_from(&tcsb_c));
+
+    let batch_from_b_a = tcsb_b.events_since(&Since::new_from(&tcsb_a));
+    let batch_from_b_c = tcsb_b.events_since(&Since::new_from(&tcsb_c));
+
+    let batch_from_c_a = tcsb_c.events_since(&Since::new_from(&tcsb_a));
+    let batch_from_c_b = tcsb_c.events_since(&Since::new_from(&tcsb_b));
+
+    tcsb_b.deliver_batch(batch_from_a_b);
+    tcsb_b.deliver_batch(batch_from_c_b);
+
+    tcsb_a.deliver_batch(batch_from_b_a);
+    tcsb_a.deliver_batch(batch_from_c_a);
+
+    tcsb_c.deliver_batch(batch_from_a_c);
+    tcsb_c.deliver_batch(batch_from_b_c);
 
     tcsb_a.installed_view();
     tcsb_b.installed_view();
+    tcsb_c.installed_view();
 
     assert_eq!(
         tcsb_a.group_membership.members(),

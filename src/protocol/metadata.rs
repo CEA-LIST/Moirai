@@ -60,17 +60,23 @@ impl PartialOrd for Metadata {
 // TODO: garbage
 impl Ord for Metadata {
     fn cmp(&self, other: &Self) -> Ordering {
-        let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
-        assert!(
-            !(clock_cmp.is_none() && self.origin == other.origin),
-            "Self: {}, Other: {}",
-            self,
-            other,
-        );
-        match clock_cmp {
-            Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
-            Some(Ordering::Less) => Ordering::Less,
-            Some(Ordering::Greater) => Ordering::Greater,
+        let view_id_cmp = self.view_id.cmp(&other.view_id);
+        match view_id_cmp {
+            Ordering::Equal => {
+                let clock_cmp: Option<Ordering> = self.clock.partial_cmp(&other.clock);
+                assert!(
+                    !(clock_cmp.is_none() && self.origin == other.origin),
+                    "Self: {}, Other: {}",
+                    self,
+                    other,
+                );
+                match clock_cmp {
+                    Some(Ordering::Equal) | None => other.origin.cmp(&self.origin),
+                    Some(Ordering::Less) => Ordering::Less,
+                    Some(Ordering::Greater) => Ordering::Greater,
+                }
+            }
+            _ => view_id_cmp,
         }
     }
 }
