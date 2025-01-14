@@ -31,7 +31,7 @@ where
     /// Domain-specific CRDT
     pub state: POLog<O>,
     /// Buffer of operations to be delivered
-    pub pending: VecDeque<Event<O>>,
+    pub(crate) pending: VecDeque<Event<O>>,
     /// Group Membership views
     pub group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -50,18 +50,14 @@ where
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
         let mut group_membership = Views::new();
-        group_membership.install_view(View::init(&id.to_string()));
+        group_membership.install_view(View::init(id));
         Self {
             id: id.to_string(),
             state: POLog::default(),
             group_membership,
-            // converging_members: HashMap::new(),
             ltm: MatrixClock::new(&[id.to_string()]),
-            // timestamp_extension: BTreeMap::new(),
             lsv: VectorClock::new(id.to_string()),
             pending: VecDeque::new(),
-            // hideout: HashMap::new(),
-            // removed_members: HashSet::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
         }
@@ -97,7 +93,12 @@ where
             self.id, event.metadata.origin
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
-        if self.group_membership.is_member(&event.metadata.origin) {
+        if !self
+            .group_membership
+            .current_installed_view()
+            .members
+            .contains(&event.metadata.origin)
+        {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
@@ -185,9 +186,13 @@ where
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     pub fn tc_stable(&mut self) {
         let ignore = self.group_membership.leaving_members();
-        let svv = self.ltm.svv(&ignore.as_slice());
-        let lower_bound = Metadata::new(svv.clone(), "", 0);
-        let ready_to_stabilize = self.collect_stabilizable_events(&lower_bound);
+        let svv = self.ltm.svv(ignore.as_slice());
+        let upper_bound = Metadata::new(
+            svv.clone(),
+            "",
+            self.group_membership.current_installed_view().id,
+        );
+        let ready_to_stabilize = self.collect_stabilizable_events(&upper_bound);
         if !ready_to_stabilize.is_empty() {
             self.lsv = self.ltm.svv(&ignore);
         }
@@ -238,23 +243,21 @@ where
         O::eval(&self.state)
     }
 
+    /// Install directly a new view with the given members.
     pub fn install_view(&mut self, members: Vec<&str>) {
         self.installing_view(members);
         self.installed_view();
     }
 
+    /// Start a new view installation.
     pub fn installing_view(&mut self, members: Vec<&str>) {
-        if members.contains(&self.id.as_str()) {
-            self.group_membership.install(
-                members.iter().map(|m| m.to_string()).collect(),
-                ViewStatus::Installing,
-            );
-        } else {
-            self.group_membership
-                .install(vec![self.id.clone()], ViewStatus::Installing);
-        }
+        self.group_membership.install(
+            members.iter().map(|m| m.to_string()).collect(),
+            ViewStatus::Installing,
+        );
     }
 
+    /// Start a stability phase and mark the current view as installed.
     pub fn installed_view(&mut self) {
         self.tc_stable();
         assert!(self.state.unstable.is_empty());
@@ -265,6 +268,15 @@ where
             self.ltm.remove_key(member);
         }
         self.group_membership.mark_installed();
+        if !self
+            .group_membership
+            .current_installed_view()
+            .members
+            .contains(&self.id)
+        {
+            self.group_membership
+                .install(vec![self.id.clone()], ViewStatus::Installed);
+        }
     }
 
     /// Return the mutable vector clock of the local replica
@@ -319,13 +331,13 @@ where
     }
 
     /// Returns a list of operations that are ready to be stabilized.
-    fn collect_stabilizable_events(&self, lower_bound: &Metadata) -> Vec<RefCell<Metadata>> {
+    fn collect_stabilizable_events(&self, upper_bound: &Metadata) -> Vec<RefCell<Metadata>> {
         let state = self
             .state
             .unstable
-            .range((Bound::Unbounded, Bound::Included(lower_bound)))
+            .range((Bound::Unbounded, Bound::Included(upper_bound)))
             .filter_map(|(m, _)| {
-                if m.clock <= lower_bound.clock {
+                if m.clock <= upper_bound.clock {
                     Some(RefCell::new(m.clone()))
                 } else {
                     None

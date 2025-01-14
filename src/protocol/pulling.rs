@@ -74,11 +74,16 @@ where
     O: PureCRDT + Debug,
 {
     pub fn events_since(&self, since: &Since) -> Result<Batch<O>, DeliveryError> {
-        if !self.group_membership.members().contains(&since.origin) {
+        if !self
+            .group_membership
+            .current_installed_view()
+            .members
+            .contains(&since.origin)
+        {
             error!(
                 "The origin {} of the metadata is not part of the group membership: {:?}",
                 since.origin,
-                self.group_membership.members()
+                self.group_membership.current_installed_view().members
             );
             return Err(DeliveryError::UnknownPeer);
         }
@@ -93,6 +98,7 @@ where
                 // If the dot is greater than the one in the since vector clock, then we have not delivered the event
                 if m.clock.get(&m.origin).unwrap() > boundary.clock.get(&m.origin).unwrap()
                     && !since.exclude.contains(&m.dot())
+                    && m.view_id <= boundary.view_id
                 {
                     Some(Event::new(o.as_ref().clone(), m.clone()))
                 } else {

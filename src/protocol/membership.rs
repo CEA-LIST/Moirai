@@ -24,10 +24,10 @@ impl View {
         }
     }
 
-    pub fn init(tcsb_id: &String) -> Self {
+    pub fn init(tcsb_id: &str) -> Self {
         Self {
             id: 0,
-            members: vec![tcsb_id.clone()],
+            members: vec![tcsb_id.to_string()],
             status: ViewStatus::Installed,
         }
     }
@@ -77,6 +77,7 @@ impl Views {
         self.views.last().unwrap()
     }
 
+    /// Returns the members of the last view (installed or installing)
     pub fn members(&self) -> &Vec<String> {
         &self.views.last().unwrap().members
     }
@@ -110,5 +111,11 @@ impl Views {
 
     pub fn is_member(&self, id: &String) -> bool {
         !self.views.last().unwrap().members.contains(id)
+    }
+}
+
+impl Default for Views {
+    fn default() -> Self {
+        Self::new()
     }
 }
