@@ -6,6 +6,5 @@ pub mod multilog;
 pub mod po_log;
 pub mod pulling;
 pub mod pure_crdt;
-pub mod state_transfer;
 pub mod tcsb;
 pub mod utils;

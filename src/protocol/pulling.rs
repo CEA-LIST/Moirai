@@ -64,7 +64,7 @@ impl Since {
             clock: tcsb.my_clock().clone(),
             origin: tcsb.id.clone(),
             exclude: tcsb.pending.iter().map(|e| e.metadata.dot()).collect(),
-            view_id: tcsb.group_membership.current_installed_view().id,
+            view_id: tcsb.view_id(),
         }
     }
 }
@@ -74,16 +74,11 @@ where
     O: PureCRDT + Debug,
 {
     pub fn events_since(&self, since: &Since) -> Result<Batch<O>, DeliveryError> {
-        if !self
-            .group_membership
-            .current_installed_view()
-            .members
-            .contains(&since.origin)
-        {
+        if !self.group_members().contains(&since.origin) {
             error!(
                 "The origin {} of the metadata is not part of the group membership: {:?}",
                 since.origin,
-                self.group_membership.current_installed_view().members
+                self.group_members()
             );
             return Err(DeliveryError::UnknownPeer);
         }

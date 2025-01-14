@@ -90,10 +90,7 @@ mod tests {
     fn clear_aw_set() {
         let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
 
-        assert_eq!(
-            tcsb_a.group_membership.current_installed_view(),
-            tcsb_b.group_membership.current_installed_view()
-        );
+        assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
 
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
 

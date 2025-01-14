@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum ViewStatus {
     Installing,
     Installed,
+    Pending,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,86 +37,79 @@ impl View {
 /// Invariants:
 /// - There is always at least one view in the list
 /// - There may be zero or one view being installed
-/// - A view marked as installing is always the last one
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Views {
     views: Vec<View>,
+    current_view_id: usize,
 }
 
 impl Views {
-    pub fn new() -> Self {
-        Self { views: Vec::new() }
-    }
-
-    /// Create and install a new view with the given members and status
-    pub fn install(&mut self, members: Vec<String>, status: ViewStatus) {
-        let id = self.views.len();
-        self.views.push(View::new(id, members, status));
+    pub fn new(members: Vec<String>) -> Self {
+        Self {
+            views: vec![View::init(&members[0])],
+            current_view_id: 0,
+        }
     }
 
     /// Install the view given in parameter
-    pub fn install_view(&mut self, view: View) {
+    pub fn add_pending_view(&mut self, members: Vec<String>) {
+        let view_id = self.views.len();
+        let view = View::new(view_id, members, ViewStatus::Pending);
         self.views.push(view);
+    }
+
+    pub fn start_installing(&mut self) {
+        assert!(
+            self.views.get_mut(self.current_view_id + 1).unwrap().status == ViewStatus::Pending
+        );
+        self.views.get_mut(self.current_view_id + 1).unwrap().status = ViewStatus::Installing;
     }
 
     /// Mark as installed the last view
     pub fn mark_installed(&mut self) {
-        self.views.last_mut().unwrap().status = ViewStatus::Installed;
+        assert!(
+            self.views.get_mut(self.current_view_id + 1).unwrap().status == ViewStatus::Installing
+        );
+        self.views.get_mut(self.current_view_id + 1).unwrap().status = ViewStatus::Installed;
+        self.current_view_id += 1;
     }
 
     /// Returns the last installed view (not the one being installed)
-    pub fn current_installed_view(&self) -> &View {
-        if matches!(self.views.last().unwrap().status, ViewStatus::Installed) {
-            self.views.last().unwrap()
-        } else {
-            self.views.get(self.views.len() - 2).unwrap()
+    pub fn installed_view(&self) -> &View {
+        self.views.get(self.current_view_id).unwrap()
+    }
+
+    pub fn installing_view(&self) -> Option<&View> {
+        if self.views.len() == 1 {
+            return self.views.get(0);
         }
+        self.views.get(self.current_view_id + 1)
     }
 
-    pub fn last_view(&self) -> &View {
-        self.views.last().unwrap()
-    }
-
-    /// Returns the members of the last view (installed or installing)
-    pub fn members(&self) -> &Vec<String> {
-        &self.views.last().unwrap().members
-    }
-
+    /// Returns the members that are in the installed view but not in the installing view
     pub fn leaving_members(&self) -> Vec<&String> {
-        if matches!(self.views.last().unwrap().status, ViewStatus::Installing) {
-            let last = self.views.last().unwrap();
-            let previous = self.views.get(self.views.len() - 2).unwrap();
-            previous
+        if let Some(installing_view) = self.installing_view() {
+            self.installed_view()
                 .members
                 .iter()
-                .filter(|id| !last.members.contains(id))
+                .filter(|id| !installing_view.members.contains(id))
                 .collect()
         } else {
             Vec::new()
         }
     }
 
+    /// Returns the members that are in the installing view but not in the installed view
     pub fn joining_members(&self) -> Vec<&String> {
-        if matches!(self.views.last().unwrap().status, ViewStatus::Installing) {
-            let last = self.views.last().unwrap();
-            let previous = self.views.get(self.views.len() - 2).unwrap();
-            last.members
+        if let Some(installing_view) = self.installing_view() {
+            installing_view
+                .members
                 .iter()
-                .filter(|id| !previous.members.contains(id))
+                .filter(|id| !self.installed_view().members.contains(id))
                 .collect()
         } else {
             Vec::new()
         }
-    }
-
-    pub fn is_member(&self, id: &String) -> bool {
-        !self.views.last().unwrap().members.contains(id)
-    }
-}
-
-impl Default for Views {
-    fn default() -> Self {
-        Self::new()
     }
 }

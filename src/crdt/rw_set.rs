@@ -150,6 +150,7 @@ mod tests {
     #[test_log::test]
     fn case_two() {
         let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+
         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
         let event_b = tcsb_b.tc_bcast(RWSet::Add("a"));
 
