@@ -348,7 +348,13 @@ where
     O: PureCRDT,
 {
     pub fn new(tcsb: &Tcsb<O>, to: &String) -> Self {
-        assert!(&tcsb.id != to && tcsb.group_members().contains(to));
+        assert!(
+            &tcsb.id != to && tcsb.group_members().contains(to),
+            "Peer {} should be in the group of peer {}. The group members are: {:?}",
+            to,
+            tcsb.id,
+            tcsb.group_members()
+        );
         StateTransfer {
             group_membership: tcsb.group_membership.clone(),
             state: tcsb.state.clone(),
