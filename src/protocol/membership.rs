@@ -54,6 +54,7 @@ impl Views {
 
     /// Install the view given in parameter
     pub fn add_pending_view(&mut self, members: Vec<String>) {
+        assert!(!members.is_empty());
         let view_id = self.views.len();
         let view = View::new(view_id, members, ViewStatus::Pending);
         self.views.push(view);
@@ -82,7 +83,7 @@ impl Views {
 
     pub fn installing_view(&self) -> Option<&View> {
         if self.views.len() == 1 {
-            return self.views.get(0);
+            return self.views.first();
         }
         self.views.get(self.current_view_id + 1)
     }
