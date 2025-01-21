@@ -60,11 +60,15 @@ impl Views {
         self.views.push(view);
     }
 
-    pub fn start_installing(&mut self) {
-        assert!(
-            self.views.get_mut(self.current_view_id + 1).unwrap().status == ViewStatus::Pending
-        );
-        self.views.get_mut(self.current_view_id + 1).unwrap().status = ViewStatus::Installing;
+    pub fn start_installing(&mut self) -> bool {
+        let next_pending_view = self.views.get_mut(self.current_view_id + 1);
+        if let Some(view) = next_pending_view {
+            if view.status == ViewStatus::Pending {
+                view.status = ViewStatus::Installing;
+                return true;
+            }
+        }
+        false
     }
 
     /// Mark as installed the last view
@@ -86,6 +90,28 @@ impl Views {
             return self.views.first();
         }
         self.views.get(self.current_view_id + 1)
+    }
+
+    /// The set of members that are in the installed view and in the installing view
+    pub fn stable_members_in_transition(&self) -> Option<Vec<&String>> {
+        if let Some(installing_view) = self.installing_view() {
+            let members = self
+                .installed_view()
+                .members
+                .iter()
+                .filter(|id| installing_view.members.contains(id))
+                .collect();
+            return Some(members);
+        }
+        None
+    }
+
+    pub fn installing_members(&self) -> Option<Vec<&String>> {
+        if let Some(installing_view) = self.installing_view() {
+            let members = installing_view.members.iter().collect();
+            return Some(members);
+        }
+        None
     }
 
     /// Returns the members that are in the installed view but not in the installing view
