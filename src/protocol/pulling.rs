@@ -41,6 +41,7 @@ pub struct Since {
     pub clock: VectorClock<String, usize>,
     pub origin: String,
     pub view_id: usize,
+    /// Dots to exclude from the pull request (already received but not delivered)
     pub exclude: Vec<(String, usize)>,
 }
 

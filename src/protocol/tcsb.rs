@@ -234,12 +234,20 @@ where
         O::eval(&self.state)
     }
 
+    pub fn stable_members_in_transition(&self) -> Option<Vec<&String>> {
+        self.group_membership.stable_members_in_transition()
+    }
+
+    pub fn installing_members(&self) -> Option<Vec<&String>> {
+        self.group_membership.installing_members()
+    }
+
     pub fn add_pending_view(&mut self, members: Vec<String>) {
         self.group_membership.add_pending_view(members);
     }
 
-    pub fn start_installing_view(&mut self) {
-        self.group_membership.start_installing();
+    pub fn start_installing_view(&mut self) -> bool {
+        self.group_membership.start_installing()
     }
 
     /// Start a stability phase and mark the current view as installed.

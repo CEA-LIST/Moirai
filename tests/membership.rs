@@ -106,23 +106,18 @@ fn leave() {
     tcsb_c.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_c.start_installing_view();
 
-    let batch_from_a_b = tcsb_a.events_since(&Since::new_from(&tcsb_b));
-    let batch_from_a_c = tcsb_a.events_since(&Since::new_from(&tcsb_c));
+    let batch = |from: Vec<&Tcsb<Counter<i32>>>, to: &mut Tcsb<Counter<i32>>| {
+        for f in from {
+            if to.stable_members_in_transition().contains(&&f.id) {
+                let batch = f.events_since(&Since::new_from(to));
+                to.deliver_batch(batch);
+            }
+        }
+    };
 
-    let batch_from_b_a = tcsb_b.events_since(&Since::new_from(&tcsb_a));
-    let batch_from_b_c = tcsb_b.events_since(&Since::new_from(&tcsb_c));
-
-    let batch_from_c_a = tcsb_c.events_since(&Since::new_from(&tcsb_a));
-    let batch_from_c_b = tcsb_c.events_since(&Since::new_from(&tcsb_b));
-
-    tcsb_b.deliver_batch(batch_from_a_b);
-    tcsb_b.deliver_batch(batch_from_c_b);
-
-    tcsb_a.deliver_batch(batch_from_b_a);
-    tcsb_a.deliver_batch(batch_from_c_a);
-
-    tcsb_c.deliver_batch(batch_from_a_c);
-    tcsb_c.deliver_batch(batch_from_b_c);
+    batch(vec![&tcsb_c, &tcsb_b], &mut tcsb_a);
+    batch(vec![&tcsb_a, &tcsb_c], &mut tcsb_b);
+    batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
 
     tcsb_a.mark_installed_view();
     tcsb_b.mark_installed_view();
