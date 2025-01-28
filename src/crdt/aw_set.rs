@@ -20,17 +20,17 @@ where
     type Value = HashSet<V>;
 
     fn r(event: &Event<Self>, _state: &POLog<Self>) -> bool {
-        matches!(event.op, AWSet::Clear) || matches!(event.op, AWSet::Remove(_))
+        matches!(event.op, AWSet::Clear | AWSet::Remove(_))
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
+        // use early return
         old_event.metadata.clock < new_event.metadata.clock
             && (matches!(new_event.op, AWSet::Clear)
                 || match (&old_event.op, &new_event.op) {
-                    (AWSet::Add(v1), AWSet::Add(v2))
-                    | (AWSet::Remove(v1), AWSet::Remove(v2))
-                    | (AWSet::Add(v1), AWSet::Remove(v2))
-                    | (AWSet::Remove(v1), AWSet::Add(v2)) => v1 == v2,
+                    (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => {
+                        v1 == v2
+                    }
                     _ => false,
                 })
     }

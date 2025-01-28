@@ -115,13 +115,25 @@ impl Views {
     }
 
     /// Returns the members that are in the installed view but not in the installing view
-    pub fn leaving_members(&self) -> Vec<&String> {
+    pub fn leaving_members(&self, id: &str) -> Vec<&String> {
         if let Some(installing_view) = self.installing_view() {
-            self.installed_view()
+            let members: Vec<&String> = self
+                .installed_view()
                 .members
                 .iter()
-                .filter(|id| !installing_view.members.contains(id))
-                .collect()
+                .filter(|m| !installing_view.members.contains(m))
+                .collect();
+            if members.contains(&&id.to_string()) {
+                let old_view_members: Vec<&String> = self
+                    .installed_view()
+                    .members
+                    .iter()
+                    .filter(|m| *m != id)
+                    .collect();
+                old_view_members
+            } else {
+                members
+            }
         } else {
             Vec::new()
         }

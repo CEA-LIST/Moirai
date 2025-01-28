@@ -25,7 +25,7 @@ pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 #[derive(Clone)]
 pub struct Tcsb<O>
 where
-    O: PureCRDT + Debug,
+    O: PureCRDT,
 {
     /// Unique peer id
     pub id: String,
@@ -184,7 +184,12 @@ where
     /// The TCSB middleware can offer this causal stability information through extending its API with tcstablei(τ),
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     pub fn tc_stable(&mut self) {
-        let ignore = self.group_membership.leaving_members();
+        let ignore = self.group_membership.leaving_members(&self.id);
+        info!(
+            "[{}] - Starting the stability phase with ignore list {:?}",
+            self.id.blue().bold(),
+            ignore
+        );
         let svv = self.ltm.svv(ignore.as_slice());
         let upper_bound = Metadata::new(svv.clone(), "", self.view_id());
         let ready_to_stabilize = self.collect_stabilizable_events(&upper_bound);
@@ -234,30 +239,47 @@ where
         O::eval(&self.state)
     }
 
+    /// Returns the members that are in the current view and the next view.
     pub fn stable_members_in_transition(&self) -> Option<Vec<&String>> {
         self.group_membership.stable_members_in_transition()
     }
 
+    /// Returns the members that are in the installing view.
     pub fn installing_members(&self) -> Option<Vec<&String>> {
         self.group_membership.installing_members()
     }
 
+    /// Add a view in the queue of pending views.
     pub fn add_pending_view(&mut self, members: Vec<String>) {
+        info!(
+            "[{}] - Adding pending view with members {:?}",
+            self.id.blue().bold(),
+            members
+        );
         self.group_membership.add_pending_view(members);
     }
 
+    /// Start installing the next view.
     pub fn start_installing_view(&mut self) -> bool {
+        info!(
+            "[{}] - Starting to install the next view",
+            self.id.blue().bold()
+        );
         self.group_membership.start_installing()
     }
 
     /// Start a stability phase and mark the current view as installed.
     pub fn mark_installed_view(&mut self) {
+        info!(
+            "[{}] - Marking the installing view as installed",
+            self.id.blue().bold()
+        );
         self.tc_stable();
         assert!(self.state.unstable.is_empty());
         for member in self.group_membership.joining_members() {
             self.ltm.add_key(member.clone());
         }
-        for member in self.group_membership.leaving_members() {
+        for member in self.group_membership.leaving_members(&self.id) {
             self.ltm.remove_key(member);
         }
         self.group_membership.mark_installed();
