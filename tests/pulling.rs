@@ -1,11 +1,11 @@
 use po_crdt::{
-    crdt::{counter::Counter, test_util::twins},
+    crdt::{counter::Counter, test_util::twins_po},
     protocol::pulling::Since,
 };
 
 #[test_log::test]
 fn events_since_concurrent_counter() {
-    let (mut tcsb_a, mut tcsb_b) = twins::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b) = twins_po::<Counter<i32>>();
 
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));

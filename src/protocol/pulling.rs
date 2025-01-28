@@ -1,4 +1,4 @@
-use super::{pure_crdt::PureCRDT, tcsb::Tcsb};
+use super::{log::Log, tcsb::Tcsb};
 use crate::{
     clocks::vector_clock::VectorClock,
     protocol::{event::Event, metadata::Metadata},
@@ -10,18 +10,12 @@ use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Batch<O>
-where
-    O: PureCRDT,
-{
+pub struct Batch<O> {
     pub events: Vec<Event<O>>,
     pub metadata: Metadata,
 }
 
-impl<O> Batch<O>
-where
-    O: PureCRDT,
-{
+impl<O> Batch<O> {
     pub fn new(events: Vec<Event<O>>, metadata: Metadata) -> Self {
         Self { events, metadata }
     }
@@ -60,7 +54,7 @@ impl Since {
         }
     }
 
-    pub fn new_from(tcsb: &Tcsb<impl PureCRDT>) -> Self {
+    pub fn new_from(tcsb: &Tcsb<impl Log>) -> Self {
         Since {
             clock: tcsb.my_clock().clone(),
             origin: tcsb.id.clone(),
@@ -70,11 +64,11 @@ impl Since {
     }
 }
 
-impl<O> Tcsb<O>
+impl<L> Tcsb<L>
 where
-    O: PureCRDT + Debug,
+    L: Log,
 {
-    pub fn events_since(&self, since: &Since) -> Result<Batch<O>, DeliveryError> {
+    pub fn events_since(&self, since: &Since) -> Result<Batch<L::Op>, DeliveryError> {
         if !self.group_members().contains(&since.origin) {
             error!(
                 "The origin {} of the metadata is not part of the group membership: {:?}",
@@ -84,31 +78,32 @@ where
             return Err(DeliveryError::UnknownPeer);
         }
 
-        let boundary = Metadata::new(since.clock.clone(), "", since.view_id);
+        let _boundary = Metadata::new(since.clock.clone(), "", since.view_id);
 
-        let events: Vec<Event<O>> = self
-            .state
-            .unstable
-            .iter()
-            .filter_map(|(m, o)| {
-                // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-                if m.clock.get(&m.origin).unwrap() > boundary.clock.get(&m.origin).unwrap()
-                    && !since.exclude.contains(&m.dot())
-                    && m.view_id <= boundary.view_id
-                {
-                    Some(Event::new(o.as_ref().clone(), m.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+        let events = vec![];
+        // let events: Vec<Event<L>> = self
+        //     .state
+        //     .unstable
+        //     .iter()
+        //     .filter_map(|(m, o)| {
+        //         // If the dot is greater than the one in the since vector clock, then we have not delivered the event
+        //         if m.clock.get(&m.origin).unwrap() > boundary.clock.get(&m.origin).unwrap()
+        //             && !since.exclude.contains(&m.dot())
+        //             && m.view_id <= boundary.view_id
+        //         {
+        //             Some(Event::new(o.as_ref().clone(), m.clone()))
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     .collect::<Vec<_>>();
         Ok(Batch::new(
             events,
             Metadata::new(self.my_clock().clone(), &self.id, 0),
         ))
     }
 
-    pub fn deliver_batch(&mut self, batch: Result<Batch<O>, DeliveryError>) {
+    pub fn deliver_batch(&mut self, batch: Result<Batch<L::Op>, DeliveryError>) {
         match batch {
             Ok(batch) => {
                 for event in batch.events {

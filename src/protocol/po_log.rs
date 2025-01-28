@@ -1,5 +1,5 @@
 use super::event::Event;
-use super::{metadata::Metadata, pure_crdt::PureCRDT};
+use super::metadata::Metadata;
 use colored::Colorize;
 use log::info;
 #[cfg(feature = "serde")]
@@ -11,8 +11,6 @@ use std::iter::Chain;
 use std::rc::Rc;
 use std::slice::{Iter, IterMut};
 
-pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
-
 /// # Causal DAG operation history
 ///
 /// A Partially Ordered Log (PO-Log), is a chronological record that
@@ -21,18 +19,15 @@ pub type Log<O> = BTreeMap<Metadata, Rc<O>>;
 /// one that simply stores the set of stable operations and the other stores the timestamped operations.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct POLog<O>
-where
-    O: PureCRDT + Debug,
-{
+pub struct POLog<O> {
     pub stable: Vec<Rc<O>>,
-    pub unstable: Log<O>,
+    pub unstable: BTreeMap<Metadata, Rc<O>>,
     // pub path_trie: PathTrie<O>,
 }
 
 impl<O> POLog<O>
 where
-    O: PureCRDT + Debug,
+    O: Clone + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -101,7 +96,7 @@ where
 
 impl<O> Default for POLog<O>
 where
-    O: PureCRDT + Debug,
+    O: Clone + Debug,
 {
     fn default() -> Self {
         Self::new()
@@ -110,7 +105,7 @@ where
 
 impl<O> Display for POLog<O>
 where
-    O: PureCRDT + Debug + Display,
+    O: Debug + Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Stable: [")?;

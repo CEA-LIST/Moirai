@@ -1,9 +1,9 @@
 use po_crdt::{
-    crdt::{counter::Counter, test_util::triplet},
-    protocol::{pulling::Since, tcsb::Tcsb},
+    crdt::{counter::Counter, test_util::triplet_po},
+    protocol::{po_log::POLog, pulling::Since, tcsb::Tcsb},
 };
 
-fn batch(from: Vec<&Tcsb<Counter<i32>>>, to: &mut Tcsb<Counter<i32>>) {
+fn batch(from: Vec<&Tcsb<POLog<Counter<i32>>>>, to: &mut Tcsb<POLog<Counter<i32>>>) {
     for f in from {
         if to
             .stable_members_in_transition()
@@ -17,8 +17,8 @@ fn batch(from: Vec<&Tcsb<Counter<i32>>>, to: &mut Tcsb<Counter<i32>>) {
 
 #[test_log::test]
 fn join_new_group() {
-    let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
-    let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
+    let mut tcsb_a = Tcsb::<POLog<Counter<i32>>>::new("a");
+    let mut tcsb_b = Tcsb::<POLog<Counter<i32>>>::new("b");
 
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
@@ -39,9 +39,9 @@ fn join_new_group() {
 
 #[test_log::test]
 fn join_existing_group() {
-    let mut tcsb_a = Tcsb::<Counter<i32>>::new("a");
-    let mut tcsb_b = Tcsb::<Counter<i32>>::new("b");
-    let mut tcsb_c = Tcsb::<Counter<i32>>::new("c");
+    let mut tcsb_a = Tcsb::<POLog<Counter<i32>>>::new("a");
+    let mut tcsb_b = Tcsb::<POLog<Counter<i32>>>::new("b");
+    let mut tcsb_c = Tcsb::<POLog<Counter<i32>>>::new("c");
 
     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_a.start_installing_view();
@@ -94,7 +94,7 @@ fn join_existing_group() {
 
 #[test_log::test]
 fn leave() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_po::<Counter<i32>>();
 
     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
     let event_b = tcsb_b.tc_bcast(Counter::Inc(7));
@@ -135,7 +135,7 @@ fn leave() {
 
 #[test_log::test]
 fn rejoin() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_po::<Counter<i32>>();
 
     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
     tcsb_b.try_deliver(event_a.clone());

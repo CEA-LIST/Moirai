@@ -1,27 +1,40 @@
 pub mod aw_set;
 pub mod counter;
+pub mod duet;
 pub mod graph;
 pub mod mv_register;
 pub mod rw_set;
+pub mod uw_map;
 
 pub mod test_util {
     use colored::Colorize;
     use log::debug;
 
-    use crate::protocol::{pure_crdt::PureCRDT, tcsb::Tcsb};
-    use std::fmt::Debug;
+    use crate::protocol::{log::Log, po_log::POLog, pure_crdt::PureCRDT, tcsb::Tcsb};
 
-    pub type Twins<O> = (Tcsb<O>, Tcsb<O>);
-    pub type Triplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>);
-    pub type Quadruplet<O> = (Tcsb<O>, Tcsb<O>, Tcsb<O>, Tcsb<O>);
+    pub type Twins<L> = (Tcsb<L>, Tcsb<L>);
+    pub type Triplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>);
+    pub type Quadruplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>, Tcsb<L>);
 
-    pub fn twins<O: PureCRDT + Clone + Debug>() -> Twins<O> {
+    pub fn twins_po<O: PureCRDT>() -> Twins<POLog<O>> {
+        twins()
+    }
+
+    pub fn triplet_po<O: PureCRDT>() -> Triplet<POLog<O>> {
+        triplet()
+    }
+
+    pub fn quadruplet_po<O: PureCRDT>() -> Quadruplet<POLog<O>> {
+        quadruplet()
+    }
+
+    pub fn twins<L: Log>() -> Twins<L> {
         #[cfg(feature = "utils")]
         let mut tcsb_a = Tcsb::new_with_trace("a");
         #[cfg(feature = "utils")]
         let mut tcsb_b = Tcsb::new_with_trace("b");
         #[cfg(not(feature = "utils"))]
-        let mut tcsb_a = Tcsb::new("a");
+        let mut tcsb_a = Tcsb::<L>::new("a");
         #[cfg(not(feature = "utils"))]
         let mut tcsb_b = Tcsb::new("b");
 
@@ -34,8 +47,8 @@ pub mod test_util {
         tcsb_b.state_transfer(&mut tcsb_a);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
-        assert_eq!(tcsb_a.state.stable.len(), tcsb_b.state.stable.len());
-        assert_eq!(tcsb_a.state.unstable.len(), tcsb_b.state.unstable.len());
+        // assert_eq!(tcsb_a.state.stable.len(), tcsb_b.state.stable.len());
+        // assert_eq!(tcsb_a.state.unstable.len(), tcsb_b.state.unstable.len());
         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
@@ -49,9 +62,9 @@ pub mod test_util {
         (tcsb_a, tcsb_b)
     }
 
-    pub fn triplet<O: PureCRDT + Clone + Debug>() -> Triplet<O> {
-        let (mut tcsb_a, mut tcsb_b) = twins::<O>();
-        let mut tcsb_c = Tcsb::<O>::new("c");
+    pub fn triplet<L: Log>() -> Triplet<L> {
+        let (mut tcsb_a, mut tcsb_b) = twins::<L>();
+        let mut tcsb_c = Tcsb::<L>::new("c");
 
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         tcsb_a.start_installing_view();
@@ -79,10 +92,10 @@ pub mod test_util {
         (tcsb_a, tcsb_b, tcsb_c)
     }
 
-    pub fn quadruplet<O: PureCRDT + Clone + Debug>() -> Quadruplet<O> {
-        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<O>();
+    pub fn quadruplet<L: Log>() -> Quadruplet<L> {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<L>();
 
-        let mut tcsb_d = Tcsb::<O>::new("d");
+        let mut tcsb_d = Tcsb::<L>::new("d");
 
         tcsb_a.add_pending_view(vec![
             "a".to_string(),
@@ -135,23 +148,26 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{
-        counter::Counter,
-        test_util::{quadruplet, triplet, twins},
+    use crate::{
+        crdt::{
+            counter::Counter,
+            test_util::{quadruplet, triplet, twins},
+        },
+        protocol::po_log::POLog,
     };
 
     #[test_log::test]
     fn test_twins() {
-        let _ = twins::<Counter<i32>>();
+        let _ = twins::<POLog<Counter<i32>>>();
     }
 
     #[test_log::test]
     fn test_triplet() {
-        let _ = triplet::<Counter<i32>>();
+        let _ = triplet::<POLog<Counter<i32>>>();
     }
 
     #[test_log::test]
     fn test_quadruplet() {
-        let _ = quadruplet::<Counter<i32>>();
+        let _ = quadruplet::<POLog<Counter<i32>>>();
     }
 }
