@@ -1,13 +1,13 @@
 use crate::protocol::{event::Event, log::Log, metadata::Metadata};
 
 #[derive(Clone, Debug)]
-enum Duet<F, S> {
+pub enum Duet<F, S> {
     First(F),
     Second(S),
 }
 
 #[derive(Clone, Debug, Default)]
-struct DuetLog<Fl, Sl> {
+pub struct DuetLog<Fl, Sl> {
     first: Fl,
     second: Sl,
 }
@@ -64,6 +64,11 @@ where
         result
     }
 
+    fn r_n(&mut self, metadata: &Metadata, conservative: bool) {
+        self.first.r_n(metadata, conservative);
+        self.second.r_n(metadata, conservative);
+    }
+
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         match event.op {
             Duet::First(ref op) => {
@@ -84,5 +89,9 @@ where
     fn stabilize(&mut self, metadata: &Metadata) {
         self.first.stabilize(metadata);
         self.second.stabilize(metadata);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.first.is_empty() && self.second.is_empty()
     }
 }
