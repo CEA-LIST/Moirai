@@ -24,6 +24,7 @@ where
     F: PureCRDT + Debug,
     S: PureCRDT + Debug,
 {
+    type Log = (F::Log, S::Log);
     type Value = (F::Value, S::Value);
 
     fn r(_event: &Event<Self>, _state: &POLog<Self>) -> bool {
