@@ -3,18 +3,14 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use super::membership::Views;
-use super::po_log::POLog;
-use super::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
+use super::{event::Event, metadata::Metadata};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::protocol::guard::{guard_against_duplicates, guard_against_out_of_order};
+use crate::protocol::log::Log;
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
-use std::ops::Bound;
-
-pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -23,16 +19,16 @@ pub type RedundantRelation<O> = fn(&Event<O>, &Event<O>) -> bool;
 /// It also notifies recipients when delivered messages achieve causal stability,
 /// facilitating subsequent compaction within the Partially Ordered Log of operations (PO-Log)
 #[derive(Clone)]
-pub struct Tcsb<O>
+pub struct Tcsb<L>
 where
-    O: PureCRDT,
+    L: Log,
 {
     /// Unique peer id
     pub id: String,
     /// Domain-specific CRDT
-    pub state: POLog<O>,
+    pub state: L,
     /// Buffer of operations to be delivered
-    pub(crate) pending: VecDeque<Event<O>>,
+    pub(crate) pending: VecDeque<Event<L::Op>>,
     /// Group Membership views
     group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -44,15 +40,15 @@ where
     pub tracer: Tracer,
 }
 
-impl<O> Tcsb<O>
+impl<L> Tcsb<L>
 where
-    O: PureCRDT + Debug,
+    L: Log,
 {
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
         Self {
             id: id.to_string(),
-            state: POLog::default(),
+            state: Default::default(),
             group_membership: Views::new(vec![id.to_string()]),
             ltm: MatrixClock::new(&[id.to_string()]),
             lsv: VectorClock::new(id.to_string()),
@@ -71,7 +67,7 @@ where
     }
 
     /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
-    pub fn tc_bcast(&mut self, op: O) -> Event<O> {
+    pub fn tc_bcast(&mut self, op: L::Op) -> Event<L::Op> {
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(op.clone(), metadata.clone());
         self.tc_deliver(event.clone());
@@ -84,7 +80,7 @@ where
     /// Reliable Causal Broadcast (RCB) functionality.
     /// Store a new event in the buffer and check if it is ready to be delivered.
     /// Check if other pending events are made ready to be delivered by the new event.
-    pub fn try_deliver(&mut self, event: Event<O>) {
+    pub fn try_deliver(&mut self, event: Event<L::Op>) {
         // The local peer should not call this function for its own events
         assert_ne!(
             self.id, event.metadata.origin,
@@ -154,7 +150,7 @@ where
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, event: Event<O>) {
+    fn tc_deliver(&mut self, event: Event<L::Op>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -175,7 +171,7 @@ where
             self.tracer.append(event.clone());
         }
 
-        O::effect(event, &mut self.state);
+        self.state.effect(event);
 
         // Check if some operations are ready to be stabilized
         self.tc_stable();
@@ -192,34 +188,34 @@ where
         );
         let svv = self.ltm.svv(ignore.as_slice());
         let upper_bound = Metadata::new(svv.clone(), "", self.view_id());
-        let ready_to_stabilize = self.collect_stabilizable_events(&upper_bound);
+        let ready_to_stabilize = self.state.collect_events(&upper_bound);
         if !ready_to_stabilize.is_empty() {
             self.lsv = self.ltm.svv(&ignore);
         }
 
-        for metadata in &ready_to_stabilize {
-            if let Some(op) = self.state.unstable.get(&metadata.borrow()) {
-                info!(
-                    "[{}] - Op {} with timestamp {} is causally stable",
-                    self.id.blue().bold(),
-                    format!("{:?}", op).green(),
-                    format!("{}", metadata.borrow()).red(),
-                );
-                O::stable(&metadata.borrow(), &mut self.state);
-            } else {
-                error!(
-                    "[{}] - Op with timestamp {} is not found in the state",
-                    self.id.blue().bold(),
-                    format!("{}", metadata.borrow()).red(),
-                );
-            }
+        for event in &ready_to_stabilize {
+            // if let Some(op) = self.state.unstable.get(&metadata.borrow()) {
+            //     info!(
+            //         "[{}] - Op {} with timestamp {} is causally stable",
+            //         self.id.blue().bold(),
+            //         format!("{:?}", op).green(),
+            //         format!("{}", metadata.borrow()).red(),
+            //     );
+            self.state.stable(&event.metadata);
+            // } else {
+            //     error!(
+            //         "[{}] - Op with timestamp {} is not found in the state",
+            //         self.id.blue().bold(),
+            //         format!("{}", metadata.borrow()).red(),
+            //     );
+            // }
         }
     }
 
     /// Transfer the state of a replica to another replica.
     /// `self` is the peer that will receive the state of the `other` peer.
     /// The peer giving the state should be the one that have welcomed the other peer in its group membership.
-    pub fn state_transfer(&mut self, other: &mut Tcsb<O>) {
+    pub fn state_transfer(&mut self, other: &mut Tcsb<L>) {
         let state_transfer = StateTransfer::new(other, &self.id);
 
         self.deliver_state(state_transfer);
@@ -235,8 +231,8 @@ where
     }
 
     /// Utilitary function to evaluate the current state of the whole CRDT.
-    pub fn eval(&self) -> O::Value {
-        O::eval(&self.state)
+    pub fn eval(&self) -> L::Value {
+        self.state.eval()
     }
 
     /// Returns the members that are in the current view and the next view.
@@ -275,7 +271,7 @@ where
             self.id.blue().bold()
         );
         self.tc_stable();
-        assert!(self.state.unstable.is_empty());
+        // assert!(self.state.unstable.is_empty());
         for member in self.group_membership.joining_members() {
             self.ltm.add_key(member.clone());
         }
@@ -324,7 +320,7 @@ where
         waiting_from
     }
 
-    /// Returns the update clock new event of this [`Tcsb<O>`].
+    /// Returns the update clock new event of this [`Tcsb<L>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
         let clock = {
@@ -333,23 +329,6 @@ where
             my_clock.clone()
         };
         Metadata::new(clock, &self.id, self.view_id())
-    }
-
-    /// Returns a list of operations that are ready to be stabilized.
-    fn collect_stabilizable_events(&self, upper_bound: &Metadata) -> Vec<RefCell<Metadata>> {
-        let state = self
-            .state
-            .unstable
-            .range((Bound::Unbounded, Bound::Included(upper_bound)))
-            .filter_map(|(m, _)| {
-                if m.clock <= upper_bound.clock {
-                    Some(RefCell::new(m.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<RefCell<Metadata>>>();
-        state
     }
 
     pub fn group_members(&self) -> &Vec<String> {
@@ -363,21 +342,18 @@ where
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct StateTransfer<O>
-where
-    O: PureCRDT,
-{
+pub struct StateTransfer<L> {
     pub group_membership: Views,
-    pub state: POLog<O>,
+    pub state: L,
     pub lsv: VectorClock<String, usize>,
     pub ltm: MatrixClock<String, usize>,
 }
 
-impl<O> StateTransfer<O>
+impl<L> StateTransfer<L>
 where
-    O: PureCRDT,
+    L: Log,
 {
-    pub fn new(tcsb: &Tcsb<O>, to: &String) -> Self {
+    pub fn new(tcsb: &Tcsb<L>, to: &String) -> Self {
         assert!(
             &tcsb.id != to && tcsb.group_members().contains(to),
             "Peer {} should be in the group of peer {}. The group members are: {:?}",
@@ -394,11 +370,11 @@ where
     }
 }
 
-impl<O> Tcsb<O>
+impl<L> Tcsb<L>
 where
-    O: PureCRDT + Debug,
+    L: Log,
 {
-    pub fn deliver_state(&mut self, state: StateTransfer<O>) {
+    pub fn deliver_state(&mut self, state: StateTransfer<L>) {
         self.lsv = state.lsv;
         self.ltm = state.ltm;
         self.ltm.most_update(&self.id);

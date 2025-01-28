@@ -19,8 +19,8 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(event: &Event<Self>, _state: &POLog<Self>) -> bool {
-        matches!(event.op, RWSet::Clear)
+    fn r(new_event: &Event<Self>, _old_event: &Event<Self>) -> bool {
+        matches!(new_event.op, RWSet::Clear)
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
@@ -40,7 +40,7 @@ where
     }
 
     fn stabilize(metadata: &Metadata, state: &mut POLog<Self>) {
-        // Get the op
+        //Get the op
         let op = state.unstable.get(metadata).unwrap();
 
         let is_stable_or_unstable = |v: &V| {
@@ -87,12 +87,12 @@ where
         }
     }
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(ops: &[Self]) -> Self::Value {
         let mut set = Self::Value::new();
-        for o in state.iter() {
-            if let RWSet::Add(v) = o.as_ref() {
-                if state.iter().all(|e| {
-                    if let RWSet::Remove(v2) = e.as_ref() {
+        for o in ops {
+            if let RWSet::Add(v) = o {
+                if ops.iter().all(|e| {
+                    if let RWSet::Remove(v2) = e {
                         v != v2
                     } else {
                         true
@@ -110,11 +110,11 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::crdt::{rw_set::RWSet, test_util::twins};
+    use crate::crdt::{rw_set::RWSet, test_util::twins_po};
 
     #[test_log::test]
     fn clear_rw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
 
         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
         tcsb_b.try_deliver(event);
@@ -138,7 +138,7 @@ mod tests {
 
     #[test_log::test]
     fn case_one() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
         tcsb_b.try_deliver(event);
 
@@ -149,7 +149,7 @@ mod tests {
 
     #[test_log::test]
     fn case_two() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
 
         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
         let event_b = tcsb_b.tc_bcast(RWSet::Add("a"));
@@ -169,7 +169,7 @@ mod tests {
 
     #[test_log::test]
     fn case_three() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
 
         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
         let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
@@ -191,7 +191,7 @@ mod tests {
 
     #[test_log::test]
     fn case_five() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
         let event = tcsb_a.tc_bcast(RWSet::Remove("a"));
         tcsb_b.try_deliver(event);
 
@@ -207,7 +207,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_add_remove() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<RWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<RWSet<&str>>();
 
         let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));

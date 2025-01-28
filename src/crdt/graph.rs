@@ -23,11 +23,11 @@ where
 {
     type Value = DiGraph<V, ()>;
 
-    fn r(event: &Event<Self>, state: &POLog<Self>) -> bool {
-        match &event.op {
+    fn r(new_event: &Event<Self>, _old_event: &Event<Self>) -> bool {
+        match &new_event.op {
             Graph::AddVertex(_) => false,
             Graph::RemoveVertex(_) => true,
-            Graph::AddArc(v1, v2) => Self::lookup(v1, v2, state),
+            Graph::AddArc(_, _) => false,
             Graph::RemoveArc(_, _) => true,
         }
     }
@@ -81,14 +81,14 @@ where
         Self::r_zero(old_event, new_event)
     }
 
-    fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
+    fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(ops: &[Self]) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for o in &state.stable {
-            match o.as_ref() {
+        for o in ops {
+            match o {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -96,18 +96,16 @@ where
                 Graph::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
-                    graph.add_edge(
-                        *node_index.get(&v1).unwrap(),
-                        *node_index.get(&v2).unwrap(),
-                        (),
-                    );
+                    if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
+                        graph.add_edge(*a, *b, ());
+                    }
                 }
                 // No "remove" operation can be in the stable set
                 _ => {}
             }
         }
-        for o in state.unstable.values() {
-            match o.as_ref() {
+        for o in ops {
+            match o {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
@@ -115,12 +113,10 @@ where
                 Graph::AddArc(v1, v2) => {
                     // probably safe to unwrap because node and edges are inserted in order
                     // (i.e. node before edge)
-                    let idx = graph.add_edge(
-                        *node_index.get(v1).unwrap(),
-                        *node_index.get(v2).unwrap(),
-                        (),
-                    );
-                    edge_index.insert((v1, v2), idx);
+                    if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
+                        let idx = graph.add_edge(*a, *b, ());
+                        edge_index.insert((v1, v2), idx);
+                    }
                 }
                 Graph::RemoveVertex(v) => {
                     // the vertex should be already in the node_index map anyway
@@ -140,53 +136,15 @@ where
     }
 }
 
-impl<V> Graph<V>
-where
-    V: Debug + Clone + Hash + Eq,
-{
-    fn lookup(v1: &V, v2: &V, state: &POLog<Self>) -> bool {
-        let mut found_v1 = false;
-        let mut found_v2 = false;
-
-        for o in state.stable.iter() {
-            if found_v1 && found_v2 {
-                break;
-            }
-            if let Graph::AddVertex(v) = o.as_ref() {
-                if v == v1 {
-                    found_v1 = true;
-                }
-                if v == v2 {
-                    found_v2 = true;
-                }
-            }
-        }
-        for o in state.unstable.values() {
-            if found_v1 && found_v2 {
-                break;
-            }
-            if let Graph::AddVertex(v) = o.as_ref() {
-                if v == v1 {
-                    found_v1 = true;
-                }
-                if v == v2 {
-                    found_v2 = true;
-                }
-            }
-        }
-        !found_v1 || !found_v2
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use petgraph::algo::is_isomorphic;
 
-    use crate::crdt::{graph::Graph, test_util::twins};
+    use crate::crdt::{graph::Graph, test_util::twins_po};
 
     #[test_log::test]
     fn simple_graph() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<Graph<&str>>();
 
         let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
         tcsb_b.try_deliver(event);
@@ -205,7 +163,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_graph() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Graph<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins_po::<Graph<&str>>();
 
         let event = tcsb_a.tc_bcast(Graph::AddVertex("A"));
         tcsb_b.try_deliver(event);

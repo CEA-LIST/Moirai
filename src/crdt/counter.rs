@@ -1,12 +1,10 @@
-use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog, pure_crdt::PureCRDT};
+use crate::protocol::pure_crdt::PureCRDT;
+use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::{
-    borrow::Borrow,
-    ops::{Add, AddAssign, SubAssign},
-};
+use std::ops::{Add, AddAssign, SubAssign};
 
 pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
 
@@ -20,7 +18,7 @@ pub enum Counter<V: Number> {
 impl<V: Number + Debug> PureCRDT for Counter<V> {
     type Value = V;
 
-    fn r(_event: &Event<Self>, _state: &POLog<Self>) -> bool {
+    fn r(_: &Event<Self>, _: &Event<Self>) -> bool {
         false
     }
 
@@ -32,18 +30,18 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
         false
     }
 
-    fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
-
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(state: &[Self]) -> Self::Value {
         let mut counter = Self::Value::default();
         for op in state.iter() {
-            match op.borrow() {
+            match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,
             }
         }
         counter
     }
+
+    fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 }
 
 impl<V> Display for Counter<V>
@@ -60,11 +58,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{counter::Counter, test_util::twins};
+    use crate::{
+        crdt::{counter::Counter, test_util::twins},
+        protocol::po_log::POLog,
+    };
 
     #[test_log::test]
     pub fn simple_counter() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<Counter<isize>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<Counter<isize>>>();
 
         let event = tcsb_a.tc_bcast(Counter::Dec(5));
         tcsb_b.try_deliver(event);

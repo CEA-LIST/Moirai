@@ -19,12 +19,11 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(event: &Event<Self>, _state: &POLog<Self>) -> bool {
-        matches!(event.op, AWSet::Clear | AWSet::Remove(_))
+    fn r(new_event: &Event<Self>, _old_event: &Event<Self>) -> bool {
+        matches!(new_event.op, AWSet::Clear | AWSet::Remove(_))
     }
 
     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        // use early return
         old_event.metadata.clock < new_event.metadata.clock
             && (matches!(new_event.op, AWSet::Clear)
                 || match (&old_event.op, &new_event.op) {
@@ -41,10 +40,10 @@ where
 
     fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
 
-    fn eval(state: &POLog<Self>) -> Self::Value {
+    fn eval(ops: &[Self]) -> Self::Value {
         let mut set = Self::Value::new();
-        for o in state.iter() {
-            if let AWSet::Add(v) = o.as_ref() {
+        for o in ops {
+            if let AWSet::Add(v) = o {
                 set.insert(v.clone());
             }
         }
@@ -56,11 +55,14 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{crdt::aw_set::AWSet, crdt::test_util::twins};
+    use crate::{
+        crdt::{aw_set::AWSet, test_util::twins},
+        protocol::po_log::POLog,
+    };
 
     #[test_log::test]
     fn simple_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
@@ -88,7 +90,7 @@ mod tests {
 
     #[test_log::test]
     fn clear_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
 
         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
 
@@ -113,7 +115,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
@@ -137,7 +139,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_add_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("c"));
         tcsb_b.try_deliver(event);
@@ -161,7 +163,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_add_aw_set_2() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<AWSet<&str>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
 
         let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));
