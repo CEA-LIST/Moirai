@@ -20,6 +20,8 @@ pub trait Log: Default + Clone {
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool;
 
+    fn r_n(&mut self, metadata: &Metadata, conservative: bool);
+
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
     fn eval(&self) -> Self::Value;
@@ -52,6 +54,8 @@ pub trait Log: Default + Clone {
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
     }
+
+    fn is_empty(&self) -> bool;
 }
 
 impl<O> Log for POLog<O>
@@ -124,6 +128,18 @@ where
         false
     }
 
+    /// conservative: keep concurrent operations
+    fn r_n(&mut self, metadata: &Metadata, conservative: bool) {
+        self.stable.clear();
+        self.unstable.retain(|m, _| {
+            if conservative {
+                !(m.clock < metadata.clock)
+            } else {
+                m.clock > metadata.clock
+            }
+        });
+    }
+
     fn stabilize(&mut self, metadata: &Metadata) {
         O::stabilize(metadata, self);
     }
@@ -131,5 +147,9 @@ where
     fn eval(&self) -> Self::Value {
         let ops: Vec<O> = self.iter().map(|o| o.as_ref().clone()).collect::<Vec<O>>();
         O::eval(&ops)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stable.is_empty() && self.unstable.is_empty()
     }
 }
