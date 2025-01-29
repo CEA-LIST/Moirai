@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use super::aw_set::AWSet;
 
 #[derive(Clone, Debug)]
-pub enum UWMap<K, O> {
+pub enum AWMap<K, O> {
     Update(K, O),
     Remove(K),
 }
@@ -31,12 +31,12 @@ where
     L: Log,
     K: Keyable + Clone + Debug,
 {
-    type Op = UWMap<K, L::Op>;
+    type Op = AWMap<K, L::Op>;
     type Value = HashMap<K, L::Value>;
 
     fn new_event(&mut self, event: &Event<Self::Op>) {
         match &event.op {
-            UWMap::Update(k, v) => {
+            AWMap::Update(k, v) => {
                 let event = Event::new(v.clone(), event.metadata.clone());
                 self.values.entry(k.clone()).or_default().new_event(&event);
                 self.keys
@@ -48,7 +48,7 @@ where
 
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
         match &event.op {
-            UWMap::Update(k, v) => {
+            AWMap::Update(k, v) => {
                 let event = Event::new(AWSet::Add(k.clone()), event.metadata.clone());
                 self.keys.prune_redundant_events(&event, is_r_0);
 
@@ -58,7 +58,7 @@ where
                     .or_default()
                     .prune_redundant_events(&event, is_r_0);
             }
-            UWMap::Remove(k) => {
+            AWMap::Remove(k) => {
                 let event = Event::new(AWSet::Remove(k.clone()), event.metadata.clone());
                 self.keys.prune_redundant_events(&event, is_r_0);
 
@@ -81,7 +81,7 @@ where
             events.extend(
                 v.collect_events(upper_bound)
                     .into_iter()
-                    .map(|e| Event::new(UWMap::Update(k.clone(), e.op), e.metadata)),
+                    .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
             );
         }
         events
@@ -97,8 +97,8 @@ where
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         let event = match &event.op {
-            UWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata.clone()),
-            UWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata.clone()),
+            AWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata.clone()),
+            AWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata.clone()),
         };
         self.keys.any_r(&event)
     }
@@ -131,10 +131,10 @@ mod tests {
 
     use crate::{
         crdt::{
+            aw_map::{AWMap, UWMapLog},
             counter::Counter,
             duet::{Duet, DuetLog},
             test_util::twins,
-            uw_map::{UWMap, UWMapLog},
         },
         protocol::po_log::POLog,
     };
@@ -143,13 +143,13 @@ mod tests {
     fn simple_aw_map() {
         let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, POLog<Counter<i32>>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a".to_string(), Counter::Dec(5)));
+        let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Dec(5)));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b".to_string(), Counter::Inc(5)));
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Counter::Inc(5)));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("a".to_string(), Counter::Inc(15)));
+        let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(15)));
         tcsb_b.try_deliver(event);
 
         let mut map = HashMap::new();
@@ -164,22 +164,22 @@ mod tests {
         let (mut tcsb_a, mut tcsb_b) =
             twins::<UWMapLog<String, DuetLog<POLog<Counter<i32>>, POLog<Counter<i32>>>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update(
+        let event = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
             Duet::First(Counter::Inc(15)),
         ));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update(
+        let event = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
             Duet::First(Counter::Inc(10)),
         ));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update(
+        let event = tcsb_a.tc_bcast(AWMap::Update(
             "b".to_string(),
             Duet::Second(Counter::Dec(7)),
         ));
@@ -197,30 +197,30 @@ mod tests {
         let (mut tcsb_a, mut tcsb_b) =
             twins::<UWMapLog<String, DuetLog<POLog<Counter<i32>>, POLog<Counter<i32>>>>>();
 
-        let event = tcsb_a.tc_bcast(UWMap::Update(
+        let event = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
             Duet::First(Counter::Inc(15)),
         ));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
         tcsb_b.try_deliver(event);
 
-        let event_a = tcsb_a.tc_bcast(UWMap::Update(
+        let event_a = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
             Duet::First(Counter::Inc(10)),
         ));
-        let event_b = tcsb_b.tc_bcast(UWMap::Remove("a".to_string()));
+        let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
         tcsb_b.try_deliver(event_a);
         tcsb_a.try_deliver(event_b);
 
-        let event = tcsb_a.tc_bcast(UWMap::Update(
+        let event = tcsb_a.tc_bcast(AWMap::Update(
             "b".to_string(),
             Duet::Second(Counter::Dec(7)),
         ));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_a.tc_bcast(UWMap::Remove("b".to_string()));
+        let event = tcsb_a.tc_bcast(AWMap::Remove("b".to_string()));
         tcsb_b.try_deliver(event);
 
         let mut map = HashMap::new();
