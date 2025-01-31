@@ -1,4 +1,5 @@
 use crate::protocol::metadata::Metadata;
+use crate::protocol::pulling::Since;
 use crate::protocol::{event::Event, log::Log, po_log::POLog, utils::Keyable};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -80,6 +81,18 @@ where
         for (k, v) in &self.values {
             events.extend(
                 v.collect_events(upper_bound)
+                    .into_iter()
+                    .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
+            );
+        }
+        events
+    }
+
+    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+        let mut events = vec![];
+        for (k, v) in &self.values {
+            events.extend(
+                v.collect_events_since(since)
                     .into_iter()
                     .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
             );
