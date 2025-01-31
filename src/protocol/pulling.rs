@@ -78,25 +78,8 @@ where
             return Err(DeliveryError::UnknownPeer);
         }
 
-        let _boundary = Metadata::new(since.clock.clone(), "", since.view_id);
+        let events = self.state.collect_events_since(since);
 
-        let events = vec![];
-        // let events: Vec<Event<L>> = self
-        //     .state
-        //     .unstable
-        //     .iter()
-        //     .filter_map(|(m, o)| {
-        //         // If the dot is greater than the one in the since vector clock, then we have not delivered the event
-        //         if m.clock.get(&m.origin).unwrap() > boundary.clock.get(&m.origin).unwrap()
-        //             && !since.exclude.contains(&m.dot())
-        //             && m.view_id <= boundary.view_id
-        //         {
-        //             Some(Event::new(o.as_ref().clone(), m.clone()))
-        //         } else {
-        //             None
-        //         }
-        //     })
-        //     .collect::<Vec<_>>();
         Ok(Batch::new(
             events,
             Metadata::new(self.my_clock().clone(), &self.id, 0),

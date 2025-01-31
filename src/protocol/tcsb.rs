@@ -338,6 +338,10 @@ where
     pub fn view_id(&self) -> usize {
         self.group_membership.installed_view().id
     }
+
+    pub fn views(&self) -> Views {
+        self.group_membership.clone()
+    }
 }
 
 #[derive(Clone, Debug)]

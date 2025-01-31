@@ -1,4 +1,4 @@
-use crate::protocol::{event::Event, log::Log, metadata::Metadata};
+use crate::protocol::{event::Event, log::Log, metadata::Metadata, pulling::Since};
 
 #[derive(Clone, Debug)]
 pub enum Duet<F, S> {
@@ -61,6 +61,22 @@ where
         for e in events_sl {
             result.push(Event::new(Duet::Second(e.op), e.metadata));
         }
+        result
+    }
+
+    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+        let mut result = self
+            .first
+            .collect_events_since(since)
+            .into_iter()
+            .map(|e| Event::new(Duet::First(e.op), e.metadata))
+            .collect::<Vec<_>>();
+        result.extend(
+            self.second
+                .collect_events_since(since)
+                .into_iter()
+                .map(|e| Event::new(Duet::Second(e.op), e.metadata)),
+        );
         result
     }
 
