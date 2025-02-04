@@ -342,6 +342,10 @@ where
     pub fn views(&self) -> Views {
         self.group_membership.clone()
     }
+
+    pub fn stable_across_views(&self) -> Vec<&String> {
+        self.group_membership.stable_across_views()
+    }
 }
 
 #[derive(Clone, Debug)]

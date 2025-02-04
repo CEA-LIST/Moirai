@@ -5,10 +5,7 @@ use po_crdt::{
 
 fn batch(from: Vec<&Tcsb<POLog<Counter<i32>>>>, to: &mut Tcsb<POLog<Counter<i32>>>) {
     for f in from {
-        if to
-            .stable_members_in_transition()
-            .is_some_and(|v| v.contains(&&f.id))
-        {
+        if to.stable_across_views().contains(&&f.id) {
             let batch = f.events_since(&Since::new_from(to));
             to.deliver_batch(batch);
         }
