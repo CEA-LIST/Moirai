@@ -106,6 +106,18 @@ impl Views {
         None
     }
 
+    pub fn stable_across_views(&self) -> Vec<&String> {
+        let mut stable_members: Vec<&String> = self.installed_view().members.iter().collect();
+        for i in self.current_view_id + 1..self.views.len() {
+            stable_members = stable_members
+                .iter()
+                .filter(|id| self.views[i].members.contains(*id))
+                .copied()
+                .collect();
+        }
+        stable_members
+    }
+
     pub fn installing_members(&self) -> Option<Vec<&String>> {
         if let Some(installing_view) = self.installing_view() {
             let members = installing_view.members.iter().collect();
@@ -150,5 +162,37 @@ impl Views {
         } else {
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::protocol::membership::{View, ViewStatus};
+
+    #[test_log::test]
+    fn test_stable_across_views() {
+        let views = vec![
+            View::new(
+                0,
+                vec!["a".to_string(), "b".to_string()],
+                ViewStatus::Installed,
+            ),
+            View::new(
+                1,
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                ViewStatus::Installing,
+            ),
+            View::new(
+                2,
+                vec!["a".to_string(), "c".to_string(), "d".to_string()],
+                ViewStatus::Pending,
+            ),
+        ];
+        let views = super::Views {
+            views,
+            current_view_id: 0,
+        };
+        let stable_members = views.stable_across_views();
+        assert_eq!(stable_members, vec![&"a".to_string()]);
     }
 }
