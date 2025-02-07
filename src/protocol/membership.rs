@@ -1,11 +1,26 @@
+use log::info;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ViewStatus {
-    Installing,
+    /// The view has been installed. At least one view is always installed and the last installed view is the current view.
     Installed,
+    /// The view is being installed. There is at most one view being installed at a time.
+    Installing,
+    /// The view is planned to be installed. It will be installed right after the current installing view.
+    /// Only consecutive views can be planned and they must follow the installing one.
+    Planned,
+    /// The view is pending.
     Pending,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum ViewInstallingStatus {
+    NothingToInstall,
+    AlreadyInstalling,
+    Starting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,27 +72,36 @@ impl Views {
         assert!(!members.is_empty());
         let view_id = self.views.len();
         let view = View::new(view_id, members, ViewStatus::Pending);
+        assert!(self.views.last().unwrap().id < view_id);
         self.views.push(view);
     }
 
-    pub fn start_installing(&mut self) -> bool {
+    /// Start installing the next view
+    pub fn start_installing(&mut self) -> ViewInstallingStatus {
         let next_pending_view = self.views.get_mut(self.current_view_id + 1);
         if let Some(view) = next_pending_view {
-            if view.status == ViewStatus::Pending {
+            if view.status == ViewStatus::Pending || view.status == ViewStatus::Planned {
                 view.status = ViewStatus::Installing;
-                return true;
+                return ViewInstallingStatus::Starting;
+            } else {
+                return ViewInstallingStatus::AlreadyInstalling;
             }
         }
-        false
+        ViewInstallingStatus::NothingToInstall
     }
 
     /// Mark as installed the last view
     pub fn mark_installed(&mut self) {
-        assert!(
-            self.views.get_mut(self.current_view_id + 1).unwrap().status == ViewStatus::Installing
+        let view = self.views.get_mut(self.current_view_id + 1).unwrap();
+        assert_eq!(
+            view.status,
+            ViewStatus::Installing,
+            "Trying to mark as installed a view that is not installing. Status of next view is {:?}",
+            view.status,
         );
-        self.views.get_mut(self.current_view_id + 1).unwrap().status = ViewStatus::Installed;
+        view.status = ViewStatus::Installed;
         self.current_view_id += 1;
+        info!("View {} installed", self.current_view_id);
     }
 
     /// Returns the last installed view (not the one being installed)
@@ -162,6 +186,28 @@ impl Views {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn planning(&mut self, view_id: usize) {
+        assert!(view_id < self.views.len());
+        let installing_id = self.installing_view().unwrap().id;
+        for v in &mut self.views[installing_id..=view_id] {
+            v.status = ViewStatus::Planned;
+        }
+    }
+
+    pub fn last_planned_id(&self) -> Option<usize> {
+        let mut last_planned_id = None;
+        for view in &self.views[self.current_view_id..] {
+            if view.status == ViewStatus::Planned {
+                last_planned_id = Some(view.id);
+            }
+        }
+        last_planned_id
+    }
+
+    pub fn last_view(&self) -> &View {
+        self.views.last().unwrap()
     }
 }
 

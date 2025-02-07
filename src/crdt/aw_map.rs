@@ -136,6 +136,10 @@ where
     fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
+
+    fn lowest_view_id(&self) -> usize {
+        self.keys.lowest_view_id()
+    }
 }
 
 #[cfg(test)]

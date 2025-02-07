@@ -40,15 +40,13 @@ pub mod test_util {
 
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
         tcsb_a.start_installing_view();
-        tcsb_a.mark_installed_view();
+        tcsb_a.mark_view_installed();
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
 
         // --> Causal stability <--
         tcsb_b.state_transfer(&mut tcsb_a);
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
-        // assert_eq!(tcsb_a.state.stable.len(), tcsb_b.state.stable.len());
-        // assert_eq!(tcsb_a.state.unstable.len(), tcsb_b.state.unstable.len());
         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
 
@@ -68,11 +66,11 @@ pub mod test_util {
 
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         tcsb_a.start_installing_view();
-        tcsb_a.mark_installed_view();
+        tcsb_a.mark_view_installed();
 
         tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         tcsb_b.start_installing_view();
-        tcsb_b.mark_installed_view();
+        tcsb_b.mark_view_installed();
 
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
@@ -104,7 +102,7 @@ pub mod test_util {
             "d".to_string(),
         ]);
         tcsb_a.start_installing_view();
-        tcsb_a.mark_installed_view();
+        tcsb_a.mark_view_installed();
 
         tcsb_b.add_pending_view(vec![
             "a".to_string(),
@@ -113,7 +111,7 @@ pub mod test_util {
             "d".to_string(),
         ]);
         tcsb_b.start_installing_view();
-        tcsb_b.mark_installed_view();
+        tcsb_b.mark_view_installed();
 
         tcsb_c.add_pending_view(vec![
             "a".to_string(),
@@ -122,7 +120,7 @@ pub mod test_util {
             "d".to_string(),
         ]);
         tcsb_c.start_installing_view();
-        tcsb_c.mark_installed_view();
+        tcsb_c.mark_view_installed();
 
         assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
         assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);

@@ -110,4 +110,10 @@ where
     fn is_empty(&self) -> bool {
         self.first.is_empty() && self.second.is_empty()
     }
+
+    fn lowest_view_id(&self) -> usize {
+        self.first
+            .lowest_view_id()
+            .min(self.second.lowest_view_id())
+    }
 }
