@@ -2,7 +2,7 @@ use colored::*;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
-use super::membership::Views;
+use super::membership::{ViewInstallingStatus, Views};
 use super::{event::Event, metadata::Metadata};
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::protocol::guard::{guard_against_duplicates, guard_against_out_of_order};
@@ -101,9 +101,10 @@ where
                 format!("{}", event.metadata.clock).red()
             );
         }
-        if self.view_id() > event.metadata.view_id {
+        // If the event is from a previous view, ignore it
+        if event.metadata.view_id < self.view_id() {
             error!(
-                "[{}] - Event from {} with an old view id {} detected with timestamp {}",
+                "[{}] - Event from {} with a view id {} inferior to the current view id {}",
                 self.id.blue().bold(),
                 event.metadata.origin.blue(),
                 format!("{}", event.metadata.view_id).blue(),
@@ -137,12 +138,15 @@ where
             .sort_by(|a, b| a.metadata.cmp(&b.metadata));
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
-            // If the event is causally ready...
-            if !guard_against_out_of_order(&self.ltm, &event.metadata) {
+            // If the event is causally ready, and
+            // it belongs to the current view...
+            if !guard_against_out_of_order(&self.ltm, &event.metadata)
+                && event.metadata.view_id == self.view_id()
+            {
                 // ...deliver it
                 self.tc_deliver(event);
             } else {
-                // ...otherwise, keep it in the buffer
+                // ...otherwise, keep it in the buffer (including events from the next views)
                 still_pending.push_back(event);
             }
         }
@@ -194,21 +198,7 @@ where
         }
 
         for event in &ready_to_stabilize {
-            // if let Some(op) = self.state.unstable.get(&metadata.borrow()) {
-            //     info!(
-            //         "[{}] - Op {} with timestamp {} is causally stable",
-            //         self.id.blue().bold(),
-            //         format!("{:?}", op).green(),
-            //         format!("{}", metadata.borrow()).red(),
-            //     );
             self.state.stable(&event.metadata);
-            // } else {
-            //     error!(
-            //         "[{}] - Op with timestamp {} is not found in the state",
-            //         self.id.blue().bold(),
-            //         format!("{}", metadata.borrow()).red(),
-            //     );
-            // }
         }
     }
 
@@ -256,7 +246,7 @@ where
     }
 
     /// Start installing the next view.
-    pub fn start_installing_view(&mut self) -> bool {
+    pub fn start_installing_view(&mut self) -> ViewInstallingStatus {
         info!(
             "[{}] - Starting to install the next view",
             self.id.blue().bold()
@@ -265,13 +255,13 @@ where
     }
 
     /// Start a stability phase and mark the current view as installed.
-    pub fn mark_installed_view(&mut self) {
+    pub fn mark_view_installed(&mut self) {
         info!(
             "[{}] - Marking the installing view as installed",
             self.id.blue().bold()
         );
         self.tc_stable();
-        // assert!(self.state.unstable.is_empty());
+        assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
         for member in self.group_membership.joining_members() {
             self.ltm.add_key(member.clone());
         }
@@ -328,7 +318,14 @@ where
             my_clock.increment(&my_id);
             my_clock.clone()
         };
-        Metadata::new(clock, &self.id, self.view_id())
+        let view_id = if self.group_membership.installing_view().is_some() {
+            self.group_membership
+                .last_planned_id()
+                .unwrap_or_else(|| self.group_membership.installing_view().unwrap().id)
+        } else {
+            self.view_id()
+        };
+        Metadata::new(clock, &self.id, view_id)
     }
 
     pub fn group_members(&self) -> &Vec<String> {
@@ -345,6 +342,18 @@ where
 
     pub fn stable_across_views(&self) -> Vec<&String> {
         self.group_membership.stable_across_views()
+    }
+
+    pub fn planning(&mut self, view_id: usize) {
+        self.group_membership.planning(view_id);
+    }
+
+    pub fn last_planned_id(&self) -> Option<usize> {
+        self.group_membership.last_planned_id()
+    }
+
+    pub fn last_view_id(&self) -> usize {
+        self.group_membership.last_view().id
     }
 }
 

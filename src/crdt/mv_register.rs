@@ -41,37 +41,6 @@ where
     }
 }
 
-// impl<V> NestedPureCRDT for MVRegister<V>
-// where
-//     V: Debug + Clone + Hash + Eq,
-// {
-//     type Value = Vec<V>;
-
-//     fn r(event: &Event<Self>, _: &POLog<Self>) -> bool {
-//         matches!(event.op, MVRegister::Clear)
-//     }
-
-//     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-//         old_event.metadata.clock < new_event.metadata.clock
-//     }
-
-//     fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-//         Self::r_zero(old_event, new_event)
-//     }
-
-//     fn stabilize(_: &Metadata, _: &mut POLog<Self>) {}
-
-//     fn eval(state: &POLog<Self>) -> Self::Value {
-//         let mut vec = Self::Value::new();
-//         for op in state.iter() {
-//             if let MVRegister::Write(v) = op.as_ref() {
-//                 vec.push(v.clone());
-//             }
-//         }
-//         vec
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
     use crate::crdt::{

@@ -27,7 +27,7 @@ fn join_new_group() {
 
     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_a.start_installing_view();
-    tcsb_a.mark_installed_view();
+    tcsb_a.mark_view_installed();
     tcsb_b.state_transfer(&mut tcsb_a);
 
     assert_eq!(tcsb_a.group_members(), tcsb_a.group_members(),);
@@ -42,11 +42,11 @@ fn join_existing_group() {
 
     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_a.start_installing_view();
-    tcsb_a.mark_installed_view();
+    tcsb_a.mark_view_installed();
 
     tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_b.start_installing_view();
-    tcsb_b.mark_installed_view();
+    tcsb_b.mark_view_installed();
 
     let event_a_1 = tcsb_a.tc_bcast(Counter::Inc(1));
     let event_b_1 = tcsb_b.tc_bcast(Counter::Inc(7));
@@ -78,8 +78,8 @@ fn join_existing_group() {
     let batch_from_b = tcsb_b.events_since(&Since::new_from(&tcsb_a));
     tcsb_a.deliver_batch(batch_from_b);
 
-    tcsb_a.mark_installed_view();
-    tcsb_b.mark_installed_view();
+    tcsb_a.mark_view_installed();
+    tcsb_b.mark_view_installed();
 
     tcsb_c.state_transfer(&mut tcsb_a);
 
@@ -120,7 +120,7 @@ fn leave() {
     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
 
     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
-        tcsb.mark_installed_view();
+        tcsb.mark_view_installed();
     }
 
     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
@@ -152,7 +152,7 @@ fn rejoin() {
     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
 
     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
-        tcsb.mark_installed_view();
+        tcsb.mark_view_installed();
     }
 
     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
@@ -173,7 +173,7 @@ fn rejoin() {
     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
 
     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
-        tcsb.mark_installed_view();
+        tcsb.mark_view_installed();
     }
 
     tcsb_c.state_transfer(&mut tcsb_a);
@@ -182,4 +182,37 @@ fn rejoin() {
     assert_eq!(tcsb_c.group_members(), tcsb_b.group_members());
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
+}
+
+#[test_log::test]
+fn operations_while_installing() {
+    let (mut tcsb_a, _, _) = triplet_po::<Counter<i32>>();
+
+    tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    tcsb_a.add_pending_view(vec![
+        "a".to_string(),
+        "b".to_string(),
+        "c".to_string(),
+        "d".to_string(),
+    ]);
+    tcsb_a.add_pending_view(vec!["a".to_string(), "c".to_string(), "d".to_string()]);
+
+    tcsb_a.planning(tcsb_a.last_view_id());
+    tcsb_a.start_installing_view();
+
+    let _ = tcsb_a.tc_bcast(Counter::Inc(-1));
+    let _ = tcsb_a.tc_bcast(Counter::Inc(2));
+    let _ = tcsb_a.tc_bcast(Counter::Inc(-3));
+    let _ = tcsb_a.tc_bcast(Counter::Inc(11));
+
+    while tcsb_a
+        .last_planned_id()
+        .is_some_and(|id| id > tcsb_a.view_id())
+    {
+        tcsb_a.mark_view_installed();
+        tcsb_a.start_installing_view();
+    }
+
+    assert_eq!(tcsb_a.eval(), 9);
+    assert_eq!(tcsb_a.view_id(), 4);
 }

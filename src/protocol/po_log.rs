@@ -219,6 +219,10 @@ where
     fn is_empty(&self) -> bool {
         self.stable.is_empty() && self.unstable.is_empty()
     }
+
+    fn lowest_view_id(&self) -> usize {
+        self.unstable.keys().map(|m| m.view_id).min().unwrap_or(0)
+    }
 }
 
 impl<O> Default for POLog<O>
