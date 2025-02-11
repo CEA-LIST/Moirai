@@ -1,3 +1,5 @@
+use crate::clocks::vector_clock::VectorClock;
+
 use super::event::Event;
 use super::log::Log;
 use super::metadata::Metadata;
@@ -13,7 +15,6 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::iter::Chain;
 use std::ops::Bound;
-use std::rc::Rc;
 use std::slice::{Iter, IterMut};
 
 /// # Causal DAG operation history
@@ -25,9 +26,8 @@ use std::slice::{Iter, IterMut};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct POLog<O> {
-    pub stable: Vec<Rc<O>>,
-    pub unstable: BTreeMap<Metadata, Rc<O>>,
-    // pub path_trie: PathTrie<O>,
+    pub stable: Vec<O>,
+    pub unstable: BTreeMap<Metadata, O>,
 }
 
 impl<O> POLog<O>
@@ -38,12 +38,10 @@ where
         Self {
             stable: vec![],
             unstable: BTreeMap::new(),
-            // path_trie: Trie::new(),
         }
     }
 
     pub fn new_event(&mut self, event: &Event<O>) {
-        let rc_op = Rc::new(event.op.clone());
         if self.unstable.contains_key(&event.metadata) {
             info!(
                 "Event with metadata {:?} already present in the log: {:?}",
@@ -51,7 +49,9 @@ where
                 self.unstable.get(&event.metadata).unwrap()
             );
         }
-        let is_key_present = self.unstable.insert(event.metadata.clone(), rc_op);
+        let is_key_present = self
+            .unstable
+            .insert(event.metadata.clone(), event.op.clone());
         assert!(
             is_key_present.is_none(),
             "Key already present in the log with value {:?}",
@@ -66,7 +66,7 @@ where
             info!(
                 "[{}] - Op {} is redundant",
                 id.blue().bold(),
-                format!("{:?}", removed.as_ref()).green()
+                format!("{:?}", removed).green()
             );
         }
         for m in unstable {
@@ -75,22 +75,22 @@ where
                 info!(
                     "[{}] - Op {} is redundant",
                     id.blue().bold(),
-                    format!("{:?}", removed.as_ref()).green()
+                    format!("{:?}", removed).green()
                 );
             }
         }
     }
 
     /// Should only be used in `eval()`
-    pub fn new_stable(&mut self, op: Rc<O>) {
+    pub fn new_stable(&mut self, op: O) {
         self.stable.push(op);
     }
 
-    pub fn iter(&self) -> Chain<Iter<Rc<O>>, Values<Metadata, Rc<O>>> {
+    pub fn iter(&self) -> Chain<Iter<O>, Values<Metadata, O>> {
         self.stable.iter().chain(self.unstable.values())
     }
 
-    pub fn iter_mut(&mut self) -> Chain<IterMut<Rc<O>>, ValuesMut<Metadata, Rc<O>>> {
+    pub fn iter_mut(&mut self) -> Chain<IterMut<O>, ValuesMut<Metadata, O>> {
         self.stable.iter_mut().chain(self.unstable.values_mut())
     }
 
@@ -113,7 +113,7 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
         // Keep only the operations that are not made redundant by the new operation
         self.stable.retain(|o| {
-            let old_event: Event<O> = Event::new(o.as_ref().clone(), Metadata::default());
+            let old_event: Event<O> = Event::new(o.clone(), Metadata::default());
             if is_r_0 {
                 !(Self::Op::r_zero(&old_event, event))
             } else {
@@ -121,7 +121,7 @@ where
             }
         });
         self.unstable.retain(|m, o| {
-            let old_event: Event<O> = Event::new(o.as_ref().clone(), m.clone());
+            let old_event: Event<O> = Event::new(o.clone(), m.clone());
             if is_r_0 {
                 !(Self::Op::r_zero(&old_event, event))
             } else {
@@ -144,7 +144,7 @@ where
             .range((Bound::Unbounded, Bound::Included(upper_bound)))
             .filter_map(|(m, o)| {
                 if m.clock <= upper_bound.clock {
-                    Some(Event::new(o.as_ref().clone(), m.clone()))
+                    Some(Event::new(o.clone(), m.clone()))
                 } else {
                     None
                 }
@@ -163,7 +163,7 @@ where
                     && !since.exclude.contains(&m.dot())
                     && m.view_id <= boundary.view_id
                 {
-                    Some(Event::new(o.as_ref().clone(), m.clone()))
+                    Some(Event::new(o.clone(), m.clone()))
                 } else {
                     None
                 }
@@ -173,13 +173,13 @@ where
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         for o in &self.stable {
-            let old_event = Event::new(o.as_ref().clone(), Metadata::default());
+            let old_event = Event::new(o.clone(), Metadata::default());
             if O::r(event, &old_event) {
                 return true;
             }
         }
         for (m, o) in self.unstable.iter() {
-            let old_event = Event::new(o.as_ref().clone(), m.clone());
+            let old_event = Event::new(o.clone(), m.clone());
             if O::r(event, &old_event) {
                 return true;
             }
@@ -212,7 +212,7 @@ where
     }
 
     fn eval(&self) -> Self::Value {
-        let ops: Vec<O> = self.iter().map(|o| o.as_ref().clone()).collect::<Vec<O>>();
+        let ops: Vec<O> = self.iter().cloned().collect();
         O::eval(&ops)
     }
 
@@ -222,6 +222,29 @@ where
 
     fn lowest_view_id(&self) -> usize {
         self.unstable.keys().map(|m| m.view_id).min().unwrap_or(0)
+    }
+
+    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
+        if self.unstable.iter().any(|(m, _)| m.clock.len() == 1) {
+            let old_unstable = self.unstable.clone();
+            self.unstable = BTreeMap::new();
+            for (m, o) in old_unstable {
+                assert_eq!(
+                    m.clock.len(),
+                    1,
+                    "Vector clock has more than one element: {}",
+                    m.clock
+                );
+                let mut new_m = m.clone();
+                for (key, value) in clock.iter() {
+                    if new_m.clock.contains(key) {
+                        continue;
+                    }
+                    new_m.clock.insert(key.clone(), *value);
+                }
+                self.unstable.insert(new_m, o);
+            }
+        }
     }
 }
 

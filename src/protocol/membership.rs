@@ -192,14 +192,16 @@ impl Views {
         assert!(view_id < self.views.len());
         let installing_id = self.installing_view().unwrap().id;
         for v in &mut self.views[installing_id..=view_id] {
-            v.status = ViewStatus::Planned;
+            if v.status == ViewStatus::Pending {
+                v.status = ViewStatus::Planned;
+            }
         }
     }
 
     pub fn last_planned_id(&self) -> Option<usize> {
         let mut last_planned_id = None;
         for view in &self.views[self.current_view_id..] {
-            if view.status == ViewStatus::Planned {
+            if view.status == ViewStatus::Planned || view.status == ViewStatus::Installing {
                 last_planned_id = Some(view.id);
             }
         }

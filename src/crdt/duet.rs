@@ -1,4 +1,7 @@
-use crate::protocol::{event::Event, log::Log, metadata::Metadata, pulling::Since};
+use crate::{
+    clocks::vector_clock::VectorClock,
+    protocol::{event::Event, log::Log, metadata::Metadata, pulling::Since},
+};
 
 #[derive(Clone, Debug)]
 pub enum Duet<F, S> {
@@ -115,5 +118,10 @@ where
         self.first
             .lowest_view_id()
             .min(self.second.lowest_view_id())
+    }
+
+    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
+        self.first.scalar_to_vec(clock);
+        self.second.scalar_to_vec(clock);
     }
 }
