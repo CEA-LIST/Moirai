@@ -45,38 +45,38 @@ where
 
         let is_stable_or_unstable = |v: &V| {
             // Is there an already stable op (add or rmv) with the same value?
-            state.stable.iter().any(|o| match o.as_ref() {
+            state.stable.iter().any(|o| match o {
                 RWSet::Add(v2) | RWSet::Remove(v2) => v == v2,
                 _ => false,
             })
             // Is there another unstable op (add or rmv, not the current op) with the same value?
-            || state.unstable.iter().any(|(t, o)| match o.as_ref() {
+            || state.unstable.iter().any(|(t, o)| match o {
                 RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && metadata.clock != t.clock,
                 _ => false,
             })
         };
 
         // Should we remove the op?
-        let to_remove = match op.as_ref() {
+        let to_remove = match op {
             // If it's a 'add' op, remove it if another operation with the same value exists
             RWSet::Add(v) => is_stable_or_unstable(v),
             // If it's a 'remove' op, remove it if there is no 'add' op with the same value
             RWSet::Remove(v) => !state
                 .stable
                 .iter()
-                .any(|o| matches!(o.as_ref(), RWSet::Add(v2) if v == v2))
+                .any(|o| matches!(o, RWSet::Add(v2) if v == v2))
                 && !state.unstable.iter().any(
-                    |(t, o)| matches!(o.as_ref(), RWSet::Add(v2) if v == v2 && metadata.clock != t.clock),
+                    |(t, o)| matches!(o, RWSet::Add(v2) if v == v2 && metadata.clock != t.clock),
                 ),
             RWSet::Clear => true,
         };
 
         // If it's a 'add' op and there exists a stable remove op with the same value, remove it
-        if let RWSet::Add(v) = op.as_ref() {
+        if let RWSet::Add(v) = op {
             if let Some(i) = state
                 .stable
                 .iter()
-                .position(|o| matches!(o.as_ref(), RWSet::Remove(v2) if v == v2))
+                .position(|o| matches!(o, RWSet::Remove(v2) if v == v2))
             {
                 state.stable.remove(i);
             }

@@ -1,3 +1,5 @@
+use crate::clocks::vector_clock::VectorClock;
+
 use super::{event::Event, metadata::Metadata, pulling::Since};
 use std::fmt::Debug;
 
@@ -59,4 +61,8 @@ pub trait Log: Default + Clone {
 
     /// Return the lowest view ID in the log
     fn lowest_view_id(&self) -> usize;
+
+    /// For every unstable operation in the log where the clock is a scalar,
+    /// convert the scalar clock to a vector clock using the clock in parameter
+    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>);
 }

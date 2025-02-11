@@ -71,7 +71,6 @@ where
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(op.clone(), metadata.clone());
         self.tc_deliver(event.clone());
-        // self.add_timestamp_extension(&mut metadata.clock);
         #[cfg(feature = "utils")]
         self.tracer.append(event.clone());
         Event::new(op, metadata)
@@ -100,6 +99,7 @@ where
                 event.metadata.origin.blue(),
                 format!("{}", event.metadata.clock).red()
             );
+            return;
         }
         // If the event is from a previous view, ignore it
         if event.metadata.view_id < self.view_id() {
@@ -271,6 +271,10 @@ where
         self.group_membership.mark_installed();
         if !self.group_members().contains(&self.id) {
             self.group_membership = Views::new(vec![self.id.to_string()]);
+            self.tc_stable();
+        } else if self.group_membership.last_planned_id().is_none() {
+            let my_clock = self.my_clock().clone();
+            self.state.scalar_to_vec(&my_clock);
         }
     }
 
@@ -313,18 +317,35 @@ where
     /// Returns the update clock new event of this [`Tcsb<L>`].
     fn generate_metadata_for_new_event(&mut self) -> Metadata {
         let my_id = self.id.clone();
-        let clock = {
-            let my_clock = self.my_clock_mut();
-            my_clock.increment(&my_id);
-            my_clock.clone()
-        };
-        let view_id = if self.group_membership.installing_view().is_some() {
-            self.group_membership
-                .last_planned_id()
-                .unwrap_or_else(|| self.group_membership.installing_view().unwrap().id)
+        let installing_view = self.group_membership.installing_view().cloned();
+
+        let (view_id, clock) = if let Some(v) = installing_view {
+            info!(
+                "[{}] - Creating event while installing view {}",
+                self.id.blue().bold(),
+                v.id,
+            );
+            let clock = {
+                let my_clock = self.my_clock_mut();
+                my_clock.increment(&my_id);
+                let my_clock_value = self.my_clock().get(&my_id).unwrap();
+                let mut clock = VectorClock::default();
+                clock.insert(my_id, my_clock_value);
+                clock
+            };
+            (
+                self.group_membership.last_planned_id().unwrap_or(v.id),
+                clock,
+            )
         } else {
-            self.view_id()
+            let clock = {
+                let my_clock = self.my_clock_mut();
+                my_clock.increment(&my_id);
+                my_clock.clone()
+            };
+            (self.view_id(), clock)
         };
+
         Metadata::new(clock, &self.id, view_id)
     }
 

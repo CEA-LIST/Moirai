@@ -214,5 +214,5 @@ fn operations_while_installing() {
     }
 
     assert_eq!(tcsb_a.eval(), 9);
-    assert_eq!(tcsb_a.view_id(), 4);
+    assert_eq!(tcsb_a.view_id(), 5);
 }

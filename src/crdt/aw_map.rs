@@ -1,3 +1,4 @@
+use crate::clocks::vector_clock::VectorClock;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::pulling::Since;
 use crate::protocol::{event::Event, log::Log, po_log::POLog, utils::Keyable};
@@ -139,6 +140,13 @@ where
 
     fn lowest_view_id(&self) -> usize {
         self.keys.lowest_view_id()
+    }
+
+    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
+        self.keys.scalar_to_vec(clock);
+        self.values
+            .iter_mut()
+            .for_each(|(_, v)| v.scalar_to_vec(clock));
     }
 }
 
