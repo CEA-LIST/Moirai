@@ -1,14 +1,19 @@
-use crate::protocol::{event::Event, metadata::Metadata, pure_crdt::PureCRDT};
+use crate::protocol::{event::Event, log::Log, metadata::Metadata};
 use anyhow::Result;
-use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, fs::File, io::Write};
+use std::{fmt::Debug, fs::File, io::Write, path::Path};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Tracer {
     pub(super) origin: String,
     pub(super) trace: Vec<TracerEvent>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TracerEvent {
+    pub(super) metadata: Metadata,
+    pub(super) op: String,
 }
 
 impl Tracer {
@@ -19,24 +24,27 @@ impl Tracer {
         }
     }
 
-    pub fn append<C: PureCRDT + Debug>(&mut self, event: Event<C>) {
+    pub fn append<L: Log>(&mut self, event: Event<L::Op>) {
         let op_string = format!("{:?}", event.op);
         let metadata = event.metadata.clone();
-        self.trace.push(TracerEvent::new(metadata, op_string));
+        self.trace.push(TracerEvent {
+            metadata,
+            op: op_string,
+        });
     }
 
     pub fn serialize(&self) -> Result<String> {
         serde_json::to_string(&self).map_err(Into::into)
     }
 
-    pub fn serialize_to_file(&self, path: &Utf8Path) -> Result<()> {
+    pub fn serialize_to_file(&self, path: &Path) -> Result<()> {
         let mut file = File::create(path)?;
         let serialized = self.serialize()?;
         file.write_all(serialized.as_bytes())?;
         Ok(())
     }
 
-    pub fn deserialize_from_file(path: &Utf8Path) -> Result<Self> {
+    pub fn deserialize_from_file(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
         let tracer: Self = serde_json::from_reader(file)?;
         Ok(tracer)
@@ -44,18 +52,5 @@ impl Tracer {
 
     pub fn clear(&mut self) {
         self.trace.clear();
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct TracerEvent {
-    pub(super) metadata: Metadata,
-    pub(super) op: String,
-}
-
-impl TracerEvent {
-    pub fn new(metadata: Metadata, op: String) -> Self {
-        Self { metadata, op }
     }
 }

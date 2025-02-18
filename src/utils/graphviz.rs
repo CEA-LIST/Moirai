@@ -1,62 +1,120 @@
 use super::tracer::Tracer;
 use anyhow::Result;
-use camino::Utf8Path;
-use graphviz_rust::cmd::Format;
-use graphviz_rust::exec;
-use graphviz_rust::parse;
-use graphviz_rust::printer::PrinterContext;
 use std::cmp::Ordering;
-use std::fs::write;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-pub fn tracer_to_graphviz(tracer: &Tracer) -> String {
+pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
     let mut graphviz_str = String::new();
-    graphviz_str.push_str("strict digraph G {splines=polyline;");
-    graphviz_str.push_str("node [shape=box];");
+    graphviz_str.push_str("strict digraph G {\n");
+    graphviz_str.push_str(&format!("label=\"{}\"\n", name));
+    graphviz_str.push_str("splines=polyline;\n");
+    graphviz_str.push_str("node [shape=box];\n");
+    graphviz_str.push_str("newrank=true;\n");
+    graphviz_str.push_str("fontname=\"Helvetica\"\n");
     let mut graph: Vec<(usize, usize)> = vec![];
+    let mut process = HashMap::<String, Vec<usize>>::new();
     for (i, event) in tracer.trace.iter().enumerate() {
         graphviz_str.push_str(&format!(
-            "  {} [label=<<FONT FACE=\"monospace\" POINT-SIZE=\"8\">({})</FONT> <B>{}</B>: {}<BR /><I><FONT FACE=\"monospace\" POINT-SIZE=\"10\">{}</FONT></I>>{}];",
+            "{} [label=<<FONT FACE=\"monospace\" POINT-SIZE=\"8\">({})</FONT>   {}<BR /><I><FONT FACE=\"monospace\" POINT-SIZE=\"10\">{}</FONT></I>>style=filled, fillcolor=\"lightblue\"];\n",
             i,
             i + 1,
-            event.metadata.origin,
             event.metadata.clock,
             event.op.replace("\"", ""),
-            if event.metadata.origin == tracer.origin {
-                "style=filled, fillcolor=lightblue"
-            } else {
-                "style=filled, fillcolor=lightgray"
-            },
         ));
+        if process.contains_key(&event.metadata.origin) {
+            let list = process.get_mut(&event.metadata.origin).unwrap();
+            list.push(i);
+        } else {
+            process.insert(event.metadata.origin.clone(), vec![i]);
+        }
         for (j, previous_event) in tracer.trace.iter().enumerate() {
             if j < i {
-                match previous_event
-                    .metadata
-                    .clock
-                    .partial_cmp(&event.metadata.clock)
-                {
-                    Some(Ordering::Less) => {
+                match previous_event.metadata.view_id.cmp(&event.metadata.view_id) {
+                    Ordering::Less => {
                         graph.push((j, i));
                     }
-                    Some(Ordering::Greater) => {
+                    Ordering::Greater => {
                         graph.push((i, j));
                     }
-                    _ => {}
+                    Ordering::Equal => match previous_event
+                        .metadata
+                        .clock
+                        .partial_cmp(&event.metadata.clock)
+                    {
+                        Some(Ordering::Less) => {
+                            graph.push((j, i));
+                        }
+                        Some(Ordering::Greater) => {
+                            graph.push((i, j));
+                        }
+                        _ => {}
+                    },
                 }
             }
         }
     }
+    for (id, list) in &process {
+        graphviz_str.push_str(&format!("subgraph cluster_{} {{\n", id));
+        graphviz_str.push_str("style=filled;\n");
+        graphviz_str.push_str("color=lightgrey;\n");
+        graphviz_str.push_str("node [style=filled,color=white];\n");
+        graphviz_str.push_str(&format!("start_{}", id));
+        for (i, e) in list.iter().enumerate() {
+            if i == list.len() - 1 {
+                if i == 0 && list.len() == 1 {
+                    graphviz_str.push_str(&format!("-> {};\n", e));
+                } else {
+                    graphviz_str.push_str(&format!("{}[style=\"dashed\"];\n", e));
+                }
+            } else {
+                graphviz_str.push_str(&format!("-> {} -> ", e));
+            }
+        }
+        graphviz_str.push_str(&format!(
+            "label = <<FONT FACE=\"monospace\"><B>{}</B></FONT>>;\n",
+            id
+        ));
+        graphviz_str.push_str("}\n");
+    }
     transitive_reduction(&mut graph);
     for (i, j) in graph {
-        graphviz_str.push_str(&format!("{} -> {};", i, j));
+        graphviz_str.push_str(&format!("{} -> {};\n", i, j));
     }
-    graphviz_str.push('}');
+    graphviz_str.push_str("\n{rank=same;");
+    for proc in process.keys() {
+        graphviz_str.push_str(&format!(
+            "start_{}[shape=point;style=filled;color=black];",
+            proc
+        ));
+    }
+    graphviz_str.push_str("}\n");
+    graphviz_str.push_str("}\n");
     graphviz_str
 }
 
-pub fn graphviz_str_to_svg(graphviz_str: &str, path: &Utf8Path) -> Result<()> {
-    let g = parse(graphviz_str).map_err(|e| anyhow::anyhow!(e))?;
-    let graph_svg = exec(g, &mut PrinterContext::default(), vec![Format::Svg.into()])?;
-    write(path, graph_svg)?;
+pub fn generate_svg(dot_source: &str, output_path: &str) -> Result<()> {
+    // Spawn the dot process
+    let mut process = Command::new("dot")
+        .arg("-Tsvg") // Output SVG format
+        .stdin(Stdio::piped()) // Provide input via stdin
+        .stdout(Stdio::piped()) // Capture output via stdout
+        .spawn()?;
+
+    // Write the DOT input to the stdin of the process
+    if let Some(mut stdin) = process.stdin.take() {
+        stdin.write_all(dot_source.as_bytes())?;
+    }
+
+    // Capture the output
+    let output = process.wait_with_output()?;
+
+    // Save the output to the specified file
+    let mut file = File::create(output_path)?;
+    file.write_all(&output.stdout)?;
+
     Ok(())
 }
 
@@ -86,35 +144,28 @@ fn transitive_reduction(graph: &mut Vec<(usize, usize)>) {
 
 #[cfg(test)]
 mod tests {
-    use camino::Utf8PathBuf;
+    use std::path::Path;
 
     use super::*;
 
-    #[test_log::test]
-    fn evict_multiple_msg_trace() {
-        let tracer = Tracer::deserialize_from_file(&Utf8PathBuf::from(
-            "traces/membership_evict_multiple_msg_b_trace.json",
-        ))
-        .unwrap();
-        let graphviz_str = tracer_to_graphviz(&tracer);
-        let res = graphviz_str_to_svg(
-            &graphviz_str,
-            &Utf8PathBuf::from("traces/membership_evict_multiple_msg_b_trace.svg"),
-        );
-        assert!(res.is_ok());
+    fn trace_to_file(name: &str) -> Result<()> {
+        let tracer =
+            Tracer::deserialize_from_file(Path::new(&format!("traces/{}.json", name))).unwrap();
+        let graphviz_str = tracer_to_graphviz(&tracer, name);
+        generate_svg(&graphviz_str, &format!("traces/{}.svg", name))
     }
 
     #[test_log::test]
-    fn evict_full_scenario() {
-        let tracer = Tracer::deserialize_from_file(&Utf8PathBuf::from(
-            "traces/membership_evict_full_scenario.json",
-        ))
-        .unwrap();
-        let graphviz_str = tracer_to_graphviz(&tracer);
-        let res = graphviz_str_to_svg(
-            &graphviz_str,
-            &Utf8PathBuf::from("traces/membership_evict_full_scenario.svg"),
-        );
-        assert!(res.is_ok());
+    fn aw_set_a() {
+        let name = "aw_set_a";
+        let res = trace_to_file(name);
+        assert!(res.is_ok(), "{:?}", res);
+    }
+
+    #[test_log::test]
+    fn membership() {
+        let name = "membership";
+        let res = trace_to_file(name);
+        assert!(res.is_ok(), "{:?}", res);
     }
 }
