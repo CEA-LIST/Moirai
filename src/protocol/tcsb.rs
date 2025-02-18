@@ -72,7 +72,7 @@ where
         let event = Event::new(op.clone(), metadata.clone());
         self.tc_deliver(event.clone());
         #[cfg(feature = "utils")]
-        self.tracer.append(event.clone());
+        self.tracer.append::<L>(event.clone());
         Event::new(op, metadata)
     }
 
@@ -172,7 +172,7 @@ where
             self.my_clock_mut().merge(&event.metadata.clock);
 
             #[cfg(feature = "utils")]
-            self.tracer.append(event.clone());
+            self.tracer.append::<L>(event.clone());
         }
 
         self.state.effect(event);

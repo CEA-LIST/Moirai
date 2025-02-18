@@ -130,6 +130,7 @@ where
         });
     }
 
+    /// Metadata may be absent in the log
     fn purge_stable_metadata(&mut self, metadata: &Metadata) {
         if let Some(n) = self.unstable.get(metadata) {
             self.stable.push(n.clone());

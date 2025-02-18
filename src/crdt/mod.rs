@@ -4,6 +4,7 @@ pub mod counter;
 pub mod duet;
 pub mod graph;
 pub mod mv_register;
+pub mod resettable_counter;
 pub mod rw_set;
 
 pub mod test_util {

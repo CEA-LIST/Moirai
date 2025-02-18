@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::protocol::event::Event;
 use crate::protocol::metadata::Metadata;
 use crate::protocol::po_log::POLog;
@@ -7,6 +9,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AWSet<V> {
     Add(V),
     Remove(V),

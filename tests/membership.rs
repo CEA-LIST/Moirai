@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use po_crdt::{
     crdt::{counter::Counter, test_util::triplet_po},
     protocol::{po_log::POLog, pulling::Since, tcsb::Tcsb},
@@ -182,6 +184,10 @@ fn rejoin() {
     assert_eq!(tcsb_c.group_members(), tcsb_b.group_members());
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
+    tcsb_a
+        .tracer
+        .serialize_to_file(Path::new("traces/membership.json"))
+        .unwrap();
 }
 
 #[test_log::test]
