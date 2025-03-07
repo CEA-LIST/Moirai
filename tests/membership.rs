@@ -7,7 +7,7 @@ use po_crdt::{
 
 fn batch(from: Vec<&Tcsb<POLog<Counter<i32>>>>, to: &mut Tcsb<POLog<Counter<i32>>>) {
     for f in from {
-        if to.stable_across_views().contains(&&f.id) {
+        if to.group_membership.stable_across_views().contains(&&f.id) {
             let batch = f.events_since(&Since::new_from(to));
             to.deliver_batch(batch);
         }
@@ -203,7 +203,7 @@ fn operations_while_installing() {
     ]);
     tcsb_a.add_pending_view(vec!["a".to_string(), "c".to_string(), "d".to_string()]);
 
-    tcsb_a.planning(tcsb_a.last_view_id());
+    tcsb_a.group_membership.planning(tcsb_a.last_view_id());
     tcsb_a.start_installing_view();
 
     let _ = tcsb_a.tc_bcast(Counter::Inc(-1));
@@ -212,6 +212,7 @@ fn operations_while_installing() {
     let _ = tcsb_a.tc_bcast(Counter::Inc(11));
 
     while tcsb_a
+        .group_membership
         .last_planned_id()
         .is_some_and(|id| id > tcsb_a.view_id())
     {

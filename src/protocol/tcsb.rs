@@ -30,7 +30,7 @@ where
     /// Buffer of operations to be delivered
     pub(crate) pending: VecDeque<Event<L::Op>>,
     /// Group Membership views
-    group_membership: Views,
+    pub group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock<String, usize>,
     /// Last Stable Vector (LSV)
@@ -355,22 +355,6 @@ where
 
     pub fn view_id(&self) -> usize {
         self.group_membership.installed_view().id
-    }
-
-    pub fn views(&self) -> Views {
-        self.group_membership.clone()
-    }
-
-    pub fn stable_across_views(&self) -> Vec<&String> {
-        self.group_membership.stable_across_views()
-    }
-
-    pub fn planning(&mut self, view_id: usize) {
-        self.group_membership.planning(view_id);
-    }
-
-    pub fn last_planned_id(&self) -> Option<usize> {
-        self.group_membership.last_planned_id()
     }
 
     pub fn last_view_id(&self) -> usize {

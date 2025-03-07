@@ -17,15 +17,15 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 colored = "2.1.0"
 serde_json = { version = "1.0.128", optional = true }
 anyhow = { version = "1.0.89", optional = true }
-petgraph = { version = "0.6.4", features = ["serde-1"], optional = true }
+petgraph = { version = "0.6.4", features = ["serde-1"] }
 
 [dev-dependencies]
 deepsize = { version = "0.2.0" }
 # dhat = "0.3.3"
 
 [features]
-default = ["crdt", "serde", "utils"]
-crdt = ["dep:petgraph"]
+default = ["crdt", "serde"]
+crdt = []
 serde = ["dep:serde_json"]
 utils = ["serde", "dep:anyhow"]
 # dhat-heap = []                                                # if you are doing heap profiling

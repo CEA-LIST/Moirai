@@ -1,6 +1,6 @@
-use crate::clocks::vector_clock::VectorClock;
+use crate::clocks::dependency_clock::DependencyClock;
 
-use super::{event::Event, metadata::Metadata, pulling::Since};
+use super::{event::Event, pulling::Since};
 use std::fmt::Debug;
 
 pub trait Log: Default + Clone {
@@ -16,13 +16,13 @@ pub trait Log: Default + Clone {
 
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool);
 
-    fn collect_events(&self, upper_bound: &Metadata) -> Vec<Event<Self::Op>>;
+    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>>;
 
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>>;
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool;
 
-    fn r_n(&mut self, metadata: &Metadata, conservative: bool);
+    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool);
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
@@ -31,7 +31,7 @@ pub trait Log: Default + Clone {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(&mut self, metadata: &Metadata);
+    fn stabilize(&mut self, metadata: &DependencyClock);
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
@@ -46,12 +46,12 @@ pub trait Log: Default + Clone {
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &Metadata);
+    fn purge_stable_metadata(&mut self, metadata: &DependencyClock);
 
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
-    fn stable(&mut self, metadata: &Metadata) {
+    fn stable(&mut self, metadata: &DependencyClock) {
         self.stabilize(metadata);
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
@@ -61,8 +61,4 @@ pub trait Log: Default + Clone {
 
     /// Return the lowest view ID in the log
     fn lowest_view_id(&self) -> usize;
-
-    /// For every unstable operation in the log where the clock is a scalar,
-    /// convert the scalar clock to a vector clock using the clock in parameter
-    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>);
 }

@@ -1,7 +1,7 @@
 use log::info;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ViewStatus {
     /// The view has been installed. At least one view is always installed and the last installed view is the current view.
@@ -23,7 +23,7 @@ pub enum ViewInstallingStatus {
     Starting,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct View {
     pub id: usize,
