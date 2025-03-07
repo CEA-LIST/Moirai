@@ -1,11 +1,12 @@
+use crate::clocks::dependency_clock::DependencyClock;
 use crate::clocks::vector_clock::VectorClock;
 
 use super::event::Event;
 use super::log::Log;
-use super::metadata::Metadata;
 use super::pulling::Since;
 use super::pure_crdt::PureCRDT;
-use colored::Colorize;
+use crate::clocks::clock::Clock;
+use crate::protocol::membership::View;
 use log::info;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -27,7 +28,7 @@ use std::slice::{Iter, IterMut};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct POLog<O> {
     pub stable: Vec<O>,
-    pub unstable: BTreeMap<Metadata, O>,
+    pub unstable: BTreeMap<DependencyClock, O>,
 }
 
 impl<O> POLog<O>
@@ -59,43 +60,12 @@ where
         );
     }
 
-    /// Clean up the state by removing redundant operations
-    pub fn remove_redundant_ops(&mut self, id: &str, stable: Vec<usize>, unstable: Vec<Metadata>) {
-        for (i, val) in stable.iter().enumerate() {
-            let removed = self.stable.remove(val - i);
-            info!(
-                "[{}] - Op {} is redundant",
-                id.blue().bold(),
-                format!("{:?}", removed).green()
-            );
-        }
-        for m in unstable {
-            let opt_removed = self.unstable.remove(&m);
-            if let Some(removed) = opt_removed {
-                info!(
-                    "[{}] - Op {} is redundant",
-                    id.blue().bold(),
-                    format!("{:?}", removed).green()
-                );
-            }
-        }
-    }
-
-    /// Should only be used in `eval()`
-    pub fn new_stable(&mut self, op: O) {
-        self.stable.push(op);
-    }
-
-    pub fn iter(&self) -> Chain<Iter<O>, Values<Metadata, O>> {
+    pub fn iter(&self) -> Chain<Iter<O>, Values<DependencyClock, O>> {
         self.stable.iter().chain(self.unstable.values())
     }
 
-    pub fn iter_mut(&mut self) -> Chain<IterMut<O>, ValuesMut<Metadata, O>> {
+    pub fn iter_mut(&mut self) -> Chain<IterMut<O>, ValuesMut<DependencyClock, O>> {
         self.stable.iter_mut().chain(self.unstable.values_mut())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.stable.is_empty() && self.unstable.is_empty()
     }
 }
 
@@ -113,7 +83,8 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
         // Keep only the operations that are not made redundant by the new operation
         self.stable.retain(|o| {
-            let old_event: Event<O> = Event::new(o.clone(), Metadata::default());
+            let old_event: Event<O> =
+                Event::new(o.clone(), DependencyClock::bot(&event.metadata.view));
             if is_r_0 {
                 !(Self::Op::r_zero(&old_event, event))
             } else {
@@ -131,7 +102,7 @@ where
     }
 
     /// Metadata may be absent in the log
-    fn purge_stable_metadata(&mut self, metadata: &Metadata) {
+    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
         if let Some(n) = self.unstable.get(metadata) {
             self.stable.push(n.clone());
             self.unstable.remove(metadata);
@@ -139,7 +110,7 @@ where
     }
 
     /// Returns a list of events that are in the past of the given metadata
-    fn collect_events(&self, upper_bound: &Metadata) -> Vec<Event<Self::Op>> {
+    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
         let list = self
             .unstable
             .range((Bound::Unbounded, Bound::Included(upper_bound)))
@@ -174,7 +145,7 @@ where
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         for o in &self.stable {
-            let old_event = Event::new(o.clone(), Metadata::default());
+            let old_event = Event::new(o.clone(), DependencyClock::default());
             if O::r(event, &old_event) {
                 return true;
             }
@@ -189,7 +160,7 @@ where
     }
 
     /// conservative: keep concurrent operations
-    fn r_n(&mut self, metadata: &Metadata, conservative: bool) {
+    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
         self.stable.clear();
         self.unstable.retain(|m, _| {
             if conservative {
@@ -208,7 +179,7 @@ where
         });
     }
 
-    fn stabilize(&mut self, metadata: &Metadata) {
+    fn stabilize(&mut self, metadata: &DependencyClock) {
         O::stabilize(metadata, self);
     }
 
@@ -223,29 +194,6 @@ where
 
     fn lowest_view_id(&self) -> usize {
         self.unstable.keys().map(|m| m.view_id).min().unwrap_or(0)
-    }
-
-    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
-        if self.unstable.iter().any(|(m, _)| m.clock.len() == 1) {
-            let old_unstable = self.unstable.clone();
-            self.unstable = BTreeMap::new();
-            for (m, o) in old_unstable {
-                assert_eq!(
-                    m.clock.len(),
-                    1,
-                    "Vector clock has more than one element: {}",
-                    m.clock
-                );
-                let mut new_m = m.clone();
-                for (key, value) in clock.iter() {
-                    if new_m.clock.contains(key) {
-                        continue;
-                    }
-                    new_m.clock.insert(key.clone(), *value);
-                }
-                self.unstable.insert(new_m, o);
-            }
-        }
     }
 }
 

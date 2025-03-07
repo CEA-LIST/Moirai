@@ -65,9 +65,9 @@ pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
         for (i, e) in list.iter().enumerate() {
             if i == list.len() - 1 {
                 if i == 0 && list.len() == 1 {
-                    graphviz_str.push_str(&format!("-> {};\n", e));
+                    graphviz_str.push_str(&format!("-> {} -> end_{}[style=\"dashed\"];\n", e, id));
                 } else {
-                    graphviz_str.push_str(&format!("{}[style=\"dashed\"];\n", e));
+                    graphviz_str.push_str(&format!("{} -> end_{}[style=\"dashed\"];\n", e, id));
                 }
             } else {
                 graphviz_str.push_str(&format!("-> {} -> ", e));
@@ -87,6 +87,14 @@ pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
     for proc in process.keys() {
         graphviz_str.push_str(&format!(
             "start_{}[shape=point;style=filled;color=black];",
+            proc
+        ));
+    }
+    graphviz_str.push_str("}\n");
+    graphviz_str.push_str("\n{rank=same;");
+    for proc in process.keys() {
+        graphviz_str.push_str(&format!(
+            "end_{}[shape=point;style=filled;color=black];",
             proc
         ));
     }

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::event::Event;
-use crate::protocol::metadata::Metadata;
 use crate::protocol::po_log::POLog;
 use crate::protocol::pure_crdt::PureCRDT;
 use std::collections::HashSet;
