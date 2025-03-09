@@ -55,7 +55,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
     }
 
     fn stabilize(metadata: &Metadata, state: &mut POLog<Self>) {
-        if state.stable.get(0).is_none() {
+        if state.stable.first().is_none() {
             state.stable.push(Counter::Inc(V::default()));
         }
         if state.stable.get(1).is_none() {
@@ -64,7 +64,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
         let op = state.unstable.remove(metadata).unwrap();
         match op {
             Counter::Inc(v) => {
-                state.stable[0] = state.stable.get(0).map_or_else(
+                state.stable[0] = state.stable.first().map_or_else(
                     || Counter::Inc(V::default()),
                     |w| Counter::Inc(w.to_value() + v),
                 );
