@@ -1,6 +1,6 @@
 use crate::clocks::dependency_clock::DependencyClock;
 
-use super::po_log::POLog;
+use super::event_graph::EventGraph;
 use std::{cmp::Ordering, fmt::Debug};
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
@@ -27,7 +27,7 @@ pub trait PureCRDT: Clone + Debug {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(metadata: &DependencyClock, state: &mut POLog<Self>);
+    fn stabilize(metadata: &DependencyClock, state: &mut EventGraph<Self>);
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.

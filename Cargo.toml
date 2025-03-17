@@ -10,6 +10,7 @@ repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Bas
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11.2"
 test-log = "0.2.15"

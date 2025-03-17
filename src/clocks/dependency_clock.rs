@@ -1,15 +1,12 @@
+use super::{clock::Clock, dot::Dot, vector_clock::VectorClock};
+use crate::protocol::membership::View;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
-
-use serde::{Deserialize, Serialize};
-
-use crate::protocol::membership::View;
-
-use super::clock::Clock;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -22,12 +19,53 @@ pub struct DependencyClock {
     pub(crate) origin: usize,
 }
 
+impl DependencyClock {
+    pub fn view_id(&self) -> usize {
+        self.view.id
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&usize, &usize)> {
+        self.clock.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&usize, &mut usize)> {
+        self.clock.iter_mut()
+    }
+}
+
+impl From<&DependencyClock> for Dot {
+    fn from(clock: &DependencyClock) -> Dot {
+        Dot::new(
+            clock.origin,
+            clock.get(&clock.origin()),
+            &Rc::clone(&clock.view),
+        )
+    }
+}
+
+impl From<&DependencyClock> for VectorClock<String, usize> {
+    fn from(clock: &DependencyClock) -> VectorClock<String, usize> {
+        let keys: Vec<String> = clock.view.members.iter().map(|m| m.clone()).collect();
+        let values: Vec<usize> = clock.view.members.iter().map(|m| clock.get(m)).collect();
+        VectorClock::from_key_value(&keys, &values)
+    }
+}
+
 impl Clock for DependencyClock {
     fn new(view: &Rc<View>, origin: &str) -> Self {
         Self {
-            origin: view.members.iter().position(|m| m == origin).unwrap(),
+            origin: view
+                .members
+                .iter()
+                .position(|m| m == origin)
+                .expect("Member not found"),
             view: Rc::clone(view),
-            clock: HashMap::new(),
+            clock: view
+                .members
+                .iter()
+                .enumerate()
+                .map(|(i, _)| (i, 0))
+                .collect(),
         }
     }
 
@@ -59,7 +97,12 @@ impl Clock for DependencyClock {
     }
 
     fn remove(&mut self, member: &str) {
-        let idx = self.view.members.iter().position(|m| m == member).unwrap();
+        let idx = self
+            .view
+            .members
+            .iter()
+            .position(|m| m == member)
+            .expect("Member not found");
         self.clock.remove(&(idx));
     }
 
@@ -67,17 +110,25 @@ impl Clock for DependencyClock {
         self.clock.len()
     }
 
+    /// Returns the value of the clock for the given member OR 0 if the member is not in the clock
     fn get(&self, member: &str) -> usize {
-        let idx = self.view.members.iter().position(|m| m == member).unwrap();
+        let idx = self
+            .view
+            .members
+            .iter()
+            .position(|m| m == member)
+            .expect("Member not found");
         *self.clock.get(&(idx)).unwrap_or(&0)
     }
 
-    fn bot(members: &Rc<View>) -> Self {
-        Self {
-            view: Rc::clone(members),
-            clock: HashMap::new(),
-            origin: 0,
-        }
+    fn set(&mut self, member: &str, value: usize) {
+        let idx = self
+            .view
+            .members
+            .iter()
+            .position(|m| m == member)
+            .expect("Member not found");
+        self.clock.insert(idx, value);
     }
 
     fn origin(&self) -> &str {
@@ -152,14 +203,14 @@ impl PartialOrd for DependencyClock {
     }
 }
 
-impl Ord for DependencyClock {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.partial_cmp(&other) {
-            Some(ord) => ord,
-            None => self.origin.cmp(&other.origin),
-        }
-    }
-}
+// impl Ord for DependencyClock {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         match self.partial_cmp(&other) {
+//             Some(ord) => ord,
+//             None => self.origin.cmp(&other.origin),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
