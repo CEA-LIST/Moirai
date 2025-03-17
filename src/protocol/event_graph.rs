@@ -1,3 +1,4 @@
+use crate::clocks::clock::Clock;
 use crate::clocks::dependency_clock::DependencyClock;
 use crate::clocks::dot::Dot;
 
@@ -5,22 +6,23 @@ use super::event::Event;
 use super::log::Log;
 use super::pulling::Since;
 use super::pure_crdt::PureCRDT;
-use crate::clocks::clock::Clock;
+use bimap::BiMap;
 use log::error;
+use petgraph::algo::has_path_connecting;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::StableDiGraph;
+use petgraph::visit::Bfs;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EventGraph<Op> {
     stable: Vec<Op>,
-    graph: StableDiGraph<Op, ()>,
-    index_map: HashMap<Dot, NodeIndex>,
+    unstable: StableDiGraph<Op, ()>,
+    index_map: BiMap<Dot, NodeIndex>,
 }
 
 impl<Op> EventGraph<Op>
@@ -30,21 +32,21 @@ where
     pub fn new() -> Self {
         Self {
             stable: vec![],
-            graph: StableDiGraph::new(),
-            index_map: HashMap::new(),
+            unstable: StableDiGraph::new(),
+            index_map: BiMap::new(),
         }
     }
 
     pub fn new_event(&mut self, event: &Event<Op>) {
         let dot = Dot::from(&event.metadata);
-        if self.index_map.contains_key(&dot) {
+        if self.index_map.contains_left(&dot) {
             error!(
                 "Event with metadata {:?} already present in the graph",
                 event.metadata
             );
             return;
         }
-        let from_idx = self.graph.add_node(event.op.clone());
+        let from_idx = self.unstable.add_node(event.op.clone());
         self.index_map.insert(Dot::from(&event.metadata), from_idx);
         for (origin, cnt) in event.metadata.clock.iter() {
             if origin == &event.metadata.origin {
@@ -53,34 +55,24 @@ where
             let to_dot = Dot::new(*origin, *cnt, &event.metadata.view);
             let to_idx = self
                 .index_map
-                .get(&to_dot)
+                .get_by_left(&to_dot)
                 .expect("Causal delivery failed.");
-            self.graph.add_edge(*to_idx, from_idx, ());
+            self.unstable.add_edge(*to_idx, from_idx, ());
         }
     }
 
     pub fn partial_cmp(&self, first: Dot, second: Dot) -> Option<Ordering> {
         let first_idx = self
             .index_map
-            .get(&first)
+            .get_by_left(&first)
             .expect("Dot not found in the graph.");
         let second_idx = self
             .index_map
-            .get(&second)
+            .get_by_left(&second)
             .expect("Dot not found in the graph.");
 
-        let first_to_second = petgraph::algo::has_path_connecting(
-            &self.graph,
-            *first_idx,
-            *second_idx,
-            None,
-        );
-        let second_to_first = petgraph::algo::has_path_connecting(
-            &self.graph,
-            *second_idx,
-            *first_idx,
-            None,
-        );
+        let first_to_second = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
+        let second_to_first = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
 
         match (first_to_second, second_to_first) {
             (true, true) => None,
@@ -88,6 +80,21 @@ where
             (false, true) => Some(Ordering::Greater),
             (false, false) => Some(Ordering::Equal),
         }
+    }
+
+    fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
+        let dot = self.index_map.get_by_right(node_idx).unwrap();
+        let mut dependency_clock = DependencyClock::new(&dot.view(), &dot.origin());
+
+        let op = self.unstable.node_weight(*node_idx).unwrap();
+        let neighbors = self
+            .unstable
+            .neighbors_directed(*node_idx, petgraph::Direction::Outgoing);
+        for neighbor in neighbors {
+            let neighbor_dot = self.index_map.get_by_right(&neighbor).unwrap();
+            dependency_clock.set(&neighbor_dot.origin(), neighbor_dot.val());
+        }
+        Event::new(op.clone(), dependency_clock)
     }
 }
 
@@ -112,56 +119,112 @@ where
                 !(Self::Op::r_one(&o, Some(Ordering::Less), &event.op))
             }
         });
-        self.graph.retain_nodes(|_, node_idx| {
-            let 
-            // let old_event: Event<O> =
-            //     Event::new(o.clone(), DependencyClock::bot(&event.metadata.view));
-            // if is_r_0 {
-            //     !(Self::Op::r_zero(&old_event, event))
-            // } else {
-            //     !(Self::Op::r_one(&old_event, event))
-            // }
-        });
-        // self.graph.retain(|m, o| {
-        //     let old_event: Event<O> = Event::new(o.clone(), m.clone());
-        //     if is_r_0 {
-        //         !(Self::Op::r_zero(&old_event, event))
-        //     } else {
-        //         !(Self::Op::r_one(&old_event, event))
-        //     }
-        // });
+
+        let to_remove: Vec<_> = self
+            .unstable
+            .node_indices()
+            .filter(|&node_idx| {
+                let dot = self.index_map.get_by_right(&node_idx).unwrap();
+                let op = self.unstable.node_weight(node_idx).unwrap();
+                let ordering = self.partial_cmp(dot.clone(), Dot::from(&event.metadata));
+
+                if is_r_0 {
+                    Self::Op::r_zero(op, ordering, &event.op)
+                } else {
+                    Self::Op::r_one(op, ordering, &event.op)
+                }
+            })
+            .collect();
+
+        for node_idx in to_remove {
+            self.unstable.remove_node(node_idx);
+            self.index_map.remove_by_right(&node_idx);
+        }
     }
 
+    /// Returns a list of events that are in the past of the given metadata
     fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
-        todo!()
+        let mut bfs = Bfs::new(
+            &self.unstable,
+            *self.index_map.get_by_left(&Dot::from(upper_bound)).unwrap(),
+        );
+        let mut events = vec![];
+        while let Some(node_idx) = bfs.next(&self.unstable) {
+            events.push(self.event_from_idx(&node_idx));
+        }
+        events
     }
 
-    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+    fn collect_events_since(&self, _since: &Since) -> Vec<Event<Self::Op>> {
         todo!()
     }
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
-        todo!()
+        for o in &self.stable {
+            // let old_event = Event::new(o.clone(), DependencyClock::default());
+            if Self::Op::r(&event.op, Some(Ordering::Greater), &o) {
+                return true;
+            }
+        }
+
+        for node_idx in self.unstable.node_indices() {
+            let old_event = self.event_from_idx(&node_idx);
+            let ordering = PartialOrd::partial_cmp(&event.metadata, &old_event.metadata);
+
+            if Self::Op::r(&event.op, ordering, &old_event.op) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
-        todo!()
+        self.stable.clear();
+        let to_remove = self
+            .unstable
+            .node_indices()
+            .filter(|&node_idx| {
+                let dot = self.index_map.get_by_right(&node_idx).unwrap();
+                let ordering = self.partial_cmp(dot.clone(), Dot::from(metadata));
+                if conservative {
+                    !matches!(ordering, Some(Ordering::Less) | Some(Ordering::Equal))
+                } else {
+                    !matches!(ordering, Some(Ordering::Greater))
+                }
+            })
+            .collect::<Vec<_>>();
+        for node_idx in to_remove {
+            self.unstable.remove_node(node_idx);
+            self.index_map.remove_by_right(&node_idx);
+        }
     }
 
     fn eval(&self) -> Self::Value {
-        todo!()
+        let mut ops: Vec<O> = self.stable.clone();
+        ops.extend(self.unstable.node_weights().cloned());
+        O::eval(&ops)
     }
 
     fn stabilize(&mut self, metadata: &DependencyClock) {
-        todo!()
+        O::stabilize(metadata, self);
     }
 
     fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
-        todo!()
+        let dot = Dot::from(metadata);
+        let node_idx = self
+            .index_map
+            .get_by_left(&dot)
+            .expect("Dot not found in the graph.");
+        let op = self.unstable.remove_node(*node_idx);
+        self.index_map.remove_by_left(&dot);
+        if let Some(op) = op {
+            self.stable.push(op);
+        }
     }
 
     fn is_empty(&self) -> bool {
-        todo!()
+        self.stable.is_empty() && self.unstable.node_count() == 0
     }
 
     fn lowest_view_id(&self) -> usize {

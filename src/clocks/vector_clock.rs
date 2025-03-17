@@ -80,7 +80,7 @@ where
     /// Create a VectorClock from two slices
     /// The first slice is the keys and the second slice is the values
     /// The two slices must have the same length
-    pub fn from(keys: &[K], values: &[C]) -> VectorClock<K, C> {
+    pub fn from_key_value(keys: &[K], values: &[C]) -> VectorClock<K, C> {
         if keys.len() != values.len() {
             panic!("The two slices must have the same length");
         }
@@ -337,8 +337,8 @@ mod tests {
 
     #[test_log::test]
     fn merge_3() {
-        let mut clock1 = VectorClock::from(&["A", "B", "C", "D"], &[1, 1, 0, 1]);
-        let clock2 = VectorClock::from(&["A", "B", "C", "D"], &[0, 0, 2, 0]);
+        let mut clock1 = VectorClock::from_key_value(&["A", "B", "C", "D"], &[1, 1, 0, 1]);
+        let clock2 = VectorClock::from_key_value(&["A", "B", "C", "D"], &[0, 0, 2, 0]);
         clock1.merge(&clock2);
         assert_eq!(clock1.get(&"C"), Some(2));
     }
@@ -383,21 +383,21 @@ mod tests {
 
     #[test_log::test]
     fn lsv() {
-        let mut lsv = VectorClock::from(&["A", "B"], &[12, 16]);
-        let ltm = VectorClock::from(&["A", "B", "C"], &[0, 0, 0]);
+        let mut lsv = VectorClock::from_key_value(&["A", "B"], &[12, 16]);
+        let ltm = VectorClock::from_key_value(&["A", "B", "C"], &[0, 0, 0]);
         lsv.merge(&ltm);
-        let merge = VectorClock::from(&["A", "B", "C"], &[12, 16, 0]);
+        let merge = VectorClock::from_key_value(&["A", "B", "C"], &[12, 16, 0]);
         assert_eq!(merge, lsv);
     }
 
     #[test_log::test]
     fn left_difference() {
-        let clock = VectorClock::from(&["a", "b", "c"], &[4, 2, 1]);
-        let ext = VectorClock::from(&["d", "e", "b"], &[2, 51, 4]);
+        let clock = VectorClock::from_key_value(&["a", "b", "c"], &[4, 2, 1]);
+        let ext = VectorClock::from_key_value(&["d", "e", "b"], &[2, 51, 4]);
 
         assert_eq!(
             ext.left_difference(&clock),
-            VectorClock::from(&["d", "e"], &[2, 51])
+            VectorClock::from_key_value(&["d", "e"], &[2, 51])
         );
     }
 }

@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::membership::View;
 
-use super::{clock::Clock, dependency_clock::DependencyClock};
-
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Dot {
@@ -26,15 +24,17 @@ impl Dot {
             counter,
         }
     }
-}
 
-impl From<&DependencyClock> for Dot {
-    fn from(clock: &DependencyClock) -> Self {
-        Self {
-            view: Rc::clone(&clock.view),
-            origin: clock.origin,
-            counter: clock.get(&clock.origin()),
-        }
+    pub fn view(&self) -> Rc<View> {
+        Rc::clone(&self.view)
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.view.members[self.origin]
+    }
+
+    pub fn val(&self) -> usize {
+        self.counter
     }
 }
 
@@ -58,17 +58,17 @@ impl PartialOrd for Dot {
     }
 }
 
-///TODO: Dumb shit
-impl Ord for Dot {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.view.id.cmp(&other.view.id) {
-            Ordering::Less => Ordering::Less,
-            Ordering::Equal => match self.origin.cmp(&other.origin) {
-                Ordering::Less => Ordering::Less,
-                Ordering::Equal => self.counter.cmp(&other.counter),
-                Ordering::Greater => Ordering::Greater,
-            },
-            Ordering::Greater => Ordering::Greater,
-        }
-    }
-}
+// TODO: Dumb shit
+// impl Ord for Dot {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         match self.view.id.cmp(&other.view.id) {
+//             Ordering::Less => Ordering::Less,
+//             Ordering::Equal => match self.origin.cmp(&other.origin) {
+//                 Ordering::Less => Ordering::Less,
+//                 Ordering::Equal => self.counter.cmp(&other.counter),
+//                 Ordering::Greater => Ordering::Greater,
+//             },
+//             Ordering::Greater => Ordering::Greater,
+//         }
+//     }
+// }

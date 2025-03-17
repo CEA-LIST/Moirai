@@ -22,8 +22,7 @@ pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
 
     fn get(&self, member: &str) -> usize;
 
-    /// Create a new empty clock (the bottom element) with a given view
-    fn bot(members: &Rc<View>) -> Self;
+    fn set(&mut self, member: &str, value: usize);
 
     fn origin(&self) -> &str;
 }

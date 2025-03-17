@@ -2,8 +2,10 @@ use colored::*;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
+use super::event::Event;
 use super::membership::{ViewInstallingStatus, Views};
-use super::{event::Event, metadata::Metadata};
+use crate::clocks::clock::Clock;
+use crate::clocks::dependency_clock::DependencyClock;
 use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
 use crate::protocol::guard::{guard_against_duplicates, guard_against_out_of_order};
 use crate::protocol::log::Log;
@@ -82,33 +84,35 @@ where
     pub fn try_deliver(&mut self, event: Event<L::Op>) {
         // The local peer should not call this function for its own events
         assert_ne!(
-            self.id, event.metadata.origin,
+            self.id,
+            event.metadata.origin(),
             "Local peer {} should not be the origin {} of the event",
-            self.id, event.metadata.origin
+            self.id,
+            event.metadata.origin()
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if !self
             .group_membership
             .installed_view()
             .members
-            .contains(&event.metadata.origin)
+            .contains(&event.metadata.origin().to_string())
         {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin.blue(),
-                format!("{}", event.metadata.clock).red()
+                event.metadata.origin().blue(),
+                format!("{}", event.metadata).red()
             );
             return;
         }
         // If the event is from a previous view, ignore it
-        if event.metadata.view_id < self.view_id() {
+        if event.metadata.view_id() < self.view_id() {
             error!(
                 "[{}] - Event from {} with a view id {} inferior to the current view id {}",
                 self.id.blue().bold(),
-                event.metadata.origin.blue(),
-                format!("{}", event.metadata.view_id).blue(),
-                format!("{}", event.metadata.clock).red()
+                event.metadata.origin().blue(),
+                format!("{}", event.metadata.view_id()).blue(),
+                format!("{}", event.metadata).red()
             );
             return;
         }
@@ -116,8 +120,8 @@ where
             error!(
                 "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin.red(),
-                format!("{}", event.metadata.clock).red()
+                event.metadata.origin().red(),
+                format!("{}", event.metadata).red()
             );
             return;
         }
@@ -126,8 +130,8 @@ where
             error!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
-                event.metadata.origin.blue(),
-                format!("{}", event.metadata.clock).red(),
+                event.metadata.origin().blue(),
+                format!("{}", event.metadata).red(),
                 format!("{:?}", event.op).green(),
             );
         }
@@ -141,7 +145,7 @@ where
             // If the event is causally ready, and
             // it belongs to the current view...
             if !guard_against_out_of_order(&self.ltm, &event.metadata)
-                && event.metadata.view_id == self.view_id()
+                && event.metadata.view_id() == self.view_id()
             {
                 // ...deliver it
                 self.tc_deliver(event);
@@ -159,17 +163,20 @@ where
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
             format!("{:?}", event.op).green(),
-            event.metadata.origin.blue(),
-            format!("{}", event.metadata.clock).red()
+            event.metadata.origin().blue(),
+            format!("{}", event.metadata).red()
         );
         // If the event is not from the local replica
-        if self.id != event.metadata.origin {
+        if self.id != event.metadata.origin() {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
-            self.ltm
-                .update(&event.metadata.origin, &event.metadata.clock);
+            self.ltm.update(
+                &event.metadata.origin().to_string(),
+                &VectorClock::from(&event.metadata),
+            );
             // Update our own vector clock
-            self.my_clock_mut().merge(&event.metadata.clock);
+            self.my_clock_mut()
+                .merge(&VectorClock::from(&event.metadata));
 
             #[cfg(feature = "utils")]
             self.tracer.append::<L>(event.clone());
