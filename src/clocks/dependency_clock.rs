@@ -1,5 +1,5 @@
-use super::{clock::Clock, dot::Dot, vector_clock::VectorClock};
-use crate::protocol::membership::View;
+use super::{clock::Clock, dot::Dot};
+use crate::protocol::membership::ViewData;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
@@ -11,17 +11,30 @@ use std::{
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DependencyClock {
-    pub(crate) view: Rc<View>,
+    pub(crate) view: Rc<ViewData>,
     /// The key is the index of the member in the members list
     /// The value is the version of the last event by this member, known by this version vector
     pub(crate) clock: HashMap<usize, usize>,
     /// The index of the origin member in the members list/clock
-    pub(crate) origin: usize,
+    pub(crate) origin: Option<usize>,
 }
 
 impl DependencyClock {
     pub fn view_id(&self) -> usize {
         self.view.id
+    }
+
+    pub fn new_originless(view: &Rc<ViewData>) -> Self {
+        Self {
+            origin: None,
+            view: Rc::clone(view),
+            clock: view
+                .members
+                .iter()
+                .enumerate()
+                .map(|(i, _)| (i, 0))
+                .collect(),
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&usize, &usize)> {
@@ -31,34 +44,49 @@ impl DependencyClock {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&usize, &mut usize)> {
         self.clock.iter_mut()
     }
+
+    pub fn build(view: &Rc<ViewData>, origin: Option<&str>, clock: &[usize]) -> DependencyClock {
+        assert_eq!(view.members.len(), clock.len());
+        let origin = origin.map(|o| {
+            view.members
+                .iter()
+                .position(|m| m == o)
+                .expect("Member not found")
+        });
+        let clock = view
+            .members
+            .iter()
+            .enumerate()
+            .map(|(i, _)| (i, clock[i]))
+            .collect();
+        DependencyClock {
+            view: Rc::clone(view),
+            clock,
+            origin,
+        }
+    }
 }
 
 impl From<&DependencyClock> for Dot {
     fn from(clock: &DependencyClock) -> Dot {
         Dot::new(
-            clock.origin,
-            clock.get(&clock.origin()),
+            clock.origin.expect("Origin not set"),
+            clock.get(clock.origin()),
             &Rc::clone(&clock.view),
         )
     }
 }
 
-impl From<&DependencyClock> for VectorClock<String, usize> {
-    fn from(clock: &DependencyClock) -> VectorClock<String, usize> {
-        let keys: Vec<String> = clock.view.members.iter().map(|m| m.clone()).collect();
-        let values: Vec<usize> = clock.view.members.iter().map(|m| clock.get(m)).collect();
-        VectorClock::from_key_value(&keys, &values)
-    }
-}
-
 impl Clock for DependencyClock {
-    fn new(view: &Rc<View>, origin: &str) -> Self {
+    fn new(view: &Rc<ViewData>, origin: &str) -> Self {
+        assert!(view.members.contains(&origin.to_string()));
         Self {
-            origin: view
-                .members
-                .iter()
-                .position(|m| m == origin)
-                .expect("Member not found"),
+            origin: Some(
+                view.members
+                    .iter()
+                    .position(|m| m == origin)
+                    .expect("Member not found"),
+            ),
             view: Rc::clone(view),
             clock: view
                 .members
@@ -67,6 +95,10 @@ impl Clock for DependencyClock {
                 .map(|(i, _)| (i, 0))
                 .collect(),
         }
+    }
+
+    fn dot(&self) -> usize {
+        self.get(self.origin())
     }
 
     fn merge(&mut self, other: &Self) {
@@ -79,8 +111,9 @@ impl Clock for DependencyClock {
     }
 
     fn increment(&mut self) {
-        let idx = self.get(&self.origin());
-        self.clock.insert(self.origin, idx + 1);
+        let idx = self.get(self.origin());
+        self.clock
+            .insert(self.origin.expect("Origin not set"), idx + 1);
     }
 
     fn min(&self, other: &Self) -> Self {
@@ -132,15 +165,15 @@ impl Clock for DependencyClock {
     }
 
     fn origin(&self) -> &str {
-        &self.view.members[self.origin as usize]
+        &self.view.members[self.origin.expect("Origin not set")]
     }
 }
 
-impl Into<HashMap<String, usize>> for DependencyClock {
-    fn into(self) -> HashMap<String, usize> {
+impl From<DependencyClock> for HashMap<String, usize> {
+    fn from(val: DependencyClock) -> Self {
         let mut id_counter = HashMap::new();
-        for (idx, m) in self.view.members.iter().enumerate() {
-            id_counter.insert(m.clone(), *self.clock.get(&(idx)).unwrap_or(&0));
+        for (idx, m) in val.view.members.iter().enumerate() {
+            id_counter.insert(m.clone(), *val.clock.get(&(idx)).unwrap_or(&0));
         }
         id_counter
     }
@@ -148,7 +181,14 @@ impl Into<HashMap<String, usize>> for DependencyClock {
 
 impl Display for DependencyClock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{:?}", self.clock)
+        write!(f, "{{ ")?;
+        for (idx, m) in self.view.members.iter().enumerate() {
+            write!(f, "{}: {}", m, self.get(m))?;
+            if idx < self.view.members.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, " }}")
     }
 }
 
@@ -160,18 +200,16 @@ impl PartialOrd for DependencyClock {
             _ => {}
         };
 
-        if self.get(&self.origin()) == other.get(&other.origin()) && self.origin == other.origin {
+        if self.get(self.origin()) == other.get(other.origin()) && self.origin == other.origin {
             return Some(Ordering::Equal);
         }
 
-        match self.get(&self.origin()).cmp(&other.get(&self.origin())) {
-            Ordering::Less => return Some(Ordering::Less),
-            _ => {}
+        if self.get(self.origin()).cmp(&other.get(self.origin())) == Ordering::Less {
+            return Some(Ordering::Less);
         }
 
-        match &other.get(&self.origin()).cmp(&self.get(&self.origin())) {
-            Ordering::Less => return Some(Ordering::Greater),
-            _ => {}
+        if other.get(self.origin()).cmp(&self.get(self.origin())) == Ordering::Less {
+            return Some(Ordering::Greater);
         }
 
         let mut less = false;
@@ -203,29 +241,20 @@ impl PartialOrd for DependencyClock {
     }
 }
 
-// impl Ord for DependencyClock {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         match self.partial_cmp(&other) {
-//             Some(ord) => ord,
-//             None => self.origin.cmp(&other.origin),
-//         }
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
-    use crate::protocol::membership::ViewStatus;
+    use crate::protocol::membership::{View, ViewStatus};
 
     use super::*;
 
     #[test_log::test]
-    fn test_version_vector() {
+    fn test_clock() {
         let view = View::new(
             0,
             vec!["a".to_string(), "b".to_string(), "c".to_string()],
             ViewStatus::Installed,
         );
-        let rc = Rc::new(view);
+        let rc = Rc::clone(&view.data);
         let mut v1 = DependencyClock::new(&rc, "a");
         let mut v2 = DependencyClock::new(&rc, "b");
 
@@ -252,5 +281,17 @@ mod tests {
         assert_eq!(v2.get("a"), 2);
         assert_eq!(v2.get("b"), 3);
         assert_eq!(v2.get("c"), 0);
+    }
+
+    #[test_log::test]
+    fn display() {
+        let view = View::new(
+            0,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            ViewStatus::Installed,
+        );
+        let rc = Rc::clone(&view.data);
+        let v1 = DependencyClock::new(&rc, "a");
+        assert_eq!(format!("{}", v1), "{ a: 0, b: 0, c: 0 }");
     }
 }

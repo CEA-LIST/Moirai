@@ -6,18 +6,18 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::membership::View;
+use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Dot {
-    view: Rc<View>,
+    view: Rc<ViewData>,
     origin: usize,
     counter: usize,
 }
 
 impl Dot {
-    pub fn new(origin: usize, counter: usize, view: &Rc<View>) -> Self {
+    pub fn new(origin: usize, counter: usize, view: &Rc<ViewData>) -> Self {
         Self {
             view: Rc::clone(view),
             origin,
@@ -25,7 +25,7 @@ impl Dot {
         }
     }
 
-    pub fn view(&self) -> Rc<View> {
+    pub fn view(&self) -> Rc<ViewData> {
         Rc::clone(&self.view)
     }
 
@@ -40,7 +40,7 @@ impl Dot {
 
 impl Display for Dot {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "({}{})", self.origin, self.counter)
+        write!(f, "({}{})", self.origin(), self.counter)
     }
 }
 
@@ -48,12 +48,10 @@ impl PartialOrd for Dot {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.view.id != other.view.id {
             None
+        } else if self.origin == other.origin {
+            Some(self.counter.cmp(&other.counter))
         } else {
-            if self.origin == other.origin {
-                Some(self.counter.cmp(&other.counter))
-            } else {
-                None
-            }
+            None
         }
     }
 }

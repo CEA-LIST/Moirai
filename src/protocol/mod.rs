@@ -3,7 +3,6 @@ pub mod event_graph;
 pub mod guard;
 pub mod log;
 pub mod membership;
-pub mod po_log;
 pub mod pulling;
 pub mod pure_crdt;
 pub mod tcsb;

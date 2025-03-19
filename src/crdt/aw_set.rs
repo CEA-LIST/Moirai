@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-
-use crate::protocol::event::Event;
-use crate::protocol::po_log::POLog;
+use crate::clocks::dependency_clock::DependencyClock;
+use crate::protocol::event_graph::EventGraph;
 use crate::protocol::pure_crdt::PureCRDT;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -21,14 +21,14 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(new_event: &Event<Self>, _old_event: &Event<Self>) -> bool {
-        matches!(new_event.op, AWSet::Clear | AWSet::Remove(_))
+    fn r(new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
+        matches!(new_op, AWSet::Clear | AWSet::Remove(_))
     }
 
-    fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        old_event.metadata.clock < new_event.metadata.clock
-            && (matches!(new_event.op, AWSet::Clear)
-                || match (&old_event.op, &new_event.op) {
+    fn r_zero(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+        Some(Ordering::Less) == order
+            && (matches!(old_op, AWSet::Clear)
+                || match (&old_op, &new_op) {
                     (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => {
                         v1 == v2
                     }
@@ -36,11 +36,11 @@ where
                 })
     }
 
-    fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-        Self::r_zero(old_event, new_event)
+    fn r_one(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+        Self::r_zero(old_op, order, new_op)
     }
 
-    fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
+    fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 
     fn eval(ops: &[Self]) -> Self::Value {
         let mut set = Self::Value::new();
@@ -59,12 +59,12 @@ mod tests {
 
     use crate::{
         crdt::{aw_set::AWSet, test_util::twins},
-        protocol::po_log::POLog,
+        protocol::event_graph::EventGraph,
     };
 
     #[test_log::test]
     fn simple_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
@@ -92,7 +92,7 @@ mod tests {
 
     #[test_log::test]
     fn clear_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
 
         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
 
@@ -117,7 +117,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
@@ -141,7 +141,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_add_aw_set() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
 
         let event = tcsb_a.tc_bcast(AWSet::Add("c"));
         tcsb_b.try_deliver(event);
@@ -165,7 +165,7 @@ mod tests {
 
     #[test_log::test]
     fn concurrent_add_aw_set_2() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<AWSet<&str>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
 
         let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));

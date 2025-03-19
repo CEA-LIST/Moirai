@@ -1,6 +1,6 @@
 use crate::{
-    clocks::vector_clock::VectorClock,
-    protocol::{event::Event, log::Log, metadata::Metadata, pulling::Since},
+    clocks::dependency_clock::DependencyClock,
+    protocol::{event::Event, log::Log, pulling::Since},
 };
 
 #[derive(Clone, Debug)]
@@ -49,12 +49,12 @@ where
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &Metadata) {
+    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
         self.first.purge_stable_metadata(metadata);
         self.second.purge_stable_metadata(metadata);
     }
 
-    fn collect_events(&self, upper_bound: &Metadata) -> Vec<Event<Self::Op>> {
+    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
         let events_fl = self.first.collect_events(upper_bound);
         let events_sl = self.second.collect_events(upper_bound);
         let mut result = vec![];
@@ -83,7 +83,7 @@ where
         result
     }
 
-    fn r_n(&mut self, metadata: &Metadata, conservative: bool) {
+    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
         self.first.r_n(metadata, conservative);
         self.second.r_n(metadata, conservative);
     }
@@ -105,23 +105,12 @@ where
         (self.first.eval(), self.second.eval())
     }
 
-    fn stabilize(&mut self, metadata: &Metadata) {
+    fn stabilize(&mut self, metadata: &DependencyClock) {
         self.first.stabilize(metadata);
         self.second.stabilize(metadata);
     }
 
     fn is_empty(&self) -> bool {
         self.first.is_empty() && self.second.is_empty()
-    }
-
-    fn lowest_view_id(&self) -> usize {
-        self.first
-            .lowest_view_id()
-            .min(self.second.lowest_view_id())
-    }
-
-    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
-        self.first.scalar_to_vec(clock);
-        self.second.scalar_to_vec(clock);
     }
 }

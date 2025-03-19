@@ -1,7 +1,8 @@
 use super::{log::Log, tcsb::Tcsb};
+use crate::clocks::clock::Clock;
 use crate::{
-    clocks::vector_clock::VectorClock,
-    protocol::{event::Event, metadata::Metadata},
+    clocks::{dependency_clock::DependencyClock, dot::Dot},
+    protocol::event::Event,
 };
 use log::error;
 #[cfg(feature = "serde")]
@@ -12,11 +13,11 @@ use std::fmt::Debug;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
-    pub metadata: Metadata,
+    pub metadata: DependencyClock,
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<Event<O>>, metadata: Metadata) -> Self {
+    pub fn new(events: Vec<Event<O>>, metadata: DependencyClock) -> Self {
         Self { events, metadata }
     }
 }
@@ -32,34 +33,24 @@ pub enum DeliveryError {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Since {
-    pub clock: VectorClock<String, usize>,
-    pub origin: String,
-    pub view_id: usize,
+    pub clock: DependencyClock,
     /// Dots to exclude from the pull request (already received but not delivered)
-    pub exclude: Vec<(String, usize)>,
+    pub exclude: Vec<Dot>,
 }
 
 impl Since {
-    pub fn new(
-        clock: VectorClock<String, usize>,
-        origin: String,
-        exclude: Vec<(String, usize)>,
-        view_id: usize,
-    ) -> Self {
-        Since {
-            clock,
-            origin,
-            exclude,
-            view_id,
-        }
+    pub fn new(clock: DependencyClock, exclude: Vec<Dot>) -> Self {
+        Since { clock, exclude }
     }
 
     pub fn new_from(tcsb: &Tcsb<impl Log>) -> Self {
         Since {
             clock: tcsb.my_clock().clone(),
-            origin: tcsb.id.clone(),
-            exclude: tcsb.pending.iter().map(|e| e.metadata.dot()).collect(),
-            view_id: tcsb.view_id(),
+            exclude: tcsb
+                .pending
+                .iter()
+                .map(|e| Dot::from(&e.metadata))
+                .collect(),
         }
     }
 }
@@ -69,10 +60,13 @@ where
     L: Log,
 {
     pub fn events_since(&self, since: &Since) -> Result<Batch<L::Op>, DeliveryError> {
-        if !self.group_members().contains(&since.origin) {
+        if !self
+            .group_members()
+            .contains(&since.clock.origin().to_string())
+        {
             error!(
                 "The origin {} of the metadata is not part of the group membership: {:?}",
-                since.origin,
+                since.clock.origin(),
                 self.group_members()
             );
             return Err(DeliveryError::UnknownPeer);
@@ -80,10 +74,7 @@ where
 
         let events = self.state.collect_events_since(since);
 
-        Ok(Batch::new(
-            events,
-            Metadata::new(self.my_clock().clone(), &self.id, 0),
-        ))
+        Ok(Batch::new(events, self.my_clock().clone()))
     }
 
     pub fn deliver_batch(&mut self, batch: Result<Batch<L::Op>, DeliveryError>) {
@@ -93,9 +84,9 @@ where
                     self.try_deliver(event);
                 }
                 self.ltm
-                    .get_mut(&batch.metadata.origin.clone())
+                    .get_mut(batch.metadata.origin())
                     .unwrap()
-                    .merge(&batch.metadata.clock);
+                    .merge(&batch.metadata);
             }
             Err(e) => match e {
                 DeliveryError::UnknownPeer => {

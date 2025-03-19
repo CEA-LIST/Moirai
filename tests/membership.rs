@@ -1,11 +1,9 @@
-use std::path::Path;
-
 use po_crdt::{
     crdt::{counter::Counter, test_util::triplet_po},
-    protocol::{po_log::POLog, pulling::Since, tcsb::Tcsb},
+    protocol::{event_graph::EventGraph, pulling::Since, tcsb::Tcsb},
 };
 
-fn batch(from: Vec<&Tcsb<POLog<Counter<i32>>>>, to: &mut Tcsb<POLog<Counter<i32>>>) {
+fn batch(from: Vec<&Tcsb<EventGraph<Counter<i32>>>>, to: &mut Tcsb<EventGraph<Counter<i32>>>) {
     for f in from {
         if to.group_membership.stable_across_views().contains(&&f.id) {
             let batch = f.events_since(&Since::new_from(to));
@@ -16,8 +14,8 @@ fn batch(from: Vec<&Tcsb<POLog<Counter<i32>>>>, to: &mut Tcsb<POLog<Counter<i32>
 
 #[test_log::test]
 fn join_new_group() {
-    let mut tcsb_a = Tcsb::<POLog<Counter<i32>>>::new("a");
-    let mut tcsb_b = Tcsb::<POLog<Counter<i32>>>::new("b");
+    let mut tcsb_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
+    let mut tcsb_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
 
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
@@ -38,9 +36,9 @@ fn join_new_group() {
 
 #[test_log::test]
 fn join_existing_group() {
-    let mut tcsb_a = Tcsb::<POLog<Counter<i32>>>::new("a");
-    let mut tcsb_b = Tcsb::<POLog<Counter<i32>>>::new("b");
-    let mut tcsb_c = Tcsb::<POLog<Counter<i32>>>::new("c");
+    let mut tcsb_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
+    let mut tcsb_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
+    let mut tcsb_c = Tcsb::<EventGraph<Counter<i32>>>::new("c");
 
     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
     tcsb_a.start_installing_view();
@@ -184,10 +182,10 @@ fn rejoin() {
     assert_eq!(tcsb_c.group_members(), tcsb_b.group_members());
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
-    tcsb_a
-        .tracer
-        .serialize_to_file(Path::new("traces/membership.json"))
-        .unwrap();
+    // tcsb_a
+    //     .tracer
+    //     .serialize_to_file(Path::new("traces/membership.json"))
+    //     .unwrap();
 }
 
 #[test_log::test]

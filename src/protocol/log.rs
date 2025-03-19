@@ -58,7 +58,4 @@ pub trait Log: Default + Clone {
     }
 
     fn is_empty(&self) -> bool;
-
-    /// Return the lowest view ID in the log
-    fn lowest_view_id(&self) -> usize;
 }

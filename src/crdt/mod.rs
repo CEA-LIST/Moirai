@@ -11,21 +11,21 @@ pub mod test_util {
     use colored::Colorize;
     use log::debug;
 
-    use crate::protocol::{log::Log, po_log::POLog, pure_crdt::PureCRDT, tcsb::Tcsb};
+    use crate::protocol::{event_graph::EventGraph, log::Log, pure_crdt::PureCRDT, tcsb::Tcsb};
 
     pub type Twins<L> = (Tcsb<L>, Tcsb<L>);
     pub type Triplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>);
     pub type Quadruplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>, Tcsb<L>);
 
-    pub fn twins_po<O: PureCRDT>() -> Twins<POLog<O>> {
+    pub fn twins_po<O: PureCRDT>() -> Twins<EventGraph<O>> {
         twins()
     }
 
-    pub fn triplet_po<O: PureCRDT>() -> Triplet<POLog<O>> {
+    pub fn triplet_po<O: PureCRDT>() -> Triplet<EventGraph<O>> {
         triplet()
     }
 
-    pub fn quadruplet_po<O: PureCRDT>() -> Quadruplet<POLog<O>> {
+    pub fn quadruplet_po<O: PureCRDT>() -> Quadruplet<EventGraph<O>> {
         quadruplet()
     }
 
@@ -42,14 +42,14 @@ pub mod test_util {
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
         tcsb_a.start_installing_view();
         tcsb_a.mark_view_installed();
-        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_a.ltm.members(), &vec!["a", "b"]);
 
         // --> Causal stability <--
         tcsb_b.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_a.ltm.members(), &vec!["a", "b"]);
         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
-        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b"]);
+        assert_eq!(tcsb_b.ltm.members(), &vec!["a", "b"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
@@ -76,9 +76,9 @@ pub mod test_util {
         // --> Causal stability <--
         tcsb_c.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c"]);
-        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c"]);
-        assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c"]);
+        assert_eq!(tcsb_a.ltm.members(), &vec!["a", "b", "c"]);
+        assert_eq!(tcsb_b.ltm.members(), &vec!["a", "b", "c"]);
+        assert_eq!(tcsb_c.ltm.members(), &vec!["a", "b", "c"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
@@ -123,13 +123,13 @@ pub mod test_util {
         tcsb_c.start_installing_view();
         tcsb_c.mark_view_installed();
 
-        assert_eq!(tcsb_a.ltm.keys(), vec!["a", "b", "c", "d"]);
-        assert_eq!(tcsb_b.ltm.keys(), vec!["a", "b", "c", "d"]);
-        assert_eq!(tcsb_c.ltm.keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_a.ltm.members(), &vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_b.ltm.members(), &vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_c.ltm.members(), &vec!["a", "b", "c", "d"]);
 
         tcsb_d.state_transfer(&mut tcsb_a);
 
-        assert_eq!(tcsb_d.ltm.keys(), vec!["a", "b", "c", "d"]);
+        assert_eq!(tcsb_d.ltm.members(), &vec!["a", "b", "c", "d"]);
 
         let left = "<<<".bold().yellow();
         let right = ">>>".bold().yellow();
@@ -152,21 +152,21 @@ mod tests {
             counter::Counter,
             test_util::{quadruplet, triplet, twins},
         },
-        protocol::po_log::POLog,
+        protocol::event_graph::EventGraph,
     };
 
     #[test_log::test]
     fn test_twins() {
-        let _ = twins::<POLog<Counter<i32>>>();
+        let _ = twins::<EventGraph<Counter<i32>>>();
     }
 
     #[test_log::test]
     fn test_triplet() {
-        let _ = triplet::<POLog<Counter<i32>>>();
+        let _ = triplet::<EventGraph<Counter<i32>>>();
     }
 
     #[test_log::test]
     fn test_quadruplet() {
-        let _ = quadruplet::<POLog<Counter<i32>>>();
+        let _ = quadruplet::<EventGraph<Counter<i32>>>();
     }
 }
