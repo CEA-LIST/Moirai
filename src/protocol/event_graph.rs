@@ -11,17 +11,18 @@ use log::error;
 use petgraph::algo::has_path_connecting;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::StableDiGraph;
-use petgraph::visit::Bfs;
+use petgraph::visit::EdgeRef;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EventGraph<Op> {
-    stable: Vec<Op>,
-    unstable: StableDiGraph<Op, ()>,
+    pub(crate) stable: Vec<Op>,
+    pub(crate) unstable: StableDiGraph<Op, ()>,
     index_map: BiMap<Dot, NodeIndex>,
 }
 
@@ -49,7 +50,7 @@ where
         let from_idx = self.unstable.add_node(event.op.clone());
         self.index_map.insert(Dot::from(&event.metadata), from_idx);
         for (origin, cnt) in event.metadata.clock.iter() {
-            if origin == &event.metadata.origin {
+            if origin == &event.metadata.origin.expect("Origin not set") || *cnt == 0 {
                 continue;
             }
             let to_dot = Dot::new(*origin, *cnt, &event.metadata.view);
@@ -59,17 +60,18 @@ where
                 .expect("Causal delivery failed.");
             self.unstable.add_edge(*to_idx, from_idx, ());
         }
+        assert_eq!(self.index_map.len(), self.unstable.node_count());
     }
 
-    pub fn partial_cmp(&self, first: Dot, second: Dot) -> Option<Ordering> {
+    pub fn partial_cmp(&self, first: &Dot, second: &Dot) -> Option<Ordering> {
         let first_idx = self
             .index_map
-            .get_by_left(&first)
+            .get_by_left(first)
             .expect("Dot not found in the graph.");
         let second_idx = self
             .index_map
-            .get_by_left(&second)
-            .expect("Dot not found in the graph.");
+            .get_by_left(second)
+            .unwrap_or_else(|| panic!("Dot {} not found in the graph.", second));
 
         let first_to_second = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
         let second_to_first = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
@@ -84,7 +86,7 @@ where
 
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.index_map.get_by_right(node_idx).unwrap();
-        let mut dependency_clock = DependencyClock::new(&dot.view(), &dot.origin());
+        let mut dependency_clock = DependencyClock::new(&dot.view(), dot.origin());
 
         let op = self.unstable.node_weight(*node_idx).unwrap();
         let neighbors = self
@@ -92,7 +94,7 @@ where
             .neighbors_directed(*node_idx, petgraph::Direction::Outgoing);
         for neighbor in neighbors {
             let neighbor_dot = self.index_map.get_by_right(&neighbor).unwrap();
-            dependency_clock.set(&neighbor_dot.origin(), neighbor_dot.val());
+            dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
         Event::new(op.clone(), dependency_clock)
     }
@@ -114,19 +116,25 @@ where
         // Keep only the operations that are not made redundant by the new operation
         self.stable.retain(|o| {
             if is_r_0 {
-                !(Self::Op::r_zero(&o, Some(Ordering::Less), &event.op))
+                !(Self::Op::r_zero(o, Some(Ordering::Less), &event.op))
             } else {
-                !(Self::Op::r_one(&o, Some(Ordering::Less), &event.op))
+                !(Self::Op::r_one(o, Some(Ordering::Less), &event.op))
             }
         });
 
-        let to_remove: Vec<_> = self
+        self.new_event(event);
+        let new_dot = Dot::from(&event.metadata);
+
+        let to_remove: Vec<NodeIndex> = self
             .unstable
             .node_indices()
             .filter(|&node_idx| {
-                let dot = self.index_map.get_by_right(&node_idx).unwrap();
+                let other_dot = self.index_map.get_by_right(&node_idx).unwrap();
+                if *other_dot == new_dot {
+                    return true;
+                }
                 let op = self.unstable.node_weight(node_idx).unwrap();
-                let ordering = self.partial_cmp(dot.clone(), Dot::from(&event.metadata));
+                let ordering = self.partial_cmp(other_dot, &new_dot);
 
                 if is_r_0 {
                     Self::Op::r_zero(op, ordering, &event.op)
@@ -144,14 +152,37 @@ where
 
     /// Returns a list of events that are in the past of the given metadata
     fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
-        let mut bfs = Bfs::new(
-            &self.unstable,
-            *self.index_map.get_by_left(&Dot::from(upper_bound)).unwrap(),
-        );
-        let mut events = vec![];
-        while let Some(node_idx) = bfs.next(&self.unstable) {
-            events.push(self.event_from_idx(&node_idx));
+        let start_nodes = upper_bound.clock.iter().filter_map(|(origin, cnt)| {
+            let dot = Dot::new(*origin, *cnt, &upper_bound.view);
+            self.index_map.get_by_left(&dot)
+        });
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut events = Vec::new();
+
+        // For each start node, push its outgoing neighbors into the queue.
+        for &start in start_nodes {
+            // Using the edges iterator gives us outgoing neighbors.
+            for edge in self.unstable.edges(start) {
+                let target = edge.target();
+                if visited.insert(target) {
+                    queue.push_back(target);
+                }
+            }
         }
+
+        // Standard BFS: for each node, record its operation and visit its children.
+        while let Some(node_index) = queue.pop_front() {
+            events.push(self.event_from_idx(&node_index));
+            for edge in self.unstable.edges(node_index) {
+                let target = edge.target();
+                if visited.insert(target) {
+                    queue.push_back(target);
+                }
+            }
+        }
+
         events
     }
 
@@ -162,7 +193,7 @@ where
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         for o in &self.stable {
             // let old_event = Event::new(o.clone(), DependencyClock::default());
-            if Self::Op::r(&event.op, Some(Ordering::Greater), &o) {
+            if Self::Op::r(&event.op, Some(Ordering::Greater), o) {
                 return true;
             }
         }
@@ -186,7 +217,7 @@ where
             .node_indices()
             .filter(|&node_idx| {
                 let dot = self.index_map.get_by_right(&node_idx).unwrap();
-                let ordering = self.partial_cmp(dot.clone(), Dot::from(metadata));
+                let ordering = self.partial_cmp(dot, &Dot::from(metadata));
                 if conservative {
                     !matches!(ordering, Some(Ordering::Less) | Some(Ordering::Equal))
                 } else {
@@ -225,10 +256,6 @@ where
 
     fn is_empty(&self) -> bool {
         self.stable.is_empty() && self.unstable.node_count() == 0
-    }
-
-    fn lowest_view_id(&self) -> usize {
-        todo!()
     }
 }
 

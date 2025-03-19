@@ -1,18 +1,18 @@
-use colored::*;
-use log::{error, info};
-use serde::{Deserialize, Serialize};
-
 use super::event::Event;
 use super::membership::{ViewInstallingStatus, Views};
 use crate::clocks::clock::Clock;
 use crate::clocks::dependency_clock::DependencyClock;
-use crate::clocks::{matrix_clock::MatrixClock, vector_clock::VectorClock};
+use crate::clocks::matrix_clock::MatrixClock;
 use crate::protocol::guard::{guard_against_duplicates, guard_against_out_of_order};
 use crate::protocol::log::Log;
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use std::collections::{HashSet, VecDeque};
+use colored::*;
+use log::{error, info};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
+use std::rc::Rc;
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -34,9 +34,9 @@ where
     /// Group Membership views
     pub group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
-    pub ltm: MatrixClock<String, usize>,
+    pub ltm: MatrixClock,
     /// Last Stable Vector (LSV)
-    pub lsv: VectorClock<String, usize>,
+    pub lsv: HashMap<String, usize>,
     /// Trace of events for debugging purposes
     #[cfg(feature = "utils")]
     pub tracer: Tracer,
@@ -48,12 +48,13 @@ where
 {
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
+        let views = Views::new(vec![id.to_string()]);
         Self {
             id: id.to_string(),
             state: Default::default(),
-            group_membership: Views::new(vec![id.to_string()]),
-            ltm: MatrixClock::new(&[id.to_string()]),
-            lsv: VectorClock::new(id.to_string()),
+            ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data)),
+            group_membership: views,
+            lsv: HashMap::new(),
             pending: VecDeque::new(),
             #[cfg(feature = "utils")]
             tracer: Tracer::new(String::from(id)),
@@ -94,6 +95,7 @@ where
         if !self
             .group_membership
             .installed_view()
+            .data
             .members
             .contains(&event.metadata.origin().to_string())
         {
@@ -134,12 +136,11 @@ where
                 format!("{}", event.metadata).red(),
                 format!("{:?}", event.op).green(),
             );
+            return;
         }
         // Store the new event at the end of the causal buffer
         self.pending.push_back(event.clone());
-        self.pending
-            .make_contiguous()
-            .sort_by(|a, b| a.metadata.cmp(&b.metadata));
+        self.pending.make_contiguous();
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
@@ -170,13 +171,10 @@ where
         if self.id != event.metadata.origin() {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
-            self.ltm.update(
-                &event.metadata.origin().to_string(),
-                &VectorClock::from(&event.metadata),
-            );
+            self.ltm
+                .merge_clock(event.metadata.origin(), &event.metadata);
             // Update our own vector clock
-            self.my_clock_mut()
-                .merge(&VectorClock::from(&event.metadata));
+            self.my_clock_mut().merge(&event.metadata);
 
             #[cfg(feature = "utils")]
             self.tracer.append::<L>(event.clone());
@@ -197,11 +195,10 @@ where
             self.id.blue().bold(),
             ignore
         );
-        let svv = self.ltm.svv(ignore.as_slice());
-        let upper_bound = Metadata::new(svv.clone(), "", self.view_id());
-        let ready_to_stabilize = self.state.collect_events(&upper_bound);
+        let svv = self.ltm.svv(&self.id, &ignore);
+        let ready_to_stabilize = self.state.collect_events(&svv);
         if !ready_to_stabilize.is_empty() {
-            self.lsv = self.ltm.svv(&ignore);
+            self.lsv = svv.into();
         }
 
         for event in &ready_to_stabilize {
@@ -222,9 +219,15 @@ where
         let other_clock = other.my_clock().clone();
         other.ltm.get_mut(&self.id).unwrap().merge(&other_clock);
 
-        assert_eq!(self.my_clock(), other.my_clock());
-        assert_eq!(self.my_clock(), self.ltm.get(&other.id).unwrap());
-        assert_eq!(other.my_clock(), other.ltm.get(&self.id).unwrap());
+        assert_eq!(self.my_clock().clock, other.my_clock().clock);
+        assert_eq!(
+            self.my_clock().clock,
+            self.ltm.get(&other.id).unwrap().clock
+        );
+        assert_eq!(
+            other.my_clock().clock,
+            other.ltm.get(&self.id).unwrap().clock
+        );
     }
 
     /// Utilitary function to evaluate the current state of the whole CRDT.
@@ -268,32 +271,30 @@ where
             self.id.blue().bold()
         );
         self.tc_stable();
-        assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
-        for member in self.group_membership.joining_members() {
-            self.ltm.add_key(member.clone());
-        }
-        for member in self.group_membership.leaving_members(&self.id) {
-            self.ltm.remove_key(member);
-        }
+        // assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
+        self.ltm.change_view(&Rc::clone(
+            &self.group_membership.installing_view().unwrap().data,
+        ));
         self.group_membership.mark_installed();
         if !self.group_members().contains(&self.id) {
             self.group_membership = Views::new(vec![self.id.to_string()]);
             self.tc_stable();
-        } else if self.group_membership.last_planned_id().is_none() {
-            let my_clock = self.my_clock().clone();
-            self.state.scalar_to_vec(&my_clock);
         }
+        // else if self.group_membership.last_planned_id().is_none() {
+        //     let my_clock = self.my_clock().clone();
+        //     self.state.scalar_to_vec(&my_clock);
+        // }
     }
 
     /// Return the mutable vector clock of the local replica
-    pub fn my_clock_mut(&mut self) -> &mut VectorClock<String, usize> {
+    pub fn my_clock_mut(&mut self) -> &mut DependencyClock {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
     }
 
     /// Return the vector clock of the local replica
-    pub fn my_clock(&self) -> &VectorClock<String, usize> {
+    pub fn my_clock(&self) -> &DependencyClock {
         self.ltm
             .get(&self.id)
             .expect("Local vector clock not found")
@@ -308,64 +309,60 @@ where
         let mut waiting_from = HashSet::<String>::new();
         for event in self.pending.iter() {
             assert!(
-                event.metadata.origin != self.id,
+                event.metadata.origin() != self.id,
                 "Local peer should not be in the pending list. Event: {:?}",
                 event
             );
-            let sending_peer_clock = self.ltm.get(&event.metadata.origin).unwrap();
-            let sending_peer_lamport = sending_peer_clock.get(&event.metadata.origin).unwrap();
-            if event.metadata.get_lamport(&event.metadata.origin).unwrap() > sending_peer_lamport {
-                waiting_from.insert(event.metadata.origin.clone());
+            let sending_peer_clock = self.ltm.get(event.metadata.origin()).unwrap();
+            let sending_peer_lamport = sending_peer_clock.get(event.metadata.origin());
+            if event.metadata.dot() > sending_peer_lamport {
+                waiting_from.insert(event.metadata.origin().to_owned());
             }
         }
         waiting_from
     }
 
     /// Returns the update clock new event of this [`Tcsb<L>`].
-    fn generate_metadata_for_new_event(&mut self) -> Metadata {
+    fn generate_metadata_for_new_event(&mut self) -> DependencyClock {
         let my_id = self.id.clone();
         let installing_view = self.group_membership.installing_view().cloned();
 
-        let (view_id, clock) = if let Some(v) = installing_view {
+        let clock = if let Some(v) = installing_view {
             info!(
                 "[{}] - Creating event while installing view {}",
                 self.id.blue().bold(),
-                v.id,
+                v.data.id,
             );
             let clock = {
                 let my_clock = self.my_clock_mut();
-                my_clock.increment(&my_id);
-                let my_clock_value = self.my_clock().get(&my_id).unwrap();
-                let mut clock = VectorClock::default();
-                clock.insert(my_id, my_clock_value);
+                my_clock.increment();
+                let my_clock_value = self.my_clock().get(&my_id);
+                let mut clock = DependencyClock::new(&Rc::clone(&v.data), &my_id);
+                clock.set(&my_id, my_clock_value);
                 clock
             };
-            (
-                self.group_membership.last_planned_id().unwrap_or(v.id),
-                clock,
-            )
+            clock
         } else {
             let clock = {
                 let my_clock = self.my_clock_mut();
-                my_clock.increment(&my_id);
+                my_clock.increment();
                 my_clock.clone()
             };
-            (self.view_id(), clock)
+            clock
         };
-
-        Metadata::new(clock, &self.id, view_id)
+        clock
     }
 
     pub fn group_members(&self) -> &Vec<String> {
-        &self.group_membership.installed_view().members
+        &self.group_membership.installed_view().data.members
     }
 
     pub fn view_id(&self) -> usize {
-        self.group_membership.installed_view().id
+        self.group_membership.installed_view().data.id
     }
 
     pub fn last_view_id(&self) -> usize {
-        self.group_membership.last_view().id
+        self.group_membership.last_view().data.id
     }
 }
 
@@ -374,8 +371,8 @@ where
 pub struct StateTransfer<L> {
     pub group_membership: Views,
     pub state: L,
-    pub lsv: VectorClock<String, usize>,
-    pub ltm: MatrixClock<String, usize>,
+    pub lsv: HashMap<String, usize>,
+    pub ltm: MatrixClock,
 }
 
 impl<L> StateTransfer<L>

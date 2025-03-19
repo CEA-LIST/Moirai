@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use log::info;
 use serde::{Deserialize, Serialize};
 
@@ -25,25 +27,31 @@ pub enum ViewInstallingStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct View {
+pub struct ViewData {
     pub id: usize,
     pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct View {
+    pub data: Rc<ViewData>,
     pub status: ViewStatus,
 }
 
 impl View {
     pub fn new(id: usize, members: Vec<String>, status: ViewStatus) -> Self {
-        Self {
-            id,
-            members,
-            status,
-        }
+        let data = Rc::new(ViewData { id, members });
+        Self { data, status }
     }
 
     pub fn init(tcsb_id: &str) -> Self {
-        Self {
+        let data = Rc::new(ViewData {
             id: 0,
             members: vec![tcsb_id.to_string()],
+        });
+        Self {
+            data,
             status: ViewStatus::Installed,
         }
     }
@@ -72,7 +80,7 @@ impl Views {
         assert!(!members.is_empty());
         let view_id = self.views.len();
         let view = View::new(view_id, members, ViewStatus::Pending);
-        assert!(self.views.last().unwrap().id < view_id);
+        assert!(self.views.last().unwrap().data.id < view_id);
         self.views.push(view);
     }
 
@@ -121,9 +129,10 @@ impl Views {
         if let Some(installing_view) = self.installing_view() {
             let members = self
                 .installed_view()
+                .data
                 .members
                 .iter()
-                .filter(|id| installing_view.members.contains(id))
+                .filter(|id| installing_view.data.members.contains(id))
                 .collect();
             return Some(members);
         }
@@ -131,11 +140,11 @@ impl Views {
     }
 
     pub fn stable_across_views(&self) -> Vec<&String> {
-        let mut stable_members: Vec<&String> = self.installed_view().members.iter().collect();
+        let mut stable_members: Vec<&String> = self.installed_view().data.members.iter().collect();
         for i in self.current_view_id + 1..self.views.len() {
             stable_members = stable_members
                 .iter()
-                .filter(|id| self.views[i].members.contains(*id))
+                .filter(|id| self.views[i].data.members.contains(*id))
                 .copied()
                 .collect();
         }
@@ -144,7 +153,7 @@ impl Views {
 
     pub fn installing_members(&self) -> Option<Vec<&String>> {
         if let Some(installing_view) = self.installing_view() {
-            let members = installing_view.members.iter().collect();
+            let members = installing_view.data.members.iter().collect();
             return Some(members);
         }
         None
@@ -155,13 +164,15 @@ impl Views {
         if let Some(installing_view) = self.installing_view() {
             let members: Vec<&String> = self
                 .installed_view()
+                .data
                 .members
                 .iter()
-                .filter(|m| !installing_view.members.contains(m))
+                .filter(|m| !installing_view.data.members.contains(m))
                 .collect();
             if members.contains(&&id.to_string()) {
                 let old_view_members: Vec<&String> = self
                     .installed_view()
+                    .data
                     .members
                     .iter()
                     .filter(|m| *m != id)
@@ -179,9 +190,10 @@ impl Views {
     pub fn joining_members(&self) -> Vec<&String> {
         if let Some(installing_view) = self.installing_view() {
             installing_view
+                .data
                 .members
                 .iter()
-                .filter(|id| !self.installed_view().members.contains(id))
+                .filter(|id| !self.installed_view().data.members.contains(id))
                 .collect()
         } else {
             Vec::new()
@@ -190,7 +202,7 @@ impl Views {
 
     pub fn planning(&mut self, view_id: usize) {
         assert!(view_id < self.views.len());
-        let installing_id = self.installing_view().unwrap().id;
+        let installing_id = self.installing_view().unwrap().data.id;
         for v in &mut self.views[installing_id..=view_id] {
             if v.status == ViewStatus::Pending {
                 v.status = ViewStatus::Planned;
@@ -202,7 +214,7 @@ impl Views {
         let mut last_planned_id = None;
         for view in &self.views[self.current_view_id..] {
             if view.status == ViewStatus::Planned || view.status == ViewStatus::Installing {
-                last_planned_id = Some(view.id);
+                last_planned_id = Some(view.data.id);
             }
         }
         last_planned_id

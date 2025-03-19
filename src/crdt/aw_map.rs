@@ -1,7 +1,7 @@
-use crate::clocks::vector_clock::VectorClock;
-use crate::protocol::metadata::Metadata;
+use crate::clocks::dependency_clock::DependencyClock;
+use crate::protocol::event_graph::EventGraph;
 use crate::protocol::pulling::Since;
-use crate::protocol::{event::Event, log::Log, po_log::POLog, utils::Keyable};
+use crate::protocol::{event::Event, log::Log, utils::Keyable};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -15,7 +15,7 @@ pub enum AWMap<K, O> {
 
 #[derive(Clone, Debug)]
 pub struct UWMapLog<K, L> {
-    keys: POLog<AWSet<K>>,
+    keys: EventGraph<AWSet<K>>,
     values: HashMap<K, L>,
 }
 
@@ -77,7 +77,7 @@ where
         }
     }
 
-    fn collect_events(&self, upper_bound: &Metadata) -> Vec<Event<Self::Op>> {
+    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
         for (k, v) in &self.values {
             events.extend(
@@ -101,7 +101,7 @@ where
         events
     }
 
-    fn r_n(&mut self, metadata: &Metadata, conservative: bool) {
+    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
         self.keys.r_n(metadata, conservative);
         self.values.retain(|_, v| {
             v.r_n(metadata, conservative);
@@ -125,9 +125,9 @@ where
         map
     }
 
-    fn stabilize(&mut self, _: &Metadata) {}
+    fn stabilize(&mut self, _: &DependencyClock) {}
 
-    fn purge_stable_metadata(&mut self, metadata: &Metadata) {
+    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
         self.keys.purge_stable_metadata(metadata);
         self.values
             .iter_mut()
@@ -136,17 +136,6 @@ where
 
     fn is_empty(&self) -> bool {
         self.keys.is_empty()
-    }
-
-    fn lowest_view_id(&self) -> usize {
-        self.keys.lowest_view_id()
-    }
-
-    fn scalar_to_vec(&mut self, clock: &VectorClock<String, usize>) {
-        self.keys.scalar_to_vec(clock);
-        self.values
-            .iter_mut()
-            .for_each(|(_, v)| v.scalar_to_vec(clock));
     }
 }
 
@@ -161,12 +150,12 @@ mod tests {
             duet::{Duet, DuetLog},
             test_util::twins,
         },
-        protocol::po_log::POLog,
+        protocol::event_graph::EventGraph,
     };
 
     #[test_log::test]
     fn simple_aw_map() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, POLog<Counter<i32>>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
 
         let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Dec(5)));
         tcsb_b.try_deliver(event);
@@ -186,8 +175,9 @@ mod tests {
 
     #[test_log::test]
     fn aw_map_duet_counter() {
-        let (mut tcsb_a, mut tcsb_b) =
-            twins::<UWMapLog<String, DuetLog<POLog<Counter<i32>>, POLog<Counter<i32>>>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<
+            UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
+        >();
 
         let event = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
@@ -219,8 +209,9 @@ mod tests {
 
     #[test_log::test]
     fn aw_map_concurrent_duet_counter() {
-        let (mut tcsb_a, mut tcsb_b) =
-            twins::<UWMapLog<String, DuetLog<POLog<Counter<i32>>, POLog<Counter<i32>>>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<
+            UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
+        >();
 
         let event = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),

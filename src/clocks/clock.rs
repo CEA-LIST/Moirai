@@ -3,10 +3,10 @@ use std::{
     rc::Rc,
 };
 
-use crate::protocol::membership::View;
+use crate::protocol::membership::ViewData;
 
 pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
-    fn new(members: &Rc<View>, origin: &str) -> Self;
+    fn new(members: &Rc<ViewData>, origin: &str) -> Self;
 
     fn merge(&mut self, other: &Self);
 
@@ -25,4 +25,6 @@ pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
     fn set(&mut self, member: &str, value: usize);
 
     fn origin(&self) -> &str;
+
+    fn dot(&self) -> usize;
 }

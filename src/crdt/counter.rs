@@ -1,7 +1,9 @@
+use crate::clocks::dependency_clock::DependencyClock;
+use crate::protocol::event_graph::EventGraph;
 use crate::protocol::pure_crdt::PureCRDT;
-use crate::protocol::{event::Event, metadata::Metadata, po_log::POLog};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, SubAssign};
@@ -18,15 +20,15 @@ pub enum Counter<V: Number> {
 impl<V: Number + Debug> PureCRDT for Counter<V> {
     type Value = V;
 
-    fn r(_: &Event<Self>, _: &Event<Self>) -> bool {
+    fn r(_new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
         false
     }
 
-    fn r_zero(_old_event: &Event<Self>, _new_event: &Event<Self>) -> bool {
+    fn r_zero(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
         false
     }
 
-    fn r_one(_old_event: &Event<Self>, _new_event: &Event<Self>) -> bool {
+    fn r_one(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
         false
     }
 
@@ -41,7 +43,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
         counter
     }
 
-    fn stabilize(_metadata: &Metadata, _state: &mut POLog<Self>) {}
+    fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 }
 
 impl<V> Display for Counter<V>
@@ -60,12 +62,12 @@ where
 mod tests {
     use crate::{
         crdt::{counter::Counter, test_util::twins},
-        protocol::po_log::POLog,
+        protocol::event_graph::EventGraph,
     };
 
     #[test_log::test]
     pub fn simple_counter() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<POLog<Counter<isize>>>();
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
 
         let event = tcsb_a.tc_bcast(Counter::Dec(5));
         tcsb_b.try_deliver(event);
