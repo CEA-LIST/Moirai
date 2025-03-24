@@ -1,11 +1,11 @@
 use po_crdt::crdt::{
     counter::Counter,
-    test_util::{triplet_po, twins_po},
+    test_util::{triplet_graph, twins_graph},
 };
 
 #[test_log::test]
-fn causal_delivery() {
-    let (mut tcsb_a, mut tcsb_b) = twins_po::<Counter<i32>>();
+fn causal_delivery_twins() {
+    let (mut tcsb_a, mut tcsb_b) = twins_graph::<Counter<i32>>();
 
     let event_a_1 = tcsb_a.tc_bcast(Counter::Inc(1));
     let event_a_2 = tcsb_a.tc_bcast(Counter::Inc(1));
@@ -21,9 +21,9 @@ fn causal_delivery() {
     let event_b_3 = tcsb_b.tc_bcast(Counter::Inc(1));
     let event_b_4 = tcsb_b.tc_bcast(Counter::Inc(1));
 
-    tcsb_a.try_deliver(event_b_4);
     tcsb_a.try_deliver(event_b_3);
     tcsb_a.try_deliver(event_b_1);
+    tcsb_a.try_deliver(event_b_4);
     tcsb_a.try_deliver(event_b_2);
 
     assert_eq!(tcsb_a.eval(), 6);
@@ -32,7 +32,7 @@ fn causal_delivery() {
 
 #[test_log::test]
 fn causal_delivery_triplet() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_po::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Counter<i32>>();
 
     let event_b = tcsb_b.tc_bcast(Counter::Inc(2));
 

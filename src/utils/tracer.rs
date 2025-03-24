@@ -1,7 +1,9 @@
-use crate::protocol::{event::Event, log::Log, metadata::Metadata};
+use std::{fmt::Debug, fs::File, io::Write, path::Path};
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, fs::File, io::Write, path::Path};
+
+use crate::protocol::{event::Event, log::Log, metadata::Metadata};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

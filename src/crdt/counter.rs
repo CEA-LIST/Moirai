@@ -1,12 +1,16 @@
-use crate::clocks::dependency_clock::DependencyClock;
-use crate::protocol::event_graph::EventGraph;
-use crate::protocol::pure_crdt::PureCRDT;
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display},
+    ops::{Add, AddAssign, SubAssign},
+};
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::fmt::Debug;
-use std::fmt::Display;
-use std::ops::{Add, AddAssign, SubAssign};
+
+use crate::{
+    clocks::dependency_clock::DependencyClock,
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+};
 
 pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
 
@@ -76,6 +80,24 @@ mod tests {
         tcsb_b.try_deliver(event);
 
         let result = 0;
+        assert_eq!(tcsb_a.eval(), result);
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    pub fn simple_counter_2() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
+
+        let event = tcsb_a.tc_bcast(Counter::Dec(5));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(Counter::Inc(5));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(Counter::Inc(5));
+        tcsb_b.try_deliver(event);
+
+        let result = 5;
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }

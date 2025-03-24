@@ -1,12 +1,14 @@
-use super::{clock::Clock, dot::Dot};
-use crate::protocol::membership::ViewData;
-use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
+
+use serde::{Deserialize, Serialize};
+
+use super::{clock::Clock, dot::Dot};
+use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -71,7 +73,7 @@ impl From<&DependencyClock> for Dot {
     fn from(clock: &DependencyClock) -> Dot {
         Dot::new(
             clock.origin.expect("Origin not set"),
-            clock.get(clock.origin()),
+            clock.get(clock.origin()).unwrap(),
             &Rc::clone(&clock.view),
         )
     }
@@ -98,20 +100,20 @@ impl Clock for DependencyClock {
     }
 
     fn dot(&self) -> usize {
-        self.get(self.origin())
+        self.get(self.origin()).unwrap()
     }
 
     fn merge(&mut self, other: &Self) {
         assert!(self.view.id == other.view.id);
         for (idx, m) in self.view.members.iter().enumerate() {
             if self.get(m) < other.get(m) {
-                self.clock.insert(idx, other.get(m));
+                self.clock.insert(idx, other.get(m).unwrap());
             }
         }
     }
 
     fn increment(&mut self) {
-        let idx = self.get(self.origin());
+        let idx = self.get(self.origin()).unwrap();
         self.clock
             .insert(self.origin.expect("Origin not set"), idx + 1);
     }
@@ -120,7 +122,7 @@ impl Clock for DependencyClock {
         assert!(self.view.id == other.view.id);
         let mut new_clock = HashMap::new();
         for (idx, m) in self.view.members.iter().enumerate() {
-            new_clock.insert(idx, min(self.get(m), other.get(m)));
+            new_clock.insert(idx, min(self.get(m).unwrap(), other.get(m).unwrap()));
         }
         Self {
             view: self.view.clone(),
@@ -144,14 +146,14 @@ impl Clock for DependencyClock {
     }
 
     /// Returns the value of the clock for the given member OR 0 if the member is not in the clock
-    fn get(&self, member: &str) -> usize {
-        let idx = self
-            .view
-            .members
-            .iter()
-            .position(|m| m == member)
-            .expect("Member not found");
-        *self.clock.get(&(idx)).unwrap_or(&0)
+    fn get(&self, member: &str) -> Option<usize> {
+        let idx = self.view.members.iter().position(|m| m == member);
+        if let Some(idx) = idx {
+            if let Some(val) = self.clock.get(&idx) {
+                return Some(*val);
+            }
+        }
+        None
     }
 
     fn set(&mut self, member: &str, value: usize) {
@@ -160,7 +162,7 @@ impl Clock for DependencyClock {
             .members
             .iter()
             .position(|m| m == member)
-            .expect("Member not found");
+            .expect(&format!("Member {} not found", member));
         self.clock.insert(idx, value);
     }
 
@@ -183,12 +185,16 @@ impl Display for DependencyClock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "{{ ")?;
         for (idx, m) in self.view.members.iter().enumerate() {
-            write!(f, "{}: {}", m, self.get(m))?;
+            write!(f, "{}: {}", m, self.get(m).unwrap())?;
             if idx < self.view.members.len() - 1 {
                 write!(f, ", ")?;
             }
         }
-        write!(f, " }}")
+        write!(f, " }}")?;
+        if let Some(origin) = self.origin {
+            write!(f, "@{}", self.view.members[origin])?;
+        }
+        Ok(())
     }
 }
 
@@ -243,9 +249,8 @@ impl PartialOrd for DependencyClock {
 
 #[cfg(test)]
 mod tests {
-    use crate::protocol::membership::{View, ViewStatus};
-
     use super::*;
+    use crate::protocol::membership::{View, ViewStatus};
 
     #[test_log::test]
     fn test_clock() {
@@ -264,23 +269,23 @@ mod tests {
         v2.increment();
         v2.increment();
 
-        assert_eq!(v1.get("a"), 2);
-        assert_eq!(v1.get("b"), 0);
-        assert_eq!(v1.get("c"), 0);
+        assert_eq!(v1.get("a").unwrap(), 2);
+        assert_eq!(v1.get("b").unwrap(), 0);
+        assert_eq!(v1.get("c").unwrap(), 0);
 
-        assert_eq!(v2.get("a"), 0);
-        assert_eq!(v2.get("b"), 3);
-        assert_eq!(v2.get("c"), 0);
+        assert_eq!(v2.get("a").unwrap(), 0);
+        assert_eq!(v2.get("b").unwrap(), 3);
+        assert_eq!(v2.get("c").unwrap(), 0);
 
         v1.merge(&v2);
-        assert_eq!(v1.get("a"), 2);
-        assert_eq!(v1.get("b"), 3);
-        assert_eq!(v1.get("c"), 0);
+        assert_eq!(v1.get("a").unwrap(), 2);
+        assert_eq!(v1.get("b").unwrap(), 3);
+        assert_eq!(v1.get("c").unwrap(), 0);
 
         v2.merge(&v1);
-        assert_eq!(v2.get("a"), 2);
-        assert_eq!(v2.get("b"), 3);
-        assert_eq!(v2.get("c"), 0);
+        assert_eq!(v2.get("a").unwrap(), 2);
+        assert_eq!(v2.get("b").unwrap(), 3);
+        assert_eq!(v2.get("c").unwrap(), 0);
     }
 
     #[test_log::test]
@@ -292,6 +297,6 @@ mod tests {
         );
         let rc = Rc::clone(&view.data);
         let v1 = DependencyClock::new(&rc, "a");
-        assert_eq!(format!("{}", v1), "{ a: 0, b: 0, c: 0 }");
+        assert_eq!(format!("{}", v1), "{ a: 0, b: 0, c: 0 }@a");
     }
 }

@@ -1,7 +1,7 @@
-use crate::clocks::dependency_clock::DependencyClock;
+use std::{cmp::Ordering, fmt::Debug};
 
 use super::event_graph::EventGraph;
-use std::{cmp::Ordering, fmt::Debug};
+use crate::clocks::dependency_clock::DependencyClock;
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Clone + Debug {

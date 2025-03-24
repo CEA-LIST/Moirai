@@ -1,10 +1,14 @@
-use super::tracer::Tracer;
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fs::File,
+    io::Write,
+    process::{Command, Stdio},
+};
+
 use anyhow::Result;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
-use std::process::{Command, Stdio};
+
+use super::tracer::Tracer;
 
 pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
     let mut graphviz_str = String::new();

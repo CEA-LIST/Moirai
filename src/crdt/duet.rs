@@ -113,4 +113,8 @@ where
     fn is_empty(&self) -> bool {
         self.first.is_empty() && self.second.is_empty()
     }
+
+    fn size(&self) -> usize {
+        self.first.size() + self.second.size()
+    }
 }

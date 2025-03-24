@@ -20,7 +20,7 @@ pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
     /// The dimension is distinct from the number of members in the system
     fn dim(&self) -> usize;
 
-    fn get(&self, member: &str) -> usize;
+    fn get(&self, member: &str) -> Option<usize>;
 
     fn set(&mut self, member: &str, value: usize);
 

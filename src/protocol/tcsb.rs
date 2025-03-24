@@ -1,18 +1,26 @@
-use super::event::Event;
-use super::membership::{ViewInstallingStatus, Views};
-use crate::clocks::clock::Clock;
-use crate::clocks::dependency_clock::DependencyClock;
-use crate::clocks::matrix_clock::MatrixClock;
-use crate::protocol::guard::{guard_against_duplicates, guard_against_out_of_order};
-use crate::protocol::log::Log;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::Debug,
+    rc::Rc,
+};
+
+use colored::*;
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
+
+use super::{
+    event::Event,
+    membership::{ViewInstallingStatus, Views},
+};
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
-use colored::*;
-use log::{error, info};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Debug;
-use std::rc::Rc;
+use crate::{
+    clocks::{clock::Clock, dependency_clock::DependencyClock, matrix_clock::MatrixClock},
+    protocol::{
+        guard::{guard_against_duplicates, guard_against_out_of_order},
+        log::Log,
+    },
+};
 
 /// # Extended Reliable Causal Broadcast (RCB) middleware API
 ///
@@ -30,7 +38,7 @@ where
     /// Domain-specific CRDT
     pub state: L,
     /// Buffer of operations to be delivered
-    pub(crate) pending: VecDeque<Event<L::Op>>,
+    pub pending: VecDeque<Event<L::Op>>,
     /// Group Membership views
     pub group_membership: Views,
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
@@ -136,11 +144,17 @@ where
                 format!("{}", event.metadata).red(),
                 format!("{:?}", event.op).green(),
             );
-            return;
         }
         // Store the new event at the end of the causal buffer
+        // TODO: Check that this is correct
         self.pending.push_back(event.clone());
-        self.pending.make_contiguous();
+        self.pending.make_contiguous().sort_by(|a, b| {
+            if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
+                order
+            } else {
+                a.metadata.origin().cmp(&b.metadata.origin())
+            }
+        });
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
@@ -196,6 +210,7 @@ where
             ignore
         );
         let svv = self.ltm.svv(&self.id, &ignore);
+        debug!("[{}] - SVV: {}", self.id.blue().bold(), svv);
         let ready_to_stabilize = self.state.collect_events(&svv);
         if !ready_to_stabilize.is_empty() {
             self.lsv = svv.into();
@@ -272,9 +287,8 @@ where
         );
         self.tc_stable();
         // assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
-        self.ltm.change_view(&Rc::clone(
-            &self.group_membership.installing_view().unwrap().data,
-        ));
+        let new_view = &Rc::clone(&self.group_membership.installing_view().unwrap().data);
+        self.ltm.change_view(new_view);
         self.group_membership.mark_installed();
         if !self.group_members().contains(&self.id) {
             self.group_membership = Views::new(vec![self.id.to_string()]);
@@ -314,7 +328,7 @@ where
                 event
             );
             let sending_peer_clock = self.ltm.get(event.metadata.origin()).unwrap();
-            let sending_peer_lamport = sending_peer_clock.get(event.metadata.origin());
+            let sending_peer_lamport = sending_peer_clock.get(event.metadata.origin()).unwrap();
             if event.metadata.dot() > sending_peer_lamport {
                 waiting_from.insert(event.metadata.origin().to_owned());
             }
@@ -336,7 +350,7 @@ where
             let clock = {
                 let my_clock = self.my_clock_mut();
                 my_clock.increment();
-                let my_clock_value = self.my_clock().get(&my_id);
+                let my_clock_value = self.my_clock().get(&my_id).unwrap();
                 let mut clock = DependencyClock::new(&Rc::clone(&v.data), &my_id);
                 clock.set(&my_id, my_clock_value);
                 clock

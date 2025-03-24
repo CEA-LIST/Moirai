@@ -17,15 +17,15 @@ pub mod test_util {
     pub type Triplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>);
     pub type Quadruplet<L> = (Tcsb<L>, Tcsb<L>, Tcsb<L>, Tcsb<L>);
 
-    pub fn twins_po<O: PureCRDT>() -> Twins<EventGraph<O>> {
+    pub fn twins_graph<O: PureCRDT>() -> Twins<EventGraph<O>> {
         twins()
     }
 
-    pub fn triplet_po<O: PureCRDT>() -> Triplet<EventGraph<O>> {
+    pub fn triplet_graph<O: PureCRDT>() -> Triplet<EventGraph<O>> {
         triplet()
     }
 
-    pub fn quadruplet_po<O: PureCRDT>() -> Quadruplet<EventGraph<O>> {
+    pub fn quadruplet_graph<O: PureCRDT>() -> Quadruplet<EventGraph<O>> {
         quadruplet()
     }
 
