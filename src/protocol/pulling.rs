@@ -1,13 +1,14 @@
-use super::{log::Log, tcsb::Tcsb};
-use crate::clocks::clock::Clock;
-use crate::{
-    clocks::{dependency_clock::DependencyClock, dot::Dot},
-    protocol::event::Event,
-};
+use std::fmt::Debug;
+
 use log::error;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+
+use super::{log::Log, tcsb::Tcsb};
+use crate::{
+    clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot},
+    protocol::event::Event,
+};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

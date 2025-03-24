@@ -1,5 +1,5 @@
 use po_crdt::{
-    crdt::{counter::Counter, test_util::triplet_po},
+    crdt::{counter::Counter, test_util::triplet_graph},
     protocol::{event_graph::EventGraph, pulling::Since, tcsb::Tcsb},
 };
 
@@ -91,7 +91,7 @@ fn join_existing_group() {
 
 #[test_log::test]
 fn leave() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_po::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Counter<i32>>();
 
     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
     let event_b = tcsb_b.tc_bcast(Counter::Inc(7));
@@ -132,7 +132,7 @@ fn leave() {
 
 #[test_log::test]
 fn rejoin() {
-    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_po::<Counter<i32>>();
+    let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Counter<i32>>();
 
     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
     tcsb_b.try_deliver(event_a.clone());
@@ -190,7 +190,7 @@ fn rejoin() {
 
 #[test_log::test]
 fn operations_while_installing() {
-    let (mut tcsb_a, _, _) = triplet_po::<Counter<i32>>();
+    let (mut tcsb_a, _, _) = triplet_graph::<Counter<i32>>();
 
     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     tcsb_a.add_pending_view(vec![

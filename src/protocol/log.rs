@@ -1,9 +1,9 @@
-use crate::clocks::dependency_clock::DependencyClock;
-
-use super::{event::Event, pulling::Since};
 use std::fmt::Debug;
 
-pub trait Log: Default + Clone {
+use super::{event::Event, pulling::Since};
+use crate::clocks::dependency_clock::DependencyClock;
+
+pub trait Log: Default + Clone + Debug {
     type Op: Debug + Clone;
     type Value;
 
@@ -58,4 +58,6 @@ pub trait Log: Default + Clone {
     }
 
     fn is_empty(&self) -> bool;
+
+    fn size(&self) -> usize;
 }

@@ -1,11 +1,11 @@
-use crate::clocks::dependency_clock::DependencyClock;
-use crate::protocol::event_graph::EventGraph;
-use crate::protocol::pure_crdt::PureCRDT;
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::Hash;
+
+use crate::{
+    clocks::dependency_clock::DependencyClock,
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -27,7 +27,7 @@ where
 
     fn r_zero(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
         Some(Ordering::Less) == order
-            && (matches!(old_op, AWSet::Clear)
+            && (matches!(new_op, AWSet::Clear)
                 || match (&old_op, &new_op) {
                     (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => {
                         v1 == v2

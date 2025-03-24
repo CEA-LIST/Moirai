@@ -1,22 +1,15 @@
-use crate::clocks::clock::Clock;
-use crate::clocks::dependency_clock::DependencyClock;
-use crate::clocks::dot::Dot;
+use std::{cmp::Ordering, fmt::Debug};
 
-use super::event::Event;
-use super::log::Log;
-use super::pulling::Since;
-use super::pure_crdt::PureCRDT;
 use bimap::BiMap;
-use log::error;
-use petgraph::algo::has_path_connecting;
-use petgraph::graph::NodeIndex;
-use petgraph::prelude::StableDiGraph;
-use petgraph::visit::EdgeRef;
+use log::{debug, error};
+use petgraph::{
+    algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef,
+};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{HashSet, VecDeque};
-use std::fmt::Debug;
+
+use super::{event::Event, log::Log, pulling::Since, pure_crdt::PureCRDT};
+use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -54,13 +47,23 @@ where
                 continue;
             }
             let to_dot = Dot::new(*origin, *cnt, &event.metadata.view);
-            let to_idx = self
-                .index_map
-                .get_by_left(&to_dot)
-                .expect("Causal delivery failed.");
-            self.unstable.add_edge(*to_idx, from_idx, ());
+            let to_idx = self.index_map.get_by_left(&to_dot);
+            // `to_idx` may be None because the dot has been moved to the stable part.
+            if let Some(to_idx) = to_idx {
+                self.unstable.add_edge(*to_idx, from_idx, ());
+            }
         }
         assert_eq!(self.index_map.len(), self.unstable.node_count());
+    }
+
+    pub fn remove_dot(&mut self, dot: &Dot) -> Option<Op> {
+        let node_idx = self
+            .index_map
+            .get_by_left(dot)
+            .expect("Dot not found in the graph.");
+        let op = self.unstable.remove_node(*node_idx);
+        self.index_map.remove_by_left(dot);
+        op
     }
 
     pub fn partial_cmp(&self, first: &Dot, second: &Dot) -> Option<Ordering> {
@@ -87,6 +90,7 @@ where
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.index_map.get_by_right(node_idx).unwrap();
         let mut dependency_clock = DependencyClock::new(&dot.view(), dot.origin());
+        dependency_clock.set(dot.origin(), dot.val());
 
         let op = self.unstable.node_weight(*node_idx).unwrap();
         let neighbors = self
@@ -96,7 +100,8 @@ where
             let neighbor_dot = self.index_map.get_by_right(&neighbor).unwrap();
             dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
-        Event::new(op.clone(), dependency_clock)
+        let event = Event::new(op.clone(), dependency_clock);
+        event
     }
 }
 
@@ -157,28 +162,19 @@ where
             self.index_map.get_by_left(&dot)
         });
 
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
         let mut events = Vec::new();
+        let mut visited = std::collections::HashSet::new();
 
-        // For each start node, push its outgoing neighbors into the queue.
         for &start in start_nodes {
-            // Using the edges iterator gives us outgoing neighbors.
-            for edge in self.unstable.edges(start) {
-                let target = edge.target();
-                if visited.insert(target) {
-                    queue.push_back(target);
-                }
-            }
-        }
-
-        // Standard BFS: for each node, record its operation and visit its children.
-        while let Some(node_index) = queue.pop_front() {
-            events.push(self.event_from_idx(&node_index));
-            for edge in self.unstable.edges(node_index) {
-                let target = edge.target();
-                if visited.insert(target) {
-                    queue.push_back(target);
+            let mut stack = Vec::new();
+            stack.push(start);
+            while let Some(node_idx) = stack.pop() {
+                if visited.insert(node_idx) {
+                    events.push(self.event_from_idx(&node_idx));
+                    for edge in self.unstable.edges(node_idx) {
+                        let target = edge.target();
+                        stack.push(target);
+                    }
                 }
             }
         }
@@ -186,8 +182,11 @@ where
         events
     }
 
-    fn collect_events_since(&self, _since: &Since) -> Vec<Event<Self::Op>> {
-        todo!()
+    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+        let mut events = self.collect_events(&since.clock);
+        events.retain(|event| since.exclude.contains(&Dot::from(&event.metadata)));
+
+        events
     }
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
@@ -234,6 +233,7 @@ where
     fn eval(&self) -> Self::Value {
         let mut ops: Vec<O> = self.stable.clone();
         ops.extend(self.unstable.node_weights().cloned());
+        assert_eq!(self.size(), ops.len());
         O::eval(&ops)
     }
 
@@ -242,20 +242,27 @@ where
     }
 
     fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
+        // The dot may have been removed in the `stabilize` function
         let dot = Dot::from(metadata);
-        let node_idx = self
-            .index_map
-            .get_by_left(&dot)
-            .expect("Dot not found in the graph.");
-        let op = self.unstable.remove_node(*node_idx);
-        self.index_map.remove_by_left(&dot);
-        if let Some(op) = op {
-            self.stable.push(op);
+        let node_idx = self.index_map.get_by_left(&dot);
+
+        if let Some(node_idx) = node_idx {
+            let op = self.unstable.remove_node(*node_idx);
+            self.index_map.remove_by_left(&dot);
+            if let Some(op) = op {
+                self.stable.push(op);
+            }
+        } else {
+            debug!("Dot {:?} not found in the graph", dot);
         }
     }
 
     fn is_empty(&self) -> bool {
         self.stable.is_empty() && self.unstable.node_count() == 0
+    }
+
+    fn size(&self) -> usize {
+        self.stable.len() + self.unstable.node_count()
     }
 }
 
@@ -267,3 +274,14 @@ where
         Self::new()
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     fn create_event_graph() {
+//         let mut event_graph = EventGraph::new();
+//         let event = super::Event::new(1, super::DependencyClock::default());
+//         event_graph.new_event(&event);
+//         assert_eq!(event_graph.stable.len(), 1);
+//         assert_eq!(event_graph.unstable.node_count(), 1);
+//     }
+// }

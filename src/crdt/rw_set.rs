@@ -1,8 +1,9 @@
-// use crate::protocol::event::Event;
-// use crate::protocol::pure_crdt::PureCRDT;
-// use std::collections::HashSet;
-// use std::fmt::Debug;
-// use std::hash::Hash;
+// use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+
+// use crate::{
+//     clocks::dependency_clock::DependencyClock,
+//     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+// };
 
 // #[derive(Clone, Debug)]
 // pub enum RWSet<V> {
@@ -17,14 +18,14 @@
 // {
 //     type Value = HashSet<V>;
 
-//     fn r(new_op: &Self, order: Option<Ordering>, old_op: &Self) -> bool {
-//         matches!(new_event.op, RWSet::Clear)
+//     fn r(new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
+//         matches!(new_op, RWSet::Clear)
 //     }
 
-//     fn r_zero(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-//         old_event.metadata.clock < new_event.metadata.clock
-//             && (matches!(new_event.op, RWSet::Clear)
-//                 || match (&old_event.op, &new_event.op) {
+//     fn r_zero(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+//         Some(Ordering::Less) == order
+//             && (matches!(new_op, RWSet::Clear)
+//                 || match (&old_op, &new_op) {
 //                     (RWSet::Add(v1), RWSet::Add(v2))
 //                     | (RWSet::Remove(v1), RWSet::Remove(v2))
 //                     | (RWSet::Add(v1), RWSet::Remove(v2))
@@ -33,11 +34,11 @@
 //                 })
 //     }
 
-//     fn r_one(old_event: &Event<Self>, new_event: &Event<Self>) -> bool {
-//         Self::r_zero(old_event, new_event)
+//     fn r_one(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+//         Self::r_zero(old_op, order, new_op)
 //     }
 
-//     fn stabilize(metadata: &Metadata, state: &mut POLog<Self>) {
+//     fn stabilize(metadata: &DependencyClock, state: &mut EventGraph<Self>) {
 //         //Get the op
 //         let op = state.unstable.get(metadata).unwrap();
 

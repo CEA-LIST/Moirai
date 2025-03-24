@@ -1,12 +1,15 @@
-use super::{clock::Clock, dependency_clock::DependencyClock};
-use crate::protocol::membership::ViewData;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
+    mem,
     rc::Rc,
 };
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use super::{clock::Clock, dependency_clock::DependencyClock};
+use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -28,35 +31,22 @@ impl MatrixClock {
         }
     }
 
-    pub fn change_view(&mut self, view: &Rc<ViewData>) {
-        for m in &self.view.members {
-            if !view.members.contains(m) {
-                self.clock
-                    .remove(&self.view.members.iter().position(|x| x == m).unwrap());
-            }
-        }
-        for m in &view.members {
-            if !self.view.members.contains(m) {
-                self.clock.insert(
-                    view.members.iter().position(|x| x == m).unwrap(),
-                    DependencyClock::new(view, m),
-                );
-            }
-        }
-        self.clock.values_mut().for_each(|d| {
-            for (i, m) in self.view.members.iter().enumerate() {
-                if !view.members.contains(m) {
-                    d.clock.remove_entry(&i);
+    pub fn change_view(&mut self, new_view: &Rc<ViewData>) {
+        let mut new_matrix_clock = MatrixClock::new(new_view);
+
+        for (i, new_d) in new_matrix_clock.clock.iter_mut() {
+            for (j, c) in new_d.clock.iter_mut() {
+                let i_member = &new_matrix_clock.view.members[*i];
+                let j_member = &new_matrix_clock.view.members[*j];
+                if let Some(old_d) = self.get(i_member) {
+                    if let Some(old_c) = old_d.get(j_member) {
+                        *c = old_c;
+                    }
                 }
             }
-            for (i, m) in view.members.iter().enumerate() {
-                if !self.view.members.contains(m) {
-                    d.clock.insert(i, 0);
-                }
-            }
-            d.view = Rc::clone(view);
-        });
-        self.view = Rc::clone(view);
+        }
+
+        mem::swap(self, &mut new_matrix_clock);
         assert!(self.is_valid());
     }
 
@@ -64,6 +54,7 @@ impl MatrixClock {
         &self.view.members
     }
 
+    /// Can panic if the member is not found
     pub fn dot(&self, member: &str) -> usize {
         self.clock
             .get(&self.view.members.iter().position(|m| m == member).unwrap())
@@ -72,13 +63,19 @@ impl MatrixClock {
     }
 
     pub fn get(&self, member: &str) -> Option<&DependencyClock> {
-        self.clock
-            .get(&self.view.members.iter().position(|m| m == member).unwrap())
+        let i = &self.view.members.iter().position(|m| m == member);
+        if let Some(i) = i {
+            return self.clock.get(i);
+        }
+        None
     }
 
     pub fn get_mut(&mut self, member: &str) -> Option<&mut DependencyClock> {
-        self.clock
-            .get_mut(&self.view.members.iter().position(|m| m == member).unwrap())
+        let i = &self.view.members.iter().position(|m| m == member);
+        if let Some(i) = i {
+            return self.clock.get_mut(i);
+        }
+        None
     }
 
     pub fn merge_clock(&mut self, member: &str, clock: &DependencyClock) {
@@ -95,7 +92,10 @@ impl MatrixClock {
     /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
     pub fn svv(&self, id: &str, ignore: &[&String]) -> DependencyClock {
-        let mut svv = self.get(id).expect("Member not found").clone();
+        let mut svv = self
+            .get(id)
+            .expect(&format!("Member {} not found", id))
+            .clone();
         for (o, d) in &self.clock {
             if !ignore.contains(&&self.view.members[*o]) {
                 svv = Clock::min(&svv, d);
@@ -169,7 +169,7 @@ impl MatrixClock {
             && self.clock.iter().all(|(_, d)| {
                 d.clock
                     .iter()
-                    .all(|(j, c)| self.clock[j].get(&self.view.members[*j]) >= *c)
+                    .all(|(j, c)| self.clock[j].get(&self.view.members[*j]).unwrap() >= *c)
             })
     }
 }
@@ -245,7 +245,7 @@ mod tests {
         let mc = MatrixClock::build(&view_abc(), &[&[0, 1, 1], &[1, 0, 1], &[1, 1, 0]]);
         assert_eq!(
             format!("{}", mc),
-            "{\n  A: { A: 0, B: 1, C: 1 }\n  B: { A: 1, B: 0, C: 1 }\n  C: { A: 1, B: 1, C: 0 }\n}"
+            "{\n  A: { A: 0, B: 1, C: 1 }@A\n  B: { A: 1, B: 0, C: 1 }@B\n  C: { A: 1, B: 1, C: 0 }@C\n}"
         );
     }
 
@@ -273,12 +273,20 @@ mod tests {
         let view_data_0_rc = Rc::new(view_data_0);
         let mut mc = MatrixClock::build(&view_data_0_rc, &[&[10, 2, 3], &[8, 6, 4], &[9, 0, 4]]);
         let view_data_1 = ViewData {
-            members: vec!["A".to_string(), "C".to_string(), "D".to_string()],
+            members: vec![
+                "E".to_string(),
+                "A".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+            ],
             id: 1,
         };
         let view_data_1_rc = Rc::new(view_data_1);
         mc.change_view(&view_data_1_rc);
-        let test = MatrixClock::build(&view_data_1_rc, &[&[0, 0, 0], &[0, 6, 4], &[0, 0, 4]]);
+        let test = MatrixClock::build(
+            &view_data_1_rc,
+            &[&[0, 0, 0, 0], &[0, 0, 0, 0], &[0, 0, 6, 4], &[0, 0, 0, 4]],
+        );
         assert_eq!(test, mc);
     }
 }
