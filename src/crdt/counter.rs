@@ -23,8 +23,10 @@ pub enum Counter<V: Number> {
 
 impl<V: Number + Debug> PureCRDT for Counter<V> {
     type Value = V;
+    const R_ZERO: Option<bool> = Some(false);
+    const R_ONE: Option<bool> = Some(false);
 
-    fn r(_new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
+    fn r(_new_op: &Self) -> bool {
         false
     }
 

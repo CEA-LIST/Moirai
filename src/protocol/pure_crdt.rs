@@ -7,10 +7,13 @@ use crate::clocks::dependency_clock::DependencyClock;
 pub trait PureCRDT: Clone + Debug {
     type Value;
 
+    const R_ZERO: Option<bool> = None;
+    const R_ONE: Option<bool> = None;
+
     /// Datatype-specific relation used to define causal redundancy.
     /// R relation defines whether the delivered operation is itself
     /// redundant and does not need to be added itself to the PO-Log.
-    fn r(new_op: &Self, order: Option<Ordering>, old_op: &Self) -> bool;
+    fn r(new_op: &Self) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
     /// R0 defines which operations in the current PO-Log become redundant

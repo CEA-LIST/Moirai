@@ -21,7 +21,7 @@ where
 {
     type Value = DiGraph<V, ()>;
 
-    fn r(new_op: &Self, _order: Option<Ordering>, _old_op: &Self) -> bool {
+    fn r(new_op: &Self) -> bool {
         matches!(new_op, Graph::RemoveVertex(_) | Graph::RemoveArc(_, _))
     }
 
