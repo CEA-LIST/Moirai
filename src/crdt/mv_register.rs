@@ -17,7 +17,7 @@ where
 {
     type Value = Vec<V>;
 
-    fn r(new_op: &Self, _order: Option<Ordering>, _old_op: &Self) -> bool {
+    fn r(new_op: &Self) -> bool {
         matches!(new_op, MVRegister::Clear)
     }
 

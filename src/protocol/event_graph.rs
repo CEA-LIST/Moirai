@@ -13,19 +13,22 @@ use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct EventGraph<Op> {
-    pub(crate) stable: Vec<Op>,
+pub struct EventGraph<Op, V> {
+    pub stable: V,
     pub unstable: StableDiGraph<Op, ()>,
     pub(crate) index_map: BiMap<Dot, NodeIndex>,
 }
 
-impl<Op> EventGraph<Op>
+impl<Op, V> EventGraph<Op, V>
 where
     Op: Clone + Debug,
 {
-    pub fn new() -> Self {
+    pub fn new() -> Self
+    where
+        V: Default,
+    {
         Self {
-            stable: vec![],
+            stable: V::default(),
             unstable: StableDiGraph::new(),
             index_map: BiMap::new(),
         }
@@ -110,53 +113,81 @@ where
     }
 }
 
-impl<O> Log for EventGraph<O>
+impl<O, V> Log for EventGraph<O, V>
 where
     O: PureCRDT,
+    V: Debug + Clone + Default,
 {
     type Op = O;
-
     type Value = O::Value;
 
     fn new_event(&mut self, event: &Event<Self::Op>) {
         self.new_event(event);
     }
 
-    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
+    /// `is_r` is true if the operation is already redundant (will never be stored in the event graph)
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r: bool) {
         // Keep only the operations that are not made redundant by the new operation
-        self.stable.retain(|o| {
-            if is_r_0 {
-                !(Self::Op::r_zero(o, Some(Ordering::Less), &event.op))
-            } else {
-                !(Self::Op::r_one(o, Some(Ordering::Less), &event.op))
+        if is_r {
+            match O::R_ZERO {
+                Some(true) => {
+                    self.stable.clear();
+                    self.unstable.clear();
+                    self.index_map.clear();
+                }
+                Some(false) => {}
+                None => {
+                    self.stable
+                        .retain(|o| !(Self::Op::r_zero(o, Some(Ordering::Less), &event.op)));
+                    // TODO: shrink if capacity > 2*len
+                    self.stable.shrink_to_fit();
+                    prune_unstable(self, event, true);
+                }
             }
-        });
-
-        self.new_event(event);
-        let new_dot = Dot::from(&event.metadata);
-
-        let to_remove: Vec<NodeIndex> = self
-            .unstable
-            .node_indices()
-            .filter(|&node_idx| {
-                let other_dot = self.index_map.get_by_right(&node_idx).unwrap();
-                if *other_dot == new_dot {
-                    return true;
+        } else {
+            match O::R_ONE {
+                Some(true) => {
+                    self.stable.clear();
+                    self.unstable.clear();
+                    self.index_map.clear();
                 }
-                let op = self.unstable.node_weight(node_idx).unwrap();
-                let ordering = self.partial_cmp(other_dot, &new_dot);
-
-                if is_r_0 {
-                    Self::Op::r_zero(op, ordering, &event.op)
-                } else {
-                    Self::Op::r_one(op, ordering, &event.op)
+                Some(false) => {}
+                None => {
+                    self.stable
+                        .retain(|o| !(Self::Op::r_one(o, Some(Ordering::Less), &event.op)));
+                    self.stable.shrink_to_fit();
+                    prune_unstable(self, event, false);
                 }
-            })
-            .collect();
+            }
+        }
 
-        for node_idx in to_remove {
-            self.unstable.remove_node(node_idx);
-            self.index_map.remove_by_right(&node_idx);
+        fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
+            graph.new_event(event);
+            let new_dot = Dot::from(&event.metadata);
+
+            let to_remove: Vec<NodeIndex> = graph
+                .unstable
+                .node_indices()
+                .filter(|&node_idx| {
+                    let other_dot = graph.index_map.get_by_right(&node_idx).unwrap();
+                    if *other_dot == new_dot {
+                        return true;
+                    }
+                    let op = graph.unstable.node_weight(node_idx).unwrap();
+                    let ordering = graph.partial_cmp(other_dot, &new_dot);
+
+                    if is_r {
+                        O::r_zero(op, ordering, &event.op)
+                    } else {
+                        O::r_one(op, ordering, &event.op)
+                    }
+                })
+                .collect();
+
+            for node_idx in to_remove {
+                graph.unstable.remove_node(node_idx);
+                graph.index_map.remove_by_right(&node_idx);
+            }
         }
     }
 
@@ -196,23 +227,7 @@ where
     }
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
-        for o in &self.stable {
-            // let old_event = Event::new(o.clone(), DependencyClock::default());
-            if Self::Op::r(&event.op, Some(Ordering::Greater), o) {
-                return true;
-            }
-        }
-
-        for node_idx in self.unstable.node_indices() {
-            let old_event = self.event_from_idx(&node_idx);
-            let ordering = PartialOrd::partial_cmp(&event.metadata, &old_event.metadata);
-
-            if Self::Op::r(&event.op, ordering, &old_event.op) {
-                return true;
-            }
-        }
-
-        false
+        Self::Op::r(&event.op)
     }
 
     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
@@ -272,9 +287,10 @@ where
     }
 }
 
-impl<Op> Default for EventGraph<Op>
+impl<Op, V> Default for EventGraph<Op, V>
 where
     Op: Clone + Debug,
+    V: Default,
 {
     fn default() -> Self {
         Self::new()

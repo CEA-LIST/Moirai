@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
-    mem,
     rc::Rc,
 };
 
@@ -46,7 +45,8 @@ impl MatrixClock {
             }
         }
 
-        mem::swap(self, &mut new_matrix_clock);
+        *self = new_matrix_clock;
+
         assert!(self.is_valid());
     }
 

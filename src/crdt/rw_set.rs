@@ -18,7 +18,7 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
+    fn r(new_op: &Self) -> bool {
         matches!(new_op, RWSet::Clear)
     }
 

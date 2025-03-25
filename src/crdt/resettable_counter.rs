@@ -35,7 +35,7 @@ impl<V: Number> Counter<V> {
 impl<V: Number + Debug> PureCRDT for Counter<V> {
     type Value = V;
 
-    fn r(new_op: &Self, _: Option<Ordering>, _: &Self) -> bool {
+    fn r(new_op: &Self) -> bool {
         matches!(new_op, Counter::Reset)
     }
 
