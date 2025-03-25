@@ -55,18 +55,3 @@ impl PartialOrd for Dot {
         }
     }
 }
-
-// TODO: Dumb shit
-// impl Ord for Dot {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         match self.view.id.cmp(&other.view.id) {
-//             Ordering::Less => Ordering::Less,
-//             Ordering::Equal => match self.origin.cmp(&other.origin) {
-//                 Ordering::Less => Ordering::Less,
-//                 Ordering::Equal => self.counter.cmp(&other.counter),
-//                 Ordering::Greater => Ordering::Greater,
-//             },
-//             Ordering::Greater => Ordering::Greater,
-//         }
-//     }
-// }
