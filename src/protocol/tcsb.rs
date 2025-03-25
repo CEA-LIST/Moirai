@@ -292,6 +292,8 @@ where
         self.group_membership.mark_installed();
         if !self.group_members().contains(&self.id) {
             self.group_membership = Views::new(vec![self.id.to_string()]);
+            self.ltm
+                .change_view(&self.group_membership.installed_view().data.clone());
             self.tc_stable();
         }
         // else if self.group_membership.last_planned_id().is_none() {

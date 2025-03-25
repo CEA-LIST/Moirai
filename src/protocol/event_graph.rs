@@ -15,8 +15,8 @@ use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EventGraph<Op> {
     pub(crate) stable: Vec<Op>,
-    pub(crate) unstable: StableDiGraph<Op, ()>,
-    index_map: BiMap<Dot, NodeIndex>,
+    pub unstable: StableDiGraph<Op, ()>,
+    pub(crate) index_map: BiMap<Dot, NodeIndex>,
 }
 
 impl<Op> EventGraph<Op>
@@ -38,7 +38,7 @@ where
                 "Event with metadata {:?} already present in the graph",
                 event.metadata
             );
-            return;
+            panic!();
         }
         let from_idx = self.unstable.add_node(event.op.clone());
         self.index_map.insert(Dot::from(&event.metadata), from_idx);
@@ -64,6 +64,11 @@ where
         let op = self.unstable.remove_node(*node_idx);
         self.index_map.remove_by_left(dot);
         op
+    }
+
+    pub fn get_op(&self, dot: &Dot) -> Option<Op> {
+        let node_idx = self.index_map.get_by_left(dot)?;
+        self.unstable.node_weight(*node_idx).cloned()
     }
 
     pub fn partial_cmp(&self, first: &Dot, second: &Dot) -> Option<Ordering> {
@@ -165,6 +170,7 @@ where
         let mut events = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
+        // TODO: stack = start_nodes. Attention visited
         for &start in start_nodes {
             let mut stack = Vec::new();
             stack.push(start);
@@ -274,14 +280,3 @@ where
         Self::new()
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     fn create_event_graph() {
-//         let mut event_graph = EventGraph::new();
-//         let event = super::Event::new(1, super::DependencyClock::default());
-//         event_graph.new_event(&event);
-//         assert_eq!(event_graph.stable.len(), 1);
-//         assert_eq!(event_graph.unstable.node_count(), 1);
-//     }
-// }
