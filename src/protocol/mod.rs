@@ -6,4 +6,3 @@ pub mod membership;
 pub mod pulling;
 pub mod pure_crdt;
 pub mod tcsb;
-pub mod utils;

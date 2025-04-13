@@ -13,22 +13,19 @@ use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct EventGraph<Op, V> {
-    pub stable: V,
+pub struct EventGraph<Op> {
+    pub stable: Vec<Op>,
     pub unstable: StableDiGraph<Op, ()>,
     pub(crate) index_map: BiMap<Dot, NodeIndex>,
 }
 
-impl<Op, V> EventGraph<Op, V>
+impl<Op> EventGraph<Op>
 where
     Op: Clone + Debug,
 {
-    pub fn new() -> Self
-    where
-        V: Default,
-    {
+    pub fn new() -> Self {
         Self {
-            stable: V::default(),
+            stable: Vec::new(),
             unstable: StableDiGraph::new(),
             index_map: BiMap::new(),
         }
@@ -108,15 +105,13 @@ where
             let neighbor_dot = self.index_map.get_by_right(&neighbor).unwrap();
             dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
-        let event = Event::new(op.clone(), dependency_clock);
-        event
+        Event::new(op.clone(), dependency_clock)
     }
 }
 
-impl<O, V> Log for EventGraph<O, V>
+impl<O> Log for EventGraph<O>
 where
     O: PureCRDT,
-    V: Debug + Clone + Default,
 {
     type Op = O;
     type Value = O::Value;
@@ -287,10 +282,9 @@ where
     }
 }
 
-impl<Op, V> Default for EventGraph<Op, V>
+impl<Op> Default for EventGraph<Op>
 where
     Op: Clone + Debug,
-    V: Default,
 {
     fn default() -> Self {
         Self::new()

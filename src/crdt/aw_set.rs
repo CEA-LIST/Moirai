@@ -1,11 +1,9 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
-
-use serde::{Deserialize, Serialize};
-
 use crate::{
     clocks::dependency_clock::DependencyClock,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
+use serde::{Deserialize, Serialize};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -176,4 +174,7 @@ mod tests {
         assert_eq!(tcsb_a.eval(), vec!["a"].into_iter().collect());
         assert_eq!(tcsb_b.eval(), tcsb_a.eval());
     }
+
+    #[test_log::test]
+    fn convergence_checker() {}
 }
