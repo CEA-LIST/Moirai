@@ -152,7 +152,7 @@ where
             if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
                 order
             } else {
-                a.metadata.origin().cmp(&b.metadata.origin())
+                a.metadata.origin().cmp(b.metadata.origin())
             }
         });
         let mut still_pending = VecDeque::new();

@@ -8,6 +8,8 @@ use std::{
 
 use anyhow::Result;
 
+use crate::clocks::clock::Clock;
+
 use super::tracer::Tracer;
 
 pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
@@ -25,29 +27,29 @@ pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
             "{} [label=<<FONT FACE=\"monospace\" POINT-SIZE=\"8\">({})</FONT>   {}<BR /><I><FONT FACE=\"monospace\" POINT-SIZE=\"10\">{}</FONT></I>>style=filled, fillcolor=\"lightblue\"];\n",
             i,
             i + 1,
-            event.metadata.clock,
+            event.metadata,
             event.op.replace("\"", ""),
         ));
-        if process.contains_key(&event.metadata.origin) {
-            let list = process.get_mut(&event.metadata.origin).unwrap();
+        if process.contains_key(event.metadata.origin()) {
+            let list = process.get_mut(event.metadata.origin()).unwrap();
             list.push(i);
         } else {
-            process.insert(event.metadata.origin.clone(), vec![i]);
+            process.insert(event.metadata.origin().to_string(), vec![i]);
         }
         for (j, previous_event) in tracer.trace.iter().enumerate() {
             if j < i {
-                match previous_event.metadata.view_id.cmp(&event.metadata.view_id) {
+                match previous_event
+                    .metadata
+                    .view_id()
+                    .cmp(&event.metadata.view_id())
+                {
                     Ordering::Less => {
                         graph.push((j, i));
                     }
                     Ordering::Greater => {
                         graph.push((i, j));
                     }
-                    Ordering::Equal => match previous_event
-                        .metadata
-                        .clock
-                        .partial_cmp(&event.metadata.clock)
-                    {
+                    Ordering::Equal => match previous_event.metadata.partial_cmp(&event.metadata) {
                         Some(Ordering::Less) => {
                             graph.push((j, i));
                         }
@@ -161,8 +163,8 @@ mod tests {
     use super::*;
 
     fn trace_to_file(name: &str) -> Result<()> {
-        let tracer =
-            Tracer::deserialize_from_file(Path::new(&format!("traces/{}.json", name))).unwrap();
+        let tracer = Tracer::deserialize_from_file(Path::new(&format!("traces/{}.json", name)))
+            .expect("Failed to deserialize file. Check if the file exists.");
         let graphviz_str = tracer_to_graphviz(&tracer, name);
         generate_svg(&graphviz_str, &format!("traces/{}.svg", name))
     }

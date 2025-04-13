@@ -12,17 +12,15 @@ use crate::{
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
 
-pub trait Number = Add<Output = Self> + AddAssign + SubAssign + Default + Copy;
-
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Counter<V: Number> {
+pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
     Reset,
 }
 
-impl<V: Number> Counter<V> {
+impl<V: Add + AddAssign + SubAssign + Default + Copy> Counter<V> {
     fn to_value(&self) -> V {
         match self {
             Counter::Inc(v) => *v,
@@ -32,7 +30,9 @@ impl<V: Number> Counter<V> {
     }
 }
 
-impl<V: Number + Debug> PureCRDT for Counter<V> {
+impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT
+    for Counter<V>
+{
     type Value = V;
 
     fn r(new_op: &Self) -> bool {
@@ -87,7 +87,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
 
 impl<V> Display for Counter<V>
 where
-    V: Number + Debug + Display,
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

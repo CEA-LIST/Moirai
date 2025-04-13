@@ -7,8 +7,6 @@ description = "A library for Conflict-free Replicated Data Types (CRDTs) in Rust
 license = "proprietary"
 repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Based_CRDT.git"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
@@ -25,7 +23,7 @@ deepsize = { version = "0.2.0" }
 # dhat = "0.3.3"
 
 [features]
-default = ["crdt", "serde"]
+default = ["crdt", "serde", "utils"]
 crdt = []
 serde = ["dep:serde_json"]
 utils = ["serde", "dep:anyhow"]

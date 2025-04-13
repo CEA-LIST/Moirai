@@ -5,7 +5,7 @@ use crate::clocks::dependency_clock::DependencyClock;
 
 pub trait Log: Default + Clone + Debug {
     type Op: Debug + Clone;
-    type Value;
+    type Value: PartialEq + Debug;
 
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters)
     fn prepare(&self, op: Self::Op) -> Self::Op {

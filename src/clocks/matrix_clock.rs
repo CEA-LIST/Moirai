@@ -94,7 +94,7 @@ impl MatrixClock {
     pub fn svv(&self, id: &str, ignore: &[&String]) -> DependencyClock {
         let mut svv = self
             .get(id)
-            .expect(&format!("Member {} not found", id))
+            .unwrap_or_else(|| panic!("Member {} not found", id))
             .clone();
         for (o, d) in &self.clock {
             if !ignore.contains(&&self.view.members[*o]) {

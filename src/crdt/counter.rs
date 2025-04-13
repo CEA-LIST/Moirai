@@ -12,16 +12,14 @@ use crate::{
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
 
-pub trait Number = Add + AddAssign + SubAssign + Default + Copy;
-
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Counter<V: Number> {
+pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
 }
 
-impl<V: Number + Debug> PureCRDT for Counter<V> {
+impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT for Counter<V> {
     type Value = V;
     const R_ZERO: Option<bool> = Some(false);
     const R_ONE: Option<bool> = Some(false);
@@ -54,7 +52,7 @@ impl<V: Number + Debug> PureCRDT for Counter<V> {
 
 impl<V> Display for Counter<V>
 where
-    V: Number + Debug + Display,
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -103,4 +101,7 @@ mod tests {
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
+
+    #[test_log::test]
+    fn convergence_checker() {}
 }

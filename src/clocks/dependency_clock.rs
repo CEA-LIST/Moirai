@@ -162,7 +162,7 @@ impl Clock for DependencyClock {
             .members
             .iter()
             .position(|m| m == member)
-            .expect(&format!("Member {} not found", member));
+            .unwrap_or_else(|| panic!("Member {} not found", member));
         self.clock.insert(idx, value);
     }
 

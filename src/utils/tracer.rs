@@ -3,7 +3,10 @@ use std::{fmt::Debug, fs::File, io::Write, path::Path};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{event::Event, log::Log, metadata::Metadata};
+use crate::{
+    clocks::dependency_clock::DependencyClock,
+    protocol::{event::Event, log::Log},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -14,7 +17,7 @@ pub struct Tracer {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TracerEvent {
-    pub(super) metadata: Metadata,
+    pub(super) metadata: DependencyClock,
     pub(super) op: String,
 }
 
