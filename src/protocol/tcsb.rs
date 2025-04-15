@@ -15,7 +15,9 @@ use super::{
 #[cfg(feature = "utils")]
 use crate::utils::tracer::Tracer;
 use crate::{
-    clocks::{clock::Clock, dependency_clock::DependencyClock, matrix_clock::MatrixClock},
+    clocks::{
+        clock::Clock, dependency_clock::DependencyClock, dot::Dot, matrix_clock::MatrixClock,
+    },
     protocol::{
         guard::{guard_against_duplicates, guard_against_out_of_order},
         log::Log,
@@ -210,15 +212,23 @@ where
             ignore
         );
         let svv = self.ltm.svv(&self.id, &ignore);
-        debug!("[{}] - SVV: {}", self.id.blue().bold(), svv);
         let ready_to_stabilize = self.state.collect_events(&svv);
         if !ready_to_stabilize.is_empty() {
             self.lsv = svv.into();
+        } else {
+            debug!("[{}] - SVV: {}", self.id.blue().bold(), svv);
         }
 
         for event in &ready_to_stabilize {
+            debug!(
+                "[{}] - Event {} is ready to be stabilized",
+                self.id.blue().bold(),
+                format!("{}", Dot::from(&event.metadata)).green()
+            );
             self.state.stable(&event.metadata);
         }
+
+        // self.state.reset();
     }
 
     /// Transfer the state of a replica to another replica.

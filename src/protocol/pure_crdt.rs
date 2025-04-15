@@ -5,7 +5,7 @@ use crate::clocks::dependency_clock::DependencyClock;
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Clone + Debug {
-    type Value: Debug + Default + PartialEq;
+    type Value: Debug + Default;
 
     /// Does `r_zero` always return the same boolean value?
     const R_ZERO: Option<bool> = None;

@@ -169,6 +169,10 @@ impl Clock for DependencyClock {
     fn origin(&self) -> &str {
         &self.view.members[self.origin.expect("Origin not set")]
     }
+
+    fn sum(&self) -> usize {
+        self.clock.values().sum()
+    }
 }
 
 impl From<DependencyClock> for HashMap<String, usize> {

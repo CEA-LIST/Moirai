@@ -6,6 +6,8 @@
 
 ```sh
 cargo instruments -t time --release --open
+
+cargo instruments -t Allocations --example <name> --release --open
 ```
 
 ### Benchmarking
