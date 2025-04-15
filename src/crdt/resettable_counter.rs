@@ -103,6 +103,7 @@ mod tests {
     use crate::{
         crdt::{resettable_counter::Counter, test_util::twins},
         protocol::event_graph::EventGraph,
+        utils::convergence_checker::convergence_checker,
     };
 
     #[test_log::test]
@@ -124,23 +125,31 @@ mod tests {
     pub fn stable_counter() {
         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
 
-        let event = tcsb_a.tc_bcast(Counter::Dec(5));
+        let event = tcsb_a.tc_bcast(Counter::Dec(1));
         tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(Counter::Inc(2));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_b.tc_bcast(Counter::Inc(3));
+        tcsb_a.try_deliver(event);
+
+        let event = tcsb_b.tc_bcast(Counter::Inc(4));
+        tcsb_a.try_deliver(event);
 
         let event = tcsb_a.tc_bcast(Counter::Inc(5));
         tcsb_b.try_deliver(event);
 
-        let event = tcsb_b.tc_bcast(Counter::Inc(5));
-        tcsb_a.try_deliver(event);
-
-        let event = tcsb_b.tc_bcast(Counter::Inc(5));
-        tcsb_a.try_deliver(event);
-
-        let event = tcsb_a.tc_bcast(Counter::Inc(5));
-        tcsb_b.try_deliver(event);
-
-        let result = 15;
+        let result = 13;
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    fn convergence_check() {
+        convergence_checker::<EventGraph<Counter<isize>>>(
+            &[Counter::Inc(7), Counter::Dec(15), Counter::Reset],
+            -8,
+        );
     }
 }

@@ -1,50 +1,81 @@
-// use crate::{
-//     crdt::test_util::twins,
-//     protocol::{event_graph::EventGraph, log::Log, pure_crdt::PureCRDT},
-// };
+use crate::{
+    clocks::clock::Clock,
+    crdt::test_util::n_members,
+    protocol::{event::Event, log::Log},
+};
+use std::fmt::Debug;
 
-// pub fn converge<O: PureCRDT>(op1: O, op2: O) -> bool {
-//     let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<O>>();
+fn factorial(number: usize) -> usize {
+    let mut factorial: usize = 1;
+    for i in 1..(number + 1) {
+        factorial *= i;
+    }
+    factorial
+}
 
-//     let event_a = tcsb_a.tc_bcast(op1.clone());
-//     let event_b = tcsb_b.tc_bcast(op2.clone());
+fn generate_permutations(n: usize) -> Vec<Vec<usize>> {
+    let indices: Vec<usize> = (0..n).collect();
+    permute(&indices)
+}
 
-//     tcsb_a.try_deliver(event_b);
-//     tcsb_b.try_deliver(event_a);
+fn permute(indices: &[usize]) -> Vec<Vec<usize>> {
+    if indices.len() == 1 {
+        return vec![indices.to_vec()];
+    }
 
-//     tcsb_a.eval() == tcsb_b.eval()
-// }
+    let mut result = Vec::new();
 
-// pub fn converge_all<O: PureCRDT>(ops: Vec<O>, state: O::Value) {
-//     let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<O>>();
+    for i in 0..indices.len() {
+        let mut rest = indices.to_vec();
+        let current = rest.remove(i);
+        for mut p in permute(&rest) {
+            let mut permutation = vec![current];
+            permutation.append(&mut p);
+            result.push(permutation);
+        }
+    }
+    result
+}
 
-//     for op in &ops {
-//         for o in &ops {
-//             let event_a = tcsb_a.tc_bcast(o.clone());
-//             let event_b = tcsb_b.tc_bcast(op.clone());
+pub fn convergence_checker<L: Log>(ops: &[L::Op], value: L::Value)
+where
+    L::Value: PartialEq + Debug,
+{
+    assert!(
+        ops.len() <= 15,
+        "The number of operations must be less than or equal to 15 to avoid overflow"
+    );
+    assert!(
+        !ops.is_empty(),
+        "The number of operations must be greater than 0"
+    );
+    let fac = factorial(ops.len());
+    let mut tcsbs = n_members::<L>(fac);
+    let permutations = generate_permutations(ops.len());
+    assert!(permutations.len() == fac);
 
-//             tcsb_a.try_deliver(event_b);
-//             tcsb_b.try_deliver(event_a);
-//         }
+    let mut to_deliver: Vec<Event<L::Op>> = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let event = tcsbs[i].tc_bcast(op.clone());
+        to_deliver.push(event);
+    }
 
-//         assert_eq!(state, tcsb_a.eval());
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
-// }
+    for (i, perm) in permutations.iter().enumerate() {
+        for seq in perm {
+            if i != *seq {
+                let event = to_deliver[*seq].clone();
+                tcsbs[i].try_deliver(event.clone());
+            }
+        }
+    }
 
-// pub fn converge_all_log<L: Log>(ops: Vec<L::Op>, state: L::Value) {
-//     let (mut tcsb_a, mut tcsb_b) = twins::<L>();
-
-//     for op in &ops {
-//         for o in &ops {
-//             let event_a = tcsb_a.tc_bcast(o.clone());
-//             let event_b = tcsb_b.tc_bcast(op.clone());
-
-//             tcsb_a.try_deliver(event_b);
-//             tcsb_b.try_deliver(event_a);
-//         }
-
-//         assert_eq!(state, tcsb_a.eval());
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
-// }
+    for i in 0..tcsbs.len() {
+        if i == tcsbs.len() - 1 {
+            break;
+        }
+        assert_eq!(tcsbs[i].eval(), value);
+        assert_eq!(tcsbs[i].my_clock().sum(), ops.len());
+        assert_eq!(tcsbs[i].my_clock().sum(), tcsbs[i + 1].my_clock().sum());
+        assert_eq!(tcsbs[i].eval(), tcsbs[i + 1].eval());
+    }
+}

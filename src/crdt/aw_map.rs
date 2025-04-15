@@ -158,6 +158,7 @@ mod tests {
             test_util::twins,
         },
         protocol::event_graph::EventGraph,
+        utils::convergence_checker::convergence_checker,
     };
 
     #[test_log::test]
@@ -214,53 +215,54 @@ mod tests {
         assert_eq!(map, tcsb_b.eval());
     }
 
-    // #[test_log::test]
-    // fn convergence_checker() {
-    //     assert!(convergence_checker::converge_all_log::<
-    //         UWMapLog<String, EventGraph<Counter<i32>>>,
-    //     >(vec![
-    //         AWMap::Update("a".to_string(), Counter::Inc(5)),
-    //         AWMap::Update("b".to_string(), Counter::Dec(5)),
-    //         AWMap::Remove("a".to_string()),
-    //         AWMap::Remove("b".to_string()),
-    //     ]));
-    // }
+    #[test_log::test]
+    fn aw_map_concurrent_duet_counter() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<
+            UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
+        >();
 
-    // #[test_log::test]
-    // fn aw_map_concurrent_duet_counter() {
-    //     let (mut tcsb_a, mut tcsb_b) = twins::<
-    //         UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
-    //     >();
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(15)),
+        ));
+        tcsb_b.try_deliver(event);
 
-    //     let event = tcsb_a.tc_bcast(AWMap::Update(
-    //         "a".to_string(),
-    //         Duet::First(Counter::Inc(15)),
-    //     ));
-    //     tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        tcsb_b.try_deliver(event);
 
-    //     let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
-    //     tcsb_b.try_deliver(event);
+        let event_a = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(10)),
+        ));
+        let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
+        tcsb_b.try_deliver(event_a);
+        tcsb_a.try_deliver(event_b);
 
-    //     let event_a = tcsb_a.tc_bcast(AWMap::Update(
-    //         "a".to_string(),
-    //         Duet::First(Counter::Inc(10)),
-    //     ));
-    //     let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
-    //     tcsb_b.try_deliver(event_a);
-    //     tcsb_a.try_deliver(event_b);
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "b".to_string(),
+            Duet::Second(Counter::Dec(7)),
+        ));
+        tcsb_b.try_deliver(event);
 
-    //     let event = tcsb_a.tc_bcast(AWMap::Update(
-    //         "b".to_string(),
-    //         Duet::Second(Counter::Dec(7)),
-    //     ));
-    //     tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Remove("b".to_string()));
+        tcsb_b.try_deliver(event);
 
-    //     let event = tcsb_a.tc_bcast(AWMap::Remove("b".to_string()));
-    //     tcsb_b.try_deliver(event);
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (10, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
 
-    //     let mut map = HashMap::new();
-    //     map.insert(String::from("a"), (10, 0));
-    //     assert_eq!(map, tcsb_a.eval());
-    //     assert_eq!(map, tcsb_b.eval());
-    // }
+    #[test_log::test]
+    fn convergence_check() {
+        convergence_checker::<UWMapLog<String, EventGraph<Counter<i32>>>>(
+            &[
+                AWMap::Update("a".to_string(), Counter::Inc(5)),
+                AWMap::Update("b".to_string(), Counter::Dec(5)),
+                AWMap::Remove("a".to_string()),
+                AWMap::Remove("b".to_string()),
+            ],
+            HashMap::new(),
+        );
+    }
 }

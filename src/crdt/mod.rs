@@ -29,6 +29,42 @@ pub mod test_util {
         quadruplet()
     }
 
+    pub fn n_members<L: Log>(n: usize) -> Vec<Tcsb<L>> {
+        assert!(n > 1, "The number of members must be greater than 1");
+        assert!(
+            n <= 26,
+            "The number of members must be less than or equal to 26"
+        );
+        let mut tcsbs = Vec::new();
+        let alphabet = "abcdefghijklmnopqrstuvwxyz";
+        let alphabet = alphabet.chars().collect::<Vec<char>>();
+        for i in alphabet.iter().take(n) {
+            #[cfg(feature = "utils")]
+            let tcsb = Tcsb::new_with_trace(&i.to_string());
+            #[cfg(not(feature = "utils"))]
+            let mut tcsb = Tcsb::<L>::new(&format!("{}", alphabet[i]));
+            tcsbs.push(tcsb);
+        }
+        let view_content = tcsbs
+            .iter()
+            .map(|tcsb| tcsb.id.clone())
+            .collect::<Vec<String>>();
+        for tcsb in tcsbs.iter_mut() {
+            tcsb.add_pending_view(view_content.clone());
+            tcsb.start_installing_view();
+            tcsb.mark_view_installed();
+        }
+        for i in 0..n {
+            assert_eq!(tcsbs[i].ltm.members(), &view_content);
+            if i == n - 1 {
+                break;
+            }
+            assert_eq!(tcsbs[i].view_id(), tcsbs[i + 1].view_id());
+            assert_eq!(tcsbs[i].ltm, tcsbs[i + 1].ltm);
+        }
+        tcsbs
+    }
+
     pub fn twins<L: Log>() -> Twins<L> {
         #[cfg(feature = "utils")]
         let mut tcsb_a = Tcsb::new_with_trace("a");
@@ -150,7 +186,7 @@ mod tests {
     use crate::{
         crdt::{
             counter::Counter,
-            test_util::{quadruplet, triplet, twins},
+            test_util::{n_members, quadruplet, triplet, twins},
         },
         protocol::event_graph::EventGraph,
     };
@@ -168,5 +204,10 @@ mod tests {
     #[test_log::test]
     fn test_quadruplet() {
         let _ = quadruplet::<EventGraph<Counter<i32>>>();
+    }
+
+    #[test_log::test]
+    fn two_members() {
+        let _ = n_members::<EventGraph<Counter<i32>>>(8);
     }
 }

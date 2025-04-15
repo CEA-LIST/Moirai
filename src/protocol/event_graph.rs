@@ -1,9 +1,9 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug};
 
 use bimap::BiMap;
 use log::{debug, error};
 use petgraph::{
-    algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef,
+    algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef, Direction,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ where
         let dot = Dot::from(&event.metadata);
         if self.index_map.contains_left(&dot) {
             error!(
-                "Event with metadata {:?} already present in the graph",
+                "Event with metadata {} already present in the graph",
                 event.metadata
             );
             panic!();
@@ -43,14 +43,18 @@ where
         let from_idx = self.unstable.add_node(event.op.clone());
         self.index_map.insert(Dot::from(&event.metadata), from_idx);
         for (origin, cnt) in event.metadata.clock.iter() {
-            if origin == &event.metadata.origin.expect("Origin not set") || *cnt == 0 {
+            if *cnt == 0 {
                 continue;
             }
-            let to_dot = Dot::new(*origin, *cnt, &event.metadata.view);
+            let to_dot = if origin == &event.metadata.origin.expect("Origin not set") {
+                Dot::new(*origin, *cnt - 1, &event.metadata.view)
+            } else {
+                Dot::new(*origin, *cnt, &event.metadata.view)
+            };
             let to_idx = self.index_map.get_by_left(&to_dot);
             // `to_idx` may be None because the dot has been moved to the stable part.
             if let Some(to_idx) = to_idx {
-                self.unstable.add_edge(*to_idx, from_idx, ());
+                self.unstable.add_edge(from_idx, *to_idx, ());
             }
         }
         assert_eq!(self.index_map.len(), self.unstable.node_count());
@@ -81,17 +85,31 @@ where
             .get_by_left(second)
             .unwrap_or_else(|| panic!("Dot {} not found in the graph.", second));
 
-        let first_to_second = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
-        let second_to_first = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
+        let first_to_second = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
+        let second_to_first = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
+
+        if !first_to_second && !second_to_first && first.origin() == second.origin() {
+            panic!(
+                "Both dots are not connected but have the same origin: {} and {}. Graph: {:?}",
+                first,
+                second,
+                petgraph::dot::Dot::with_config(
+                    &self.unstable,
+                    &[petgraph::dot::Config::EdgeNoLabel]
+                )
+            );
+        }
 
         match (first_to_second, second_to_first) {
-            (true, true) => None,
+            (true, true) => Some(Ordering::Equal),
             (true, false) => Some(Ordering::Less),
             (false, true) => Some(Ordering::Greater),
-            (false, false) => Some(Ordering::Equal),
+            (false, false) => None,
         }
     }
 
+    /// Reconstruct the event from the node index
+    /// Reconstruct the dependency clock from the event graph
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.index_map.get_by_right(node_idx).unwrap();
         let mut dependency_clock = DependencyClock::new(&dot.view(), dot.origin());
@@ -100,9 +118,12 @@ where
         let op = self.unstable.node_weight(*node_idx).unwrap();
         let neighbors = self
             .unstable
-            .neighbors_directed(*node_idx, petgraph::Direction::Outgoing);
+            .neighbors_directed(*node_idx, Direction::Outgoing);
         for neighbor in neighbors {
             let neighbor_dot = self.index_map.get_by_right(&neighbor).unwrap();
+            if neighbor_dot.origin() == dot.origin() {
+                continue;
+            }
             dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
         Event::new(op.clone(), dependency_clock)
@@ -170,7 +191,6 @@ where
                     }
                     let op = graph.unstable.node_weight(node_idx).unwrap();
                     let ordering = graph.partial_cmp(other_dot, &new_dot);
-
                     if is_r {
                         O::r_zero(op, ordering, &event.op)
                     } else {
@@ -190,19 +210,20 @@ where
     fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
         let start_nodes = upper_bound.clock.iter().filter_map(|(origin, cnt)| {
             let dot = Dot::new(*origin, *cnt, &upper_bound.view);
-            self.index_map.get_by_left(&dot)
+            self.index_map.get_by_left(&dot).cloned()
         });
 
         let mut events = Vec::new();
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
 
         // TODO: stack = start_nodes. Attention visited
-        for &start in start_nodes {
+        for start in start_nodes {
             let mut stack = Vec::new();
             stack.push(start);
             while let Some(node_idx) = stack.pop() {
                 if visited.insert(node_idx) {
-                    events.push(self.event_from_idx(&node_idx));
+                    let event = self.event_from_idx(&node_idx);
+                    events.push(event);
                     for edge in self.unstable.edges(node_idx) {
                         let target = edge.target();
                         stack.push(target);
@@ -211,6 +232,8 @@ where
             }
         }
 
+        // remove duplicate events
+        events.dedup_by(|a, b| a.metadata == b.metadata);
         events
     }
 
@@ -268,8 +291,9 @@ where
             if let Some(op) = op {
                 self.stable.push(op);
             }
+            debug!("Dot {} has been moved to the stable part", dot);
         } else {
-            debug!("Dot {:?} not found in the graph", dot);
+            debug!("Dot {} not found in the graph", dot);
         }
     }
 
@@ -279,6 +303,18 @@ where
 
     fn size(&self) -> usize {
         self.stable.len() + self.unstable.node_count()
+    }
+
+    fn reset(&mut self) {
+        let mut new_graph = Self::new();
+        for node_idx in self.unstable.node_indices() {
+            let event = self.event_from_idx(&node_idx);
+            new_graph.new_event(&event);
+        }
+        self.stable
+            .iter()
+            .for_each(|op| new_graph.stable.push(op.clone()));
+        *self = new_graph;
     }
 }
 

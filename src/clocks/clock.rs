@@ -27,4 +27,7 @@ pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
     fn origin(&self) -> &str;
 
     fn dot(&self) -> usize;
+
+    /// Returns the sum of all values in the clock, i.e. the number of events
+    fn sum(&self) -> usize;
 }

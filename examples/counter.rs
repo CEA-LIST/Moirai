@@ -20,4 +20,15 @@ fn main() {
             }
         }
     }
+
+    env_logger::init();
+
+    for (i, tcsb) in tcsb_arr.iter().enumerate() {
+        log::info!("TCSB {} stable ops: {}", i, tcsb.state.stable.len());
+        log::info!(
+            "TCSB {} unstable ops: {}",
+            i,
+            tcsb.state.unstable.node_count()
+        );
+    }
 }

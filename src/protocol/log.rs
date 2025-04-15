@@ -1,11 +1,13 @@
 use std::fmt::Debug;
 
+use log::debug;
+
 use super::{event::Event, pulling::Since};
-use crate::clocks::dependency_clock::DependencyClock;
+use crate::clocks::{dependency_clock::DependencyClock, dot::Dot};
 
 pub trait Log: Default + Clone + Debug {
     type Op: Debug + Clone;
-    type Value: PartialEq + Debug;
+    type Value: Debug;
 
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters)
     fn prepare(&self, op: Self::Op) -> Self::Op {
@@ -52,6 +54,7 @@ pub trait Log: Default + Clone + Debug {
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
     fn stable(&mut self, metadata: &DependencyClock) {
+        debug!("Dot {} is stable", Dot::from(metadata));
         self.stabilize(metadata);
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
@@ -60,4 +63,8 @@ pub trait Log: Default + Clone + Debug {
     fn is_empty(&self) -> bool;
 
     fn size(&self) -> usize;
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
