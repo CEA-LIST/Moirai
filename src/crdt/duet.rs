@@ -54,9 +54,13 @@ where
         self.second.purge_stable_metadata(metadata);
     }
 
-    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
-        let events_fl = self.first.collect_events(upper_bound);
-        let events_sl = self.second.collect_events(upper_bound);
+    fn collect_events(
+        &self,
+        upper_bound: &DependencyClock,
+        lower_bound: &DependencyClock,
+    ) -> Vec<Event<Self::Op>> {
+        let events_fl = self.first.collect_events(upper_bound, lower_bound);
+        let events_sl = self.second.collect_events(upper_bound, lower_bound);
         let mut result = vec![];
         for e in events_fl {
             result.push(Event::new(Duet::First(e.op), e.metadata));

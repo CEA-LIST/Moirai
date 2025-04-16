@@ -152,18 +152,4 @@ mod tests {
 
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
-
-    // #[test_log::test]
-    // fn convergence_check() {
-    //     convergence_checker::<EventGraph<Graph<&str>>>(
-    //         &[
-    //             Graph::AddVertex("a"),
-    //             Graph::AddVertex("b"),
-    //             Graph::AddArc("a", "b"),
-    //             Graph::RemoveVertex("a"),
-    //             Graph::RemoveArc("b", "a"),
-    //         ],
-    //         DiGraph::new(),
-    //     );
-    // }
 }
