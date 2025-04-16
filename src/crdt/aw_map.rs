@@ -80,11 +80,15 @@ where
         }
     }
 
-    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
+    fn collect_events(
+        &self,
+        upper_bound: &DependencyClock,
+        lower_bound: &DependencyClock,
+    ) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
         for (k, v) in &self.values {
             events.extend(
-                v.collect_events(upper_bound)
+                v.collect_events(upper_bound, lower_bound)
                     .into_iter()
                     .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
             );

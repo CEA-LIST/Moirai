@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, rc::Rc};
 
 use bimap::BiMap;
 use log::{debug, error};
@@ -207,21 +207,46 @@ where
     }
 
     /// Returns a list of events that are in the past of the given metadata
-    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>> {
-        let start_nodes = upper_bound.clock.iter().filter_map(|(origin, cnt)| {
-            let dot = Dot::new(*origin, *cnt, &upper_bound.view);
-            self.index_map.get_by_left(&dot).cloned()
-        });
+    fn collect_events(
+        &self,
+        upper_bound: &DependencyClock,
+        lower_bound: &DependencyClock,
+    ) -> Vec<Event<Self::Op>> {
+        let start_nodes: Vec<NodeIndex> = upper_bound
+            .clock
+            .iter()
+            .filter_map(|(origin, cnt)| {
+                if *cnt == 0 {
+                    return None;
+                }
+                let dot = Dot::new(*origin, *cnt, &upper_bound.view);
+                self.index_map.get_by_left(&dot).cloned()
+            })
+            .collect();
+
+        let end_nodes: HashSet<NodeIndex> = lower_bound
+            .clock
+            .iter()
+            .filter_map(|(origin, cnt)| {
+                if *cnt == 0 {
+                    return None;
+                }
+                let dot = Dot::new(*origin, *cnt, &lower_bound.view);
+                self.index_map.get_by_left(&dot).cloned()
+            })
+            .collect();
 
         let mut events = Vec::new();
         let mut visited = HashSet::new();
 
-        // TODO: stack = start_nodes. Attention visited
         for start in start_nodes {
             let mut stack = Vec::new();
             stack.push(start);
             while let Some(node_idx) = stack.pop() {
                 if visited.insert(node_idx) {
+                    if end_nodes.contains(&node_idx) {
+                        continue;
+                    }
                     let event = self.event_from_idx(&node_idx);
                     events.push(event);
                     for edge in self.unstable.edges(node_idx) {
@@ -232,14 +257,39 @@ where
             }
         }
 
-        // remove duplicate events
         events.dedup_by(|a, b| a.metadata == b.metadata);
         events
     }
 
+    /// Collect events since the given metadata.
+    /// Exclude the events that are in the `since.exclude` list.
+    /// Technically, this does the inverse of `collect_events`.
+    /// `collect_events` returns the events that are in the past of the given metadata
+    /// and `collect_events_since` returns the events that are in the future/concurrent of the given metadata.
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-        let mut events = self.collect_events(&since.clock);
-        events.retain(|event| since.exclude.contains(&Dot::from(&event.metadata)));
+        let idxs: Vec<NodeIndex> = self
+            .unstable
+            .node_indices()
+            .filter(|&node| {
+                self.unstable
+                    .neighbors_directed(node, Direction::Incoming)
+                    .next()
+                    .is_none()
+            })
+            .collect();
+
+        let dots = idxs
+            .iter()
+            .filter_map(|&node| self.index_map.get_by_right(&node))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut upper_bound = DependencyClock::new_originless(&Rc::clone(&since.clock.view));
+        for dot in dots {
+            upper_bound.set(dot.origin(), dot.val());
+        }
+
+        let mut events = self.collect_events(&upper_bound, &since.clock);
+        events.retain(|event| !since.exclude.contains(&Dot::from(&event.metadata)));
 
         events
     }

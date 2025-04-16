@@ -18,7 +18,11 @@ pub trait Log: Default + Clone + Debug {
 
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool);
 
-    fn collect_events(&self, upper_bound: &DependencyClock) -> Vec<Event<Self::Op>>;
+    fn collect_events(
+        &self,
+        upper_bound: &DependencyClock,
+        lower_bound: &DependencyClock,
+    ) -> Vec<Event<Self::Op>>;
 
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>>;
 

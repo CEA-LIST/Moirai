@@ -212,7 +212,12 @@ where
             ignore
         );
         let svv = self.ltm.svv(&self.id, &ignore);
-        let ready_to_stabilize = self.state.collect_events(&svv);
+        let ready_to_stabilize = self.state.collect_events(
+            &svv,
+            &DependencyClock::new_originless(&Rc::clone(
+                &self.group_membership.installed_view().data,
+            )),
+        );
         if !ready_to_stabilize.is_empty() {
             self.lsv = svv.into();
         } else {
