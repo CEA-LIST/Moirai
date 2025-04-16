@@ -186,4 +186,11 @@ mod tests {
         let res = trace_to_file(name);
         assert!(res.is_ok(), "{:?}", res);
     }
+
+    #[test_log::test]
+    fn convergence() {
+        let name = "convergence";
+        let res = trace_to_file(name);
+        assert!(res.is_ok(), "{:?}", res);
+    }
 }

@@ -23,7 +23,7 @@ deepsize = { version = "0.2.0" }
 # dhat = "0.3.3"
 
 [features]
-default = ["crdt", "serde", "utils"]
+default = ["crdt", "serde"]
 crdt = []
 serde = ["dep:serde_json"]
 utils = ["serde", "dep:anyhow"]

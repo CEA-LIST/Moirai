@@ -28,6 +28,9 @@ pub trait Log: Default + Clone + Debug {
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool;
 
+    /// Remove every stable operations and unstable that are:
+    /// - less or equal to the metadata if conservative is true
+    /// - less, equal or concurrent to the metadata if conservative is false
     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool);
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.

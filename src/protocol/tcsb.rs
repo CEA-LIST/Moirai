@@ -74,6 +74,8 @@ where
     #[cfg(feature = "utils")]
     /// Create a new TCSB instance with a tracer for debugging purposes.
     pub fn new_with_trace(id: &str) -> Self {
+        use log::warn;
+        warn!("[{}] - Creating a new TCSB instance with a tracer", id);
         let mut tcsb = Self::new(id);
         tcsb.tracer = Tracer::new(String::from(id));
         tcsb
