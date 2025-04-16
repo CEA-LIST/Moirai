@@ -214,11 +214,11 @@ impl PartialOrd for DependencyClock {
             return Some(Ordering::Equal);
         }
 
-        if self.get(self.origin()).cmp(&other.get(self.origin())) == Ordering::Less {
+        if self.get(self.origin()) <= other.get(self.origin()) {
             return Some(Ordering::Less);
         }
 
-        if other.get(self.origin()).cmp(&self.get(self.origin())) == Ordering::Less {
+        if other.get(other.origin()) <= self.get(other.origin()) {
             return Some(Ordering::Greater);
         }
 
@@ -226,8 +226,8 @@ impl PartialOrd for DependencyClock {
         let mut greater = false;
 
         for m in self.view.members.iter() {
-            let self_val = self.get(m);
-            let other_val = other.get(m);
+            let self_val = self.get(m).unwrap_or(0);
+            let other_val = other.get(m).unwrap_or(0);
 
             match self_val.cmp(&other_val) {
                 Ordering::Less => less = true,
@@ -255,6 +255,76 @@ impl PartialOrd for DependencyClock {
 mod tests {
     use super::*;
     use crate::protocol::membership::{View, ViewStatus};
+
+    #[test_log::test]
+    fn concurrent_clock() {
+        let view = View::new(
+            0,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            ViewStatus::Installed,
+        );
+        let rc = Rc::clone(&view.data);
+        let mut v1 = DependencyClock::new(&rc, "a");
+        let mut v2 = DependencyClock::new(&rc, "b");
+        v1.increment();
+        v2.increment();
+
+        assert_eq!(v1.partial_cmp(&v2), None);
+    }
+
+    #[test_log::test]
+    fn shortcut_clock() {
+        let view = View::new(
+            0,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            ViewStatus::Installed,
+        );
+        let rc = Rc::clone(&view.data);
+        let mut v1 = DependencyClock::new(&rc, "a");
+        let mut v2 = DependencyClock::new(&rc, "b");
+        v1.increment();
+        v1.increment();
+        v2.merge(&v1);
+
+        assert_eq!(v1.clock, v2.clock);
+
+        v2.increment();
+
+        assert_eq!(v1.partial_cmp(&v2), Some(Ordering::Less));
+    }
+
+    #[test_log::test]
+    fn same_clock() {
+        let view = View::new(
+            0,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            ViewStatus::Installed,
+        );
+        let rc = Rc::clone(&view.data);
+        let mut v1 = DependencyClock::new(&rc, "a");
+        let mut v2 = DependencyClock::new(&rc, "a");
+        v1.increment();
+        v2.increment();
+
+        assert_eq!(v1.partial_cmp(&v2), Some(Ordering::Equal));
+    }
+
+    #[test_log::test]
+    fn same_origin_clock() {
+        let view = View::new(
+            0,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            ViewStatus::Installed,
+        );
+        let rc = Rc::clone(&view.data);
+        let mut v1 = DependencyClock::new(&rc, "a");
+        let mut v2 = DependencyClock::new(&rc, "a");
+        v1.increment();
+        v2.increment();
+        v2.increment();
+
+        assert_eq!(v1.partial_cmp(&v2), Some(Ordering::Less));
+    }
 
     #[test_log::test]
     fn test_clock() {

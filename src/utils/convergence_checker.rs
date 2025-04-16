@@ -73,7 +73,14 @@ where
         if i == tcsbs.len() - 1 {
             break;
         }
-        assert_eq!(tcsbs[i].eval(), value);
+        if value != tcsbs[i].eval() {
+            #[cfg(feature = "utils")]
+            tcsbs[i]
+                .tracer
+                .serialize_to_file(std::path::Path::new("traces/convergence.json"))
+                .unwrap();
+            assert_eq!(tcsbs[i].eval(), value);
+        }
         assert_eq!(tcsbs[i].my_clock().sum(), ops.len());
         assert_eq!(tcsbs[i].my_clock().sum(), tcsbs[i + 1].my_clock().sum());
         assert_eq!(tcsbs[i].eval(), tcsbs[i + 1].eval());

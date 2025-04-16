@@ -118,11 +118,11 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{
-        crdt::{rw_set::RWSet, test_util::twins_graph},
-        protocol::event_graph::EventGraph,
-        utils::convergence_checker::convergence_checker,
-    };
+    use crate::crdt::{rw_set::RWSet, test_util::twins_graph};
+    #[cfg(feature = "utils")]
+    use protocol::event_graph::EventGraph;
+    #[cfg(feature = "utils")]
+    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     fn clear_rw_set() {
@@ -234,6 +234,7 @@ mod tests {
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
 
+    #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
         convergence_checker::<EventGraph<RWSet<&str>>>(

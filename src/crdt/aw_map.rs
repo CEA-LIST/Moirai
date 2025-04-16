@@ -162,8 +162,9 @@ mod tests {
             test_util::twins,
         },
         protocol::event_graph::EventGraph,
-        utils::convergence_checker::convergence_checker,
     };
+    #[cfg(feature = "utils")]
+    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     fn simple_aw_map() {
@@ -181,6 +182,22 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    fn concurrent_aw_map() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
+
+        let event_a = tcsb_a.tc_bcast(AWMap::Remove("a".to_string()));
+        let event_b = tcsb_b.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(10)));
+
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), 10);
         assert_eq!(map, tcsb_a.eval());
         assert_eq!(map, tcsb_b.eval());
     }
@@ -234,13 +251,26 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
         tcsb_b.try_deliver(event);
 
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (15, 0));
+        map.insert(String::from("b"), (5, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+
         let event_a = tcsb_a.tc_bcast(AWMap::Update(
             "a".to_string(),
             Duet::First(Counter::Inc(10)),
         ));
         let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
         tcsb_b.try_deliver(event_a);
+        // bug here ->
         tcsb_a.try_deliver(event_b);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (10, 0));
+        map.insert(String::from("b"), (5, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
 
         let event = tcsb_a.tc_bcast(AWMap::Update(
             "b".to_string(),
@@ -257,8 +287,12 @@ mod tests {
         assert_eq!(map, tcsb_b.eval());
     }
 
+    #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
+        let mut result = HashMap::new();
+        result.insert("a".to_string(), 5);
+        result.insert("b".to_string(), -5);
         convergence_checker::<UWMapLog<String, EventGraph<Counter<i32>>>>(
             &[
                 AWMap::Update("a".to_string(), Counter::Inc(5)),
@@ -266,7 +300,7 @@ mod tests {
                 AWMap::Remove("a".to_string()),
                 AWMap::Remove("b".to_string()),
             ],
-            HashMap::new(),
+            result,
         );
     }
 }

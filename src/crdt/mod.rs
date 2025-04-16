@@ -42,7 +42,7 @@ pub mod test_util {
             #[cfg(feature = "utils")]
             let tcsb = Tcsb::new_with_trace(&i.to_string());
             #[cfg(not(feature = "utils"))]
-            let mut tcsb = Tcsb::<L>::new(&format!("{}", alphabet[i]));
+            let tcsb = Tcsb::<L>::new(&i.to_string());
             tcsbs.push(tcsb);
         }
         let view_content = tcsbs

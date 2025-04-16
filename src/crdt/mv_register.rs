@@ -46,14 +46,14 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{
-        crdt::{
-            mv_register::MVRegister,
-            test_util::{triplet_graph, twins_graph},
-        },
-        protocol::event_graph::EventGraph,
-        utils::convergence_checker::convergence_checker,
+    use crate::crdt::{
+        mv_register::MVRegister,
+        test_util::{triplet_graph, twins_graph},
     };
+    #[cfg(feature = "utils")]
+    use protocol::event_graph::EventGraph;
+    #[cfg(feature = "utils")]
+    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     fn simple_mv_register() {
@@ -134,6 +134,7 @@ mod tests {
         assert_eq!(eval_a, eval_b);
     }
 
+    #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
         convergence_checker::<EventGraph<MVRegister<&str>>>(

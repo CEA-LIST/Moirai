@@ -304,12 +304,14 @@ where
             .unstable
             .node_indices()
             .filter(|&node_idx| {
-                let dot = self.index_map.get_by_right(&node_idx).unwrap();
-                let ordering = self.partial_cmp(dot, &Dot::from(metadata));
+                let event = self.event_from_idx(&node_idx);
+                let ordering = event.metadata.partial_cmp(metadata);
+                // If conservative, we remove the event if it is less than or equal to the metadata
+                // If not conservative, we remove the event if it is less, non, equal to the metadata
                 if conservative {
-                    !matches!(ordering, Some(Ordering::Less) | Some(Ordering::Equal))
+                    ordering == Some(Ordering::Less) || ordering == Some(Ordering::Equal)
                 } else {
-                    !matches!(ordering, Some(Ordering::Greater))
+                    ordering != Some(Ordering::Greater)
                 }
             })
             .collect::<Vec<_>>();
