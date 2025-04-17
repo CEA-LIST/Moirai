@@ -1,11 +1,11 @@
-use po_crdt::crdt::{counter::Counter, test_util::quadruplet_graph};
+use po_crdt::crdt::{resettable_counter::Counter, test_util::quadruplet_graph};
 
 fn main() {
     let (tcsb_a, tcsb_b, tcsb_c, tcsb_d) = quadruplet_graph::<Counter<isize>>();
 
     let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
 
-    for x in 0..10_000 {
+    for x in 0..100_000 {
         for i in 0..tcsb_arr.len() {
             let op = if x % 2 == 0 {
                 Counter::Inc(1)
