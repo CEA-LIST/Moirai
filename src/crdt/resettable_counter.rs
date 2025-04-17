@@ -34,6 +34,7 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
     for Counter<V>
 {
     type Value = V;
+    const R_ONE: Option<bool> = Some(false);
 
     fn r(new_op: &Self) -> bool {
         matches!(new_op, Counter::Reset)
