@@ -85,7 +85,23 @@ where
             .get_by_left(second)
             .unwrap_or_else(|| panic!("Dot {} not found in the graph.", second));
 
+        if first.origin() == second.origin() {
+            if first.val() == second.val() {
+                return Some(Ordering::Equal);
+            }
+            if first.val() < second.val() {
+                return Some(Ordering::Less);
+            } else {
+                return Some(Ordering::Greater);
+            }
+        }
+
         let first_to_second = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
+
+        if first_to_second {
+            return Some(Ordering::Less);
+        }
+
         let second_to_first = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
 
         if !first_to_second && !second_to_first && first.origin() == second.origin() {
@@ -101,7 +117,7 @@ where
         }
 
         match (first_to_second, second_to_first) {
-            (true, true) => Some(Ordering::Equal),
+            (true, true) => panic!("No duplicate event allowed"),
             (true, false) => Some(Ordering::Less),
             (false, true) => Some(Ordering::Greater),
             (false, false) => None,
@@ -127,6 +143,31 @@ where
             dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
         Event::new(op.clone(), dependency_clock)
+    }
+
+    /// Given a `node_idx` that will be removed from the graph,
+    /// reattach the incoming edges of that node to the outgoing edges of the node
+    /// that will be removed.
+    /// TODO: Detect chain of events and reattach only the last one
+    /// Reattach the incoming edges of a node to its outgoing edges.
+    /// Complexity: O(I * O), where I is the number of incoming edges and O is the number of outgoing edges.
+    fn reattach_events(&mut self, node_idx: &NodeIndex) {
+        let incoming_edges: Vec<NodeIndex> = self
+            .unstable
+            .neighbors_directed(*node_idx, Direction::Incoming)
+            .collect();
+        let outgoing_edges: Vec<NodeIndex> = self
+            .unstable
+            .neighbors_directed(*node_idx, Direction::Outgoing)
+            .collect();
+        for incoming in incoming_edges {
+            for outgoing in outgoing_edges.iter() {
+                if incoming == *outgoing {
+                    panic!("Self-loop detected");
+                }
+                self.unstable.add_edge(incoming, *outgoing, ());
+            }
+        }
     }
 }
 
@@ -190,6 +231,7 @@ where
                         return true;
                     }
                     let op = graph.unstable.node_weight(node_idx).unwrap();
+
                     let ordering = graph.partial_cmp(other_dot, &new_dot);
                     if is_r {
                         O::r_zero(op, ordering, &event.op)
@@ -200,6 +242,7 @@ where
                 .collect();
 
             for node_idx in to_remove {
+                graph.reattach_events(&node_idx);
                 graph.unstable.remove_node(node_idx);
                 graph.index_map.remove_by_right(&node_idx);
             }
@@ -316,6 +359,7 @@ where
             })
             .collect::<Vec<_>>();
         for node_idx in to_remove {
+            self.reattach_events(&node_idx);
             self.unstable.remove_node(node_idx);
             self.index_map.remove_by_right(&node_idx);
         }
