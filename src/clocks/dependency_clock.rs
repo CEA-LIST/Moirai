@@ -1,11 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
-
-use serde::{Deserialize, Serialize};
 
 use super::{clock::Clock, dot::Dot};
 use crate::protocol::membership::ViewData;

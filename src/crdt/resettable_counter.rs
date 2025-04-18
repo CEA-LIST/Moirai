@@ -105,8 +105,6 @@ mod tests {
         crdt::{resettable_counter::Counter, test_util::twins},
         protocol::event_graph::EventGraph,
     };
-    #[cfg(feature = "utils")]
-    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     pub fn simple_counter() {
@@ -150,6 +148,10 @@ mod tests {
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
+        use crate::{
+            protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+        };
+
         convergence_checker::<EventGraph<Counter<isize>>>(
             &[Counter::Inc(7), Counter::Dec(15), Counter::Reset],
             -8,

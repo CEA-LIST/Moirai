@@ -163,8 +163,6 @@ mod tests {
         },
         protocol::event_graph::EventGraph,
     };
-    #[cfg(feature = "utils")]
-    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     fn simple_aw_map() {
@@ -290,6 +288,8 @@ mod tests {
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
+        use crate::utils::convergence_checker::convergence_checker;
+
         let mut result = HashMap::new();
         result.insert("a".to_string(), 5);
         result.insert("b".to_string(), -5);
