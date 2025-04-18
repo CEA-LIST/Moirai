@@ -69,6 +69,8 @@ RUST_LOG=debug cargo test <name> -- --nocapture
 ## Work notes
 
 - After flushing, reset the clocks.
+- Special case: partioned process.
+- Table of operations to dot.
 
 ## Helpers
 
