@@ -50,10 +50,6 @@ mod tests {
         mv_register::MVRegister,
         test_util::{triplet_graph, twins_graph},
     };
-    #[cfg(feature = "utils")]
-    use protocol::event_graph::EventGraph;
-    #[cfg(feature = "utils")]
-    use utils::convergence_checker::convergence_checker;
 
     #[test_log::test]
     fn simple_mv_register() {
@@ -137,6 +133,10 @@ mod tests {
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
+        use crate::{
+            protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+        };
+
         convergence_checker::<EventGraph<MVRegister<&str>>>(
             &[
                 MVRegister::Write("a"),

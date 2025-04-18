@@ -116,13 +116,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use crate::crdt::{rw_set::RWSet, test_util::twins_graph};
-    #[cfg(feature = "utils")]
-    use protocol::event_graph::EventGraph;
-    #[cfg(feature = "utils")]
-    use utils::convergence_checker::convergence_checker;
+    use std::collections::HashSet;
 
     #[test_log::test]
     fn clear_rw_set() {
@@ -237,6 +232,10 @@ mod tests {
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {
+        use crate::{
+            protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+        };
+
         convergence_checker::<EventGraph<RWSet<&str>>>(
             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
             HashSet::new(),

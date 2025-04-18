@@ -23,12 +23,10 @@ deepsize = { version = "0.2.0" }
 # dhat = "0.3.3"
 
 [features]
-default = ["crdt", "serde"]
+default = ["crdt", "serde", "utils"]
 crdt = []
 serde = ["dep:serde_json"]
 utils = ["serde", "dep:anyhow"]
-# dhat-heap = []                                                # if you are doing heap profiling
-# dhat-ad-hoc = []                                              # if you are doing ad hoc profiling
 
 [profile.release]
 debug = 1
