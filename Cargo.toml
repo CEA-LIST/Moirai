@@ -12,21 +12,19 @@ bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11.2"
 test-log = "0.2.15"
-serde = { version = "1.0", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 colored = "2.1.0"
 serde_json = { version = "1.0.128", optional = true }
 anyhow = { version = "1.0.89", optional = true }
 petgraph = { version = "0.6.4", features = ["serde-1"] }
-
-[dev-dependencies]
-deepsize = { version = "0.2.0" }
-# dhat = "0.3.3"
+tsify = { version = "0.5.5", optional = true }
+wasm-bindgen = { version = "0.2.100", optional = true }
 
 [features]
 default = ["crdt", "serde", "utils"]
 crdt = []
-serde = ["dep:serde_json"]
-utils = ["serde", "dep:anyhow"]
+serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
+utils = ["dep:anyhow"]
 
 [profile.release]
 debug = 1

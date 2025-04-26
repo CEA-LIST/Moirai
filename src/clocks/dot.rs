@@ -4,12 +4,18 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use tsify::Tsify;
 
 use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct Dot {
     view: Rc<ViewData>,
     origin: usize,

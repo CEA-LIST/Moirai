@@ -1,12 +1,11 @@
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+
 use crate::{
     clocks::dependency_clock::DependencyClock,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
-use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AWSet<V> {
     Add(V),
     Remove(V),

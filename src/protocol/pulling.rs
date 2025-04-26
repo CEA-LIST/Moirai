@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use log::error;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use tsify::Tsify;
 
 use super::{log::Log, tcsb::Tcsb};
 use crate::{
@@ -11,7 +12,11 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
     pub metadata: DependencyClock,
@@ -24,7 +29,11 @@ impl<O> Batch<O> {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub enum DeliveryError {
     UnknownPeer,
     DuplicatedEvent,
@@ -32,7 +41,11 @@ pub enum DeliveryError {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct Since {
     pub clock: DependencyClock,
     /// Dots to exclude from the pull request (already received but not delivered)

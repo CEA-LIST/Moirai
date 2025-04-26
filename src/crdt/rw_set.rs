@@ -50,7 +50,7 @@ where
             })
             // Is there another unstable op (add or rmv, not the current op) with the same value?
             || state.unstable.node_indices().zip(state.unstable.node_weights()).any(|(idx, op)| {
-				let dot = state.index_map.get_by_right(&idx).unwrap();
+				let dot = state.dot_index_map.get_by_right(&idx).unwrap();
 				match op {
 					RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && *dot != Dot::from(metadata),
 					_ => false,
@@ -73,7 +73,7 @@ where
                         .node_indices()
                         .zip(state.unstable.node_weights())
                         .any(|(idx, op)| {
-                            let dot = state.index_map.get_by_right(&idx).unwrap();
+                            let dot = state.dot_index_map.get_by_right(&idx).unwrap();
                             matches!(op, RWSet::Add(v2) if v == v2 && Dot::from(metadata) != *dot)
                         }),
                 RWSet::Clear => true,
@@ -116,8 +116,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::{rw_set::RWSet, test_util::twins_graph};
     use std::collections::HashSet;
+
+    use crate::crdt::{rw_set::RWSet, test_util::twins_graph};
 
     #[test_log::test]
     fn clear_rw_set() {

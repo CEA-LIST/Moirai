@@ -8,9 +8,8 @@ use std::{
 
 use anyhow::Result;
 
-use crate::clocks::clock::Clock;
-
 use super::tracer::Tracer;
+use crate::clocks::clock::Clock;
 
 pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
     let mut graphviz_str = String::new();

@@ -1,3 +1,4 @@
+pub mod dot_index_map;
 pub mod event;
 pub mod event_graph;
 pub mod guard;
