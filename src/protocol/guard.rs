@@ -3,6 +3,8 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use log::error;
+
 use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, matrix_clock::MatrixClock};
 
 /// Check that the event is not from an evicted peer
@@ -33,6 +35,7 @@ pub fn guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) ->
             }
         }
         if cnt > ltm.dot(&origin) {
+            error!("bizarre");
             return true;
         }
     }

@@ -95,7 +95,9 @@ where
         match batch {
             Ok(batch) => {
                 for event in batch.events {
-                    self.try_deliver(event);
+                    if self.id != event.metadata.origin() {
+                        self.try_deliver(event);
+                    }
                 }
                 self.ltm
                     .get_mut(batch.metadata.origin())
