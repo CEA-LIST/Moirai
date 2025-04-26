@@ -339,7 +339,10 @@ where
         }
 
         let mut events = self.collect_events(&upper_bound, &since.clock);
-        events.retain(|event| !since.exclude.contains(&Dot::from(&event.metadata)));
+        events.retain(|event| {
+            !since.exclude.contains(&Dot::from(&event.metadata))
+                && event.metadata.origin() != since.clock.origin()
+        });
 
         events
     }
