@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
@@ -6,11 +5,20 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use tsify::Tsify;
+
 use super::{clock::Clock, dot::Dot};
 use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub struct DependencyClock {
     pub(crate) view: Rc<ViewData>,
     /// The key is the index of the member in the members list

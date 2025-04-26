@@ -4,14 +4,19 @@ use std::{
     rc::Rc,
 };
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
 use super::{clock::Clock, dependency_clock::DependencyClock};
 use crate::protocol::membership::ViewData;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use tsify::Tsify;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub struct MatrixClock {
     clock: HashMap<usize, DependencyClock>,
     view: Rc<ViewData>,
@@ -101,6 +106,7 @@ impl MatrixClock {
                 svv = Clock::min(&svv, d);
             }
         }
+        // TODO
         // for (o, c) in &svv.clock {
         //     if self.clock[o].get(&svv.view.members[*o]) == *c {
         //         svv.origin = Some(*o);

@@ -1,9 +1,9 @@
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+
 use crate::{
     clocks::dependency_clock::DependencyClock,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
-use std::{cmp::Ordering, fmt::Debug};
-use std::{collections::HashSet, hash::Hash};
 
 #[derive(Clone, Debug)]
 pub enum MVRegister<V> {

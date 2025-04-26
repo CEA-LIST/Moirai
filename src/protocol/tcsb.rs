@@ -6,7 +6,9 @@ use std::{
 
 use colored::*;
 use log::{debug, error, info};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use tsify::Tsify;
 
 use super::{
     event::Event,
@@ -313,10 +315,6 @@ where
                 .change_view(&self.group_membership.installed_view().data.clone());
             self.tc_stable();
         }
-        // else if self.group_membership.last_planned_id().is_none() {
-        //     let my_clock = self.my_clock().clone();
-        //     self.state.scalar_to_vec(&my_clock);
-        // }
     }
 
     /// Return the mutable vector clock of the local replica
@@ -400,7 +398,11 @@ where
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct StateTransfer<L> {
     pub group_membership: Views,
     pub state: L,

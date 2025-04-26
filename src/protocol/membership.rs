@@ -1,9 +1,17 @@
-use log::info;
-use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
+use log::info;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use tsify::Tsify;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub enum ViewStatus {
     /// The view has been installed. At least one view is always installed and the last installed view is the current view.
     Installed,
@@ -17,7 +25,12 @@ pub enum ViewStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub enum ViewInstallingStatus {
     NothingToInstall,
     AlreadyInstalling,
@@ -25,14 +38,24 @@ pub enum ViewInstallingStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub struct ViewData {
     pub id: usize,
     pub members: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+
 pub struct View {
     pub data: Rc<ViewData>,
     pub status: ViewStatus,
@@ -60,7 +83,11 @@ impl View {
 /// - There is always at least one view in the list
 /// - There may be zero or one view being installed
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, Tsify),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct Views {
     views: Vec<View>,
     current_view_id: usize,
@@ -221,6 +248,10 @@ impl Views {
 
     pub fn last_view(&self) -> &View {
         self.views.last().unwrap()
+    }
+
+    pub fn views(&self) -> &[View] {
+        &self.views
     }
 }
 
