@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use bimap::BiMap;
 use petgraph::graph::NodeIndex;
@@ -10,6 +10,12 @@ use crate::clocks::dot::Dot;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DotIndexMap(pub BiMap<Dot, NodeIndex>);
+
+impl Default for DotIndexMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl DotIndexMap {
     pub fn new() -> Self {
@@ -42,6 +48,10 @@ impl DotIndexMap {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn clear(&mut self) {
@@ -81,5 +91,14 @@ impl<'de> Deserialize<'de> for DotIndexMap {
             bimap.insert(dot, NodeIndex::new(idx));
         }
         Ok(DotIndexMap(bimap))
+    }
+}
+
+impl Display for DotIndexMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (k, v) in self.0.iter() {
+            write!(f, "({} <> {:?}) ", k, v)?;
+        }
+        Ok(())
     }
 }

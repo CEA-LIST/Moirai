@@ -317,32 +317,28 @@ where
     /// `collect_events` returns the events that are in the past of the given metadata
     /// and `collect_events_since` returns the events that are in the future/concurrent of the given metadata.
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-        let idxs: Vec<NodeIndex> = self
+        let max_node_idx: Vec<NodeIndex> = self
             .unstable
             .node_indices()
             .filter(|&node| {
                 self.unstable
-                    .neighbors_directed(node, Direction::Incoming)
-                    .next()
-                    .is_none()
+                    .neighbors_directed(node, petgraph::Incoming)
+                    .count()
+                    == 0
             })
             .collect();
 
-        let dots = idxs
-            .iter()
-            .filter_map(|&node| self.dot_index_map.get_by_right(&node))
-            .cloned()
-            .collect::<Vec<_>>();
         let mut upper_bound = DependencyClock::new_originless(&Rc::clone(&since.clock.view));
-        for dot in dots {
+
+        for idx in max_node_idx.iter() {
+            let dot = self.dot_index_map.get_by_right(idx).unwrap();
             upper_bound.set(dot.origin(), dot.val());
         }
 
-        let mut events = self.collect_events(&upper_bound, &since.clock);
-        events.retain(|event| {
-            !since.exclude.contains(&Dot::from(&event.metadata))
-                && event.metadata.origin() != since.clock.origin()
-        });
+        let events = self.collect_events(
+            &upper_bound,
+            &DependencyClock::new_originless(&Rc::clone(&since.clock.view)),
+        );
 
         events
     }

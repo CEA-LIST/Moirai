@@ -141,7 +141,6 @@ where
             );
             return;
         }
-        // The LTM should be synchronized with the group membership
         if guard_against_out_of_order(&self.ltm, &event.metadata) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
@@ -179,7 +178,7 @@ where
     }
 
     /// Deliver an event to the local state.
-    fn tc_deliver(&mut self, event: Event<L::Op>) {
+    pub(super) fn tc_deliver(&mut self, event: Event<L::Op>) {
         info!(
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
@@ -191,9 +190,9 @@ where
         if self.id != event.metadata.origin() {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
+            // And our own vector clock with the new event
             self.ltm
                 .merge_clock(event.metadata.origin(), &event.metadata);
-            // Update our own vector clock
             self.my_clock_mut().merge(&event.metadata);
 
             #[cfg(feature = "utils")]
