@@ -35,6 +35,8 @@ fn events_since_concurrent_counter() {
 
     tcsb_a.deliver_batch(batch);
 
+    assert_eq!(tcsb_a.pending.len(), 0);
+    assert_eq!(tcsb_b.pending.len(), 0);
     assert_eq!(tcsb_a.eval(), 0);
     assert_eq!(tcsb_b.eval(), 0);
 }

@@ -74,8 +74,10 @@ pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
                 } else {
                     graphviz_str.push_str(&format!("{} -> end_{}[style=\"dashed\"];\n", e, id));
                 }
+            } else if i == 0 {
+                graphviz_str.push_str(&format!(" -> {} -> ", e));
             } else {
-                graphviz_str.push_str(&format!("-> {} -> ", e));
+                graphviz_str.push_str(&format!("{} -> ", e));
             }
         }
         graphviz_str.push_str(&format!(
@@ -189,6 +191,13 @@ mod tests {
     #[test_log::test]
     fn convergence() {
         let name = "convergence";
+        let res = trace_to_file(name);
+        assert!(res.is_ok(), "{:?}", res);
+    }
+
+    #[test_log::test]
+    fn random_event_graph() {
+        let name = "random_event_graph";
         let res = trace_to_file(name);
         assert!(res.is_ok(), "{:?}", res);
     }

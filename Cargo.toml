@@ -8,6 +8,7 @@ license = "proprietary"
 repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Based_CRDT.git"
 
 [dependencies]
+rand = { version = "0.9.1", optional = true }
 bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11.2"
@@ -24,7 +25,7 @@ wasm-bindgen = { version = "0.2.100", optional = true }
 default = ["crdt", "serde", "utils"]
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
-utils = ["dep:anyhow"]
+utils = ["dep:anyhow", "dep:rand"]
 
 [profile.release]
 debug = 1

@@ -91,6 +91,7 @@ impl MatrixClock {
 
     pub fn clear(&mut self) {
         self.clock.clear();
+        assert!(self.is_valid());
     }
 
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
@@ -195,19 +196,17 @@ mod tests {
     use super::*;
 
     fn view_ab() -> Rc<ViewData> {
-        let view = Rc::new(ViewData {
+        Rc::new(ViewData {
             members: vec!["A".to_string(), "B".to_string()],
             id: 0,
-        });
-        view
+        })
     }
 
     fn view_abc() -> Rc<ViewData> {
-        let view = Rc::new(ViewData {
+        Rc::new(ViewData {
             members: vec!["A".to_string(), "B".to_string(), "C".to_string()],
             id: 0,
-        });
-        view
+        })
     }
 
     #[test_log::test]
@@ -215,8 +214,8 @@ mod tests {
         let mc = MatrixClock::build(&view_abc(), &[&[0, 0, 0], &[0, 0, 0], &[0, 0, 0]]);
         assert_eq!(mc.clock.len(), 3);
         assert_eq!(
-            mc.get(&"A"),
-            Some(&DependencyClock::build(&view_abc(), Some(&"A"), &[0, 0, 0]))
+            mc.get("A"),
+            Some(&DependencyClock::build(&view_abc(), Some("A"), &[0, 0, 0]))
         );
     }
 
@@ -224,7 +223,7 @@ mod tests {
     fn svv() {
         let m = MatrixClock::build(&view_ab(), &[&[10, 2], &[8, 6]]);
         assert_eq!(
-            m.svv(&"A", &[]),
+            m.svv("A", &[]),
             DependencyClock::build(&view_ab(), None, &[8, 2])
         );
     }
@@ -241,7 +240,7 @@ mod tests {
     fn svv_ignore() {
         let mc = MatrixClock::build(&view_abc(), &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
         assert_eq!(
-            mc.svv(&"A", &[&"C".to_string()]),
+            mc.svv("A", &[&"C".to_string()]),
             DependencyClock::build(&view_abc(), None, &[2, 5, 1])
         );
     }

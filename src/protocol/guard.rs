@@ -3,8 +3,6 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use log::error;
-
 use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, matrix_clock::MatrixClock};
 
 /// Check that the event is not from an evicted peer
@@ -22,7 +20,7 @@ pub fn guard_against_duplicates(ltm: &MatrixClock, clock: &DependencyClock) -> b
         .unwrap_or(false)
 }
 
-/// Check that the event is the causal successor of the last event delivered by this same replica
+/// Check that the event is the strict (+1) causal successor of the last event delivered by this same replica
 /// Returns true if the event is out of order
 pub fn guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) -> bool {
     let map: HashMap<String, usize> = clock.clone().into();
@@ -35,7 +33,26 @@ pub fn guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) ->
             }
         }
         if cnt > ltm.dot(&origin) {
-            error!("bizarre");
+            return true;
+        }
+    }
+    false
+}
+
+/// Check that the event is the causal successor of the last event delivered by this same replica
+/// But not necessarily the strict (+1) causal successor
+/// Returns true if the event is out of order
+pub fn loose_guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) -> bool {
+    let map: HashMap<String, usize> = clock.clone().into();
+    for (origin, cnt) in map {
+        if origin == clock.origin() {
+            if cnt <= ltm.dot(&origin) {
+                return true;
+            } else {
+                continue;
+            }
+        }
+        if cnt > ltm.dot(&origin) {
             return true;
         }
     }
