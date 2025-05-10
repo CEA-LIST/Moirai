@@ -34,18 +34,29 @@ where
         }
     }
 
+    for i in 0..n_proc {
+        for j in 0..n_proc {
+            if i != j {
+                let batch = tcsbs[i].events_since(&Since::new_from(&tcsbs[j]));
+                tcsbs[j].deliver_batch(batch);
+            }
+        }
+    }
+
     tcsbs
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
 
     use super::*;
     use crate::crdt::aw_set::AWSet;
+    use crate::crdt::resettable_counter::Counter;
     use crate::protocol::event_graph::EventGraph;
 
     #[test_log::test]
-    fn test_generate_event_graph() {
+    fn generate_aw_set() {
         let ops = vec![
             AWSet::Add("a"),
             AWSet::Add("b"),
@@ -64,19 +75,53 @@ mod tests {
 
         assert_eq!(tcsbs.len(), n_proc);
 
+        #[cfg(feature = "serde")]
         tcsbs[0]
             .tracer
             .serialize_to_file(std::path::Path::new("traces/random_event_graph.json"))
             .unwrap();
 
-        // let ltm = tcsbs[0].ltm.clone();
-        for tcsb in tcsbs {
+        let mut eval: HashSet<&str> = HashSet::new();
+        for (i, tcsb) in tcsbs.iter().enumerate() {
             println!("tcsb {} : {}", tcsb.id, tcsb.tracer.trace.len());
             println!("tcsb {} - buffer size {}", tcsb.id, tcsb.pending.len());
             for event in tcsb.pending.iter() {
                 println!("event: {}", event);
             }
             println!("tcsb {} - LTM {}", tcsb.id, tcsb.ltm);
+            if i == 0 {
+                eval = tcsb.eval();
+            }
+            assert_eq!(tcsb.eval(), eval);
+        }
+    }
+
+    #[test_log::test]
+
+    fn generate_counter() {
+        let ops = vec![Counter::Inc(1), Counter::Dec(1), Counter::Reset];
+        let n_proc = 4;
+        let n_event = 50;
+
+        let tcsbs = generate_event_graph::<EventGraph<Counter<isize>>>(&ops, n_proc, n_event);
+
+        assert_eq!(tcsbs.len(), n_proc);
+
+        #[cfg(feature = "serde")]
+        tcsbs[0]
+            .tracer
+            .serialize_to_file(std::path::Path::new("traces/random_event_graph.json"))
+            .unwrap();
+
+        let mut eval: isize = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            println!("tcsb {} : {}", tcsb.id, tcsb.tracer.trace.len());
+            println!("tcsb {} - buffer size {}", tcsb.id, tcsb.pending.len());
+            println!("tcsb {} - LTM {}", tcsb.id, tcsb.ltm);
+            if i == 0 {
+                eval = tcsb.eval();
+            }
+            assert_eq!(tcsb.eval(), eval);
         }
     }
 }

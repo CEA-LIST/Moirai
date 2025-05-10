@@ -1,8 +1,10 @@
-use std::rc::Rc;
-
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
 use log::info;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
+#[cfg(feature = "serde")]
 use tsify::Tsify;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -11,7 +13,6 @@ use tsify::Tsify;
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
-
 pub enum ViewStatus {
     /// The view has been installed. At least one view is always installed and the last installed view is the current view.
     Installed,
@@ -30,7 +31,6 @@ pub enum ViewStatus {
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
-
 pub enum ViewInstallingStatus {
     NothingToInstall,
     AlreadyInstalling,
@@ -43,7 +43,7 @@ pub enum ViewInstallingStatus {
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
-
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct ViewData {
     pub id: usize,
     pub members: Vec<String>,

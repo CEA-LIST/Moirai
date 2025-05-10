@@ -2,6 +2,7 @@ use std::fmt::{Debug, Display, Error, Formatter};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
 use tsify::Tsify;
 
 use crate::clocks::dependency_clock::DependencyClock;

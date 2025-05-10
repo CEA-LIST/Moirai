@@ -158,6 +158,7 @@ fn transitive_reduction(graph: &mut Vec<(usize, usize)>) {
 }
 
 #[cfg(test)]
+#[cfg(feature = "serde")]
 mod tests {
     use std::path::Path;
 

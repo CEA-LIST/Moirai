@@ -1,13 +1,15 @@
+use super::{clock::Clock, dependency_clock::DependencyClock};
+use crate::protocol::membership::ViewData;
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
     rc::Rc,
 };
-
-use super::{clock::Clock, dependency_clock::DependencyClock};
-use crate::protocol::membership::ViewData;
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -16,7 +18,7 @@ use tsify::Tsify;
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
-
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct MatrixClock {
     clock: HashMap<usize, DependencyClock>,
     view: Rc<ViewData>,
@@ -293,5 +295,12 @@ mod tests {
             &[&[0, 0, 0, 0], &[0, 0, 0, 0], &[0, 0, 6, 4], &[0, 0, 0, 4]],
         );
         assert_eq!(test, mc);
+    }
+
+    #[test_log::test]
+    #[cfg(feature = "utils")]
+    fn deepsize_of_matrix_clock() {
+        let mc = MatrixClock::build(&view_abc(), &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
+        println!("Deep size of MatrixClock: {}", mc.deep_size_of());
     }
 }

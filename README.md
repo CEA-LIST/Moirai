@@ -69,8 +69,13 @@ RUST_LOG=debug cargo test <name> -- --nocapture
 ## Work notes
 
 - After flushing, reset the clocks.
-- Special case: partioned process.
-- Table of operations to dot.
+- Special case: partitioned process, how to optimize?
+- Table of operations to dot for quick access?
+
+## To-do
+
+- Add a reliable broadcast layer (message buffering) and implement pulling at
+  this layer.
 
 ## Helpers
 

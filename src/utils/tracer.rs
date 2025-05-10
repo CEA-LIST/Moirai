@@ -1,21 +1,29 @@
-use std::{fmt::Debug, fs::File, io::Write, path::Path};
-
+#[cfg(feature = "serde")]
 use anyhow::Result;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+#[cfg(feature = "serde")]
+use std::{fs::File, io::Write, path::Path};
 
 use crate::{
     clocks::dependency_clock::DependencyClock,
     protocol::{event::Event, log::Log},
 };
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Clone, Debug)]
 pub struct Tracer {
     pub(super) origin: String,
     pub(super) trace: Vec<TracerEvent>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub struct TracerEvent {
     pub(super) metadata: DependencyClock,
     pub(super) op: String,
@@ -38,10 +46,12 @@ impl Tracer {
         });
     }
 
+    #[cfg(feature = "serde")]
     pub fn serialize(&self) -> Result<String> {
         serde_json::to_string(&self).map_err(Into::into)
     }
 
+    #[cfg(feature = "serde")]
     pub fn serialize_to_file(&self, path: &Path) -> Result<()> {
         let mut file = File::create(path)?;
         let serialized = self.serialize()?;
@@ -49,6 +59,7 @@ impl Tracer {
         Ok(())
     }
 
+    #[cfg(feature = "serde")]
     pub fn deserialize_from_file(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
         let tracer: Self = serde_json::from_reader(file)?;

@@ -1,10 +1,9 @@
-use std::fmt::Debug;
-
 use crate::{
     clocks::clock::Clock,
     crdt::test_util::n_members,
     protocol::{event::Event, log::Log},
 };
+use std::fmt::Debug;
 
 fn factorial(number: usize) -> usize {
     let mut factorial: usize = 1;
@@ -75,7 +74,7 @@ where
             break;
         }
         if value != tcsbs[i].eval() {
-            #[cfg(feature = "utils")]
+            #[cfg(feature = "serde")]
             tcsbs[i]
                 .tracer
                 .serialize_to_file(std::path::Path::new("traces/convergence.json"))

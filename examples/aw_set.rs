@@ -1,3 +1,5 @@
+#![cfg(feature = "crdt")]
+
 use po_crdt::crdt::{aw_set::AWSet, test_util::quadruplet_graph};
 
 fn main() {
