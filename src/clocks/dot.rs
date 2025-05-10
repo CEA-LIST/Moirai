@@ -1,11 +1,13 @@
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
-
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::membership::ViewData;
@@ -16,6 +18,7 @@ use crate::protocol::membership::ViewData;
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Dot {
     view: Rc<ViewData>,
     origin: usize,

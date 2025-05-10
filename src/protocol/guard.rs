@@ -40,16 +40,28 @@ pub fn guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) ->
 }
 
 /// Check that the event is the causal successor of the last event delivered by this same replica
-/// But not necessarily the strict (+1) causal successor
+/// But not necessarily the strict (+1) causal successor if the event is from that same replica
 /// Returns true if the event is out of order
-pub fn loose_guard_against_out_of_order(ltm: &MatrixClock, clock: &DependencyClock) -> bool {
+pub fn loose_guard_against_out_of_order(
+    ltm: &MatrixClock,
+    clock: &DependencyClock,
+    batch_origin: &str,
+) -> bool {
     let map: HashMap<String, usize> = clock.clone().into();
     for (origin, cnt) in map {
         if origin == clock.origin() {
-            if cnt <= ltm.dot(&origin) {
-                return true;
+            if batch_origin == origin {
+                if cnt <= ltm.dot(&origin) {
+                    return true;
+                } else {
+                    continue;
+                }
             } else {
-                continue;
+                if cnt != ltm.dot(&origin) + 1 {
+                    return true;
+                } else {
+                    continue;
+                }
             }
         }
         if cnt > ltm.dot(&origin) {

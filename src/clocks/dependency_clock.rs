@@ -1,12 +1,14 @@
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
-
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use super::{clock::Clock, dot::Dot};
@@ -18,7 +20,7 @@ use crate::protocol::membership::ViewData;
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
-
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct DependencyClock {
     pub(crate) view: Rc<ViewData>,
     /// The key is the index of the member in the members list

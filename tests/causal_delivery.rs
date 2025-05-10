@@ -1,3 +1,5 @@
+#![cfg(feature = "crdt")]
+
 use po_crdt::crdt::{
     counter::Counter,
     test_util::{triplet_graph, twins_graph},

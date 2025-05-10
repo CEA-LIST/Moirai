@@ -4,6 +4,7 @@ use log::error;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::Debug;
+#[cfg(feature = "serde")]
 use tsify::Tsify;
 
 use super::{log::Log, tcsb::Tcsb};
@@ -107,11 +108,28 @@ where
     pub fn deliver_batch(&mut self, batch: Result<Batch<L::Op>, DeliveryError>) {
         match batch {
             Ok(batch) => {
-                for event in batch.events {
+                let mut sorted = batch.events.clone();
+                sorted.sort_by(|a, b| {
+                    if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
+                        order
+                    } else {
+                        a.metadata.origin().cmp(b.metadata.origin())
+                    }
+                });
+                for event in sorted {
                     if self.id != event.metadata.origin() {
-                        self.force_deliver(event);
+                        self.force_deliver(event, batch.metadata.origin());
                     }
                 }
+                // for event in batch.events {
+                //     if self.id != event.metadata.origin() {
+                //         self.try_deliver(event);
+                //     }
+                // }
+                self.ltm
+                    .get_mut(batch.metadata.origin())
+                    .unwrap()
+                    .merge(&batch.metadata);
             }
             Err(e) => match e {
                 DeliveryError::UnknownPeer => {
@@ -124,7 +142,7 @@ where
         }
     }
 
-    fn force_deliver(&mut self, event: Event<L::Op>) {
+    fn force_deliver(&mut self, event: Event<L::Op>, batch_origin: &str) {
         // The local peer should not call this function for its own events
         assert_ne!(
             self.id,
@@ -169,6 +187,15 @@ where
             );
             return;
         }
+        if loose_guard_against_out_of_order(&self.ltm, &event.metadata, batch_origin) {
+            error!(
+                "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
+                self.id.blue().bold(),
+                event.metadata.origin().blue(),
+                format!("{}", event.metadata).red(),
+                format!("{:?}", event.op).green(),
+            );
+        }
         // Store the new event at the end of the causal buffer
         // TODO: Check that this is correct
         self.pending.push_back(event.clone());
@@ -183,7 +210,7 @@ where
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
             // it belongs to the current view...
-            if !loose_guard_against_out_of_order(&self.ltm, &event.metadata)
+            if !loose_guard_against_out_of_order(&self.ltm, &event.metadata, batch_origin)
                 && event.metadata.view_id() == self.view_id()
             {
                 // ...deliver it

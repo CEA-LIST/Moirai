@@ -8,6 +8,7 @@ use colored::*;
 use log::{debug, error, info};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
 use tsify::Tsify;
 
 use super::{

@@ -1,11 +1,13 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, rc::Rc};
-
+// #[cfg(feature = "utils")]
+// use deepsize::DeepSizeOf;
 use log::{debug, error};
 use petgraph::{
     algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef, Direction,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, rc::Rc};
+#[cfg(feature = "serde")]
 use tsify::Tsify;
 
 use super::{
@@ -19,6 +21,7 @@ use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+// #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct EventGraph<Op> {
     pub stable: Vec<Op>,
     pub unstable: StableDiGraph<Op, ()>,
@@ -317,28 +320,32 @@ where
     /// `collect_events` returns the events that are in the past of the given metadata
     /// and `collect_events_since` returns the events that are in the future/concurrent of the given metadata.
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-        let max_node_idx: Vec<NodeIndex> = self
+        let idxs: Vec<NodeIndex> = self
             .unstable
             .node_indices()
             .filter(|&node| {
                 self.unstable
-                    .neighbors_directed(node, petgraph::Incoming)
-                    .count()
-                    == 0
+                    .neighbors_directed(node, Direction::Incoming)
+                    .next()
+                    .is_none()
             })
             .collect();
 
+        let dots = idxs
+            .iter()
+            .filter_map(|&node| self.dot_index_map.get_by_right(&node))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut upper_bound = DependencyClock::new_originless(&Rc::clone(&since.clock.view));
-
-        for idx in max_node_idx.iter() {
-            let dot = self.dot_index_map.get_by_right(idx).unwrap();
+        for dot in dots {
             upper_bound.set(dot.origin(), dot.val());
         }
 
-        let events = self.collect_events(
-            &upper_bound,
-            &DependencyClock::new_originless(&Rc::clone(&since.clock.view)),
-        );
+        let mut events = self.collect_events(&upper_bound, &since.clock);
+        events.retain(|event| {
+            !since.exclude.contains(&Dot::from(&event.metadata))
+                && event.metadata.origin() != since.clock.origin()
+        });
 
         events
     }
