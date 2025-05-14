@@ -2,6 +2,7 @@ use super::{clock::Clock, dependency_clock::DependencyClock};
 use crate::protocol::membership::ViewData;
 #[cfg(feature = "utils")]
 use deepsize::DeepSizeOf;
+use log::debug;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
@@ -174,12 +175,19 @@ impl MatrixClock {
     ///
     /// Returns true if the matrix clock is valid
     pub fn is_valid(&self) -> bool {
-        self.is_square()
-            && self.clock.iter().all(|(_, d)| {
-                d.clock
-                    .iter()
-                    .all(|(j, c)| self.clock[j].get(&self.view.members[*j]).unwrap() >= *c)
-            })
+        let is_square = self.is_square();
+        let valid_entries = self.clock.iter().all(|(_, d)| {
+            d.clock
+                .iter()
+                .all(|(j, c)| self.clock[j].get(&self.view.members[*j]).unwrap() >= *c)
+        });
+        if !is_square {
+            debug!("MatrixClock is not square");
+        }
+        if !valid_entries {
+            debug!("MatrixClock has invalid entries");
+        }
+        is_square && valid_entries
     }
 }
 

@@ -18,11 +18,11 @@ where
 {
     type Value = HashSet<V>;
 
-    fn r(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, AWSet::Clear | AWSet::Remove(_))
     }
 
-    fn r_zero(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
         Some(Ordering::Less) == order
             && (matches!(new_op, AWSet::Clear)
                 || match (&old_op, &new_op) {
@@ -33,8 +33,8 @@ where
                 })
     }
 
-    fn r_one(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
-        Self::r_zero(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, order, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}

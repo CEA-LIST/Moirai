@@ -26,15 +26,23 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
     const R_ZERO: Option<bool> = Some(false);
     const R_ONE: Option<bool> = Some(false);
 
-    fn r(_new_op: &Self) -> bool {
+    fn redundant_itself(_new_op: &Self) -> bool {
         false
     }
 
-    fn r_zero(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(
+        _old_op: &Self,
+        _order: Option<Ordering>,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 
-    fn r_one(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        _old_op: &Self,
+        _order: Option<Ordering>,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 

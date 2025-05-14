@@ -21,11 +21,11 @@ where
 {
     type Value = DiGraph<V, ()>;
 
-    fn r(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, Graph::RemoveVertex(_) | Graph::RemoveArc(_, _))
     }
 
-    fn r_zero(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
         match (&old_op, &new_op) {
             (Graph::AddVertex(v1), Graph::AddVertex(v2)) => {
                 matches!(order, None | Some(Ordering::Less)) && v1 == v2
@@ -51,8 +51,8 @@ where
         }
     }
 
-    fn r_one(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
-        Self::r_zero(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, order, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
@@ -114,7 +114,7 @@ where
 mod tests {
     use petgraph::algo::is_isomorphic;
 
-    use crate::crdt::{graph::Graph, test_util::twins_graph};
+    use crate::crdt::{aw_graph::Graph, test_util::twins_graph};
 
     #[test_log::test]
     fn simple_graph() {

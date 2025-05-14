@@ -56,12 +56,10 @@ pub fn loose_guard_against_out_of_order(
                 } else {
                     continue;
                 }
+            } else if cnt != ltm.dot(&origin) + 1 {
+                return true;
             } else {
-                if cnt != ltm.dot(&origin) + 1 {
-                    return true;
-                } else {
-                    continue;
-                }
+                continue;
             }
         }
         if cnt > ltm.dot(&origin) {
