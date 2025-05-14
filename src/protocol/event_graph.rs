@@ -6,7 +6,12 @@ use petgraph::{
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, rc::Rc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    rc::Rc,
+};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -26,6 +31,7 @@ pub struct EventGraph<Op> {
     pub stable: Vec<Op>,
     pub unstable: StableDiGraph<Op, ()>,
     pub dot_index_map: DotIndexMap,
+    pub dot_vector: HashMap<Dot, HashMap<usize, usize>>,
 }
 
 impl<Op> EventGraph<Op>
@@ -37,6 +43,7 @@ where
             stable: Vec::new(),
             unstable: StableDiGraph::new(),
             dot_index_map: DotIndexMap::new(),
+            dot_vector: HashMap::new(),
         }
     }
 
@@ -204,8 +211,9 @@ where
                 }
                 Some(false) => {}
                 None => {
-                    self.stable
-                        .retain(|o| !(Self::Op::r_zero(o, Some(Ordering::Less), &event.op)));
+                    self.stable.retain(|o| {
+                        !(Self::Op::redundant_by_when_redundant(o, Some(Ordering::Less), &event.op))
+                    });
                     // TODO: shrink if capacity > 2*len
                     self.stable.shrink_to_fit();
                     prune_unstable(self, event, true);
@@ -220,8 +228,13 @@ where
                 }
                 Some(false) => {}
                 None => {
-                    self.stable
-                        .retain(|o| !(Self::Op::r_one(o, Some(Ordering::Less), &event.op)));
+                    self.stable.retain(|o| {
+                        !(Self::Op::redundant_by_when_not_redundant(
+                            o,
+                            Some(Ordering::Less),
+                            &event.op,
+                        ))
+                    });
                     self.stable.shrink_to_fit();
                     prune_unstable(self, event, false);
                 }
@@ -244,9 +257,9 @@ where
 
                     let ordering = graph.partial_cmp(other_dot, &new_dot);
                     if is_r {
-                        O::r_zero(op, ordering, &event.op)
+                        O::redundant_by_when_redundant(op, ordering, &event.op)
                     } else {
-                        O::r_one(op, ordering, &event.op)
+                        O::redundant_by_when_not_redundant(op, ordering, &event.op)
                     }
                 })
                 .collect();
@@ -351,7 +364,7 @@ where
     }
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
-        Self::Op::r(&event.op)
+        Self::Op::redundant_itself(&event.op)
     }
 
     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {

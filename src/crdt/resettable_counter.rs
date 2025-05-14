@@ -38,15 +38,15 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
     type Value = V;
     const R_ONE: Option<bool> = Some(false);
 
-    fn r(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, Counter::Reset)
     }
 
-    fn r_zero(_old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(_old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
         Some(Ordering::Less) == order && matches!(new_op, Counter::Reset)
     }
 
-    fn r_one(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
         false
     }
 
