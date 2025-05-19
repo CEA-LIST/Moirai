@@ -1,38 +1,40 @@
-#![cfg(feature = "crdt")]
+fn main() {}
 
-use po_crdt::crdt::{aw_set::AWSet, test_util::quadruplet_graph};
+// #![cfg(feature = "crdt")]
 
-fn main() {
-    let (tcsb_a, tcsb_b, tcsb_c, tcsb_d) = quadruplet_graph::<AWSet<u32>>();
+// use po_crdt::crdt::{aw_set::AWSet, test_util::quadruplet_graph};
 
-    let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
+// fn main() {
+//     let (tcsb_a, tcsb_b, tcsb_c, tcsb_d) = quadruplet_graph::<AWSet<u32>>();
 
-    let max = 1_000;
+//     let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
 
-    for x in 0..max {
-        for i in 0..tcsb_arr.len() {
-            let op = if x >= max / 2 {
-                AWSet::Remove(max - x)
-            } else {
-                AWSet::Add(x)
-            };
-            let event = tcsb_arr[i].tc_bcast(op);
-            for j in 0..tcsb_arr.len() {
-                if i != j {
-                    tcsb_arr[j].try_deliver(event.clone());
-                }
-            }
-        }
-    }
+//     let max = 1_000;
 
-    env_logger::init();
+//     for x in 0..max {
+//         for i in 0..tcsb_arr.len() {
+//             let op = if x >= max / 2 {
+//                 AWSet::Remove(max - x)
+//             } else {
+//                 AWSet::Add(x)
+//             };
+//             let event = tcsb_arr[i].tc_bcast(op);
+//             for j in 0..tcsb_arr.len() {
+//                 if i != j {
+//                     tcsb_arr[j].try_deliver(event.clone());
+//                 }
+//             }
+//         }
+//     }
 
-    for (i, tcsb) in tcsb_arr.iter().enumerate() {
-        log::info!("TCSB {} stable ops: {}", i, tcsb.state.stable.len());
-        log::info!(
-            "TCSB {} unstable ops: {}",
-            i,
-            tcsb.state.unstable.node_count()
-        );
-    }
-}
+//     env_logger::init();
+
+//     for (i, tcsb) in tcsb_arr.iter().enumerate() {
+//         log::info!("TCSB {} stable ops: {}", i, tcsb.state.stable.len());
+//         log::info!(
+//             "TCSB {} unstable ops: {}",
+//             i,
+//             tcsb.state.unstable.node_count()
+//         );
+//     }
+// }

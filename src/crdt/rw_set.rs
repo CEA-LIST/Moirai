@@ -34,7 +34,11 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        order: Option<Ordering>,
+        new_op: &Self,
+    ) -> bool {
         Self::redundant_by_when_redundant(old_op, order, new_op)
     }
 
@@ -95,22 +99,18 @@ where
         }
     }
 
-    fn eval(ops: &[Self]) -> Self::Value {
-        let mut set = Self::Value::new();
-        for o in ops {
-            if let RWSet::Add(v) = o {
-                if ops.iter().all(|e| {
-                    if let RWSet::Remove(v2) = e {
-                        v != v2
-                    } else {
-                        true
-                    }
-                }) {
-                    set.insert(v.clone());
-                }
+    fn apply_to(&self, value: &mut Self::Value) {
+        match self {
+            RWSet::Add(v) => {
+                value.insert(v.clone());
+            }
+            RWSet::Remove(v) => {
+                value.remove(v);
+            }
+            RWSet::Clear => {
+                value.clear();
             }
         }
-        set
     }
 }
 

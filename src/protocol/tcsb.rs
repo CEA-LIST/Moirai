@@ -236,14 +236,15 @@ where
             );
             self.state.stable(&event.metadata);
         }
-
-        // self.state.reset();
     }
 
     /// Transfer the state of a replica to another replica.
     /// `self` is the peer that will receive the state of the `other` peer.
     /// The peer giving the state should be the one that have welcomed the other peer in its group membership.
-    pub fn state_transfer(&mut self, other: &mut Tcsb<L>) {
+    pub fn state_transfer(&mut self, other: &mut Tcsb<L>)
+    where
+        L: Clone,
+    {
         let state_transfer = StateTransfer::new(other, &self.id);
 
         self.deliver_state(state_transfer);
@@ -412,7 +413,7 @@ pub struct StateTransfer<L> {
 
 impl<L> StateTransfer<L>
 where
-    L: Log,
+    L: Log + Clone,
 {
     pub fn new(tcsb: &Tcsb<L>, to: &String) -> Self {
         assert!(

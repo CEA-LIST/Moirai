@@ -23,6 +23,7 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
 
 impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT for Counter<V> {
     type Value = V;
+    type Stable = Vec<Self>;
     const R_ZERO: Option<bool> = Some(false);
     const R_ONE: Option<bool> = Some(false);
 
@@ -46,9 +47,9 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
         false
     }
 
-    fn eval(state: &[Self]) -> Self::Value {
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut counter = Self::Value::default();
-        for op in state.iter() {
+        for op in stable.iter().chain(unstable.iter()) {
             match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,

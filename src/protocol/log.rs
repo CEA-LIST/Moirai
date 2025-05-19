@@ -1,11 +1,9 @@
 use std::fmt::Debug;
 
-use log::debug;
-
 use super::{event::Event, pulling::Since};
-use crate::clocks::{dependency_clock::DependencyClock, dot::Dot};
+use crate::clocks::dependency_clock::DependencyClock;
 
-pub trait Log: Default + Clone + Debug {
+pub trait Log: Default + Debug {
     type Op: Debug + Clone;
     type Value: Debug;
 
@@ -44,14 +42,15 @@ pub trait Log: Default + Clone + Debug {
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
+    /// The event is added to the PO-Log during "prune redundant events".
     fn effect(&mut self, event: Event<Self::Op>) {
+        self.new_event(&event);
         if self.any_r(&event) {
             // The operation is redundant
             self.prune_redundant_events(&event, true);
         } else {
             // The operation is not redundant
             self.prune_redundant_events(&event, false);
-            self.new_event(&event);
         }
     }
 
@@ -61,7 +60,6 @@ pub trait Log: Default + Clone + Debug {
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
     fn stable(&mut self, metadata: &DependencyClock) {
-        debug!("Dot {} is stable", Dot::from(metadata));
         self.stabilize(metadata);
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
@@ -70,8 +68,4 @@ pub trait Log: Default + Clone + Debug {
     fn is_empty(&self) -> bool;
 
     fn size(&self) -> usize;
-
-    fn reset(&mut self) {
-        *self = Self::default();
-    }
 }
