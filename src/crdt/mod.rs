@@ -1,11 +1,11 @@
-pub mod aw_graph;
-pub mod aw_map;
+// pub mod aw_graph;
+// pub mod aw_map;
 pub mod aw_set;
 pub mod counter;
-pub mod duet;
-pub mod mv_register;
+// pub mod duet;
+// pub mod mv_register;
 pub mod resettable_counter;
-pub mod rw_set;
+// pub mod rw_set;
 
 pub mod test_util {
     use colored::Colorize;
@@ -65,7 +65,7 @@ pub mod test_util {
         tcsbs
     }
 
-    pub fn twins<L: Log>() -> Twins<L> {
+    pub fn twins<L: Log + Clone>() -> Twins<L> {
         #[cfg(feature = "utils")]
         let mut tcsb_a = Tcsb::new_with_trace("a");
         #[cfg(feature = "utils")]
@@ -97,7 +97,7 @@ pub mod test_util {
         (tcsb_a, tcsb_b)
     }
 
-    pub fn triplet<L: Log>() -> Triplet<L> {
+    pub fn triplet<L: Log + Clone>() -> Triplet<L> {
         let (mut tcsb_a, mut tcsb_b) = twins::<L>();
         let mut tcsb_c = Tcsb::<L>::new("c");
 
@@ -127,7 +127,7 @@ pub mod test_util {
         (tcsb_a, tcsb_b, tcsb_c)
     }
 
-    pub fn quadruplet<L: Log>() -> Quadruplet<L> {
+    pub fn quadruplet<L: Log + Clone>() -> Quadruplet<L> {
         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<L>();
 
         let mut tcsb_d = Tcsb::<L>::new("d");

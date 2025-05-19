@@ -14,9 +14,10 @@ pub enum AWSet<V> {
 
 impl<V> PureCRDT for AWSet<V>
 where
-    V: Debug + Clone + Hash + Eq,
+    V: Debug + Clone + Eq + Hash,
 {
     type Value = HashSet<V>;
+    type Stable = Vec<Self>;
 
     fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, AWSet::Clear | AWSet::Remove(_))
@@ -33,17 +34,29 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        order: Option<Ordering>,
+        new_op: &Self,
+    ) -> bool {
         Self::redundant_by_when_redundant(old_op, order, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 
-    fn eval(ops: &[Self]) -> Self::Value {
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut set = Self::Value::new();
-        for o in ops {
-            if let AWSet::Add(v) = o {
-                set.insert(v.clone());
+        for o in stable.iter().chain(unstable.iter()) {
+            match o {
+                AWSet::Add(v) => {
+                    set.insert(v.clone());
+                }
+                AWSet::Remove(v) => {
+                    set.remove(v);
+                }
+                AWSet::Clear => {
+                    set.clear();
+                }
             }
         }
         set
@@ -66,12 +79,11 @@ mod tests {
         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
         tcsb_b.try_deliver(event);
 
-        assert_eq!(tcsb_b.state.stable.len(), 1);
+        assert_eq!(HashSet::from(["a"]), tcsb_a.eval());
+        assert_eq!(HashSet::from(["a"]), tcsb_b.eval());
 
         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
         tcsb_a.try_deliver(event);
-
-        assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event = tcsb_a.tc_bcast(AWSet::Remove("a"));
         tcsb_b.try_deliver(event);
@@ -79,8 +91,27 @@ mod tests {
         let event = tcsb_b.tc_bcast(AWSet::Add("c"));
         tcsb_a.try_deliver(event);
 
-        assert_eq!(tcsb_a.state.stable.len(), 2);
-        assert_eq!(tcsb_b.state.stable.len(), 1);
+        let result = HashSet::from(["b", "c"]);
+        assert_eq!(tcsb_a.eval(), result);
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    fn complex_aw_set() {
+        let (mut tcsb_a, mut tcsb_b, _) =
+            crate::crdt::test_util::triplet::<EventGraph<AWSet<&str>>>();
+
+        let event = tcsb_a.tc_bcast(AWSet::Add("b"));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWSet::Add("a"));
+        tcsb_b.try_deliver(event);
+
+        let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
+        let event_b = tcsb_b.tc_bcast(AWSet::Add("c"));
+
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
 
         let result = HashSet::from(["b", "c"]);
         assert_eq!(tcsb_a.eval(), result);
@@ -170,7 +201,7 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a);
 
-        assert_eq!(tcsb_a.eval(), vec!["a"].into_iter().collect());
+        assert_eq!(tcsb_a.eval(), HashSet::from(["a"]));
         assert_eq!(tcsb_b.eval(), tcsb_a.eval());
     }
 

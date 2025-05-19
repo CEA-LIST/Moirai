@@ -1,7 +1,9 @@
 #![cfg(feature = "crdt")]
 
+use std::collections::HashSet;
+
 use po_crdt::{
-    crdt::{counter::Counter, test_util::twins_graph},
+    crdt::{aw_set::AWSet, counter::Counter, test_util::twins_graph},
     protocol::pulling::Since,
 };
 
@@ -41,4 +43,57 @@ fn events_since_concurrent_counter() {
     assert_eq!(tcsb_b.pending.len(), 0);
     assert_eq!(tcsb_a.eval(), 0);
     assert_eq!(tcsb_b.eval(), 0);
+}
+
+#[test_log::test]
+fn event_since_concurrent_aw_set() {
+    let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWSet<&str>>();
+
+    let _ = tcsb_a.tc_bcast(AWSet::Add("a"));
+    let _ = tcsb_a.tc_bcast(AWSet::Add("b"));
+    let _ = tcsb_a.tc_bcast(AWSet::Add("c"));
+    let _ = tcsb_a.tc_bcast(AWSet::Remove("a"));
+
+    let _ = tcsb_b.tc_bcast(AWSet::Add("a"));
+    let _ = tcsb_b.tc_bcast(AWSet::Add("e"));
+    let _ = tcsb_b.tc_bcast(AWSet::Add("p"));
+    let _ = tcsb_b.tc_bcast(AWSet::Remove("e"));
+
+    let batch = tcsb_a.events_since(&Since::new_from(&tcsb_b));
+    tcsb_b.deliver_batch(batch);
+
+    let batch = tcsb_b.events_since(&Since::new_from(&tcsb_a));
+    tcsb_a.deliver_batch(batch);
+
+    assert_eq!(tcsb_a.pending.len(), 0);
+    assert_eq!(tcsb_b.pending.len(), 0);
+    assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    assert_eq!(tcsb_a.eval(), HashSet::from(["a", "b", "c", "p"]));
+}
+
+#[test_log::test]
+fn event_since_concurrent_complex_aw_set() {
+    let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWSet<&str>>();
+
+    let event = tcsb_a.tc_bcast(AWSet::Add("a"));
+    tcsb_b.try_deliver(event);
+
+    let _ = tcsb_a.tc_bcast(AWSet::Add("b"));
+    let _ = tcsb_a.tc_bcast(AWSet::Add("c"));
+    let _ = tcsb_a.tc_bcast(AWSet::Remove("a"));
+
+    let _ = tcsb_b.tc_bcast(AWSet::Add("e"));
+    let _ = tcsb_b.tc_bcast(AWSet::Add("p"));
+    let _ = tcsb_b.tc_bcast(AWSet::Remove("e"));
+
+    let batch = tcsb_a.events_since(&Since::new_from(&tcsb_b));
+    tcsb_b.deliver_batch(batch);
+
+    let batch = tcsb_b.events_since(&Since::new_from(&tcsb_a));
+    tcsb_a.deliver_batch(batch);
+
+    assert_eq!(tcsb_a.pending.len(), 0);
+    assert_eq!(tcsb_b.pending.len(), 0);
+    assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    assert_eq!(tcsb_a.eval(), HashSet::from(["a", "b", "c", "p"]));
 }

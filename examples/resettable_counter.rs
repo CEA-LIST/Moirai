@@ -1,40 +1,42 @@
-use po_crdt::crdt::{resettable_counter::Counter, test_util::quadruplet_graph};
+fn main() {}
 
-fn main() {
-    let (tcsb_a, tcsb_b, tcsb_c, tcsb_d) = quadruplet_graph::<Counter<isize>>();
+// use po_crdt::crdt::{resettable_counter::Counter, test_util::quadruplet_graph};
 
-    let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
+// fn main() {
+//     let (tcsb_a, tcsb_b, tcsb_c, tcsb_d) = quadruplet_graph::<Counter<isize>>();
 
-    for x in 0..100_000 {
-        for i in 0..tcsb_arr.len() {
-            let op = if x % 2 == 0 {
-                Counter::Inc(1)
-            } else {
-                Counter::Dec(1)
-            };
-            let event = tcsb_arr[i].tc_bcast(op);
-            for j in 0..tcsb_arr.len() {
-                if i != j {
-                    tcsb_arr[j].try_deliver(event.clone());
-                }
-            }
-        }
-    }
+//     let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
 
-    env_logger::init();
+//     for x in 0..100_000 {
+//         for i in 0..tcsb_arr.len() {
+//             let op = if x % 2 == 0 {
+//                 Counter::Inc(1)
+//             } else {
+//                 Counter::Dec(1)
+//             };
+//             let event = tcsb_arr[i].tc_bcast(op);
+//             for j in 0..tcsb_arr.len() {
+//                 if i != j {
+//                     tcsb_arr[j].try_deliver(event.clone());
+//                 }
+//             }
+//         }
+//     }
 
-    for (i, tcsb) in tcsb_arr.iter().enumerate() {
-        log::info!(
-            "TCSB {} : stable ops: {} - unstable ops: {}",
-            i,
-            tcsb.state.stable.len(),
-            tcsb.state.unstable.node_count()
-        );
-        log::info!(
-            "TCSB {} : unstable node capacity: {} - unstable edge capacity: {}",
-            i,
-            tcsb.state.unstable.capacity().0,
-            tcsb.state.unstable.capacity().1,
-        );
-    }
-}
+//     env_logger::init();
+
+//     for (i, tcsb) in tcsb_arr.iter().enumerate() {
+//         log::info!(
+//             "TCSB {} : stable ops: {} - unstable ops: {}",
+//             i,
+//             tcsb.state.stable.len(),
+//             tcsb.state.unstable.node_count()
+//         );
+//         log::info!(
+//             "TCSB {} : unstable node capacity: {} - unstable edge capacity: {}",
+//             i,
+//             tcsb.state.unstable.capacity().0,
+//             tcsb.state.unstable.capacity().1,
+//         );
+//     }
+// }

@@ -309,6 +309,6 @@ mod tests {
     #[cfg(feature = "utils")]
     fn deepsize_of_matrix_clock() {
         let mc = MatrixClock::build(&view_abc(), &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
-        println!("Deep size of MatrixClock: {}", mc.deep_size_of());
+        assert_eq!(mc.deep_size_of(), 867);
     }
 }

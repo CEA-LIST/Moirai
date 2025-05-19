@@ -1,31 +1,33 @@
-use po_crdt::crdt::{rw_set::RWSet, test_util::twins_graph};
+fn main() {}
 
-fn main() {
-    let (tcsb_a, tcsb_b) = twins_graph::<RWSet<usize>>();
+// use po_crdt::crdt::{rw_set::RWSet, test_util::twins_graph};
 
-    let mut tcsb_arr = [tcsb_a, tcsb_b];
+// fn main() {
+//     let (tcsb_a, tcsb_b) = twins_graph::<RWSet<usize>>();
 
-    for x in 0..100_000 {
-        for i in 0..tcsb_arr.len() {
-            let op = RWSet::Add(x);
-            tcsb_arr[i].tc_bcast(op);
-        }
-    }
+//     let mut tcsb_arr = [tcsb_a, tcsb_b];
 
-    env_logger::init();
+//     for x in 0..100_000 {
+//         for i in 0..tcsb_arr.len() {
+//             let op = RWSet::Add(x);
+//             tcsb_arr[i].tc_bcast(op);
+//         }
+//     }
 
-    for (i, tcsb) in tcsb_arr.iter().enumerate() {
-        log::info!(
-            "TCSB {} : stable ops: {} - unstable ops: {}",
-            i,
-            tcsb.state.stable.len(),
-            tcsb.state.unstable.node_count()
-        );
-        log::info!(
-            "TCSB {} : unstable node capacity: {} - unstable edge capacity: {}",
-            i,
-            tcsb.state.unstable.capacity().0,
-            tcsb.state.unstable.capacity().1,
-        );
-    }
-}
+//     env_logger::init();
+
+//     for (i, tcsb) in tcsb_arr.iter().enumerate() {
+//         log::info!(
+//             "TCSB {} : stable ops: {} - unstable ops: {}",
+//             i,
+//             tcsb.state.stable.len(),
+//             tcsb.state.unstable.node_count()
+//         );
+//         log::info!(
+//             "TCSB {} : unstable node capacity: {} - unstable edge capacity: {}",
+//             i,
+//             tcsb.state.unstable.capacity().0,
+//             tcsb.state.unstable.capacity().1,
+//         );
+//     }
+// }

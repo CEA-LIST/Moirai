@@ -1,24 +1,23 @@
 // #[cfg(feature = "utils")]
 // use deepsize::DeepSizeOf;
 use log::{debug, error};
+use ordermap::OrderSet;
 use petgraph::{
     algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef, Direction,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    rc::Rc,
-};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, rc::Rc};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
 use super::{
     dot_index_map::DotIndexMap, event::Event, log::Log, pulling::Since, pure_crdt::PureCRDT,
 };
-use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
+use crate::{
+    clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot},
+    protocol::stable::Stable,
+};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(
@@ -27,27 +26,30 @@ use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot};
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 // #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
-pub struct EventGraph<Op> {
-    pub stable: Vec<Op>,
+pub struct EventGraph<Op>
+where
+    Op: PureCRDT,
+{
+    pub stable: Op::Stable,
     pub unstable: StableDiGraph<Op, ()>,
     pub dot_index_map: DotIndexMap,
-    pub dot_vector: HashMap<Dot, HashMap<usize, usize>>,
+    pub non_tombstones: OrderSet<NodeIndex>,
 }
 
 impl<Op> EventGraph<Op>
 where
-    Op: Clone + Debug,
+    Op: Clone + Debug + PureCRDT,
 {
     pub fn new() -> Self {
         Self {
-            stable: Vec::new(),
+            stable: Default::default(),
             unstable: StableDiGraph::new(),
             dot_index_map: DotIndexMap::new(),
-            dot_vector: HashMap::new(),
+            non_tombstones: OrderSet::new(),
         }
     }
 
-    pub fn new_event(&mut self, event: &Event<Op>) {
+    pub fn add_event(&mut self, event: &Event<Op>) {
         let dot = Dot::from(&event.metadata);
         if self.dot_index_map.contains_left(&dot) {
             error!(
@@ -74,6 +76,7 @@ where
                 self.unstable.add_edge(from_idx, *to_idx, ());
             }
         }
+        self.non_tombstones.insert(from_idx);
         assert_eq!(self.dot_index_map.len(), self.unstable.node_count());
     }
 
@@ -83,6 +86,7 @@ where
             .get_by_left(dot)
             .expect("Dot not found in the graph.");
         let op = self.unstable.remove_node(*node_idx);
+        self.non_tombstones.remove(node_idx);
         self.dot_index_map.remove_by_left(dot);
         op
     }
@@ -161,31 +165,6 @@ where
         }
         Event::new(op.clone(), dependency_clock)
     }
-
-    /// Given a `node_idx` that will be removed from the graph,
-    /// reattach the incoming edges of that node to the outgoing edges of the node
-    /// that will be removed.
-    /// TODO: Detect chain of events and reattach only the last one
-    /// Reattach the incoming edges of a node to its outgoing edges.
-    /// Complexity: O(I * O), where I is the number of incoming edges and O is the number of outgoing edges.
-    fn reattach_events(&mut self, node_idx: &NodeIndex) {
-        let incoming_edges: Vec<NodeIndex> = self
-            .unstable
-            .neighbors_directed(*node_idx, Direction::Incoming)
-            .collect();
-        let outgoing_edges: Vec<NodeIndex> = self
-            .unstable
-            .neighbors_directed(*node_idx, Direction::Outgoing)
-            .collect();
-        for incoming in incoming_edges {
-            for outgoing in outgoing_edges.iter() {
-                if incoming == *outgoing {
-                    panic!("Self-loop detected");
-                }
-                self.unstable.add_edge(incoming, *outgoing, ());
-            }
-        }
-    }
 }
 
 impl<O> Log for EventGraph<O>
@@ -196,7 +175,7 @@ where
     type Value = O::Value;
 
     fn new_event(&mut self, event: &Event<Self::Op>) {
-        self.new_event(event);
+        self.add_event(event);
     }
 
     /// `is_r` is true if the operation is already redundant (will never be stored in the event graph)
@@ -211,11 +190,10 @@ where
                 }
                 Some(false) => {}
                 None => {
-                    self.stable.retain(|o| {
-                        !(Self::Op::redundant_by_when_redundant(o, Some(Ordering::Less), &event.op))
-                    });
-                    // TODO: shrink if capacity > 2*len
-                    self.stable.shrink_to_fit();
+                    // If the operation is redundant, we make its effect on the stable part
+                    // and prune the unstable part
+                    self.stable.apply(event.op.clone());
+                    println!("stable {:?}", self.stable);
                     prune_unstable(self, event, true);
                 }
             }
@@ -228,46 +206,44 @@ where
                 }
                 Some(false) => {}
                 None => {
-                    self.stable.retain(|o| {
-                        !(Self::Op::redundant_by_when_not_redundant(
-                            o,
-                            Some(Ordering::Less),
-                            &event.op,
-                        ))
-                    });
-                    self.stable.shrink_to_fit();
+                    // If the operation is not redundant, we make its effect on the unstable part
+                    // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
+                    // So we don't need to apply it to the stable part. Future refactore include making the
+                    // effect on the stable part more generic
                     prune_unstable(self, event, false);
                 }
             }
         }
 
         fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
-            graph.new_event(event);
             let new_dot = Dot::from(&event.metadata);
 
-            let to_remove: Vec<NodeIndex> = graph
-                .unstable
-                .node_indices()
-                .filter(|&node_idx| {
-                    let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
-                    if *other_dot == new_dot {
-                        return true;
-                    }
-                    let op = graph.unstable.node_weight(node_idx).unwrap();
+            for node_idx in graph.unstable.node_indices() {
+                let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
+                if *other_dot == new_dot {
+                    // We don't want to compare the event with itself
+                    continue;
+                }
+                let op = graph.unstable.node_weight(node_idx).unwrap();
 
-                    let ordering = graph.partial_cmp(other_dot, &new_dot);
-                    if is_r {
-                        O::redundant_by_when_redundant(op, ordering, &event.op)
-                    } else {
-                        O::redundant_by_when_not_redundant(op, ordering, &event.op)
+                let ordering = graph.partial_cmp(other_dot, &new_dot);
+                if is_r {
+                    if O::redundant_by_when_redundant(op, ordering, &event.op) {
+                        println!("Removing node {:?} with dot {}", node_idx, other_dot);
+                        println!("incoming event is {:?}", event.op);
+                        graph.non_tombstones.remove(&node_idx);
                     }
-                })
-                .collect();
+                } else {
+                    if O::redundant_by_when_not_redundant(op, ordering, &event.op) {
+                        graph.non_tombstones.remove(&node_idx);
+                    }
+                }
+            }
 
-            for node_idx in to_remove {
-                graph.reattach_events(&node_idx);
-                graph.unstable.remove_node(node_idx);
-                graph.dot_index_map.remove_by_right(&node_idx);
+            if is_r {
+                graph
+                    .non_tombstones
+                    .remove(graph.dot_index_map.get_by_left(&new_dot).unwrap());
             }
         }
     }
@@ -369,33 +345,27 @@ where
 
     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
         self.stable.clear();
-        let to_remove = self
-            .unstable
-            .node_indices()
-            .filter(|&node_idx| {
-                let event = self.event_from_idx(&node_idx);
-                let ordering = event.metadata.partial_cmp(metadata);
-                // If conservative, we remove the event if it is less than or equal to the metadata
-                // If not conservative, we remove the event if it is less, non, equal to the metadata
-                if conservative {
-                    ordering == Some(Ordering::Less) || ordering == Some(Ordering::Equal)
-                } else {
-                    ordering != Some(Ordering::Greater)
-                }
-            })
-            .collect::<Vec<_>>();
-        for node_idx in to_remove {
-            self.reattach_events(&node_idx);
-            self.unstable.remove_node(node_idx);
-            self.dot_index_map.remove_by_right(&node_idx);
+        for node_idx in self.unstable.node_indices() {
+            let event = self.event_from_idx(&node_idx);
+            let ordering = event.metadata.partial_cmp(metadata);
+            // If conservative, we remove the event if it is less than or equal to the metadata
+            // If not conservative, we remove the event if it is less, non, equal to the metadata
+            if (conservative && ordering == Some(Ordering::Less)
+                || ordering == Some(Ordering::Equal))
+                || ordering != Some(Ordering::Greater)
+            {
+                self.non_tombstones.remove(&node_idx);
+            }
         }
     }
 
     fn eval(&self) -> Self::Value {
-        let mut ops: Vec<O> = self.stable.clone();
-        ops.extend(self.unstable.node_weights().cloned());
-        assert_eq!(self.size(), ops.len());
-        O::eval(&ops)
+        let unstable: Vec<Self::Op> = self
+            .non_tombstones
+            .iter()
+            .map(|&node_idx| self.unstable.node_weight(node_idx).unwrap().clone())
+            .collect();
+        O::eval(&self.stable, &unstable)
     }
 
     fn stabilize(&mut self, metadata: &DependencyClock) {
@@ -408,10 +378,11 @@ where
         let node_idx = self.dot_index_map.get_by_left(&dot);
 
         if let Some(node_idx) = node_idx {
+            self.non_tombstones.remove(node_idx);
             let op = self.unstable.remove_node(*node_idx);
             self.dot_index_map.remove_by_left(&dot);
             if let Some(op) = op {
-                self.stable.push(op);
+                self.stable.apply(op);
             }
             debug!("Dot {} has been moved to the stable part", dot);
         } else {
@@ -420,29 +391,17 @@ where
     }
 
     fn is_empty(&self) -> bool {
-        self.stable.is_empty() && self.unstable.node_count() == 0
+        self.stable.is_default() && self.unstable.node_count() == 0
     }
 
     fn size(&self) -> usize {
-        self.stable.len() + self.unstable.node_count()
-    }
-
-    fn reset(&mut self) {
-        let mut new_graph = Self::new();
-        for node_idx in self.unstable.node_indices() {
-            let event = self.event_from_idx(&node_idx);
-            new_graph.new_event(&event);
-        }
-        self.stable
-            .iter()
-            .for_each(|op| new_graph.stable.push(op.clone()));
-        *self = new_graph;
+        self.unstable.node_count()
     }
 }
 
 impl<Op> Default for EventGraph<Op>
 where
-    Op: Clone + Debug,
+    Op: Clone + Debug + PureCRDT,
 {
     fn default() -> Self {
         Self::new()

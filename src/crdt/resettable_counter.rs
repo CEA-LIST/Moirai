@@ -1,11 +1,10 @@
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -35,6 +34,7 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy> Counter<V> {
 impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT
     for Counter<V>
 {
+    type Stable = Vec<Self>;
     type Value = V;
     const R_ONE: Option<bool> = Some(false);
 
@@ -46,7 +46,11 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         Some(Ordering::Less) == order && matches!(new_op, Counter::Reset)
     }
 
-    fn redundant_by_when_not_redundant(_old_op: &Self, _order: Option<Ordering>, _new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        _old_op: &Self,
+        _order: Option<Ordering>,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 
@@ -75,9 +79,9 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         }
     }
 
-    fn eval(state: &[Self]) -> Self::Value {
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut counter = Self::Value::default();
-        for op in state.iter() {
+        for op in stable.iter().chain(unstable.iter()) {
             match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,

@@ -51,7 +51,11 @@ where
         }
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        order: Option<Ordering>,
+        new_op: &Self,
+    ) -> bool {
         Self::redundant_by_when_redundant(old_op, order, new_op)
     }
 
