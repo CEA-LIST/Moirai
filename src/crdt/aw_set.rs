@@ -1,8 +1,8 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
     clocks::dependency_clock::DependencyClock,
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
 #[derive(Clone, Debug)]
@@ -12,19 +12,51 @@ pub enum AWSet<V> {
     Clear,
 }
 
+impl<V> Stable<AWSet<V>> for HashSet<V>
+where
+    V: Clone + Eq + Hash + Debug,
+{
+    fn is_default(&self) -> bool {
+        HashSet::default() == *self
+    }
+
+    fn apply_redundant(&mut self, _rdnt: fn(&AWSet<V>, bool, &AWSet<V>) -> bool, op: &AWSet<V>) {
+        match op {
+            AWSet::Add(v) => {
+                self.remove(v);
+            }
+            AWSet::Remove(v) => {
+                self.remove(v);
+            }
+            AWSet::Clear => {
+                self.clear();
+            }
+        }
+    }
+
+    fn apply(&mut self, value: AWSet<V>) {
+        match value {
+            AWSet::Add(v) => {
+                self.insert(v);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<V> PureCRDT for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
     type Value = HashSet<V>;
-    type Stable = Vec<Self>;
+    type Stable = HashSet<V>;
 
     fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, AWSet::Clear | AWSet::Remove(_))
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
-        Some(Ordering::Less) == order
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        !is_conc
             && (matches!(new_op, AWSet::Clear)
                 || match (&old_op, &new_op) {
                     (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => {
@@ -34,29 +66,20 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        order: Option<Ordering>,
-        new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
-        let mut set = Self::Value::new();
-        for o in stable.iter().chain(unstable.iter()) {
+        let mut set = stable.clone();
+        for o in unstable.iter() {
             match o {
                 AWSet::Add(v) => {
                     set.insert(v.clone());
                 }
-                AWSet::Remove(v) => {
-                    set.remove(v);
-                }
-                AWSet::Clear => {
-                    set.clear();
-                }
+                _ => {}
             }
         }
         set

@@ -3,7 +3,11 @@
 use log::{debug, error};
 use ordermap::OrderSet;
 use petgraph::{
-    algo::has_path_connecting, graph::NodeIndex, prelude::StableDiGraph, visit::EdgeRef, Direction,
+    algo::has_path_connecting,
+    graph::NodeIndex,
+    prelude::StableDiGraph,
+    visit::{Dfs, EdgeRef},
+    Direction,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -38,7 +42,7 @@ where
 
 impl<Op> EventGraph<Op>
 where
-    Op: Clone + Debug + PureCRDT,
+    Op: Clone + PureCRDT,
 {
     pub fn new() -> Self {
         Self {
@@ -96,6 +100,7 @@ where
         self.unstable.node_weight(*node_idx).cloned()
     }
 
+    #[deprecated]
     pub fn partial_cmp(&self, first: &Dot, second: &Dot) -> Option<Ordering> {
         let first_idx = self
             .dot_index_map
@@ -145,6 +150,22 @@ where
         }
     }
 
+    pub fn causal_predecessors(&self, dot: &Dot) -> HashSet<NodeIndex> {
+        let node_idx = self
+            .dot_index_map
+            .get_by_left(dot)
+            .expect("Dot not found in the graph.");
+
+        let mut predecessors = HashSet::new();
+        let mut dfs = Dfs::new(&self.unstable, *node_idx);
+
+        while let Some(node) = dfs.next(&self.unstable) {
+            predecessors.insert(node);
+        }
+
+        predecessors
+    }
+
     /// Reconstruct the event from the node index
     /// Reconstruct the dependency clock from the event graph
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
@@ -192,8 +213,8 @@ where
                 None => {
                     // If the operation is redundant, we make its effect on the stable part
                     // and prune the unstable part
-                    self.stable.apply(event.op.clone());
-                    println!("stable {:?}", self.stable);
+                    self.stable
+                        .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op);
                     prune_unstable(self, event, true);
                 }
             }
@@ -210,6 +231,8 @@ where
                     // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
                     // So we don't need to apply it to the stable part. Future refactore include making the
                     // effect on the stable part more generic
+                    self.stable
+                        .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op);
                     prune_unstable(self, event, false);
                 }
             }
@@ -217,6 +240,7 @@ where
 
         fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
             let new_dot = Dot::from(&event.metadata);
+            let predecessors = graph.causal_predecessors(&new_dot);
 
             for node_idx in graph.unstable.node_indices() {
                 let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
@@ -224,19 +248,16 @@ where
                     // We don't want to compare the event with itself
                     continue;
                 }
-                let op = graph.unstable.node_weight(node_idx).unwrap();
 
-                let ordering = graph.partial_cmp(other_dot, &new_dot);
+                let op = graph.unstable.node_weight(node_idx).unwrap();
+                let is_conc = !predecessors.contains(&node_idx);
+
                 if is_r {
-                    if O::redundant_by_when_redundant(op, ordering, &event.op) {
-                        println!("Removing node {:?} with dot {}", node_idx, other_dot);
-                        println!("incoming event is {:?}", event.op);
+                    if O::redundant_by_when_redundant(op, is_conc, &event.op) {
                         graph.non_tombstones.remove(&node_idx);
                     }
-                } else {
-                    if O::redundant_by_when_not_redundant(op, ordering, &event.op) {
-                        graph.non_tombstones.remove(&node_idx);
-                    }
+                } else if O::redundant_by_when_not_redundant(op, is_conc, &event.op) {
+                    graph.non_tombstones.remove(&node_idx);
                 }
             }
 
@@ -372,17 +393,21 @@ where
         O::stabilize(metadata, self);
     }
 
+    /// Move the op to the stable part of the graph
     fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
         // The dot may have been removed in the `stabilize` function
         let dot = Dot::from(metadata);
         let node_idx = self.dot_index_map.get_by_left(&dot);
 
         if let Some(node_idx) = node_idx {
-            self.non_tombstones.remove(node_idx);
+            // If the remove was successful, then the op was not a tombstone
+            let was_not_tombstone = self.non_tombstones.remove(node_idx);
             let op = self.unstable.remove_node(*node_idx);
             self.dot_index_map.remove_by_left(&dot);
             if let Some(op) = op {
-                self.stable.apply(op);
+                if was_not_tombstone {
+                    self.stable.apply(op);
+                }
             }
             debug!("Dot {} has been moved to the stable part", dot);
         } else {

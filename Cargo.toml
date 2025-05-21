@@ -25,6 +25,7 @@ ordermap = { version = "0.5.7", features = ["serde"] }
 
 [features]
 default = ["crdt", "serde", "utils"]
+tracer = []
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
 utils = ["dep:anyhow", "dep:rand", "dep:deepsize"]

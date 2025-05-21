@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     rc::Rc,
 };
@@ -15,7 +15,7 @@ use super::{
     event::Event,
     membership::{ViewInstallingStatus, Views},
 };
-#[cfg(feature = "utils")]
+#[cfg(feature = "tracer")]
 use crate::utils::tracer::Tracer;
 use crate::{
     clocks::{
@@ -49,9 +49,9 @@ where
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock,
     /// Last Stable Vector (LSV)
-    pub lsv: HashMap<String, usize>,
+    pub lsv: DependencyClock,
     /// Trace of events for debugging purposes
-    #[cfg(feature = "utils")]
+    #[cfg(feature = "tracer")]
     pub tracer: Tracer,
 }
 
@@ -66,15 +66,15 @@ where
             id: id.to_string(),
             state: Default::default(),
             ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data)),
+            lsv: DependencyClock::new_originless(&Rc::clone(&views.installed_view().data)),
             group_membership: views,
-            lsv: HashMap::new(),
             pending: VecDeque::new(),
-            #[cfg(feature = "utils")]
+            #[cfg(feature = "tracer")]
             tracer: Tracer::new(String::from(id)),
         }
     }
 
-    #[cfg(feature = "utils")]
+    #[cfg(feature = "tracer")]
     /// Create a new TCSB instance with a tracer for debugging purposes.
     pub fn new_with_trace(id: &str) -> Self {
         use log::warn;
@@ -89,7 +89,7 @@ where
         let metadata = self.generate_metadata_for_new_event();
         let event = Event::new(op.clone(), metadata.clone());
         self.tc_deliver(event.clone());
-        #[cfg(feature = "utils")]
+        #[cfg(feature = "tracer")]
         self.tracer.append::<L>(event.clone());
         Event::new(op, metadata)
     }
@@ -196,7 +196,7 @@ where
                 .merge_clock(event.metadata.origin(), &event.metadata);
             self.my_clock_mut().merge(&event.metadata);
 
-            #[cfg(feature = "utils")]
+            #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
         }
 
@@ -216,6 +216,16 @@ where
             ignore
         );
         let svv = self.ltm.svv(&self.id, &ignore);
+
+        if svv == self.lsv {
+            debug!(
+                "[{}] - SVV is the same as LSV: {}",
+                self.id.blue().bold(),
+                svv
+            );
+            return;
+        }
+
         let ready_to_stabilize = self.state.collect_events(
             &svv,
             &DependencyClock::new_originless(&Rc::clone(
@@ -407,7 +417,7 @@ where
 pub struct StateTransfer<L> {
     pub group_membership: Views,
     pub state: L,
-    pub lsv: HashMap<String, usize>,
+    pub lsv: DependencyClock,
     pub ltm: MatrixClock,
 }
 

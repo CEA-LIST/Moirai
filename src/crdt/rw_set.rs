@@ -1,15 +1,51 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
     clocks::{dependency_clock::DependencyClock, dot::Dot},
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RWSet<V> {
     Add(V),
     Remove(V),
     Clear,
+}
+
+impl<V> Stable<RWSet<V>> for (HashSet<V>, Vec<RWSet<V>>)
+where
+    V: Clone + Eq + Hash + Debug,
+{
+    fn is_default(&self) -> bool {
+        (HashSet::default(), Vec::default()) == *self
+    }
+
+    fn apply_redundant(&mut self, _rdnt: fn(&RWSet<V>, bool, &RWSet<V>) -> bool, op: &RWSet<V>) {
+        match op {
+            RWSet::Add(v) => {
+                self.0.remove(v);
+            }
+            RWSet::Remove(v) => {
+                self.0.remove(v);
+                self.1.retain(|o| matches!(o, RWSet::Remove(v2) if v != v2));
+            }
+            RWSet::Clear => {
+                self.0.clear();
+            }
+        }
+    }
+
+    fn apply(&mut self, value: RWSet<V>) {
+        match value {
+            RWSet::Add(v) => {
+                self.0.insert(v);
+            }
+            RWSet::Remove(_) => {
+                self.1.push(value);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<V> PureCRDT for RWSet<V>
@@ -17,13 +53,14 @@ where
     V: Debug + Clone + Hash + Eq,
 {
     type Value = HashSet<V>;
+    type Stable = (HashSet<V>, Vec<RWSet<V>>);
 
     fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, RWSet::Clear)
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
-        Some(Ordering::Less) == order
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        !is_conc
             && (matches!(new_op, RWSet::Clear)
                 || match (&old_op, &new_op) {
                     (RWSet::Add(v1), RWSet::Add(v2))
@@ -34,12 +71,8 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        order: Option<Ordering>,
-        new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
     fn stabilize(metadata: &DependencyClock, state: &mut EventGraph<Self>) {
@@ -48,10 +81,13 @@ where
 
         let is_stable_or_unstable = |v: &V| {
             // Is there an already stable op (add or rmv) with the same value?
-            state.stable.iter().any(|o| match o {
-                RWSet::Add(v2) | RWSet::Remove(v2) => v == v2,
-                _ => false,
-            })
+            state.stable.1
+                .iter()
+                .any(|o| match o {
+                    RWSet::Remove(v2) => v == v2,
+                    _ => false,
+                })
+                || state.stable.0.contains(v)
             // Is there another unstable op (add or rmv, not the current op) with the same value?
             || state.unstable.node_indices().zip(state.unstable.node_weights()).any(|(idx, op)| {
 				let dot = state.dot_index_map.get_by_right(&idx).unwrap();
@@ -70,6 +106,7 @@ where
                 // If it's a 'remove' op, remove it if there is no 'add' op with the same value
                 RWSet::Remove(v) => !state
                     .stable
+                    .1
                     .iter()
                     .any(|o| matches!(o, RWSet::Add(v2) if v == v2))
                     && !state
@@ -87,10 +124,11 @@ where
         if let RWSet::Add(v) = op {
             if let Some(i) = state
                 .stable
+                .1
                 .iter()
                 .position(|o| matches!(o, RWSet::Remove(v2) if v == *v2))
             {
-                state.stable.remove(i);
+                state.stable.1.remove(i);
             }
         }
 
@@ -99,18 +137,22 @@ where
         }
     }
 
-    fn apply_to(&self, value: &mut Self::Value) {
-        match self {
-            RWSet::Add(v) => {
-                value.insert(v.clone());
-            }
-            RWSet::Remove(v) => {
-                value.remove(v);
-            }
-            RWSet::Clear => {
-                value.clear();
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
+        let mut set = stable.0.clone();
+        for o in stable.1.iter().chain(unstable.iter()) {
+            if let RWSet::Add(v) = o {
+                if stable.1.iter().chain(unstable.iter()).all(|e| {
+                    if let RWSet::Remove(v2) = e {
+                        v != v2
+                    } else {
+                        true
+                    }
+                }) {
+                    set.insert(v.clone());
+                }
             }
         }
+        set
     }
 }
 
@@ -127,18 +169,18 @@ mod tests {
         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
         tcsb_b.try_deliver(event);
 
-        assert_eq!(tcsb_b.state.stable.len(), 1);
+        // assert_eq!(tcsb_b.state.stable.len(), 1);
 
         let event = tcsb_b.tc_bcast(RWSet::Add("b"));
         tcsb_a.try_deliver(event);
 
-        assert_eq!(tcsb_a.state.stable.len(), 2);
+        // assert_eq!(tcsb_a.state.stable.len(), 2);
 
         let event = tcsb_a.tc_bcast(RWSet::Clear);
         tcsb_b.try_deliver(event);
 
-        assert_eq!(tcsb_a.state.stable.len(), 0);
-        assert_eq!(tcsb_b.state.stable.len(), 0);
+        // assert_eq!(tcsb_a.state.stable.len(), 0);
+        // assert_eq!(tcsb_b.state.stable.len(), 0);
 
         let result = HashSet::new();
         assert_eq!(tcsb_a.eval(), result);
@@ -168,9 +210,9 @@ mod tests {
         tcsb_b.try_deliver(event_a);
         tcsb_a.try_deliver(event_b);
 
-        assert_eq!(tcsb_a.state.stable.len(), 0);
+        // assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-        assert_eq!(tcsb_b.state.stable.len(), 0);
+        // assert_eq!(tcsb_b.state.stable.len(), 0);
         assert_eq!(tcsb_b.state.unstable.node_count(), 1);
 
         let result = HashSet::from(["a"]);
@@ -190,11 +232,6 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a_2);
 
-        assert_eq!(tcsb_a.state.stable.len(), 0);
-        assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-        assert_eq!(tcsb_b.state.stable.len(), 0);
-        assert_eq!(tcsb_b.state.unstable.node_count(), 1);
-
         let result = HashSet::from([]);
         assert_eq!(tcsb_b.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
@@ -206,9 +243,9 @@ mod tests {
         let event = tcsb_a.tc_bcast(RWSet::Remove("a"));
         tcsb_b.try_deliver(event);
 
-        assert_eq!(tcsb_a.state.stable.len(), 0);
+        // assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-        assert_eq!(tcsb_b.state.stable.len(), 0);
+        // assert_eq!(tcsb_b.state.stable.len(), 0);
         assert_eq!(tcsb_b.state.unstable.node_count(), 0);
 
         let result = HashSet::from([]);

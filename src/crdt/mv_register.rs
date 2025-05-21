@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
     clocks::dependency_clock::DependencyClock,
@@ -22,33 +22,24 @@ where
         matches!(new_op, MVRegister::Clear)
     }
 
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        order: Option<Ordering>,
-        _new_op: &Self,
-    ) -> bool {
-        order == Some(Ordering::Less)
+    fn redundant_by_when_redundant(_old_op: &Self, is_conc: bool, _new_op: &Self) -> bool {
+        !is_conc
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        order: Option<Ordering>,
-        new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 
-    fn apply_to(&self, value: &mut Self::Value) {
-        match self {
-            MVRegister::Clear => {
-                value.clear();
-            }
-            MVRegister::Write(v) => {
-                value.insert(v.clone());
+    fn eval(stable: &Self::Stable, ops: &[Self]) -> Self::Value {
+        let mut set = Self::Value::new();
+        for o in stable.iter().chain(ops.iter()) {
+            if let MVRegister::Write(v) = o {
+                set.insert(v.clone());
             }
         }
+        set
     }
 }
 
