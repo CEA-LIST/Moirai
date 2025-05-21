@@ -1,7 +1,6 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
@@ -10,7 +9,7 @@ use tsify::Tsify;
 
 use crate::{
     clocks::{dependency_clock::DependencyClock, dot::Dot},
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +30,36 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy> Counter<V> {
     }
 }
 
+impl<V> Stable<Counter<V>> for V
+where
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+{
+    fn is_default(&self) -> bool {
+        V::default() == *self
+    }
+
+    fn apply_redundant(
+        &mut self,
+        _rdnt: fn(&Counter<V>, bool, &Counter<V>) -> bool,
+        op: &Counter<V>,
+    ) {
+        match op {
+            Counter::Reset => {
+                <V as Stable<Counter<V>>>::clear(self);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply(&mut self, value: Counter<V>) {
+        match value {
+            Counter::Inc(v) => *self += v,
+            Counter::Dec(v) => *self -= v,
+            _ => {}
+        }
+    }
+}
+
 impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT
     for Counter<V>
 {
@@ -42,15 +71,11 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         matches!(new_op, Counter::Reset)
     }
 
-    fn redundant_by_when_redundant(_old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
-        Some(Ordering::Less) == order && matches!(new_op, Counter::Reset)
+    fn redundant_by_when_redundant(_old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        !is_conc && matches!(new_op, Counter::Reset)
     }
 
-    fn redundant_by_when_not_redundant(
-        _old_op: &Self,
-        _order: Option<Ordering>,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_not_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
         false
     }
 

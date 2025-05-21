@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use petgraph::graph::DiGraph;
 
@@ -20,52 +20,37 @@ where
     V: Debug + Clone + PartialEq + Eq + Hash,
 {
     type Value = DiGraph<V, ()>;
+    type Stable = Vec<Self>;
 
     fn redundant_itself(new_op: &Self) -> bool {
         matches!(new_op, Graph::RemoveVertex(_) | Graph::RemoveArc(_, _))
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
         match (&old_op, &new_op) {
-            (Graph::AddVertex(v1), Graph::AddVertex(v2)) => {
-                matches!(order, None | Some(Ordering::Less)) && v1 == v2
-            }
-            (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => {
-                order == Some(Ordering::Less) && v1 == v2
-            }
+            (Graph::AddVertex(v1), Graph::AddVertex(v2)) => v1 == v2,
+            (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => !is_conc && v1 == v2,
             (Graph::AddVertex(_), Graph::AddArc(_, _)) => false,
-            (Graph::AddVertex(v1), Graph::RemoveArc(v2, v3)) => {
-                order == Some(Ordering::Less) && (v1 == v2 || v1 == v3)
-            }
+            (Graph::AddVertex(v1), Graph::RemoveArc(v2, v3)) => !is_conc && (v1 == v2 || v1 == v3),
             (Graph::AddArc(_, _), Graph::AddVertex(_)) => false,
-            (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => {
-                matches!(order, None | Some(Ordering::Less)) && (v3 == v1 || v3 == v2)
-            }
-            (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => {
-                matches!(order, None | Some(Ordering::Less)) && v1 == v3 && v2 == v4
-            }
-            (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => {
-                order == Some(Ordering::Less) && v1 == v3 && v2 == v4
-            }
+            (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => v3 == v1 || v3 == v2,
+            (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => v1 == v3 && v2 == v4,
+            (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => !is_conc && v1 == v3 && v2 == v4,
             _ => false,
         }
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        order: Option<Ordering>,
-        new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
     fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
 
-    fn eval(ops: &[Self]) -> Self::Value {
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
         let mut edge_index = HashMap::new();
-        for o in ops {
+        for o in stable.iter().chain(unstable.iter()) {
             match o {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
@@ -82,7 +67,7 @@ where
                 _ => {}
             }
         }
-        for o in ops {
+        for o in stable.iter().chain(unstable.iter()) {
             match o {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());

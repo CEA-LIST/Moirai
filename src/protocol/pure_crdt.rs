@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::fmt::Debug;
 
 use super::{event_graph::EventGraph, stable::Stable};
 use crate::clocks::dependency_clock::DependencyClock;
@@ -24,18 +24,14 @@ pub trait PureCRDT: Clone + Debug {
     /// given the delivery of the new operation.
     /// R0 is used when the new arrival is discarded being redundant.
     /// `true` means the operation is redundant and can be discarded immediately.`
-    fn redundant_by_when_redundant(old_op: &Self, order: Option<Ordering>, new_op: &Self) -> bool;
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
     /// R1 defines which operations in the current PO-Log become redundant
     /// given the delivery of the new operation.
     /// R1 is used when the new arrivals added to the PO-Log.
     /// `true` means the operation is redundant and can be discarded immediately.
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        order: Option<Ordering>,
-        new_op: &Self,
-    ) -> bool;
+    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool;
 
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
@@ -44,5 +40,5 @@ pub trait PureCRDT: Clone + Debug {
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
-    fn eval(stable: &Self::Stable, ops: &[Self]) -> Self::Value;
+    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value;
 }

@@ -1,11 +1,11 @@
-// pub mod aw_graph;
-// pub mod aw_map;
+pub mod aw_graph;
+pub mod aw_map;
 pub mod aw_set;
 pub mod counter;
-// pub mod duet;
-// pub mod mv_register;
+pub mod duet;
+pub mod mv_register;
 pub mod resettable_counter;
-// pub mod rw_set;
+pub mod rw_set;
 
 pub mod test_util {
     use colored::Colorize;
@@ -39,9 +39,9 @@ pub mod test_util {
         let alphabet = "abcdefghijklmnopqrstuvwxyz";
         let alphabet = alphabet.chars().collect::<Vec<char>>();
         for i in alphabet.iter().take(n) {
-            #[cfg(feature = "utils")]
+            #[cfg(feature = "tracer")]
             let tcsb = Tcsb::new_with_trace(&i.to_string());
-            #[cfg(not(feature = "utils"))]
+            #[cfg(not(feature = "tracer"))]
             let tcsb = Tcsb::<L>::new(&i.to_string());
             tcsbs.push(tcsb);
         }
@@ -66,13 +66,13 @@ pub mod test_util {
     }
 
     pub fn twins<L: Log + Clone>() -> Twins<L> {
-        #[cfg(feature = "utils")]
+        #[cfg(feature = "tracer")]
         let mut tcsb_a = Tcsb::new_with_trace("a");
-        #[cfg(feature = "utils")]
+        #[cfg(feature = "tracer")]
         let mut tcsb_b = Tcsb::new_with_trace("b");
-        #[cfg(not(feature = "utils"))]
+        #[cfg(not(feature = "tracer"))]
         let mut tcsb_a = Tcsb::<L>::new("a");
-        #[cfg(not(feature = "utils"))]
+        #[cfg(not(feature = "tracer"))]
         let mut tcsb_b = Tcsb::new("b");
 
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);

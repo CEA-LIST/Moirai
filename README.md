@@ -28,9 +28,9 @@ cargo flamegraph --test eval_nested
 ### Memory used
 
 ```sh
-cargo build example --release
+cargo build --example <name> --release
 
-/usr/bin/time -l /target/release/example/<name> 2>&1 | awk '
+/usr/bin/time -l ./target/release/examples/aw_set_unstable 2>&1 | awk '
 /real/ { real_time = $1 }
 /user/ { user_time = $1 }
 /sys/ { sys_time = $1 }
@@ -39,20 +39,28 @@ cargo build example --release
 /instructions retired/ { instructions = $1 }
 /cycles elapsed/ { cycles = $1 }
 END {
-    # Function to scale memory
-    function scale_mem(bytes) {
-        if (bytes > 1024*1024*1024) return sprintf("%.2f GB", bytes / (1024*1024*1024));
-        else if (bytes > 1024*1024) return sprintf("%.2f MB", bytes / (1024*1024));
-        else return sprintf("%.2f KB", bytes / 1024);
-    }
-
     printf "CPU Time:\n"
     printf "  Real: %s sec\n", real_time
     printf "  User: %s sec\n", user_time
     printf "  Sys:  %s sec\n", sys_time
     printf "\nMemory Usage:\n"
-    printf "  Max Resident Set Size: %s\n", scale_mem(max_mem)
-    printf "  Peak Memory Footprint: %s\n", scale_mem(peak_mem)
+
+    # Scale max_mem
+    if (max_mem > 1024*1024*1024)
+        printf "  Max Resident Set Size: %.2f GB\n", max_mem / (1024*1024*1024)
+    else if (max_mem > 1024*1024)
+        printf "  Max Resident Set Size: %.2f MB\n", max_mem / (1024*1024)
+    else
+        printf "  Max Resident Set Size: %.2f KB\n", max_mem / 1024
+
+    # Scale peak_mem
+    if (peak_mem > 1024*1024*1024)
+        printf "  Peak Memory Footprint: %.2f GB\n", peak_mem / (1024*1024*1024)
+    else if (peak_mem > 1024*1024)
+        printf "  Peak Memory Footprint: %.2f MB\n", peak_mem / (1024*1024)
+    else
+        printf "  Peak Memory Footprint: %.2f KB\n", peak_mem / 1024
+
     printf "\nPerformance:\n"
     printf "  Instructions Retired: %.2f MInst\n", instructions / 1e6
     printf "  Cycles Elapsed: %.2f MCycles\n", cycles / 1e6

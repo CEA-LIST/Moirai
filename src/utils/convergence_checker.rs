@@ -74,7 +74,7 @@ where
             break;
         }
         if value != tcsbs[i].eval() {
-            #[cfg(feature = "serde")]
+            #[cfg(feature = "tracer")]
             tcsbs[i]
                 .tracer
                 .serialize_to_file(std::path::Path::new("traces/convergence.json"))

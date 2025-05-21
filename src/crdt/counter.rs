@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
@@ -11,7 +10,7 @@ use tsify::Tsify;
 
 use crate::{
     clocks::dependency_clock::DependencyClock,
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
+    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
 #[derive(Clone, Debug)]
@@ -21,9 +20,32 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Dec(V),
 }
 
+impl<V> Stable<Counter<V>> for V
+where
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+{
+    fn is_default(&self) -> bool {
+        V::default() == *self
+    }
+
+    fn apply_redundant(
+        &mut self,
+        _rdnt: fn(&Counter<V>, bool, &Counter<V>) -> bool,
+        _op: &Counter<V>,
+    ) {
+    }
+
+    fn apply(&mut self, value: Counter<V>) {
+        match value {
+            Counter::Inc(v) => *self += v,
+            Counter::Dec(v) => *self -= v,
+        }
+    }
+}
+
 impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT for Counter<V> {
     type Value = V;
-    type Stable = Vec<Self>;
+    type Stable = V;
     const R_ZERO: Option<bool> = Some(false);
     const R_ONE: Option<bool> = Some(false);
 
@@ -31,25 +53,17 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
         false
     }
 
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        _order: Option<Ordering>,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
         false
     }
 
-    fn redundant_by_when_not_redundant(
-        _old_op: &Self,
-        _order: Option<Ordering>,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_not_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
         false
     }
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
-        let mut counter = Self::Value::default();
-        for op in stable.iter().chain(unstable.iter()) {
+        let mut counter = *stable;
+        for op in unstable.iter() {
             match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,
