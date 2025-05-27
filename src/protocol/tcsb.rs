@@ -19,7 +19,9 @@ use super::{
 use crate::utils::tracer::Tracer;
 use crate::{
     clocks::{
-        clock::Clock, dependency_clock::DependencyClock, dot::Dot, matrix_clock::MatrixClock,
+        clock::{Clock, Full, Partial},
+        dot::Dot,
+        matrix_clock::MatrixClock,
     },
     protocol::{
         guard::{guard_against_duplicates, guard_against_out_of_order},
@@ -49,7 +51,7 @@ where
     /// Last Timestamp Matrix (LTM) is a matrix clock that keeps track of the vector clocks of all peers.
     pub ltm: MatrixClock,
     /// Last Stable Vector (LSV)
-    pub lsv: DependencyClock,
+    pub lsv: Clock<Full>,
     /// Trace of events for debugging purposes
     #[cfg(feature = "tracer")]
     pub tracer: Tracer,
@@ -66,7 +68,7 @@ where
             id: id.to_string(),
             state: L::new(),
             ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data)),
-            lsv: DependencyClock::new_full(&Rc::clone(&views.installed_view().data), None),
+            lsv: Clock::<Full>::new(&Rc::clone(&views.installed_view().data), None),
             group_membership: views,
             pending: VecDeque::new(),
             #[cfg(feature = "tracer")]
@@ -154,14 +156,14 @@ where
         // Store the new event at the end of the causal buffer
         // TODO: Check that this is correct
         self.pending.push_back(event.clone());
-        self.pending.make_contiguous().sort_by(|a, b| {
-            // TODO: partial_cmp is not safe
-            if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
-                order
-            } else {
-                a.metadata().origin().cmp(b.metadata().origin())
-            }
-        });
+        // self.pending.make_contiguous().sort_by(|a, b| {
+        // TODO: partial_cmp is not safe
+        // if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
+        //     order
+        // } else {
+        //     a.metadata().origin().cmp(b.metadata().origin())
+        // }
+        // });
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
@@ -231,7 +233,7 @@ where
 
         let ready_to_stabilize = self.state.collect_events(
             &svv,
-            &DependencyClock::new_full(
+            &Clock::<Full>::new(
                 &Rc::clone(&self.group_membership.installed_view().data),
                 None,
             ),
@@ -333,14 +335,14 @@ where
     }
 
     /// Return the mutable vector clock of the local replica
-    pub fn my_clock_mut(&mut self) -> &mut DependencyClock {
+    pub fn my_clock_mut(&mut self) -> &mut Clock<Full> {
         self.ltm
             .get_mut(&self.id)
             .expect("Local vector clock not found")
     }
 
     /// Return the vector clock of the local replica
-    pub fn my_clock(&self) -> &DependencyClock {
+    pub fn my_clock(&self) -> &Clock<Full> {
         self.ltm
             .get(&self.id)
             .expect("Local vector clock not found")
@@ -368,7 +370,7 @@ where
         waiting_from
     }
 
-    fn new_clock_for_op(&mut self, op: &L::Op) -> VecDeque<DependencyClock> {
+    fn new_clock_for_op(&mut self, op: &L::Op) -> VecDeque<Clock<Partial>> {
         if let Some(v) = self.group_membership.installing_view().cloned() {
             info!(
                 "[{}] - Creating event while installing view {}",
@@ -415,7 +417,7 @@ where
 pub struct StateTransfer<L> {
     pub group_membership: Views,
     pub state: L,
-    pub lsv: DependencyClock,
+    pub lsv: Clock<Full>,
     pub ltm: MatrixClock,
 }
 

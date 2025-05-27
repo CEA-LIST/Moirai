@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, rc::Rc};
 
 use crate::{
-    clocks::{dependency_clock::DependencyClock, dot::Dot},
+    clocks::{dependency_clock::Clock, dot::Dot},
     protocol::{event::Event, log::Log, membership::ViewData, pulling::Since},
 };
 
@@ -58,15 +58,15 @@ where
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
+    fn purge_stable_metadata(&mut self, metadata: &Clock) {
         self.first.purge_stable_metadata(metadata);
         self.second.purge_stable_metadata(metadata);
     }
 
     fn collect_events(
         &self,
-        upper_bound: &DependencyClock,
-        lower_bound: &DependencyClock,
+        upper_bound: &Clock,
+        lower_bound: &Clock,
     ) -> Vec<Event<Self::Op>> {
         let events_fl = self.first.collect_events(upper_bound, lower_bound);
         let events_sl = self.second.collect_events(upper_bound, lower_bound);
@@ -96,7 +96,7 @@ where
         result
     }
 
-    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
+    fn r_n(&mut self, metadata: &Clock, conservative: bool) {
         self.first.r_n(metadata, conservative);
         self.second.r_n(metadata, conservative);
     }
@@ -118,7 +118,7 @@ where
         (self.first.eval(), self.second.eval())
     }
 
-    fn stabilize(&mut self, metadata: &DependencyClock) {
+    fn stabilize(&mut self, metadata: &Clock) {
         self.first.stabilize(metadata);
         self.second.stabilize(metadata);
     }
@@ -133,7 +133,7 @@ where
 
     fn deps(
         &self,
-        node: &mut VecDeque<DependencyClock>,
+        node: &mut VecDeque<Clock>,
         view: &Rc<ViewData>,
         dot: &Dot,
         op: &Self::Op,

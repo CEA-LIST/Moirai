@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::clocks::dependency_clock::DependencyClock;
+use crate::clocks::clock::{Clock, Partial};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(
@@ -20,22 +20,22 @@ pub struct Event<O> {
     pub op: O,
     /// An event can contain multiple metadata clocks if its a nested operation.
     /// The first level always exists.
-    pub metadata: VecDeque<DependencyClock>,
+    pub metadata: VecDeque<Clock<Partial>>,
 }
 
 impl<O> Event<O> {
-    pub fn new_nested(op: O, metadata: VecDeque<DependencyClock>) -> Self {
+    pub fn new_nested(op: O, metadata: VecDeque<Clock<Partial>>) -> Self {
         Self { op, metadata }
     }
 
-    pub fn new(op: O, clock: DependencyClock) -> Self {
+    pub fn new(op: O, clock: Clock<Partial>) -> Self {
         let mut metadata = VecDeque::new();
         metadata.push_front(clock);
         Self { op, metadata }
     }
 
     /// Returns the first level dependency clock
-    pub fn metadata(&self) -> &DependencyClock {
+    pub fn metadata(&self) -> &Clock<Partial> {
         &self.metadata[0]
     }
 }

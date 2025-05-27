@@ -9,7 +9,10 @@ use tsify::Tsify;
 
 use super::{log::Log, tcsb::Tcsb};
 use crate::{
-    clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot},
+    clocks::{
+        clock::{Clock, Full},
+        dot::Dot,
+    },
     protocol::{
         event::Event,
         guard::{guard_against_duplicates, loose_guard_against_out_of_order},
@@ -24,11 +27,11 @@ use crate::{
 )]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
-    pub metadata: DependencyClock,
+    pub metadata: Clock<Full>,
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<Event<O>>, metadata: DependencyClock) -> Self {
+    pub fn new(events: Vec<Event<O>>, metadata: Clock<Full>) -> Self {
         Self { events, metadata }
     }
 }
@@ -52,13 +55,13 @@ pub enum DeliveryError {
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 pub struct Since {
-    pub clock: DependencyClock,
+    pub clock: Clock<Full>,
     /// Dots to exclude from the pull request (already received but not delivered)
     pub exclude: Vec<Dot>,
 }
 
 impl Since {
-    pub fn new(clock: DependencyClock, exclude: Vec<Dot>) -> Self {
+    pub fn new(clock: Clock<Full>, exclude: Vec<Dot>) -> Self {
         Since { clock, exclude }
     }
 
@@ -111,11 +114,12 @@ where
                 let mut sorted = batch.events.clone();
                 sorted.sort_by(|a, b| {
                     // TODO: partial_cmp is not safe
-                    if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
-                        order
-                    } else {
-                        a.metadata().origin().cmp(b.metadata().origin())
-                    }
+                    todo!("Implement a safe comparison for Event metadata");
+                    // if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
+                    //     order
+                    // } else {
+                    //     a.metadata().origin().cmp(b.metadata().origin())
+                    // }
                 });
                 for event in sorted {
                     if self.id != event.metadata().origin() {
@@ -200,14 +204,14 @@ where
         // Store the new event at the end of the causal buffer
         // TODO: Check that this is correct
         self.pending.push_back(event.clone());
-        self.pending.make_contiguous().sort_by(|a, b| {
-            // TODO: partial_cmp is not safe
-            if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
-                order
-            } else {
-                a.metadata().origin().cmp(b.metadata().origin())
-            }
-        });
+        // self.pending.make_contiguous().sort_by(|a, b| {
+        // TODO: partial_cmp is not safe
+        // if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
+        //     order
+        // } else {
+        //     a.metadata().origin().cmp(b.metadata().origin())
+        // }
+        // });
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and

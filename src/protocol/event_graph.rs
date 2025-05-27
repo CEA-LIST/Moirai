@@ -3,7 +3,6 @@
 use log::{debug, error};
 use ordermap::OrderSet;
 use petgraph::{
-    algo::has_path_connecting,
     graph::NodeIndex,
     prelude::StableDiGraph,
     visit::{Dfs, EdgeRef},
@@ -12,7 +11,6 @@ use petgraph::{
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
     collections::{HashSet, VecDeque},
     fmt::Debug,
     rc::Rc,
@@ -25,7 +23,10 @@ use super::{
     pure_crdt::PureCRDT,
 };
 use crate::{
-    clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot},
+    clocks::{
+        clock::{Clock, Full, Partial},
+        dot::Dot,
+    },
     protocol::stable::Stable,
 };
 
@@ -131,56 +132,6 @@ where
         self.unstable.node_weight(*node_idx).cloned()
     }
 
-    #[deprecated]
-    pub fn partial_cmp(&self, first: &Dot, second: &Dot) -> Option<Ordering> {
-        let first_idx = self
-            .dot_index_map
-            .get_by_left(first)
-            .expect("Dot not found in the graph.");
-        let second_idx = self
-            .dot_index_map
-            .get_by_left(second)
-            .unwrap_or_else(|| panic!("Dot {} not found in the graph.", second));
-
-        if first.origin() == second.origin() {
-            if first.val() == second.val() {
-                return Some(Ordering::Equal);
-            }
-            if first.val() < second.val() {
-                return Some(Ordering::Less);
-            } else {
-                return Some(Ordering::Greater);
-            }
-        }
-
-        let first_to_second = has_path_connecting(&self.unstable, *second_idx, *first_idx, None);
-
-        if first_to_second {
-            return Some(Ordering::Less);
-        }
-
-        let second_to_first = has_path_connecting(&self.unstable, *first_idx, *second_idx, None);
-
-        if !first_to_second && !second_to_first && first.origin() == second.origin() {
-            panic!(
-                "Both dots are not connected but have the same origin: {} and {}. Graph: {:?}",
-                first,
-                second,
-                petgraph::dot::Dot::with_config(
-                    &self.unstable,
-                    &[petgraph::dot::Config::EdgeNoLabel]
-                )
-            );
-        }
-
-        match (first_to_second, second_to_first) {
-            (true, true) => panic!("No duplicate event allowed"),
-            (true, false) => Some(Ordering::Less),
-            (false, true) => Some(Ordering::Greater),
-            (false, false) => None,
-        }
-    }
-
     pub fn causal_predecessors(&self, dot: &Dot) -> HashSet<NodeIndex> {
         if dot.val() == 0 {
             // If the dot is a zero value, it has no predecessors
@@ -206,7 +157,7 @@ where
     /// Reconstruct the dependency clock from the event graph
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.dot_index_map.get_by_right(node_idx).unwrap();
-        let mut dependency_clock = DependencyClock::new(&dot.view(), dot.origin());
+        let mut dependency_clock = Clock::<Partial>::new(&dot.view(), dot.origin());
         dependency_clock.set(dot.origin(), dot.val());
 
         let op = self.unstable.node_weight(*node_idx).unwrap();
@@ -321,8 +272,8 @@ where
     /// Returns a list of events that are in the past of the given metadata
     fn collect_events(
         &self,
-        upper_bound: &DependencyClock,
-        lower_bound: &DependencyClock,
+        upper_bound: &Clock<Full>,
+        lower_bound: &Clock<Full>,
     ) -> Vec<Event<Self::Op>> {
         let start_nodes: Vec<NodeIndex> = upper_bound
             .clock
@@ -395,7 +346,7 @@ where
             .filter_map(|&node| self.dot_index_map.get_by_right(&node))
             .cloned()
             .collect::<Vec<_>>();
-        let mut upper_bound = DependencyClock::new_full(&Rc::clone(&since.clock.view), None);
+        let mut upper_bound = Clock::<Full>::new(&Rc::clone(&since.clock.view), None);
         for dot in dots {
             upper_bound.set(dot.origin(), dot.val());
         }
@@ -413,7 +364,7 @@ where
         Self::Op::redundant_itself(&event.op)
     }
 
-    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
+    fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {
         self.stable.clear();
         if conservative {
             // reverse DFS from the roots to the metadata
@@ -459,12 +410,12 @@ where
         O::eval(&self.stable, &unstable)
     }
 
-    fn stabilize(&mut self, metadata: &DependencyClock) {
+    fn stabilize(&mut self, metadata: &Clock<Partial>) {
         O::stabilize(metadata, self);
     }
 
     /// Move the op to the stable part of the graph
-    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
+    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>) {
         // The dot may have been removed in the `stabilize` function
         let dot = Dot::from(metadata);
         let node_idx = self.dot_index_map.get_by_left(&dot);
@@ -496,12 +447,12 @@ where
 
     fn deps(
         &self,
-        clocks: &mut VecDeque<DependencyClock>,
+        clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,
         _op: &Self::Op,
     ) {
-        let mut new_clock = DependencyClock::new(&Rc::clone(view), dot.origin());
+        let mut new_clock = Clock::<Partial>::new(&Rc::clone(view), dot.origin());
         for dot in self.heads.iter() {
             new_clock.set(dot.origin(), dot.val());
         }
