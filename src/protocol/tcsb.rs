@@ -64,9 +64,9 @@ where
         let views = Views::new(vec![id.to_string()]);
         Self {
             id: id.to_string(),
-            state: Default::default(),
+            state: L::new(),
             ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data)),
-            lsv: DependencyClock::new_originless(&Rc::clone(&views.installed_view().data)),
+            lsv: DependencyClock::new_full(&Rc::clone(&views.installed_view().data), None),
             group_membership: views,
             pending: VecDeque::new(),
             #[cfg(feature = "tracer")]
@@ -86,12 +86,12 @@ where
 
     /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
     pub fn tc_bcast(&mut self, op: L::Op) -> Event<L::Op> {
-        let metadata = self.generate_metadata_for_new_event();
-        let event = Event::new(op.clone(), metadata.clone());
+        let clocks = self.new_clock_for_op(&op);
+        let event = Event::new_nested(op.clone(), clocks);
         self.tc_deliver(event.clone());
         #[cfg(feature = "tracer")]
         self.tracer.append::<L>(event.clone());
-        Event::new(op, metadata)
+        event
     }
 
     /// Reliable Causal Broadcast (RCB) functionality.
@@ -101,10 +101,10 @@ where
         // The local peer should not call this function for its own events
         assert_ne!(
             self.id,
-            event.metadata.origin(),
+            event.metadata().origin(),
             "Local peer {} should not be the origin {} of the event",
             self.id,
-            event.metadata.origin()
+            event.metadata().origin()
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if !self
@@ -112,42 +112,42 @@ where
             .installed_view()
             .data
             .members
-            .contains(&event.metadata.origin().to_string())
+            .contains(&event.metadata().origin().to_string())
         {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
         // If the event is from a previous view, ignore it
-        if event.metadata.view_id() < self.view_id() {
+        if event.metadata().view_id() < self.view_id() {
             error!(
                 "[{}] - Event from {} with a view id {} inferior to the current view id {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata.view_id()).blue(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata().view_id()).blue(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
-        if guard_against_duplicates(&self.ltm, &event.metadata) {
+        if guard_against_duplicates(&self.ltm, event.metadata()) {
             error!(
                 "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin().red(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().red(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
-        if guard_against_out_of_order(&self.ltm, &event.metadata) {
+        if guard_against_out_of_order(&self.ltm, event.metadata()) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata).red(),
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata()).red(),
                 format!("{:?}", event.op).green(),
             );
         }
@@ -155,18 +155,19 @@ where
         // TODO: Check that this is correct
         self.pending.push_back(event.clone());
         self.pending.make_contiguous().sort_by(|a, b| {
+            // TODO: partial_cmp is not safe
             if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
                 order
             } else {
-                a.metadata.origin().cmp(b.metadata.origin())
+                a.metadata().origin().cmp(b.metadata().origin())
             }
         });
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
             // it belongs to the current view...
-            if !guard_against_out_of_order(&self.ltm, &event.metadata)
-                && event.metadata.view_id() == self.view_id()
+            if !guard_against_out_of_order(&self.ltm, event.metadata())
+                && event.metadata().view_id() == self.view_id()
             {
                 // ...deliver it
                 self.tc_deliver(event);
@@ -184,17 +185,17 @@ where
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
             format!("{:?}", event.op).green(),
-            event.metadata.origin().blue(),
-            format!("{}", event.metadata).red()
+            event.metadata().origin().blue(),
+            format!("{}", event.metadata()).red()
         );
         // If the event is not from the local replica
-        if self.id != event.metadata.origin() {
+        if self.id != event.metadata().origin() {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
             self.ltm
-                .merge_clock(event.metadata.origin(), &event.metadata);
-            self.my_clock_mut().merge(&event.metadata);
+                .merge_clock(event.metadata().origin(), event.metadata());
+            self.my_clock_mut().merge(event.metadata());
 
             #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
@@ -226,14 +227,17 @@ where
             return;
         }
 
+        // TODO: Delegate to the log to collect the events and stabilize them given a stable timestamp
+
         let ready_to_stabilize = self.state.collect_events(
             &svv,
-            &DependencyClock::new_originless(&Rc::clone(
-                &self.group_membership.installed_view().data,
-            )),
+            &DependencyClock::new_full(
+                &Rc::clone(&self.group_membership.installed_view().data),
+                None,
+            ),
         );
         if !ready_to_stabilize.is_empty() {
-            self.lsv = svv.into();
+            self.lsv = svv;
         } else {
             debug!("[{}] - SVV: {}", self.id.blue().bold(), svv);
         }
@@ -242,9 +246,9 @@ where
             debug!(
                 "[{}] - Event {} is ready to be stabilized",
                 self.id.blue().bold(),
-                format!("{}", Dot::from(&event.metadata)).green()
+                format!("{}", Dot::from(event.metadata())).green()
             );
-            self.state.stable(&event.metadata);
+            self.state.stable(event.metadata());
         }
     }
 
@@ -351,48 +355,42 @@ where
         let mut waiting_from = HashSet::<String>::new();
         for event in self.pending.iter() {
             assert!(
-                event.metadata.origin() != self.id,
+                event.metadata().origin() != self.id,
                 "Local peer should not be in the pending list. Event: {:?}",
                 event
             );
-            let sending_peer_clock = self.ltm.get(event.metadata.origin()).unwrap();
-            let sending_peer_lamport = sending_peer_clock.get(event.metadata.origin()).unwrap();
-            if event.metadata.dot() > sending_peer_lamport {
-                waiting_from.insert(event.metadata.origin().to_owned());
+            let sending_peer_clock = self.ltm.get(event.metadata().origin()).unwrap();
+            let sending_peer_lamport = sending_peer_clock.get(event.metadata().origin()).unwrap();
+            if event.metadata().dot() > sending_peer_lamport {
+                waiting_from.insert(event.metadata().origin().to_owned());
             }
         }
         waiting_from
     }
 
-    /// Returns the update clock new event of this [`Tcsb<L>`].
-    fn generate_metadata_for_new_event(&mut self) -> DependencyClock {
-        let my_id = self.id.clone();
-        let installing_view = self.group_membership.installing_view().cloned();
-
-        let clock = if let Some(v) = installing_view {
+    fn new_clock_for_op(&mut self, op: &L::Op) -> VecDeque<DependencyClock> {
+        if let Some(v) = self.group_membership.installing_view().cloned() {
             info!(
                 "[{}] - Creating event while installing view {}",
                 self.id.blue().bold(),
                 v.data.id,
             );
-            let clock = {
-                let my_clock = self.my_clock_mut();
-                my_clock.increment();
-                let my_clock_value = self.my_clock().get(&my_id).unwrap();
-                let mut clock = DependencyClock::new(&Rc::clone(&v.data), &my_id);
-                clock.set(&my_id, my_clock_value);
-                clock
-            };
-            clock
+            todo!("Not implemented yet");
+            // let my_clock = self.my_clock_mut();
+            // let val = my_clock.increment();
+            // let mut new_clock = DependencyClock::new(&Rc::clone(&v.data), &my_id);
+            // new_clock.set(&my_id, my_clock_value);
+            // new_clock
         } else {
-            let clock = {
-                let my_clock = self.my_clock_mut();
-                my_clock.increment();
-                my_clock.clone()
-            };
-            clock
-        };
-        clock
+            let my_clock = self.my_clock_mut();
+            my_clock.increment();
+            let view = &self.group_membership.installed_view().data;
+            let dot = Dot::from(self.my_clock());
+
+            let mut clocks = VecDeque::new();
+            self.state.deps(&mut clocks, view, &dot, op);
+            clocks
+        }
     }
 
     pub fn group_members(&self) -> &Vec<String> {

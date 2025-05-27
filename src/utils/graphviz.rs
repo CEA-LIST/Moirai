@@ -48,6 +48,7 @@ pub fn tracer_to_graphviz(tracer: &Tracer, name: &str) -> String {
                     Ordering::Greater => {
                         graph.push((i, j));
                     }
+                    // TODO: partial_cmp is not safe
                     Ordering::Equal => match previous_event.metadata.partial_cmp(&event.metadata) {
                         Some(Ordering::Less) => {
                             graph.push((j, i));

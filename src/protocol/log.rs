@@ -1,11 +1,13 @@
-use std::fmt::Debug;
+use std::{collections::VecDeque, fmt::Debug, rc::Rc};
 
-use super::{event::Event, pulling::Since};
-use crate::clocks::dependency_clock::DependencyClock;
+use super::{event::Event, membership::ViewData, pulling::Since};
+use crate::clocks::{dependency_clock::DependencyClock, dot::Dot};
 
 pub trait Log: Default + Debug {
     type Op: Debug + Clone;
     type Value: Debug;
+
+    fn new() -> Self;
 
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters)
     fn prepare(&self, op: Self::Op) -> Self::Op {
@@ -64,6 +66,14 @@ pub trait Log: Default + Debug {
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
     }
+
+    fn deps(
+        &self,
+        clocks: &mut VecDeque<DependencyClock>,
+        view: &Rc<ViewData>,
+        dot: &Dot,
+        op: &Self::Op,
+    );
 
     fn is_empty(&self) -> bool;
 

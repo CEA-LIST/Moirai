@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display, Error, Formatter};
+use std::{
+    collections::VecDeque,
+    fmt::{Debug, Display, Error, Formatter},
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -15,12 +18,25 @@ use crate::clocks::dependency_clock::DependencyClock;
 )]
 pub struct Event<O> {
     pub op: O,
-    pub metadata: DependencyClock,
+    /// An event can contain multiple metadata clocks if its a nested operation.
+    /// The first level always exists.
+    pub metadata: VecDeque<DependencyClock>,
 }
 
 impl<O> Event<O> {
-    pub fn new(op: O, metadata: DependencyClock) -> Self {
+    pub fn new_nested(op: O, metadata: VecDeque<DependencyClock>) -> Self {
         Self { op, metadata }
+    }
+
+    pub fn new(op: O, clock: DependencyClock) -> Self {
+        let mut metadata = VecDeque::new();
+        metadata.push_front(clock);
+        Self { op, metadata }
+    }
+
+    /// Returns the first level dependency clock
+    pub fn metadata(&self) -> &DependencyClock {
+        &self.metadata[0]
     }
 }
 
@@ -30,7 +46,7 @@ where
 {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "[")?;
-        write!(f, "{:?}, {}", self.op, self.metadata)?;
+        write!(f, "{:?}, {}", self.op, self.metadata())?;
         write!(f, "]")?;
         Ok(())
     }

@@ -1,6 +1,8 @@
+use std::{collections::VecDeque, rc::Rc};
+
 use crate::{
-    clocks::dependency_clock::DependencyClock,
-    protocol::{event::Event, log::Log, pulling::Since},
+    clocks::{dependency_clock::DependencyClock, dot::Dot},
+    protocol::{event::Event, log::Log, membership::ViewData, pulling::Since},
 };
 
 #[derive(Clone, Debug)]
@@ -23,14 +25,21 @@ where
     type Value = (Fl::Value, Sl::Value);
     type Op = Duet<Fl::Op, Sl::Op>;
 
+    fn new() -> Self {
+        Self {
+            first: Fl::new(),
+            second: Sl::new(),
+        }
+    }
+
     fn new_event(&mut self, event: &Event<Self::Op>) {
         match event.op {
             Duet::First(ref op) => {
-                let event = Event::new(op.clone(), event.metadata.clone());
+                let event = Event::new(op.clone(), event.metadata().clone());
                 self.first.new_event(&event);
             }
             Duet::Second(ref op) => {
-                let event = Event::new(op.clone(), event.metadata.clone());
+                let event = Event::new(op.clone(), event.metadata().clone());
                 self.second.new_event(&event);
             }
         }
@@ -39,11 +48,11 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
         match &event.op {
             Duet::First(op) => {
-                let event = Event::new(op.clone(), event.metadata.clone());
+                let event = Event::new(op.clone(), event.metadata().clone());
                 self.first.prune_redundant_events(&event, is_r_0);
             }
             Duet::Second(op) => {
-                let event = Event::new(op.clone(), event.metadata.clone());
+                let event = Event::new(op.clone(), event.metadata().clone());
                 self.second.prune_redundant_events(&event, is_r_0);
             }
         }
@@ -63,10 +72,10 @@ where
         let events_sl = self.second.collect_events(upper_bound, lower_bound);
         let mut result = vec![];
         for e in events_fl {
-            result.push(Event::new(Duet::First(e.op), e.metadata));
+            result.push(Event::new(Duet::First(e.op.clone()), e.metadata().clone()));
         }
         for e in events_sl {
-            result.push(Event::new(Duet::Second(e.op), e.metadata));
+            result.push(Event::new(Duet::Second(e.op.clone()), e.metadata().clone()));
         }
         result
     }
@@ -76,13 +85,13 @@ where
             .first
             .collect_events_since(since)
             .into_iter()
-            .map(|e| Event::new(Duet::First(e.op), e.metadata))
+            .map(|e| Event::new(Duet::First(e.op.clone()), e.metadata().clone()))
             .collect::<Vec<_>>();
         result.extend(
             self.second
                 .collect_events_since(since)
                 .into_iter()
-                .map(|e| Event::new(Duet::Second(e.op), e.metadata)),
+                .map(|e| Event::new(Duet::Second(e.op.clone()), e.metadata().clone())),
         );
         result
     }
@@ -95,11 +104,11 @@ where
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
         match event.op {
             Duet::First(ref op) => {
-                let first = Event::new(op.clone(), event.metadata.clone());
+                let first = Event::new(op.clone(), event.metadata().clone());
                 self.first.any_r(&first)
             }
             Duet::Second(ref op) => {
-                let second = Event::new(op.clone(), event.metadata.clone());
+                let second = Event::new(op.clone(), event.metadata().clone());
                 self.second.any_r(&second)
             }
         }
@@ -120,5 +129,20 @@ where
 
     fn size(&self) -> usize {
         self.first.size() + self.second.size()
+    }
+
+    fn deps(
+        &self,
+        node: &mut VecDeque<DependencyClock>,
+        view: &Rc<ViewData>,
+        dot: &Dot,
+        op: &Self::Op,
+    ) {
+        match op {
+            Duet::First(ref op) => self.first.deps(node, view, dot, op),
+            Duet::Second(ref op) => {
+                self.second.deps(node, view, dot, op);
+            }
+        }
     }
 }

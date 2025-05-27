@@ -1,7 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::clocks::{clock::Clock, dependency_clock::DependencyClock, matrix_clock::MatrixClock};
 
@@ -14,10 +11,11 @@ pub fn guard_against_removed_members(
 }
 
 /// Check that the event has not already been delivered
+/// Returns `true` if the event is a duplicate
 pub fn guard_against_duplicates(ltm: &MatrixClock, clock: &DependencyClock) -> bool {
     ltm.get(clock.origin())
-        .map(|other_clock| clock.partial_cmp(other_clock) == Some(Ordering::Less))
-        .unwrap_or(false)
+        .map(|other_clock| other_clock.dot() >= clock.dot())
+        .unwrap_or(true)
 }
 
 /// Check that the event is the strict (+1) causal successor of the last event delivered by this same replica
