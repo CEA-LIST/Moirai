@@ -49,6 +49,12 @@ pub struct ViewData {
     pub members: Vec<String>,
 }
 
+impl ViewData {
+    pub fn member_pos(&self, id: &str) -> Option<usize> {
+        self.members.iter().position(|m| m == id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",

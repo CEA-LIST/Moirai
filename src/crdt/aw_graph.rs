@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash};
 use petgraph::graph::DiGraph;
 
 use crate::{
-    clocks::dependency_clock::DependencyClock,
+    clocks::clock::Clock,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
 
@@ -44,7 +44,7 @@ where
         Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
-    fn stabilize(_metadata: &DependencyClock, _state: &mut EventGraph<Self>) {}
+    fn stabilize(_metadata: &Clock, _state: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut graph = DiGraph::new();

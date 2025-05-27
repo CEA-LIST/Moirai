@@ -1,7 +1,10 @@
 use std::{collections::VecDeque, fmt::Debug, rc::Rc};
 
 use super::{event::Event, membership::ViewData, pulling::Since};
-use crate::clocks::{dependency_clock::DependencyClock, dot::Dot};
+use crate::clocks::{
+    clock::{Clock, Full, Partial},
+    dot::Dot,
+};
 
 pub trait Log: Default + Debug {
     type Op: Debug + Clone;
@@ -20,8 +23,8 @@ pub trait Log: Default + Debug {
 
     fn collect_events(
         &self,
-        upper_bound: &DependencyClock,
-        lower_bound: &DependencyClock,
+        upper_bound: &Clock<Full>,
+        lower_bound: &Clock<Full>,
     ) -> Vec<Event<Self::Op>>;
 
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>>;
@@ -31,7 +34,7 @@ pub trait Log: Default + Debug {
     /// Remove every stable operations and unstable that are:
     /// - less or equal to the metadata if conservative is true
     /// - less, equal or concurrent to the metadata if conservative is false
-    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool);
+    fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool);
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
@@ -40,7 +43,7 @@ pub trait Log: Default + Debug {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(&mut self, metadata: &DependencyClock);
+    fn stabilize(&mut self, metadata: &Clock<Partial>);
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
@@ -56,12 +59,12 @@ pub trait Log: Default + Debug {
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &DependencyClock);
+    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>);
 
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
-    fn stable(&mut self, metadata: &DependencyClock) {
+    fn stable(&mut self, metadata: &Clock<Partial>) {
         self.stabilize(metadata);
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(metadata);
@@ -69,7 +72,7 @@ pub trait Log: Default + Debug {
 
     fn deps(
         &self,
-        clocks: &mut VecDeque<DependencyClock>,
+        clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,
         op: &Self::Op,

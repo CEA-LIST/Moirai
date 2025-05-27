@@ -1,4 +1,4 @@
-use super::{clock::Clock, dependency_clock::DependencyClock};
+use super::clock::{Clock, ClockState, Full};
 use crate::protocol::membership::ViewData;
 #[cfg(feature = "utils")]
 use deepsize::DeepSizeOf;
@@ -21,7 +21,7 @@ use tsify::Tsify;
 )]
 #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct MatrixClock {
-    clock: HashMap<usize, DependencyClock>,
+    clock: HashMap<usize, Clock<Full>>,
     view: Rc<ViewData>,
 }
 
@@ -32,7 +32,7 @@ impl MatrixClock {
                 .members
                 .iter()
                 .enumerate()
-                .map(|(i, _)| (i, DependencyClock::new_full(view, Some(&view.members[i]))))
+                .map(|(i, _)| (i, Clock::<Full>::new(view, Some(&view.members[i]))))
                 .collect(),
             view: Rc::clone(view),
         }
@@ -70,7 +70,7 @@ impl MatrixClock {
             .dot()
     }
 
-    pub fn get(&self, member: &str) -> Option<&DependencyClock> {
+    pub fn get(&self, member: &str) -> Option<&Clock<Full>> {
         let i = &self.view.members.iter().position(|m| m == member);
         if let Some(i) = i {
             return self.clock.get(i);
@@ -78,7 +78,7 @@ impl MatrixClock {
         None
     }
 
-    pub fn get_mut(&mut self, member: &str) -> Option<&mut DependencyClock> {
+    pub fn get_mut(&mut self, member: &str) -> Option<&mut Clock<Full>> {
         let i = &self.view.members.iter().position(|m| m == member);
         if let Some(i) = i {
             return self.clock.get_mut(i);
@@ -86,7 +86,7 @@ impl MatrixClock {
         None
     }
 
-    pub fn merge_clock(&mut self, member: &str, clock: &DependencyClock) {
+    pub fn merge_clock<S: ClockState>(&mut self, member: &str, clock: &Clock<S>) {
         let i = self.view.members.iter().position(|m| m == member).unwrap();
         self.clock.get_mut(&i).unwrap().merge(clock);
         assert!(self.is_valid());
@@ -100,14 +100,14 @@ impl MatrixClock {
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
-    pub fn svv(&self, id: &str, ignore: &[&String]) -> DependencyClock {
+    pub fn svv(&self, id: &str, ignore: &[&String]) -> Clock<Full> {
         let mut svv = self
             .get(id)
             .unwrap_or_else(|| panic!("Member {} not found", id))
             .clone();
         for (o, d) in &self.clock {
             if !ignore.contains(&&self.view.members[*o]) {
-                svv = Clock::min(&svv, d);
+                svv = Clock::<Full>::min(&svv, d);
             }
         }
         // TODO
@@ -133,7 +133,7 @@ impl MatrixClock {
     /// Update the given key in the matrix clock with the value of the other keys
     pub fn most_update(&mut self, key: &str) {
         let i = self.view.members.iter().position(|m| m == key).unwrap();
-        let mut max = DependencyClock::new(&self.view, key);
+        let mut max = Clock::<Full>::new(&self.view, Some(key));
         for d in self.clock.values() {
             max.merge(d);
         }
@@ -163,7 +163,7 @@ impl MatrixClock {
         let mut matrix = MatrixClock::new(view);
         for (i, c) in clocks.iter().enumerate() {
             let origin = &view.members[i];
-            let dc = DependencyClock::build(view, Some(origin), c);
+            let dc = Clock::build(view, Some(origin), c);
             matrix.clock.insert(i, dc);
         }
         matrix
@@ -225,17 +225,14 @@ mod tests {
         assert_eq!(mc.clock.len(), 3);
         assert_eq!(
             mc.get("A"),
-            Some(&DependencyClock::build(&view_abc(), Some("A"), &[0, 0, 0]))
+            Some(&Clock::build(&view_abc(), Some("A"), &[0, 0, 0]))
         );
     }
 
     #[test_log::test]
     fn svv() {
         let m = MatrixClock::build(&view_ab(), &[&[10, 2], &[8, 6]]);
-        assert_eq!(
-            m.svv("A", &[]),
-            DependencyClock::build(&view_ab(), None, &[8, 2])
-        );
+        assert_eq!(m.svv("A", &[]), Clock::build(&view_ab(), None, &[8, 2]));
     }
 
     #[test_log::test]
@@ -251,7 +248,7 @@ mod tests {
         let mc = MatrixClock::build(&view_abc(), &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
         assert_eq!(
             mc.svv("A", &[&"C".to_string()]),
-            DependencyClock::build(&view_abc(), None, &[2, 5, 1])
+            Clock::build(&view_abc(), None, &[2, 5, 1])
         );
     }
 
