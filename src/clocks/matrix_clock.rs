@@ -32,7 +32,7 @@ impl MatrixClock {
                 .members
                 .iter()
                 .enumerate()
-                .map(|(i, _)| (i, DependencyClock::new(view, &view.members[i])))
+                .map(|(i, _)| (i, DependencyClock::new_full(view, Some(&view.members[i]))))
                 .collect(),
             view: Rc::clone(view),
         }

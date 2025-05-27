@@ -1,10 +1,11 @@
+use core::panic;
 #[cfg(feature = "utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
@@ -35,9 +36,15 @@ impl DependencyClock {
         self.view.id
     }
 
-    pub fn new_originless(view: &Rc<ViewData>) -> Self {
+    pub fn new_full(view: &Rc<ViewData>, origin: Option<&str>) -> Self {
+        let origin = origin.map(|o| {
+            view.members
+                .iter()
+                .position(|m| m == o)
+                .expect("Member not found")
+        });
         Self {
-            origin: None,
+            origin,
             view: Rc::clone(view),
             clock: view
                 .members
@@ -91,6 +98,13 @@ impl From<&DependencyClock> for Dot {
 impl Clock for DependencyClock {
     fn new(view: &Rc<ViewData>, origin: &str) -> Self {
         assert!(view.members.contains(&origin.to_string()));
+        let mut clock = HashMap::new();
+        let origin_idx = view
+            .members
+            .iter()
+            .position(|m| m == origin)
+            .expect("Member not found");
+        clock.insert(origin_idx, 0);
         Self {
             origin: Some(
                 view.members
@@ -99,12 +113,7 @@ impl Clock for DependencyClock {
                     .expect("Member not found"),
             ),
             view: Rc::clone(view),
-            clock: view
-                .members
-                .iter()
-                .enumerate()
-                .map(|(i, _)| (i, 0))
-                .collect(),
+            clock,
         }
     }
 
@@ -121,17 +130,20 @@ impl Clock for DependencyClock {
         }
     }
 
-    fn increment(&mut self) {
+    fn increment(&mut self) -> usize {
         let idx = self.get(self.origin()).unwrap();
         self.clock
             .insert(self.origin.expect("Origin not set"), idx + 1);
+        idx + 1
     }
 
     fn min(&self, other: &Self) -> Self {
         assert!(self.view.id == other.view.id);
         let mut new_clock = HashMap::new();
         for (idx, m) in self.view.members.iter().enumerate() {
-            new_clock.insert(idx, min(self.get(m).unwrap(), other.get(m).unwrap()));
+            let self_val = self.get(m).unwrap_or(0);
+            let other_val = other.get(m).unwrap_or(0);
+            new_clock.insert(idx, min(self_val, other_val));
         }
         Self {
             view: self.view.clone(),
@@ -154,7 +166,7 @@ impl Clock for DependencyClock {
         self.clock.len()
     }
 
-    /// Returns the value of the clock for the given member OR 0 if the member is not in the clock
+    /// Returns the value of the clock for the given member or None if the member is not in the clock or the value is not set
     fn get(&self, member: &str) -> Option<usize> {
         let idx = self.view.members.iter().position(|m| m == member);
         if let Some(idx) = idx {
@@ -175,6 +187,7 @@ impl Clock for DependencyClock {
         self.clock.insert(idx, value);
     }
 
+    /// Can panic if the origin is not set
     fn origin(&self) -> &str {
         &self.view.members[self.origin.expect("Origin not set")]
     }
@@ -197,10 +210,15 @@ impl From<DependencyClock> for HashMap<String, usize> {
 impl Display for DependencyClock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "{{ ")?;
+        let mut first = true;
         for (idx, m) in self.view.members.iter().enumerate() {
-            write!(f, "{}: {}", m, self.get(m).unwrap())?;
-            if idx < self.view.members.len() - 1 {
-                write!(f, ", ")?;
+            if let Some(val) = self.clock.get(&idx) {
+                if first {
+                    write!(f, "{}: {}", m, val)?;
+                    first = false;
+                } else {
+                    write!(f, ", {}: {}", m, val)?;
+                }
             }
         }
         write!(f, " }}")?;
@@ -212,12 +230,17 @@ impl Display for DependencyClock {
 }
 
 impl PartialOrd for DependencyClock {
+    /// Will PANIC if the clocks are not vector clocks
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match self.view.id.cmp(&other.view.id) {
             Ordering::Less => return Some(Ordering::Less),
             Ordering::Greater => return Some(Ordering::Greater),
             _ => {}
         };
+
+        if self.clock.keys().collect::<HashSet<_>>() != other.clock.keys().collect::<HashSet<_>>() {
+            panic!("Clocks must behave like vector clocks to be comparable.");
+        }
 
         if self.get(self.origin()) == other.get(other.origin()) && self.origin == other.origin {
             return Some(Ordering::Equal);
@@ -235,8 +258,8 @@ impl PartialOrd for DependencyClock {
         let mut greater = false;
 
         for m in self.view.members.iter() {
-            let self_val = self.get(m).unwrap_or(0);
-            let other_val = other.get(m).unwrap_or(0);
+            let self_val = self.get(m).unwrap();
+            let other_val = other.get(m).unwrap();
 
             match self_val.cmp(&other_val) {
                 Ordering::Less => less = true,
@@ -273,8 +296,8 @@ mod tests {
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let mut v1 = DependencyClock::new(&rc, "a");
-        let mut v2 = DependencyClock::new(&rc, "b");
+        let mut v1 = DependencyClock::new_full(&rc, Some("a"));
+        let mut v2 = DependencyClock::new_full(&rc, Some("b"));
         v1.increment();
         v2.increment();
 
@@ -289,8 +312,8 @@ mod tests {
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let mut v1 = DependencyClock::new(&rc, "a");
-        let mut v2 = DependencyClock::new(&rc, "b");
+        let mut v1 = DependencyClock::new_full(&rc, Some("a"));
+        let mut v2 = DependencyClock::new_full(&rc, Some("b"));
         v1.increment();
         v1.increment();
         v2.merge(&v1);
@@ -310,8 +333,8 @@ mod tests {
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let mut v1 = DependencyClock::new(&rc, "a");
-        let mut v2 = DependencyClock::new(&rc, "a");
+        let mut v1 = DependencyClock::new_full(&rc, Some("a"));
+        let mut v2 = DependencyClock::new_full(&rc, Some("a"));
         v1.increment();
         v2.increment();
 
@@ -326,8 +349,8 @@ mod tests {
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let mut v1 = DependencyClock::new(&rc, "a");
-        let mut v2 = DependencyClock::new(&rc, "a");
+        let mut v1 = DependencyClock::new_full(&rc, Some("a"));
+        let mut v2 = DependencyClock::new_full(&rc, Some("a"));
         v1.increment();
         v2.increment();
         v2.increment();
@@ -336,15 +359,15 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_clock() {
+    fn clock() {
         let view = View::new(
             0,
             vec!["a".to_string(), "b".to_string(), "c".to_string()],
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let mut v1 = DependencyClock::new(&rc, "a");
-        let mut v2 = DependencyClock::new(&rc, "b");
+        let mut v1 = DependencyClock::new_full(&rc, Some("a"));
+        let mut v2 = DependencyClock::new_full(&rc, Some("b"));
 
         v1.increment();
         v1.increment();
@@ -379,7 +402,7 @@ mod tests {
             ViewStatus::Installed,
         );
         let rc = Rc::clone(&view.data);
-        let v1 = DependencyClock::new(&rc, "a");
+        let v1 = DependencyClock::new_full(&rc, Some("a"));
         assert_eq!(format!("{}", v1), "{ a: 0, b: 0, c: 0 }@a");
     }
 }

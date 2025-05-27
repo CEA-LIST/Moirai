@@ -43,11 +43,8 @@ where
         _rdnt: fn(&Counter<V>, bool, &Counter<V>) -> bool,
         op: &Counter<V>,
     ) {
-        match op {
-            Counter::Reset => {
-                <V as Stable<Counter<V>>>::clear(self);
-            }
-            _ => {}
+        if let Counter::Reset = op {
+            <V as Stable<Counter<V>>>::clear(self);
         }
     }
 

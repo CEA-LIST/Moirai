@@ -5,12 +5,12 @@ use std::{
 
 use crate::protocol::membership::ViewData;
 
-pub trait Clock: PartialOrd + Debug + Display + Clone + Eq + PartialEq {
+pub trait Clock: Debug + Display + Clone + Eq + PartialEq {
     fn new(members: &Rc<ViewData>, origin: &str) -> Self;
 
     fn merge(&mut self, other: &Self);
 
-    fn increment(&mut self);
+    fn increment(&mut self) -> usize;
 
     fn min(&self, other: &Self) -> Self;
 

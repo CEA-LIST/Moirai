@@ -1,317 +1,386 @@
-// use std::{
-//     collections::HashMap,
-//     fmt::{Debug, Display},
-//     hash::Hash,
-// };
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::{Debug, Display},
+    hash::Hash,
+    rc::Rc,
+};
 
-// use super::aw_set::AWSet;
-// use crate::{
-//     clocks::dependency_clock::DependencyClock,
-//     protocol::{event::Event, event_graph::EventGraph, log::Log, pulling::Since},
-// };
+use petgraph::visit::Dfs;
 
-// #[derive(Clone, Debug)]
-// pub enum AWMap<K, O> {
-//     Update(K, O),
-//     Remove(K),
-// }
+use super::aw_set::AWSet;
+use crate::{
+    clocks::{clock::Clock, dependency_clock::DependencyClock, dot::Dot},
+    protocol::{
+        event::Event, event_graph::EventGraph, log::Log, membership::ViewData, pulling::Since,
+    },
+};
 
-// #[derive(Clone, Debug)]
-// pub struct UWMapLog<K, L>
-// where
-//     K: Clone + Debug + Eq + Hash,
-// {
-//     keys: EventGraph<AWSet<K>>,
-//     values: HashMap<K, L>,
-// }
+#[derive(Clone, Debug)]
+pub enum AWMap<K, O> {
+    Update(K, O),
+    Remove(K),
+}
 
-// impl<K: Clone + Debug, L> Default for UWMapLog<K, L>
-// where
-//     K: Eq + Hash,
-// {
-//     fn default() -> Self {
-//         Self {
-//             keys: Default::default(),
-//             values: Default::default(),
-//         }
-//     }
-// }
+#[derive(Clone, Debug)]
+pub struct UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash,
+{
+    keys: EventGraph<AWSet<K>>,
+    values: HashMap<K, L>,
+}
 
-// impl<K, L> Log for UWMapLog<K, L>
-// where
-//     L: Log,
-//     K: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
-// {
-//     type Op = AWMap<K, L::Op>;
-//     type Value = HashMap<K, L::Value>;
+impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
+    fn default() -> Self {
+        Self {
+            keys: Default::default(),
+            values: Default::default(),
+        }
+    }
+}
 
-//     fn new_event(&mut self, event: &Event<Self::Op>) {
-//         match &event.op {
-//             AWMap::Update(k, v) => {
-//                 let event = Event::new(v.clone(), event.metadata.clone());
-//                 self.values.entry(k.clone()).or_default().new_event(&event);
-//                 self.keys
-//                     .new_event(&Event::new(AWSet::Add(k.clone()), event.metadata.clone()));
-//             }
-//             AWMap::Remove(k) => {
-//                 self.keys.new_event(&Event::new(
-//                     AWSet::Remove(k.clone()),
-//                     event.metadata.clone(),
-//                 ));
-//             }
-//         }
-//     }
+impl<K, L> Log for UWMapLog<K, L>
+where
+    L: Log,
+    K: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+{
+    type Op = AWMap<K, L::Op>;
+    type Value = HashMap<K, L::Value>;
 
-//     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
-//         match &event.op {
-//             AWMap::Update(k, v) => {
-//                 let event = Event::new(AWSet::Add(k.clone()), event.metadata.clone());
-//                 self.keys.prune_redundant_events(&event, is_r_0);
+    fn new() -> Self {
+        Self {
+            keys: EventGraph::new(),
+            values: HashMap::new(),
+        }
+    }
 
-//                 let event = Event::new(v.clone(), event.metadata.clone());
-//                 self.values
-//                     .entry(k.clone())
-//                     .or_default()
-//                     .prune_redundant_events(&event, is_r_0);
-//             }
-//             AWMap::Remove(k) => {
-//                 let event = Event::new(AWSet::Remove(k.clone()), event.metadata.clone());
-//                 self.keys.prune_redundant_events(&event, is_r_0);
+    fn new_event(&mut self, event: &Event<Self::Op>) {
+        match &event.op {
+            AWMap::Update(k, v) => {
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                self.keys.new_event(&aw_set_event);
 
-//                 self.values.entry(k.clone()).and_modify(|v| {
-//                     v.r_n(&event.metadata, true);
-//                 });
+                let mut nested_clocks = event.metadata.clone();
+                nested_clocks.pop_front();
 
-//                 if let Some(v) = self.values.get(k) {
-//                     if v.is_empty() {
-//                         self.values.remove(k);
-//                     }
-//                 }
-//             }
-//         }
-//     }
+                let log_event = Event::new_nested(v.clone(), nested_clocks);
+                self.values
+                    .entry(k.clone())
+                    .or_default()
+                    .new_event(&log_event);
+            }
+            AWMap::Remove(k) => {
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                self.keys.new_event(&event);
+            }
+        }
+    }
 
-//     fn collect_events(
-//         &self,
-//         upper_bound: &DependencyClock,
-//         lower_bound: &DependencyClock,
-//     ) -> Vec<Event<Self::Op>> {
-//         let mut events = vec![];
-//         for (k, v) in &self.values {
-//             events.extend(
-//                 v.collect_events(upper_bound, lower_bound)
-//                     .into_iter()
-//                     .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
-//             );
-//         }
-//         events
-//     }
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
+        match &event.op {
+            AWMap::Update(k, v) => {
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                self.keys.prune_redundant_events(&aw_set_event, is_r_0);
 
-//     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-//         let mut events = vec![];
-//         for (k, v) in &self.values {
-//             events.extend(
-//                 v.collect_events_since(since)
-//                     .into_iter()
-//                     .map(|e| Event::new(AWMap::Update(k.clone(), e.op), e.metadata)),
-//             );
-//         }
-//         events
-//     }
+                let log_metadata = if let Some(m) = event.metadata.get(1) {
+                    m.clone()
+                } else {
+                    DependencyClock::new(&event.metadata().view, event.metadata().origin())
+                };
 
-//     fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
-//         self.keys.r_n(metadata, conservative);
-//         self.values.retain(|_, v| {
-//             v.r_n(metadata, conservative);
-//             !v.is_empty()
-//         });
-//     }
+                let log_event = Event::new(v.clone(), log_metadata);
+                self.values
+                    .entry(k.clone())
+                    .or_default()
+                    .prune_redundant_events(&log_event, is_r_0);
+            }
+            AWMap::Remove(k) => {
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                self.keys.prune_redundant_events(&event, is_r_0);
 
-//     fn any_r(&self, event: &Event<Self::Op>) -> bool {
-//         let event = match &event.op {
-//             AWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata.clone()),
-//             AWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata.clone()),
-//         };
-//         self.keys.any_r(&event)
-//     }
+                if let Some(v) = self.values.get_mut(k) {
+                    // compute the vector clock of the remove operation
+                    let mut vector_clock = DependencyClock::new_full(
+                        &event.metadata().view,
+                        Some(event.metadata().origin()),
+                    );
 
-//     fn eval(&self) -> Self::Value {
-//         let mut map = HashMap::new();
-//         for (k, v) in &self.values {
-//             map.insert(k.clone(), v.eval());
-//         }
-//         map
-//     }
+                    let mut dfs = Dfs::new(
+                        &self.keys.unstable,
+                        *self
+                            .keys
+                            .dot_index_map
+                            .get_by_left(&Dot::from(event.metadata()))
+                            .unwrap(),
+                    );
 
-//     fn stabilize(&mut self, _: &DependencyClock) {}
+                    while let Some(nx) = dfs.next(&self.keys.unstable) {
+                        let dot = self.keys.dot_index_map.get_by_right(&nx).unwrap();
+                        if dot.val() > vector_clock.get(dot.origin()).unwrap() {
+                            vector_clock.set(dot.origin(), dot.val());
+                        }
+                    }
 
-//     fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
-//         self.keys.purge_stable_metadata(metadata);
-//         self.values
-//             .iter_mut()
-//             .for_each(|(_, v)| v.purge_stable_metadata(metadata));
-//     }
+                    // The `true` here is what makes the map a Update-Wins Map
+                    v.r_n(&vector_clock, true);
+                }
+            }
+        }
+    }
 
-//     fn is_empty(&self) -> bool {
-//         self.keys.is_empty()
-//     }
+    fn collect_events(
+        &self,
+        upper_bound: &DependencyClock,
+        lower_bound: &DependencyClock,
+    ) -> Vec<Event<Self::Op>> {
+        let mut events = vec![];
+        for (k, v) in &self.values {
+            events.extend(
+                v.collect_events(upper_bound, lower_bound)
+                    .into_iter()
+                    .map(|e| {
+                        Event::new(AWMap::Update(k.clone(), e.op.clone()), e.metadata().clone())
+                    }),
+            );
+        }
+        events
+    }
 
-//     fn size(&self) -> usize {
-//         self.keys.size()
-//     }
-// }
+    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+        let mut events = vec![];
+        for (k, v) in &self.values {
+            events.extend(
+                v.collect_events_since(since).into_iter().map(|e| {
+                    Event::new(AWMap::Update(k.clone(), e.op.clone()), e.metadata().clone())
+                }),
+            );
+        }
+        events
+    }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::collections::HashMap;
+    /// A vector clock is used to avoid issues with direct predecessors.
+    fn r_n(&mut self, vector_clock: &DependencyClock, conservative: bool) {
+        self.keys.r_n(vector_clock, conservative);
 
-//     use crate::{
-//         crdt::{
-//             aw_map::{AWMap, UWMapLog},
-//             counter::Counter,
-//             duet::{Duet, DuetLog},
-//             test_util::twins,
-//         },
-//         protocol::event_graph::EventGraph,
-//     };
+        for v in self.values.values_mut() {
+            if v.is_empty() {
+                continue;
+            }
+            v.r_n(vector_clock, conservative);
+        }
+    }
 
-//     #[test_log::test]
-//     fn simple_aw_map() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
+    fn any_r(&self, event: &Event<Self::Op>) -> bool {
+        let event = match &event.op {
+            AWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata().clone()),
+            AWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata().clone()),
+        };
+        self.keys.any_r(&event)
+    }
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Dec(5)));
-//         tcsb_b.try_deliver(event);
+    fn eval(&self) -> Self::Value {
+        let mut map = HashMap::new();
+        for k in &self.keys.eval() {
+            map.insert(k.clone(), self.values.get(k).unwrap().eval());
+        }
+        map
+    }
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Counter::Inc(5)));
-//         tcsb_b.try_deliver(event);
+    fn stabilize(&mut self, _: &DependencyClock) {}
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(15)));
-//         tcsb_b.try_deliver(event);
+    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
+        self.keys.purge_stable_metadata(metadata);
+        self.values
+            .iter_mut()
+            .for_each(|(_, v)| v.purge_stable_metadata(metadata));
+    }
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), 10);
-//         map.insert(String::from("b"), 5);
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
-//     }
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
 
-//     #[test_log::test]
-//     fn concurrent_aw_map() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
+    fn size(&self) -> usize {
+        self.keys.size()
+    }
 
-//         let event_a = tcsb_a.tc_bcast(AWMap::Remove("a".to_string()));
-//         let event_b = tcsb_b.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(10)));
+    fn deps(
+        &self,
+        clocks: &mut VecDeque<DependencyClock>,
+        view: &Rc<ViewData>,
+        dot: &Dot,
+        op: &Self::Op,
+    ) {
+        match op {
+            AWMap::Update(k, v) => {
+                self.keys.deps(clocks, view, dot, &AWSet::Add(k.clone()));
+                if let Some(log) = self.values.get(k) {
+                    log.deps(clocks, view, dot, v);
+                } else {
+                    // If the key does not exist, we still need to add the dependency
+                    // for the update operation.
+                    let mut new_clock = DependencyClock::new(view, dot.origin());
+                    new_clock.set(dot.origin(), dot.val());
+                    clocks.push_back(new_clock);
+                }
+            }
+            AWMap::Remove(k) => {
+                self.keys.deps(clocks, view, dot, &AWSet::Remove(k.clone()));
+            }
+        }
+    }
+}
 
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), 10);
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
-//     }
+    use crate::{
+        crdt::{
+            aw_map::{AWMap, UWMapLog},
+            counter::Counter,
+            duet::{Duet, DuetLog},
+            test_util::twins,
+        },
+        protocol::event_graph::EventGraph,
+    };
 
-//     #[test_log::test]
-//     fn aw_map_duet_counter() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<
-//             UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
-//         >();
+    #[test_log::test]
+    fn simple_aw_map() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update(
-//             "a".to_string(),
-//             Duet::First(Counter::Inc(15)),
-//         ));
-//         tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Dec(5)));
+        tcsb_b.try_deliver(event);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
-//         tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Counter::Inc(5)));
+        tcsb_b.try_deliver(event);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update(
-//             "a".to_string(),
-//             Duet::First(Counter::Inc(10)),
-//         ));
-//         tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(15)));
+        tcsb_b.try_deliver(event);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update(
-//             "b".to_string(),
-//             Duet::Second(Counter::Dec(7)),
-//         ));
-//         tcsb_b.try_deliver(event);
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), 10);
+        map.insert(String::from("b"), 5);
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), (25, 0));
-//         map.insert(String::from("b"), (5, -7));
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
-//     }
+    #[test_log::test]
+    fn concurrent_aw_map() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<UWMapLog<String, EventGraph<Counter<i32>>>>();
 
-//     #[test_log::test]
-//     fn aw_map_concurrent_duet_counter() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<
-//             UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
-//         >();
+        let event_a = tcsb_a.tc_bcast(AWMap::Remove("a".to_string()));
+        let event_b = tcsb_b.tc_bcast(AWMap::Update("a".to_string(), Counter::Inc(10)));
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update(
-//             "a".to_string(),
-//             Duet::First(Counter::Inc(15)),
-//         ));
-//         tcsb_b.try_deliver(event);
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
-//         tcsb_b.try_deliver(event);
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), 10);
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), (15, 0));
-//         map.insert(String::from("b"), (5, 0));
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
+    #[test_log::test]
+    fn aw_map_duet_counter() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<
+            UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
+        >();
 
-//         let event_a = tcsb_a.tc_bcast(AWMap::Update(
-//             "a".to_string(),
-//             Duet::First(Counter::Inc(10)),
-//         ));
-//         let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
-//         tcsb_b.try_deliver(event_a);
-//         // bug here ->
-//         tcsb_a.try_deliver(event_b);
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(15)),
+        ));
+        tcsb_b.try_deliver(event);
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), (10, 0));
-//         map.insert(String::from("b"), (5, 0));
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        tcsb_b.try_deliver(event);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Update(
-//             "b".to_string(),
-//             Duet::Second(Counter::Dec(7)),
-//         ));
-//         tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(10)),
+        ));
+        tcsb_b.try_deliver(event);
 
-//         let event = tcsb_a.tc_bcast(AWMap::Remove("b".to_string()));
-//         tcsb_b.try_deliver(event);
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "b".to_string(),
+            Duet::Second(Counter::Dec(7)),
+        ));
+        tcsb_b.try_deliver(event);
 
-//         let mut map = HashMap::new();
-//         map.insert(String::from("a"), (10, 0));
-//         assert_eq!(map, tcsb_a.eval());
-//         assert_eq!(map, tcsb_b.eval());
-//     }
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (25, 0));
+        map.insert(String::from("b"), (5, -7));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
 
-//     #[cfg(feature = "utils")]
-//     #[test_log::test]
-//     fn convergence_check() {
-//         use crate::utils::convergence_checker::convergence_checker;
+    #[test_log::test]
+    fn aw_map_concurrent_duet_counter() {
+        let (mut tcsb_a, mut tcsb_b) = twins::<
+            UWMapLog<String, DuetLog<EventGraph<Counter<i32>>, EventGraph<Counter<i32>>>>,
+        >();
 
-//         let mut result = HashMap::new();
-//         result.insert("a".to_string(), 5);
-//         result.insert("b".to_string(), -5);
-//         convergence_checker::<UWMapLog<String, EventGraph<Counter<i32>>>>(
-//             &[
-//                 AWMap::Update("a".to_string(), Counter::Inc(5)),
-//                 AWMap::Update("b".to_string(), Counter::Dec(5)),
-//                 AWMap::Remove("a".to_string()),
-//                 AWMap::Remove("b".to_string()),
-//             ],
-//             result,
-//         );
-//     }
-// }
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(15)),
+        ));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        tcsb_b.try_deliver(event);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (15, 0));
+        map.insert(String::from("b"), (5, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+
+        let event_a = tcsb_a.tc_bcast(AWMap::Update(
+            "a".to_string(),
+            Duet::First(Counter::Inc(10)),
+        ));
+        let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
+        tcsb_b.try_deliver(event_a);
+        // bug here ->
+        tcsb_a.try_deliver(event_b);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (10, 0));
+        map.insert(String::from("b"), (5, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+
+        let event = tcsb_a.tc_bcast(AWMap::Update(
+            "b".to_string(),
+            Duet::Second(Counter::Dec(7)),
+        ));
+        tcsb_b.try_deliver(event);
+
+        let event = tcsb_a.tc_bcast(AWMap::Remove("b".to_string()));
+        tcsb_b.try_deliver(event);
+
+        let mut map = HashMap::new();
+        map.insert(String::from("a"), (10, 0));
+        assert_eq!(map, tcsb_a.eval());
+        assert_eq!(map, tcsb_b.eval());
+    }
+
+    #[cfg(feature = "utils")]
+    #[test_log::test]
+    fn convergence_check() {
+        use crate::utils::convergence_checker::convergence_checker;
+
+        let mut result = HashMap::new();
+        result.insert("a".to_string(), 5);
+        result.insert("b".to_string(), -5);
+        convergence_checker::<UWMapLog<String, EventGraph<Counter<i32>>>>(
+            &[
+                AWMap::Update("a".to_string(), Counter::Inc(5)),
+                AWMap::Update("b".to_string(), Counter::Dec(5)),
+                AWMap::Remove("a".to_string()),
+                AWMap::Remove("b".to_string()),
+            ],
+            result,
+        );
+    }
+}

@@ -35,11 +35,8 @@ where
     }
 
     fn apply(&mut self, value: AWSet<V>) {
-        match value {
-            AWSet::Add(v) => {
-                self.insert(v);
-            }
-            _ => {}
+        if let AWSet::Add(v) = value {
+            self.insert(v);
         }
     }
 }
@@ -75,11 +72,8 @@ where
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut set = stable.clone();
         for o in unstable.iter() {
-            match o {
-                AWSet::Add(v) => {
-                    set.insert(v.clone());
-                }
-                _ => {}
+            if let AWSet::Add(v) = o {
+                set.insert(v.clone());
             }
         }
         set

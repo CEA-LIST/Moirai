@@ -68,7 +68,7 @@ impl Since {
             exclude: tcsb
                 .pending
                 .iter()
-                .map(|e| Dot::from(&e.metadata))
+                .map(|e| Dot::from(e.metadata()))
                 .collect(),
         }
     }
@@ -110,14 +110,15 @@ where
             Ok(batch) => {
                 let mut sorted = batch.events.clone();
                 sorted.sort_by(|a, b| {
+                    // TODO: partial_cmp is not safe
                     if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
                         order
                     } else {
-                        a.metadata.origin().cmp(b.metadata.origin())
+                        a.metadata().origin().cmp(b.metadata().origin())
                     }
                 });
                 for event in sorted {
-                    if self.id != event.metadata.origin() {
+                    if self.id != event.metadata().origin() {
                         self.force_deliver(event, batch.metadata.origin());
                     }
                 }
@@ -146,10 +147,10 @@ where
         // The local peer should not call this function for its own events
         assert_ne!(
             self.id,
-            event.metadata.origin(),
+            event.metadata().origin(),
             "Local peer {} should not be the origin {} of the event",
             self.id,
-            event.metadata.origin()
+            event.metadata().origin()
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if !self
@@ -157,42 +158,42 @@ where
             .installed_view()
             .data
             .members
-            .contains(&event.metadata.origin().to_string())
+            .contains(&event.metadata().origin().to_string())
         {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
         // If the event is from a previous view, ignore it
-        if event.metadata.view_id() < self.view_id() {
+        if event.metadata().view_id() < self.view_id() {
             error!(
                 "[{}] - Event from {} with a view id {} inferior to the current view id {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata.view_id()).blue(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata().view_id()).blue(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
-        if guard_against_duplicates(&self.ltm, &event.metadata) {
+        if guard_against_duplicates(&self.ltm, event.metadata()) {
             error!(
                 "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata.origin().red(),
-                format!("{}", event.metadata).red()
+                event.metadata().origin().red(),
+                format!("{}", event.metadata()).red()
             );
             return;
         }
-        if loose_guard_against_out_of_order(&self.ltm, &event.metadata, batch_origin) {
+        if loose_guard_against_out_of_order(&self.ltm, event.metadata(), batch_origin) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
-                event.metadata.origin().blue(),
-                format!("{}", event.metadata).red(),
+                event.metadata().origin().blue(),
+                format!("{}", event.metadata()).red(),
                 format!("{:?}", event.op).green(),
             );
         }
@@ -200,18 +201,19 @@ where
         // TODO: Check that this is correct
         self.pending.push_back(event.clone());
         self.pending.make_contiguous().sort_by(|a, b| {
+            // TODO: partial_cmp is not safe
             if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
                 order
             } else {
-                a.metadata.origin().cmp(b.metadata.origin())
+                a.metadata().origin().cmp(b.metadata().origin())
             }
         });
         let mut still_pending = VecDeque::new();
         while let Some(event) = self.pending.pop_front() {
             // If the event is causally ready, and
             // it belongs to the current view...
-            if !loose_guard_against_out_of_order(&self.ltm, &event.metadata, batch_origin)
-                && event.metadata.view_id() == self.view_id()
+            if !loose_guard_against_out_of_order(&self.ltm, event.metadata(), batch_origin)
+                && event.metadata().view_id() == self.view_id()
             {
                 // ...deliver it
                 self.tc_deliver(event);
