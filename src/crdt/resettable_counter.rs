@@ -8,7 +8,10 @@ use std::{
 use tsify::Tsify;
 
 use crate::{
-    clocks::{dependency_clock::Clock, dot::Dot},
+    clocks::{
+        clock::{Clock, Partial},
+        dot::Dot,
+    },
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
@@ -76,7 +79,7 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         false
     }
 
-    fn stabilize(metadata: &Clock, state: &mut EventGraph<Self>) {
+    fn stabilize(metadata: &Clock<Partial>, state: &mut EventGraph<Self>) {
         if state.stable.is_empty() {
             state.stable.push(Counter::Inc(V::default()));
         }

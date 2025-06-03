@@ -22,10 +22,12 @@ pub trait ClockState {}
 
 /// Full vector clock (supports partial order comparisons)
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Full;
 
 /// Partial vector clock (dependency clock, no ordering)
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Partial;
 
 impl ClockState for Full {}

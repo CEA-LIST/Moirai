@@ -38,6 +38,10 @@ impl<O> Event<O> {
     pub fn metadata(&self) -> &Clock<Partial> {
         &self.metadata[0]
     }
+
+    pub fn origin(&self) -> &str {
+        self.metadata().origin()
+    }
 }
 
 impl<O> Display for Event<O>

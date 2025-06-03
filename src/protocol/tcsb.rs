@@ -29,12 +29,12 @@ use crate::{
     },
 };
 
-/// # Extended Reliable Causal Broadcast (RCB) middleware API
-///
-/// A **Tagged Causal Stable Broadcast (TCSB)** is an extended Reliable Causal Broadcast (RCB)
-/// middleware API designed to offer additional information about causality during message delivery.
-/// It also notifies recipients when delivered messages achieve causal stability,
-/// facilitating subsequent compaction within the Partially Ordered Log of operations (PO-Log)
+pub enum DeliveryStatus {
+    Ready,
+    Pending,
+    Error,
+}
+
 #[derive(Clone)]
 pub struct Tcsb<L>
 where
@@ -86,27 +86,26 @@ where
         tcsb
     }
 
-    /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
-    pub fn tc_bcast(&mut self, op: L::Op) -> Event<L::Op> {
-        let clocks = self.new_clock_for_op(&op);
-        let event = Event::new_nested(op.clone(), clocks);
-        self.tc_deliver(event.clone());
-        #[cfg(feature = "tracer")]
-        self.tracer.append::<L>(event.clone());
-        event
+    pub fn try_deliver(&mut self, event: Event<L::Op>) {
+        match self.can_deliver(&event) {
+            DeliveryStatus::Ready => {
+                self.tc_deliver(event);
+                self.try_deliver_pending();
+            }
+            DeliveryStatus::Pending => {
+                self.pending.push_back(event.clone());
+            }
+            _ => {}
+        }
     }
 
-    /// Reliable Causal Broadcast (RCB) functionality.
-    /// Store a new event in the buffer and check if it is ready to be delivered.
-    /// Check if other pending events are made ready to be delivered by the new event.
-    pub fn try_deliver(&mut self, event: Event<L::Op>) {
-        // The local peer should not call this function for its own events
+    fn can_deliver(&self, event: &Event<L::Op>) -> DeliveryStatus {
         assert_ne!(
             self.id,
-            event.metadata().origin(),
+            event.origin(),
             "Local peer {} should not be the origin {} of the event",
             self.id,
-            event.metadata().origin()
+            event.origin()
         );
         // If from evicted peer, unknown peer, duplicated event, ignore it
         if !self
@@ -114,71 +113,69 @@ where
             .installed_view()
             .data
             .members
-            .contains(&event.metadata().origin().to_string())
+            .contains(&event.origin().to_string())
         {
             error!(
                 "[{}] - Event from an unknown peer {} detected with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata().origin().blue(),
+                event.origin().blue(),
                 format!("{}", event.metadata()).red()
             );
-            return;
+            return DeliveryStatus::Error;
         }
         // If the event is from a previous view, ignore it
         if event.metadata().view_id() < self.view_id() {
             error!(
                 "[{}] - Event from {} with a view id {} inferior to the current view id {}",
                 self.id.blue().bold(),
-                event.metadata().origin().blue(),
+                event.origin().blue(),
                 format!("{}", event.metadata().view_id()).blue(),
                 format!("{}", event.metadata()).red()
             );
-            return;
+            return DeliveryStatus::Error;
         }
         if guard_against_duplicates(&self.ltm, event.metadata()) {
             error!(
                 "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
-                event.metadata().origin().red(),
+                event.origin().red(),
                 format!("{}", event.metadata()).red()
             );
-            return;
+            return DeliveryStatus::Error;
         }
         if guard_against_out_of_order(&self.ltm, event.metadata()) {
             error!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
-                event.metadata().origin().blue(),
+                event.origin().blue(),
                 format!("{}", event.metadata()).red(),
                 format!("{:?}", event.op).green(),
             );
+            return DeliveryStatus::Pending;
         }
-        // Store the new event at the end of the causal buffer
-        // TODO: Check that this is correct
-        self.pending.push_back(event.clone());
-        // self.pending.make_contiguous().sort_by(|a, b| {
-        // TODO: partial_cmp is not safe
-        // if let Some(order) = a.metadata.partial_cmp(&b.metadata) {
-        //     order
-        // } else {
-        //     a.metadata().origin().cmp(b.metadata().origin())
-        // }
-        // });
-        let mut still_pending = VecDeque::new();
-        while let Some(event) = self.pending.pop_front() {
-            // If the event is causally ready, and
-            // it belongs to the current view...
-            if !guard_against_out_of_order(&self.ltm, event.metadata())
-                && event.metadata().view_id() == self.view_id()
-            {
-                // ...deliver it
+        DeliveryStatus::Ready
+    }
+
+    fn try_deliver_pending(&mut self) {
+        let mut i = 0;
+        while i < self.pending.len() {
+            if let DeliveryStatus::Ready = self.can_deliver(&self.pending[i]) {
+                let event = self.pending.remove(i).unwrap();
                 self.tc_deliver(event);
+                i = 0; // Restart from the beginning after each successful delivery
             } else {
-                // ...otherwise, keep it in the buffer (including events from the next views)
-                still_pending.push_back(event);
+                i += 1;
             }
         }
-        self.pending = still_pending;
+    }
+
+    /// Broadcast a new domain-specific operation to all peers and deliver it to the local state.
+    pub fn tc_bcast(&mut self, op: L::Op) -> Event<L::Op> {
+        let event = self.create_event(op);
+        self.tc_deliver(event.clone());
+        #[cfg(feature = "tracer")]
+        self.tracer.append::<L>(event.clone());
+        event
     }
 
     /// Deliver an event to the local state.
@@ -187,16 +184,15 @@ where
             "[{}] - Delivering event {} from {} with timestamp {}",
             self.id.blue().bold(),
             format!("{:?}", event.op).green(),
-            event.metadata().origin().blue(),
+            event.origin().blue(),
             format!("{}", event.metadata()).red()
         );
         // If the event is not from the local replica
-        if self.id != event.metadata().origin() {
+        if self.id != event.origin() {
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
-            self.ltm
-                .merge_clock(event.metadata().origin(), event.metadata());
+            self.ltm.merge_clock(event.origin(), event.metadata());
             self.my_clock_mut().merge(event.metadata());
 
             #[cfg(feature = "tracer")]
@@ -227,9 +223,18 @@ where
                 svv
             );
             return;
+        } else {
+            self.lsv = svv.clone();
+            debug!("[{}] - LSV updated to: {}", self.id.blue().bold(), self.lsv);
         }
 
         // TODO: Delegate to the log to collect the events and stabilize them given a stable timestamp
+
+        println!(
+            "[{}] - Collecting events to stabilize with SVV: {}",
+            self.id.blue().bold(),
+            svv
+        );
 
         let ready_to_stabilize = self.state.collect_events(
             &svv,
@@ -238,11 +243,12 @@ where
                 None,
             ),
         );
-        if !ready_to_stabilize.is_empty() {
-            self.lsv = svv;
-        } else {
-            debug!("[{}] - SVV: {}", self.id.blue().bold(), svv);
-        }
+
+        println!(
+            "[{}] - events ready to stabilize -> {:?}",
+            self.id.blue().bold(),
+            ready_to_stabilize
+        );
 
         for event in &ready_to_stabilize {
             debug!(
@@ -322,6 +328,7 @@ where
             self.id.blue().bold()
         );
         self.tc_stable();
+
         // assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
         let new_view = &Rc::clone(&self.group_membership.installing_view().unwrap().data);
         self.ltm.change_view(new_view);
@@ -350,39 +357,34 @@ where
 
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
     pub fn waiting_from(&self) -> HashSet<String> {
-        // Let consider a distributed systems where nodes exchange messages with a vector clock where
-        // process id are maped to integers. Each peer have a pending array of received messages that are
-        // not causally ready to be delivered. Give me the algorithm that returns the list of peers whose
-        // local peer is waiting for messages to deliver those previously received.
         let mut waiting_from = HashSet::<String>::new();
         for event in self.pending.iter() {
             assert!(
-                event.metadata().origin() != self.id,
+                event.origin() != self.id,
                 "Local peer should not be in the pending list. Event: {:?}",
                 event
             );
-            let sending_peer_clock = self.ltm.get(event.metadata().origin()).unwrap();
-            let sending_peer_lamport = sending_peer_clock.get(event.metadata().origin()).unwrap();
+            let sending_peer_clock = self.ltm.get(event.origin()).unwrap();
+            let sending_peer_lamport = sending_peer_clock.get(event.origin()).unwrap();
             if event.metadata().dot() > sending_peer_lamport {
-                waiting_from.insert(event.metadata().origin().to_owned());
+                waiting_from.insert(event.origin().to_owned());
             }
         }
         waiting_from
     }
 
-    fn new_clock_for_op(&mut self, op: &L::Op) -> VecDeque<Clock<Partial>> {
+    fn create_event(&mut self, op: L::Op) -> Event<L::Op> {
         if let Some(v) = self.group_membership.installing_view().cloned() {
             info!(
                 "[{}] - Creating event while installing view {}",
                 self.id.blue().bold(),
                 v.data.id,
             );
-            todo!("Not implemented yet");
-            // let my_clock = self.my_clock_mut();
-            // let val = my_clock.increment();
-            // let mut new_clock = DependencyClock::new(&Rc::clone(&v.data), &my_id);
-            // new_clock.set(&my_id, my_clock_value);
-            // new_clock
+            let my_clock = self.my_clock_mut();
+            let val = my_clock.increment();
+            let mut new_clock = Clock::<Partial>::new(&Rc::clone(&v.data), &self.id);
+            new_clock.set(&self.id, val);
+            Event::new(op, new_clock)
         } else {
             let my_clock = self.my_clock_mut();
             my_clock.increment();
@@ -390,8 +392,9 @@ where
             let dot = Dot::from(self.my_clock());
 
             let mut clocks = VecDeque::new();
-            self.state.deps(&mut clocks, view, &dot, op);
-            clocks
+            println!("[{}] - state {:?}", self.id.blue().bold(), self.state);
+            self.state.deps(&mut clocks, view, &dot, &op);
+            Event::new_nested(op.clone(), clocks)
         }
     }
 

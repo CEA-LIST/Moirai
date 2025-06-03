@@ -2,12 +2,12 @@
 use anyhow::Result;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::{collections::VecDeque, fmt::Debug};
 #[cfg(feature = "serde")]
 use std::{fs::File, io::Write, path::Path};
 
 use crate::{
-    clocks::dependency_clock::DependencyClock,
+    clocks::clock::{Clock, Partial},
     protocol::{event::Event, log::Log},
 };
 
@@ -25,7 +25,7 @@ pub struct Tracer {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct TracerEvent {
-    pub(super) metadata: DependencyClock,
+    pub(super) metadata: VecDeque<Clock<Partial>>,
     pub(super) op: String,
 }
 

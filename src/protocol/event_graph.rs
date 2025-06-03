@@ -354,7 +354,7 @@ where
         let mut events = self.collect_events(&upper_bound, &since.clock);
         events.retain(|event| {
             !since.exclude.contains(&Dot::from(event.metadata()))
-                && event.metadata().origin() != since.clock.origin()
+                && event.origin() != since.clock.origin()
         });
 
         events
@@ -454,6 +454,12 @@ where
     ) {
         let mut new_clock = Clock::<Partial>::new(&Rc::clone(view), dot.origin());
         for dot in self.heads.iter() {
+            if dot.view().id != view.id {
+                // If the dot is not from the current view, skip it
+                // After a view change, the heads may contain dots from the previous view
+                // TODO: clean the heads after a view change
+                continue;
+            }
             new_clock.set(dot.origin(), dot.val());
         }
         new_clock.set(dot.origin(), dot.val());
