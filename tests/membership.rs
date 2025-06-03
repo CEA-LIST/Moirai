@@ -153,6 +153,10 @@ fn rejoin() {
     batch(vec![&tcsb_a, &tcsb_c], &mut tcsb_b);
     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
 
+    println!("{:?}", tcsb_b.state);
+    println!("Matrix Clock A {}", tcsb_a.ltm);
+    println!("Matrix Clock B {}", tcsb_b.ltm);
+
     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
         tcsb.mark_view_installed();
     }

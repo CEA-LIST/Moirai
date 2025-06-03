@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
-    clocks::dependency_clock::Clock,
+    clocks::clock::{Clock, Partial},
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
@@ -67,7 +67,7 @@ where
         Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
-    fn stabilize(_metadata: &Clock, _state: &mut EventGraph<Self>) {}
+    fn stabilize(_metadata: &Clock<Partial>, _state: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut set = stable.clone();

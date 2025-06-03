@@ -10,7 +10,7 @@ use petgraph::visit::Dfs;
 use super::aw_set::AWSet;
 use crate::{
     clocks::{
-        clock::{Clock, Full},
+        clock::{Clock, Full, Partial},
         dot::Dot,
     },
     protocol::{
@@ -88,7 +88,7 @@ where
                 let log_metadata = if let Some(m) = event.metadata.get(1) {
                     m.clone()
                 } else {
-                    Clock::new(&event.metadata().view, event.metadata().origin())
+                    Clock::<Partial>::new(&event.metadata().view, event.origin())
                 };
 
                 let log_event = Event::new(v.clone(), log_metadata);
@@ -104,7 +104,7 @@ where
                 if let Some(v) = self.values.get_mut(k) {
                     // compute the vector clock of the remove operation
                     let mut vector_clock =
-                        Clock::new_full(&event.metadata().view, Some(event.metadata().origin()));
+                        Clock::<Full>::new(&event.metadata().view, Some(event.origin()));
 
                     let mut dfs = Dfs::new(
                         &self.keys.unstable,
@@ -129,7 +129,11 @@ where
         }
     }
 
-    fn collect_events(&self, upper_bound: &Clock, lower_bound: &Clock) -> Vec<Event<Self::Op>> {
+    fn collect_events(
+        &self,
+        upper_bound: &Clock<Full>,
+        lower_bound: &Clock<Full>,
+    ) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
         for (k, v) in &self.values {
             events.extend(
@@ -183,9 +187,9 @@ where
         map
     }
 
-    fn stabilize(&mut self, _: &Clock) {}
+    fn stabilize(&mut self, _: &Clock<Partial>) {}
 
-    fn purge_stable_metadata(&mut self, metadata: &Clock) {
+    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>) {
         self.keys.purge_stable_metadata(metadata);
         self.values
             .iter_mut()
@@ -200,7 +204,13 @@ where
         self.keys.size()
     }
 
-    fn deps(&self, clocks: &mut VecDeque<Clock>, view: &Rc<ViewData>, dot: &Dot, op: &Self::Op) {
+    fn deps(
+        &self,
+        clocks: &mut VecDeque<Clock<Partial>>,
+        view: &Rc<ViewData>,
+        dot: &Dot,
+        op: &Self::Op,
+    ) {
         match op {
             AWMap::Update(k, v) => {
                 self.keys.deps(clocks, view, dot, &AWSet::Add(k.clone()));
@@ -209,7 +219,7 @@ where
                 } else {
                     // If the key does not exist, we still need to add the dependency
                     // for the update operation.
-                    let mut new_clock = Clock::new(view, dot.origin());
+                    let mut new_clock = Clock::<Partial>::new(view, dot.origin());
                     new_clock.set(dot.origin(), dot.val());
                     clocks.push_back(new_clock);
                 }

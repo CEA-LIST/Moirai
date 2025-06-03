@@ -81,4 +81,6 @@ pub trait Log: Default + Debug {
     fn is_empty(&self) -> bool;
 
     fn size(&self) -> usize;
+
+    // fn can_deliver(&self, event: &Event<Self::Op>) -> bool;
 }
