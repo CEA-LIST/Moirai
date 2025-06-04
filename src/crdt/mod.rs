@@ -60,7 +60,7 @@ pub mod test_util {
                 break;
             }
             assert_eq!(tcsbs[i].view_id(), tcsbs[i + 1].view_id());
-            assert_eq!(tcsbs[i].ltm, tcsbs[i + 1].ltm);
+            assert_eq!(tcsbs[i].ltm.clock(), tcsbs[i + 1].ltm.clock());
         }
         tcsbs
     }
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn two_members() {
+    fn test_n_members() {
         let _ = n_members::<EventGraph<Counter<i32>>>(8);
     }
 }

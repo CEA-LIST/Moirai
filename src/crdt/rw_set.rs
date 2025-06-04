@@ -1,10 +1,7 @@
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
-    clocks::{
-        clock::{Clock, Partial},
-        dot::Dot,
-    },
+    clocks::dot::Dot,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
@@ -78,9 +75,9 @@ where
         Self::redundant_by_when_redundant(old_op, is_conc, new_op)
     }
 
-    fn stabilize(metadata: &Clock<Partial>, state: &mut EventGraph<Self>) {
+    fn stabilize(dot: &Dot, state: &mut EventGraph<Self>) {
         //Get the op
-        let op = state.get_op(&Dot::from(metadata)).unwrap();
+        let op = state.get_op(dot).unwrap();
 
         let is_stable_or_unstable = |v: &V| {
             // Is there an already stable op (add or rmv) with the same value?
@@ -93,21 +90,21 @@ where
                 || state.stable.0.contains(v)
             // Is there another unstable op (add or rmv, not the current op) with the same value?
             || state.unstable.node_indices().zip(state.unstable.node_weights()).any(|(idx, op)| {
-				let dot = state.dot_index_map.get_by_right(&idx).unwrap();
+				let other_dot = state.dot_index_map.get_by_right(&idx).unwrap();
 				match op {
-					RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && *dot != Dot::from(metadata),
+					RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && other_dot != dot,
 					_ => false,
 				}
 			})
         };
 
         // Should we remove the op?
-        let to_remove =
-            match &op {
-                // If it's a 'add' op, remove it if another operation with the same value exists
-                RWSet::Add(v) => is_stable_or_unstable(v),
-                // If it's a 'remove' op, remove it if there is no 'add' op with the same value
-                RWSet::Remove(v) => !state
+        let to_remove = match &op {
+            // If it's a 'add' op, remove it if another operation with the same value exists
+            RWSet::Add(v) => is_stable_or_unstable(v),
+            // If it's a 'remove' op, remove it if there is no 'add' op with the same value
+            RWSet::Remove(v) => {
+                !state
                     .stable
                     .1
                     .iter()
@@ -117,11 +114,12 @@ where
                         .node_indices()
                         .zip(state.unstable.node_weights())
                         .any(|(idx, op)| {
-                            let dot = state.dot_index_map.get_by_right(&idx).unwrap();
-                            matches!(op, RWSet::Add(v2) if v == v2 && Dot::from(metadata) != *dot)
-                        }),
-                RWSet::Clear => true,
-            };
+                            let other_dot = state.dot_index_map.get_by_right(&idx).unwrap();
+                            matches!(op, RWSet::Add(v2) if v == v2 && dot != other_dot)
+                        })
+            }
+            RWSet::Clear => true,
+        };
 
         // If it's a 'add' op and there exists a stable remove op with the same value, remove it
         if let RWSet::Add(v) = op {
@@ -136,7 +134,7 @@ where
         }
 
         if to_remove {
-            state.remove_dot(&Dot::from(metadata));
+            state.remove_dot(dot);
         }
     }
 

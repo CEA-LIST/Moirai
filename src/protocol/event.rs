@@ -49,8 +49,16 @@ where
     O: Debug,
 {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        // TODO: improve the nesting display
         write!(f, "[")?;
-        write!(f, "{:?}, {}", self.op, self.metadata())?;
+        write!(f, "{:?},", self.op)?;
+        for (i, c) in self.metadata.iter().enumerate() {
+            if i + 1 == self.metadata.len() {
+                write!(f, "{}", c)?;
+            } else {
+                write!(f, "{} -> ", c)?;
+            }
+        }
         write!(f, "]")?;
         Ok(())
     }
