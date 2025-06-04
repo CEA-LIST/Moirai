@@ -80,18 +80,13 @@ RUST_LOG=debug cargo test <name> -- --nocapture
 - Special case: partitioned process, how to optimize?
 - Table of operations to dot for quick access?
 - Very large graphs can be slow to traverse, especially for computing causality.
-- If `depth(u) >= depth(v)`, then **`u` cannot reach `v`**. But if
-  `depth(u) < depth(v)`, **`u` may or may not reach `v`**, so you still need to
-  explore the graph
-
-## To-do
-
-- Add a reliable broadcast layer (message buffering) and implement pulling at
-  this layer.
 - When there is a chain of events, comparing causality could be done faster by
   creating a shortcut path from the head event to the first event in the chain.
   By adding a weight to that shortcut, we can avoid traversing the entire chain.
-- Incrementally add depth to the graph to help with causality.
+
+# To-do
+
+- [ ] Serialize the event's view only once, not for each operation.
 
 ## Helpers
 
