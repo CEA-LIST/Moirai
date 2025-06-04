@@ -1,7 +1,10 @@
 use std::{collections::VecDeque, rc::Rc};
 
 use crate::{
-    clocks::{dependency_clock::DependencyClock, dot::Dot},
+    clocks::{
+        clock::{Clock, Full, Partial},
+        dot::Dot,
+    },
     protocol::{event::Event, log::Log, membership::ViewData, pulling::Since},
 };
 
@@ -58,26 +61,14 @@ where
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &DependencyClock) {
-        self.first.purge_stable_metadata(metadata);
-        self.second.purge_stable_metadata(metadata);
+    fn purge_stable_metadata(&mut self, dot: &Dot) {
+        self.first.purge_stable_metadata(dot);
+        self.second.purge_stable_metadata(dot);
     }
 
-    fn collect_events(
-        &self,
-        upper_bound: &DependencyClock,
-        lower_bound: &DependencyClock,
-    ) -> Vec<Event<Self::Op>> {
-        let events_fl = self.first.collect_events(upper_bound, lower_bound);
-        let events_sl = self.second.collect_events(upper_bound, lower_bound);
-        let mut result = vec![];
-        for e in events_fl {
-            result.push(Event::new(Duet::First(e.op.clone()), e.metadata().clone()));
-        }
-        for e in events_sl {
-            result.push(Event::new(Duet::Second(e.op.clone()), e.metadata().clone()));
-        }
-        result
+    fn stable_by_clock(&mut self, clock: &Clock<Full>) {
+        self.first.stable_by_clock(clock);
+        self.second.stable_by_clock(clock);
     }
 
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
@@ -96,7 +87,7 @@ where
         result
     }
 
-    fn r_n(&mut self, metadata: &DependencyClock, conservative: bool) {
+    fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {
         self.first.r_n(metadata, conservative);
         self.second.r_n(metadata, conservative);
     }
@@ -118,30 +109,26 @@ where
         (self.first.eval(), self.second.eval())
     }
 
-    fn stabilize(&mut self, metadata: &DependencyClock) {
-        self.first.stabilize(metadata);
-        self.second.stabilize(metadata);
+    fn stabilize(&mut self, dot: &Dot) {
+        self.first.stabilize(dot);
+        self.second.stabilize(dot);
     }
 
     fn is_empty(&self) -> bool {
         self.first.is_empty() && self.second.is_empty()
     }
 
-    fn size(&self) -> usize {
-        self.first.size() + self.second.size()
-    }
-
     fn deps(
-        &self,
-        node: &mut VecDeque<DependencyClock>,
+        &mut self,
+        clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,
         op: &Self::Op,
     ) {
         match op {
-            Duet::First(ref op) => self.first.deps(node, view, dot, op),
+            Duet::First(ref op) => self.first.deps(clocks, view, dot, op),
             Duet::Second(ref op) => {
-                self.second.deps(node, view, dot, op);
+                self.second.deps(clocks, view, dot, op);
             }
         }
     }

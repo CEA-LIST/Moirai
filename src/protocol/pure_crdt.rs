@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 
+use crate::clocks::dot::Dot;
+
 use super::{event_graph::EventGraph, stable::Stable};
-use crate::clocks::dependency_clock::DependencyClock;
 
 /// An op-based CRDT is pure if disseminated messages contain only the operation and its potential arguments.
 pub trait PureCRDT: Clone + Debug {
@@ -23,7 +24,7 @@ pub trait PureCRDT: Clone + Debug {
     /// R0 defines which operations in the current PO-Log become redundant
     /// given the delivery of the new operation.
     /// R0 is used when the new arrival is discarded being redundant.
-    /// `true` means the operation is redundant and can be discarded immediately.`
+    /// `true` means the operation is redundant and can be discarded immediately.
     fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
@@ -36,7 +37,7 @@ pub trait PureCRDT: Clone + Debug {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(metadata: &DependencyClock, state: &mut EventGraph<Self>);
+    fn stabilize(dot: &Dot, state: &mut EventGraph<Self>);
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.

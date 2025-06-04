@@ -1,5 +1,4 @@
 use crate::{
-    clocks::clock::Clock,
     crdt::test_util::n_members,
     protocol::{event::Event, log::Log},
 };
