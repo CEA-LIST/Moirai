@@ -61,26 +61,14 @@ where
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>) {
-        self.first.purge_stable_metadata(metadata);
-        self.second.purge_stable_metadata(metadata);
+    fn purge_stable_metadata(&mut self, dot: &Dot) {
+        self.first.purge_stable_metadata(dot);
+        self.second.purge_stable_metadata(dot);
     }
 
-    fn collect_events(
-        &self,
-        upper_bound: &Clock<Full>,
-        lower_bound: &Clock<Full>,
-    ) -> Vec<Event<Self::Op>> {
-        let events_fl = self.first.collect_events(upper_bound, lower_bound);
-        let events_sl = self.second.collect_events(upper_bound, lower_bound);
-        let mut result = vec![];
-        for e in events_fl {
-            result.push(Event::new(Duet::First(e.op.clone()), e.metadata().clone()));
-        }
-        for e in events_sl {
-            result.push(Event::new(Duet::Second(e.op.clone()), e.metadata().clone()));
-        }
-        result
+    fn stable_by_clock(&mut self, clock: &Clock<Full>) {
+        self.first.stable_by_clock(clock);
+        self.second.stable_by_clock(clock);
     }
 
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
@@ -121,21 +109,17 @@ where
         (self.first.eval(), self.second.eval())
     }
 
-    fn stabilize(&mut self, metadata: &Clock<Partial>) {
-        self.first.stabilize(metadata);
-        self.second.stabilize(metadata);
+    fn stabilize(&mut self, dot: &Dot) {
+        self.first.stabilize(dot);
+        self.second.stabilize(dot);
     }
 
     fn is_empty(&self) -> bool {
         self.first.is_empty() && self.second.is_empty()
     }
 
-    fn size(&self) -> usize {
-        self.first.size() + self.second.size()
-    }
-
     fn deps(
-        &self,
+        &mut self,
         clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,

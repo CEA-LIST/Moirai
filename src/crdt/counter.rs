@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::{
-    clocks::clock::{Clock, Partial},
+    clocks::dot::Dot,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
@@ -72,7 +72,7 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
         counter
     }
 
-    fn stabilize(_metadata: &Clock<Partial>, _state: &mut EventGraph<Self>) {}
+    fn stabilize(_dot: &Dot, _state: &mut EventGraph<Self>) {}
 }
 
 impl<V> Display for Counter<V>

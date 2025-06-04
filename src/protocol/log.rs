@@ -21,12 +21,6 @@ pub trait Log: Default + Debug {
 
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool);
 
-    fn collect_events(
-        &self,
-        upper_bound: &Clock<Full>,
-        lower_bound: &Clock<Full>,
-    ) -> Vec<Event<Self::Op>>;
-
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>>;
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool;
@@ -43,7 +37,7 @@ pub trait Log: Default + Debug {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(&mut self, metadata: &Clock<Partial>);
+    fn stabilize(&mut self, dot: &Dot);
 
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
@@ -59,19 +53,23 @@ pub trait Log: Default + Debug {
         }
     }
 
-    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>);
+    fn purge_stable_metadata(&mut self, dot: &Dot);
+
+    fn stable_by_clock(&mut self, clock: &Clock<Full>);
 
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),
     /// by replacing a (t′, o′) pair that is present in the returned PO-Log by (⊥,o′)
-    fn stable(&mut self, metadata: &Clock<Partial>) {
-        self.stabilize(metadata);
+    fn stable(&mut self, dot: &Dot) {
+        self.stabilize(dot);
         // The operation may have been removed by `stabilize`
-        self.purge_stable_metadata(metadata);
+        self.purge_stable_metadata(dot);
     }
 
+    /// Create the clocks, including nested ones, for a given operation.
+    /// The clocks are the direct dependencies of the operation.
     fn deps(
-        &self,
+        &mut self,
         clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,
@@ -79,8 +77,4 @@ pub trait Log: Default + Debug {
     );
 
     fn is_empty(&self) -> bool;
-
-    fn size(&self) -> usize;
-
-    // fn can_deliver(&self, event: &Event<Self::Op>) -> bool;
 }

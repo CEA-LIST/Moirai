@@ -8,10 +8,7 @@ use std::{
 use tsify::Tsify;
 
 use crate::{
-    clocks::{
-        clock::{Clock, Partial},
-        dot::Dot,
-    },
+    clocks::dot::Dot,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
 };
 
@@ -21,16 +18,6 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
     Reset,
-}
-
-impl<V: Add + AddAssign + SubAssign + Default + Copy> Counter<V> {
-    fn to_value(&self) -> V {
-        match self {
-            Counter::Inc(v) => *v,
-            Counter::Dec(v) => *v,
-            Counter::Reset => panic!("Cannot convert Reset to value"),
-        }
-    }
 }
 
 impl<V> Stable<Counter<V>> for V
@@ -79,30 +66,7 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         false
     }
 
-    fn stabilize(metadata: &Clock<Partial>, state: &mut EventGraph<Self>) {
-        if state.stable.is_empty() {
-            state.stable.push(Counter::Inc(V::default()));
-        }
-        if state.stable.get(1).is_none() {
-            state.stable.push(Counter::Dec(V::default()));
-        }
-        let op = state.remove_dot(&Dot::from(metadata)).unwrap();
-        match op {
-            Counter::Inc(v) => {
-                state.stable[0] = state.stable.first().map_or_else(
-                    || Counter::Inc(V::default()),
-                    |w| Counter::Inc(w.to_value() + v),
-                );
-            }
-            Counter::Dec(v) => {
-                state.stable[1] = state.stable.get(1).map_or_else(
-                    || Counter::Dec(V::default()),
-                    |w| Counter::Dec(w.to_value() + v),
-                );
-            }
-            _ => {}
-        }
-    }
+    fn stabilize(_: &Dot, _: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut counter = Self::Value::default();
@@ -133,7 +97,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::{resettable_counter::Counter, test_util::twins},
+        crdt::{
+            resettable_counter::Counter,
+            test_util::{triplet, twins},
+        },
         protocol::event_graph::EventGraph,
     };
 
@@ -174,6 +141,30 @@ mod tests {
         let result = 13;
         assert_eq!(tcsb_a.eval(), result);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
+    #[test_log::test]
+    pub fn concurrent_counter() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<EventGraph<Counter<isize>>>();
+
+        let event_a_1 = tcsb_a.tc_bcast(Counter::Dec(1));
+        tcsb_b.try_deliver(event_a_1.clone());
+
+        let event_b_1 = tcsb_b.tc_bcast(Counter::Reset);
+        let event_c_1 = tcsb_c.tc_bcast(Counter::Inc(18));
+
+        tcsb_a.try_deliver(event_b_1.clone());
+        tcsb_a.try_deliver(event_c_1.clone());
+
+        tcsb_b.try_deliver(event_c_1);
+
+        tcsb_c.try_deliver(event_b_1);
+        tcsb_c.try_deliver(event_a_1);
+
+        let result = 18;
+        assert_eq!(tcsb_a.eval(), result);
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_a.eval(), tcsb_c.eval());
     }
 
     #[cfg(feature = "utils")]

@@ -1,4 +1,4 @@
-use log::error;
+use log::{debug, error};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -106,15 +106,17 @@ where
     pub fn deliver_batch(&mut self, batch: Result<Batch<L::Op>, DeliveryError>) {
         match batch {
             Ok(batch) => {
+                debug!(
+                    "Delivering batch from {} with {} events.",
+                    batch.metadata.origin(),
+                    batch.events.len()
+                );
                 for event in batch.events {
                     if self.id != event.origin() {
                         self.try_deliver(event);
                     }
                 }
-                self.ltm
-                    .get_mut(batch.metadata.origin())
-                    .unwrap()
-                    .merge(&batch.metadata);
+                debug_assert!(self.ltm.is_valid());
             }
             Err(e) => match e {
                 DeliveryError::UnknownPeer => {

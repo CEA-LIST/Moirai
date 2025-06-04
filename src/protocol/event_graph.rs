@@ -1,11 +1,9 @@
-// #[cfg(feature = "utils")]
-// use deepsize::DeepSizeOf;
 use log::{debug, error};
 use ordermap::OrderSet;
 use petgraph::{
     graph::NodeIndex,
     prelude::StableDiGraph,
-    visit::{Dfs, EdgeRef},
+    visit::{Dfs, EdgeRef, Visitable},
     Direction,
 };
 #[cfg(feature = "serde")]
@@ -173,6 +171,21 @@ where
         }
         Event::new(op.clone(), dependency_clock)
     }
+
+    fn node_indices_from_clock(&self, clock: &Clock<Full>) -> Vec<NodeIndex> {
+        clock
+            .clock
+            .iter()
+            .filter_map(|(origin, cnt)| {
+                if *cnt == 0 {
+                    None
+                } else {
+                    let dot = Dot::new(*origin, *cnt, &clock.view);
+                    self.dot_index_map.get_by_left(&dot).cloned()
+                }
+            })
+            .collect()
+    }
 }
 
 impl<O> Default for EventGraph<O>
@@ -269,94 +282,34 @@ where
         }
     }
 
-    /// Returns a list of events that are in the past of the given metadata
-    fn collect_events(
-        &self,
-        upper_bound: &Clock<Full>,
-        lower_bound: &Clock<Full>,
-    ) -> Vec<Event<Self::Op>> {
-        let start_nodes: Vec<NodeIndex> = upper_bound
-            .clock
-            .iter()
-            .filter_map(|(origin, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                let dot = Dot::new(*origin, *cnt, &upper_bound.view);
-                self.dot_index_map.get_by_left(&dot).cloned()
-            })
-            .collect();
-
-        let end_nodes: HashSet<NodeIndex> = lower_bound
-            .clock
-            .iter()
-            .filter_map(|(origin, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                let dot = Dot::new(*origin, *cnt, &lower_bound.view);
-                self.dot_index_map.get_by_left(&dot).cloned()
-            })
-            .collect();
-
-        let mut events = Vec::new();
-        let mut visited = HashSet::new();
-
-        for start in start_nodes {
-            let mut stack = Vec::new();
-            stack.push(start);
-            while let Some(node_idx) = stack.pop() {
-                if visited.insert(node_idx) {
-                    if end_nodes.contains(&node_idx) {
-                        continue;
-                    }
-                    let event = self.event_from_idx(&node_idx);
-                    events.push(event);
-                    for edge in self.unstable.edges(node_idx) {
-                        let target = edge.target();
-                        stack.push(target);
-                    }
-                }
-            }
-        }
-
-        events.dedup_by(|a, b| a.metadata == b.metadata);
-        events
-    }
-
     /// Collect events since the given metadata.
     /// Exclude the events that are in the `since.exclude` list.
     /// Technically, this does the inverse of `collect_events`.
     /// `collect_events` returns the events that are in the past of the given metadata
     /// and `collect_events_since` returns the events that are in the future/concurrent of the given metadata.
     fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-        let idxs: Vec<NodeIndex> = self
-            .unstable
-            .node_indices()
-            .filter(|&node| {
-                self.unstable
-                    .neighbors_directed(node, Direction::Incoming)
-                    .next()
-                    .is_none()
-            })
-            .collect();
-
-        let dots = idxs
+        let end_nodes = self.node_indices_from_clock(&since.clock);
+        let start_nodes: Vec<NodeIndex> = self
+            .heads
             .iter()
-            .filter_map(|&node| self.dot_index_map.get_by_right(&node))
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut upper_bound = Clock::<Full>::new(&Rc::clone(&since.clock.view), None);
-        for dot in dots {
-            upper_bound.set(dot.origin(), dot.val());
+            .filter_map(|dot| self.dot_index_map.get_by_left(dot).cloned())
+            .collect();
+        let mut events = Vec::new();
+
+        let discovered = self.unstable.visit_map();
+        let mut dfs = Dfs::from_parts(start_nodes, discovered);
+
+        while let Some(nx) = dfs.next(&self.unstable) {
+            // Skip the nodes that are in the exclude list
+            let dot = self.dot_index_map.get_by_right(&nx).unwrap();
+            if since.exclude.contains(dot)
+                || dot.origin() == since.clock.origin()
+                || end_nodes.contains(&nx)
+            {
+                continue;
+            }
+            events.push(self.event_from_idx(&nx));
         }
-
-        let mut events = self.collect_events(&upper_bound, &since.clock);
-        events.retain(|event| {
-            !since.exclude.contains(&Dot::from(event.metadata()))
-                && event.origin() != since.clock.origin()
-        });
-
         events
     }
 
@@ -397,6 +350,7 @@ where
                 }
             }
         } else {
+            // Every ops become a tombstone
             self.non_tombstones.clear();
         }
     }
@@ -410,21 +364,20 @@ where
         O::eval(&self.stable, &unstable)
     }
 
-    fn stabilize(&mut self, metadata: &Clock<Partial>) {
-        O::stabilize(metadata, self);
+    fn stabilize(&mut self, dot: &Dot) {
+        O::stabilize(dot, self);
     }
 
     /// Move the op to the stable part of the graph
-    fn purge_stable_metadata(&mut self, metadata: &Clock<Partial>) {
+    fn purge_stable_metadata(&mut self, dot: &Dot) {
         // The dot may have been removed in the `stabilize` function
-        let dot = Dot::from(metadata);
-        let node_idx = self.dot_index_map.get_by_left(&dot);
+        let node_idx = self.dot_index_map.get_by_left(dot);
 
         if let Some(node_idx) = node_idx {
             // If the remove was successful, then the op was not a tombstone
             let was_not_tombstone = self.non_tombstones.remove(node_idx);
             let op = self.unstable.remove_node(*node_idx);
-            self.dot_index_map.remove_by_left(&dot);
+            self.dot_index_map.remove_by_left(dot);
             if let Some(op) = op {
                 if was_not_tombstone {
                     self.stable.apply(op);
@@ -435,32 +388,45 @@ where
         }
     }
 
+    fn stable_by_clock(&mut self, clock: &Clock<Full>) {
+        let start_nodes = self.node_indices_from_clock(clock);
+
+        let discovered = self.unstable.visit_map();
+        let mut dfs = Dfs::from_parts(start_nodes, discovered);
+
+        while let Some(nx) = dfs.next(&self.unstable) {
+            let dot = self.dot_index_map.get_by_right(&nx).unwrap().clone();
+            self.stable(&dot);
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.stable.is_default()
             && (self.unstable.node_count() == 0 || self.non_tombstones.is_empty())
     }
 
-    // TODO: remove this method (not needed)
-    fn size(&self) -> usize {
-        self.unstable.node_count()
-    }
+    // fn test_stable(&mut self, metadata: &Clock<Full>) {}
 
     fn deps(
-        &self,
+        &mut self,
         clocks: &mut VecDeque<Clock<Partial>>,
         view: &Rc<ViewData>,
         dot: &Dot,
         _op: &Self::Op,
     ) {
         let mut new_clock = Clock::<Partial>::new(&Rc::clone(view), dot.origin());
+        let mut to_remove: Vec<Dot> = Vec::new();
         for dot in self.heads.iter() {
             if dot.view().id != view.id {
                 // If the dot is not from the current view, skip it
                 // After a view change, the heads may contain dots from the previous view
-                // TODO: clean the heads after a view change
+                to_remove.push(dot.clone());
                 continue;
             }
             new_clock.set(dot.origin(), dot.val());
+        }
+        for dot in to_remove {
+            self.heads.remove(&dot);
         }
         new_clock.set(dot.origin(), dot.val());
         clocks.push_back(new_clock);

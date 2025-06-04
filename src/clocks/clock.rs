@@ -221,6 +221,11 @@ impl<S: ClockState> Clock<S> {
     pub fn sum(&self) -> usize {
         self.clock.values().sum()
     }
+
+    /// A clock is "empty" is it contains no entry or every entry is a 0
+    pub fn is_empty(&self) -> bool {
+        self.clock.len() == 0 || !self.clock.iter().any(|(_, v)| *v > 0)
+    }
 }
 
 impl<S: ClockState> From<&Clock<S>> for Dot {

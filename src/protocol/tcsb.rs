@@ -64,10 +64,17 @@ where
     /// Create a new TCSB instance.
     pub fn new(id: &str) -> Self {
         let views = Views::new(vec![id.to_string()]);
+        let id_pos = views
+            .installed_view()
+            .data
+            .members
+            .iter()
+            .position(|m| m == id)
+            .unwrap_or_else(|| panic!("Member {} not found in view", id));
         Self {
             id: id.to_string(),
             state: L::new(),
-            ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data)),
+            ltm: MatrixClock::new(&Rc::clone(&views.installed_view().data), id_pos),
             lsv: Clock::<Full>::new(&Rc::clone(&views.installed_view().data), None),
             group_membership: views,
             pending: VecDeque::new(),
@@ -192,8 +199,8 @@ where
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
-            self.ltm.merge_clock(event.origin(), event.metadata());
             self.my_clock_mut().merge(event.metadata());
+            self.ltm.merge_clock(event.origin(), event.metadata());
 
             #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
@@ -228,36 +235,7 @@ where
             debug!("[{}] - LSV updated to: {}", self.id.blue().bold(), self.lsv);
         }
 
-        // TODO: Delegate to the log to collect the events and stabilize them given a stable timestamp
-
-        println!(
-            "[{}] - Collecting events to stabilize with SVV: {}",
-            self.id.blue().bold(),
-            svv
-        );
-
-        let ready_to_stabilize = self.state.collect_events(
-            &svv,
-            &Clock::<Full>::new(
-                &Rc::clone(&self.group_membership.installed_view().data),
-                None,
-            ),
-        );
-
-        println!(
-            "[{}] - events ready to stabilize -> {:?}",
-            self.id.blue().bold(),
-            ready_to_stabilize
-        );
-
-        for event in &ready_to_stabilize {
-            debug!(
-                "[{}] - Event {} is ready to be stabilized",
-                self.id.blue().bold(),
-                format!("{}", Dot::from(event.metadata())).green()
-            );
-            self.state.stable(event.metadata());
-        }
+        self.state.stable_by_clock(&svv);
     }
 
     /// Transfer the state of a replica to another replica.
@@ -331,28 +309,30 @@ where
 
         // assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
         let new_view = &Rc::clone(&self.group_membership.installing_view().unwrap().data);
-        self.ltm.change_view(new_view);
-        self.group_membership.mark_installed();
-        if !self.group_members().contains(&self.id) {
-            self.group_membership = Views::new(vec![self.id.to_string()]);
-            self.ltm
-                .change_view(&self.group_membership.installed_view().data.clone());
-            self.tc_stable();
+        let pos_id = new_view.members.iter().position(|m| m == &self.id);
+
+        match pos_id {
+            Some(pos) => {
+                self.ltm.change_view(new_view, pos);
+                self.group_membership.mark_installed();
+            }
+            None => {
+                self.group_membership = Views::new(vec![self.id.to_string()]);
+                self.ltm
+                    .change_view(&self.group_membership.installed_view().data.clone(), 0);
+                self.tc_stable();
+            }
         }
     }
 
     /// Return the mutable vector clock of the local replica
     pub fn my_clock_mut(&mut self) -> &mut Clock<Full> {
-        self.ltm
-            .get_mut(&self.id)
-            .expect("Local vector clock not found")
+        self.ltm.origin_clock_mut()
     }
 
     /// Return the vector clock of the local replica
     pub fn my_clock(&self) -> &Clock<Full> {
-        self.ltm
-            .get(&self.id)
-            .expect("Local vector clock not found")
+        self.ltm.origin_clock()
     }
 
     /// Returns the list of peers whose local peer is waiting for messages to deliver those previously received.
@@ -392,7 +372,6 @@ where
             let dot = Dot::from(self.my_clock());
 
             let mut clocks = VecDeque::new();
-            println!("[{}] - state {:?}", self.id.blue().bold(), self.state);
             self.state.deps(&mut clocks, view, &dot, &op);
             Event::new_nested(op.clone(), clocks)
         }
@@ -455,5 +434,14 @@ where
         self.ltm.most_update(&self.id);
         self.state = state.state;
         self.group_membership = state.group_membership;
+        let pos_id = self
+            .group_membership
+            .installed_view()
+            .data
+            .members
+            .iter()
+            .position(|m| m == &self.id)
+            .expect("Local peer id should be in the group membership");
+        self.ltm.set_id(pos_id);
     }
 }
