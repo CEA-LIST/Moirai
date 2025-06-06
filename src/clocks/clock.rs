@@ -40,7 +40,7 @@ impl ClockState for Partial {}
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
-pub struct Clock<S: ClockState> {
+pub struct Clock<S> {
     pub(crate) view: Rc<ViewData>,
     /// The key is the index of the member in the members list
     /// The value is the version of the last event by this member, known by this version vector

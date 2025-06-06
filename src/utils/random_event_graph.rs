@@ -12,6 +12,7 @@ where
     let mut tcsbs = n_members::<L>(n_proc);
 
     for _ in 0..(n_event - n_event % n_proc / n_proc) {
+        // For each event, we randomly choose a process and an operation
         for i in 0..n_proc {
             let mut rng = rand::rng();
             let nums: Vec<usize> = (1..100).collect();
@@ -88,7 +89,7 @@ mod tests {
     fn generate_counter() {
         let ops = vec![Counter::Inc(1), Counter::Dec(1), Counter::Reset];
         let n_proc = 5;
-        let n_event = 10;
+        let n_event = 10_000;
 
         let tcsbs = generate_event_graph::<EventGraph<Counter<isize>>>(&ops, n_proc, n_event);
 

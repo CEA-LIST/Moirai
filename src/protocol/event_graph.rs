@@ -1,5 +1,4 @@
 use log::{debug, error};
-use ordermap::OrderSet;
 use petgraph::{
     graph::NodeIndex,
     prelude::StableDiGraph,
@@ -42,7 +41,7 @@ where
     pub stable: Op::Stable,
     pub unstable: StableDiGraph<Op, ()>,
     pub dot_index_map: DotIndexMap,
-    pub non_tombstones: OrderSet<NodeIndex>,
+    pub non_tombstones: HashSet<NodeIndex>,
     // Contains the heads of the graph
     // The heads are the nodes that have no incoming edges
     // It includes the nodes that are not in the graph anymore (that are in the stable part)
@@ -58,7 +57,7 @@ where
             stable: Default::default(),
             unstable: StableDiGraph::new(),
             dot_index_map: DotIndexMap::new(),
-            non_tombstones: OrderSet::new(),
+            non_tombstones: HashSet::new(),
             heads: HashSet::new(),
         }
     }
@@ -130,6 +129,7 @@ where
         self.unstable.node_weight(*node_idx).cloned()
     }
 
+    /// Complexity: O(n + m), where n is the number of nodes and m is the number of edges in the graph.
     pub fn causal_predecessors(&self, dot: &Dot) -> HashSet<NodeIndex> {
         if dot.val() == 0 {
             // If the dot is a zero value, it has no predecessors
@@ -251,10 +251,12 @@ where
             }
         }
 
+        /// Complexity: O(n), where n is the number of nodes in the unstable part of the graph.
         fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
             let new_dot = Dot::from(event.metadata());
             let predecessors = graph.causal_predecessors(&new_dot);
 
+            // TODO: can we compare the non-tombstones rather?
             for node_idx in graph.unstable.node_indices() {
                 let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
                 if *other_dot == new_dot {
@@ -404,8 +406,6 @@ where
         self.stable.is_default()
             && (self.unstable.node_count() == 0 || self.non_tombstones.is_empty())
     }
-
-    // fn test_stable(&mut self, metadata: &Clock<Full>) {}
 
     fn deps(
         &mut self,

@@ -130,15 +130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ego-tree"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2972feb8dffe7bc8c5463b1dacda1b0dfbed3710e50f977d965429692d74cd8"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "env_filter"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -218,7 +209,6 @@ checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
 dependencies = [
  "equivalent",
  "hashbrown",
- "serde",
 ]
 
 [[package]]
@@ -296,16 +286,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ordermap"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d31b8b7a99f71bdff4235faf9ce9eada0ad3562c8fbeb7d607d9f41a6ec569d"
-dependencies = [
- "indexmap",
- "serde",
-]
-
-[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,10 +317,8 @@ dependencies = [
  "bimap",
  "colored",
  "deepsize",
- "ego-tree",
  "env_logger",
  "log",
- "ordermap",
  "petgraph",
  "po-crdt-proc",
  "rand",

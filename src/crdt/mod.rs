@@ -30,20 +30,21 @@ pub mod test_util {
     }
 
     pub fn n_members<L: Log>(n: usize) -> Vec<Tcsb<L>> {
-        assert!(n > 1, "The number of members must be greater than 1");
-        assert!(
-            n <= 26,
-            "The number of members must be less than or equal to 26"
-        );
+        // assert!(n > 1, "The number of members must be greater than 1");
         let mut tcsbs = Vec::new();
-        let alphabet = "abcdefghijklmnopqrstuvwxyz";
-        let alphabet = alphabet.chars().collect::<Vec<char>>();
-        for i in alphabet.iter().take(n) {
+        let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
+        let mut idx = 0;
+        for _ in 0..n {
+            let c1 = alphabet[(idx / (26 * 26)) % 26];
+            let c2 = alphabet[(idx / 26) % 26];
+            let c3 = alphabet[idx % 26];
+            let id = format!("{}{}{}", c1, c2, c3);
             #[cfg(feature = "tracer")]
-            let tcsb = Tcsb::new_with_trace(&i.to_string());
+            let tcsb = Tcsb::new_with_trace(&id);
             #[cfg(not(feature = "tracer"))]
-            let tcsb = Tcsb::<L>::new(&i.to_string());
+            let tcsb = Tcsb::<L>::new(&id);
             tcsbs.push(tcsb);
+            idx += 1;
         }
         let view_content = tcsbs
             .iter()

@@ -43,6 +43,7 @@ impl MatrixClock {
     pub fn change_view(&mut self, new_view: &Rc<ViewData>, id: usize) {
         let mut new_matrix_clock = MatrixClock::new(new_view, id);
 
+        // TODO: resetting the clocks.
         for (i, new_d) in new_matrix_clock.clock.iter_mut() {
             for (j, c) in new_d.clock.iter_mut() {
                 let i_member = &new_matrix_clock.view.members[*i];
@@ -88,8 +89,8 @@ impl MatrixClock {
         None
     }
 
-    pub fn merge_clock<S: ClockState>(&mut self, member: &str, clock: &Clock<S>) {
-        let i = self.view.members.iter().position(|m| m == member).unwrap();
+    pub fn merge_clock<S: ClockState>(&mut self, clock: &Clock<S>) {
+        let i = clock.origin.unwrap();
         self.clock.get_mut(&i).unwrap().merge(clock);
         debug_assert!(self.is_valid());
     }
@@ -106,18 +107,54 @@ impl MatrixClock {
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
-    pub fn svv(&self, id: &str, ignore: &[&String]) -> Clock<Full> {
-        let mut svv = self
-            .get(id)
-            .unwrap_or_else(|| panic!("Member {} not found", id))
-            .clone();
+    pub fn svv(&self, ignore: &[&String]) -> Clock<Full> {
+        let mut svv = self.clock[&self.id].clone();
         for (o, d) in &self.clock {
             if !ignore.contains(&&self.view.members[*o]) {
                 svv = Clock::<Full>::min(&svv, d);
             }
         }
-        svv.origin = None;
         svv
+    }
+
+    pub fn incremental_svv<S: ClockState>(
+        &self,
+        new_clock: &Clock<S>,
+        lsv: &Clock<Full>,
+        ignore: &[&String],
+    ) -> Clock<Full> {
+        if self.len() == 1 {
+            // If the matrix clock has only one member, the SVV is the origin clock
+            return self.origin_clock().clone();
+        }
+        if self.len() == 2 {
+            let pos = if self.id == 0 { 1 } else { 0 };
+            // If the matrix clock has two members, the SVV is the other clock
+            return self.clock.get(&pos).unwrap().clone();
+        }
+        let mut new_lsv = lsv.clone();
+        // only the keys in new_clock have changed
+        for (o, i) in new_clock.iter() {
+            // if the value is greater than the current lsv and it is not the origin or the matrix size is ,
+            // then we must recompute the min for that column
+            if i > lsv.clock.get(o).unwrap() && new_clock.origin.unwrap() != *o {
+                let mut min = *lsv.clock.get(o).unwrap();
+                for c in self.clock.iter() {
+                    if c.0 != o && !ignore.contains(&&self.view.members[*c.0]) {
+                        let val = c.1.clock.get(o).unwrap();
+                        if *val < min || min == 0 {
+                            min = *val;
+                        }
+                    }
+                }
+                new_lsv
+                    .clock
+                    .entry(*o)
+                    .and_modify(|v| *v = min)
+                    .or_insert(min);
+            }
+        }
+        new_lsv
     }
 
     pub fn merge(&mut self, other: &MatrixClock) {
@@ -132,7 +169,7 @@ impl MatrixClock {
 
     /// Update the given key in the matrix clock with the value of the other keys
     pub fn most_update(&mut self, key: &str) {
-        let i = self.view.members.iter().position(|m| m == key).unwrap();
+        let i = self.view.member_pos(key).unwrap();
         let mut max = Clock::<Full>::new(&self.view, Some(key));
         for d in self.clock.values() {
             max.merge(d);
@@ -269,7 +306,40 @@ mod tests {
     #[test_log::test]
     fn svv() {
         let m = MatrixClock::build(&view_ab(), 0, &[&[10, 2], &[8, 6]]);
-        assert_eq!(m.svv("A", &[]), Clock::build(&view_ab(), None, &[8, 2]));
+        assert_eq!(m.svv(&[]), Clock::build(&view_ab(), None, &[8, 2]));
+    }
+
+    #[test_log::test]
+    fn incremental_svv() {
+        let mut lsv = Clock::build(&view_ab(), None, &[0, 0]);
+        let mut m = MatrixClock::build(&view_ab(), 0, &[&[0, 0], &[0, 0]]);
+        let c_1: Clock<Full> = Clock::build(&view_ab(), Some("A"), &[1, 0]);
+        m.merge_clock(&c_1);
+        assert_eq!(
+            m.incremental_svv(&c_1, &mut lsv, &[]),
+            Clock::build(&view_ab(), None, &[0, 0])
+        );
+        let c_2: Clock<Full> = Clock::build(&view_ab(), Some("B"), &[0, 1]);
+        m.get_mut("A").unwrap().merge(&c_2);
+        m.merge_clock(&c_2);
+        assert_eq!(
+            m.incremental_svv(&c_2, &mut lsv, &[]),
+            Clock::build(&view_ab(), None, &[0, 1])
+        );
+        let c_3: Clock<Full> = Clock::build(&view_ab(), Some("A"), &[2, 1]);
+        m.get_mut("A").unwrap().merge(&c_3);
+        m.merge_clock(&c_3);
+        assert_eq!(
+            m.incremental_svv(&c_3, &mut lsv, &[]),
+            Clock::build(&view_ab(), None, &[0, 1])
+        );
+        let c_4: Clock<Full> = Clock::build(&view_ab(), Some("B"), &[2, 2]);
+        m.get_mut("A").unwrap().merge(&c_4);
+        m.merge_clock(&c_4);
+        assert_eq!(
+            m.incremental_svv(&c_4, &mut lsv, &[]),
+            Clock::build(&view_ab(), None, &[2, 2])
+        );
     }
 
     #[test_log::test]
@@ -287,7 +357,7 @@ mod tests {
     fn svv_ignore() {
         let mc = MatrixClock::build(&view_abc(), 0, &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
         assert_eq!(
-            mc.svv("A", &[&"C".to_string()]),
+            mc.svv(&[&"C".to_string()]),
             Clock::build(&view_abc(), None, &[2, 5, 1])
         );
     }
