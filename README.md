@@ -23,6 +23,7 @@ hyperfine 'cargo test --release'
 cargo install flamegraph
 cargo flamegraph --root --dev --unit-test po-crdt -- test_graph
 cargo flamegraph --test eval_nested
+cargo flamegraph --root --release --example <name>
 ```
 
 ### Memory used

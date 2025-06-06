@@ -200,28 +200,33 @@ where
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
             self.my_clock_mut().merge(event.metadata());
-            self.ltm.merge_clock(event.origin(), event.metadata());
+            self.ltm.merge_clock(event.metadata());
 
             #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
         }
 
+        let new_clock = event.metadata().clone();
         self.state.effect(event);
 
         // Check if some operations are ready to be stabilized
-        self.tc_stable();
+        self.tc_stable(&Some(new_clock));
     }
 
     /// The TCSB middleware can offer this causal stability information through extending its API with tcstablei(τ),
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
-    pub fn tc_stable(&mut self) {
+    pub fn tc_stable(&mut self, new_clock: &Option<Clock<Partial>>) {
         let ignore = self.group_membership.leaving_members(&self.id);
         info!(
             "[{}] - Starting the stability phase with ignore list {:?}",
             self.id.blue().bold(),
             ignore
         );
-        let svv = self.ltm.svv(&self.id, &ignore);
+
+        let svv = match new_clock {
+            Some(c) => self.ltm.incremental_svv(&c, &self.lsv, &ignore),
+            None => self.ltm.svv(&ignore),
+        };
 
         if svv == self.lsv {
             debug!(
@@ -305,7 +310,7 @@ where
             "[{}] - Marking the installing view as installed",
             self.id.blue().bold()
         );
-        self.tc_stable();
+        self.tc_stable(&None);
 
         // assert!(self.state.lowest_view_id() == 0 || self.state.lowest_view_id() > self.view_id());
         let new_view = &Rc::clone(&self.group_membership.installing_view().unwrap().data);
@@ -314,13 +319,18 @@ where
         match pos_id {
             Some(pos) => {
                 self.ltm.change_view(new_view, pos);
+                self.lsv = Clock::<Full>::new(&Rc::clone(new_view), None);
                 self.group_membership.mark_installed();
             }
             None => {
                 self.group_membership = Views::new(vec![self.id.to_string()]);
                 self.ltm
                     .change_view(&self.group_membership.installed_view().data.clone(), 0);
-                self.tc_stable();
+                self.lsv = Clock::<Full>::new(
+                    &Rc::clone(&self.group_membership.installed_view().data),
+                    None,
+                );
+                self.tc_stable(&None);
             }
         }
     }
