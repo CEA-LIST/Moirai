@@ -251,29 +251,31 @@ where
             }
         }
 
-        /// Complexity: O(n), where n is the number of nodes in the unstable part of the graph.
         fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
             let new_dot = Dot::from(event.metadata());
             let predecessors = graph.causal_predecessors(&new_dot);
 
-            // TODO: can we compare the non-tombstones rather?
-            for node_idx in graph.unstable.node_indices() {
+            let mut to_remove = Vec::new();
+            for node_idx in graph.non_tombstones.iter() {
                 let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
                 if *other_dot == new_dot {
                     // We don't want to compare the event with itself
                     continue;
                 }
 
-                let op = graph.unstable.node_weight(node_idx).unwrap();
+                let op = graph.unstable.node_weight(*node_idx).unwrap();
                 let is_conc = !predecessors.contains(&node_idx);
 
                 if is_r {
                     if O::redundant_by_when_redundant(op, is_conc, &event.op) {
-                        graph.non_tombstones.remove(&node_idx);
+                        to_remove.push(*node_idx);
                     }
                 } else if O::redundant_by_when_not_redundant(op, is_conc, &event.op) {
-                    graph.non_tombstones.remove(&node_idx);
+                    to_remove.push(*node_idx);
                 }
+            }
+            for node_idx in to_remove {
+                graph.non_tombstones.remove(&node_idx);
             }
 
             if is_r {
