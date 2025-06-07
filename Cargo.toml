@@ -24,7 +24,7 @@ deepsize = { version = "0.2.0", optional = true }
 po-crdt-proc = { path = "proc" }
 
 [features]
-default = ["crdt"]
+default = ["crdt", "utils"]
 tracer = []
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]

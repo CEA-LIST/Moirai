@@ -114,46 +114,45 @@ impl MatrixClock {
                 svv = Clock::<Full>::min(&svv, d);
             }
         }
+        svv.origin = None;
         svv
     }
 
+    /// Incrementally update the Stable Version Vector (SVV) given a new clock and the last SVV.
+    /// Only recomputes columns that have changed.
     pub fn incremental_svv<S: ClockState>(
         &self,
         new_clock: &Clock<S>,
         lsv: &Clock<Full>,
         ignore: &[&String],
     ) -> Clock<Full> {
-        if self.len() == 1 {
-            // If the matrix clock has only one member, the SVV is the origin clock
-            return self.origin_clock().clone();
+        match self.len() {
+            1 => return self.origin_clock().clone(),
+            2 => {
+                let pos = if self.id == 0 { 1 } else { 0 };
+                return self.clock.get(&pos).unwrap().clone();
+            }
+            _ => {}
         }
-        if self.len() == 2 {
-            let pos = if self.id == 0 { 1 } else { 0 };
-            // If the matrix clock has two members, the SVV is the other clock
-            return self.clock.get(&pos).unwrap().clone();
-        }
+
         let mut new_lsv = lsv.clone();
-        // only the keys in new_clock have changed
-        for (o, i) in new_clock.iter() {
-            // if the value is greater than the current lsv and it is not the origin or the matrix size is ,
-            // then we must recompute the min for that column
-            if i > lsv.clock.get(o).unwrap() && new_clock.origin.unwrap() != *o {
-                let mut min = *lsv.clock.get(o).unwrap();
-                for c in self.clock.iter() {
-                    if c.0 != o && !ignore.contains(&&self.view.members[*c.0]) {
-                        let val = c.1.clock.get(o).unwrap();
-                        if *val < min || min == 0 {
-                            min = *val;
-                        }
-                    }
-                }
-                new_lsv
+        let origin = new_clock.origin.expect("Clock must have an origin");
+
+        for (&o, &new_val) in &new_clock.clock {
+            let lsv_val = lsv.clock.get(&o).copied().unwrap_or(0);
+            if new_val > lsv_val && o != origin {
+                let min = self
                     .clock
-                    .entry(*o)
-                    .and_modify(|v| *v = min)
-                    .or_insert(min);
+                    .values()
+                    .filter(|_| !ignore.contains(&&self.view.members[o]))
+                    .filter_map(|c| c.clock.get(&o))
+                    .min()
+                    .copied()
+                    .unwrap_or(lsv_val);
+                new_lsv.clock.insert(o, min);
             }
         }
+
         new_lsv
     }
 
