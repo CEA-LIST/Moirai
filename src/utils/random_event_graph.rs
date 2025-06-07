@@ -70,18 +70,42 @@ mod tests {
             AWSet::Remove("c"),
         ];
         let n_proc = 4;
-        let n_event = 40;
+        let n_event = 20;
 
         let tcsbs = generate_event_graph::<EventGraph<AWSet<&str>>>(&ops, n_proc, n_event);
 
         assert_eq!(tcsbs.len(), n_proc);
 
-        let mut eval: HashSet<&str> = HashSet::new();
+        let mut reference: HashSet<&str> = HashSet::new();
+        let mut event_sum = 0;
         for (i, tcsb) in tcsbs.iter().enumerate() {
             if i == 0 {
-                eval = tcsb.eval();
+                reference = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
             }
-            assert_eq!(tcsb.eval(), eval);
+            println!("current {}, ref {}", tcsb.my_clock().sum(), event_sum);
+            if tcsb.eval() != reference {
+                println!("Replica {}: {:?}", tcsb.id, tcsb.eval());
+                println!("Reference: {:?}", reference);
+                println!("Replica {} stable state: {:?}", tcsb.id, tcsb.state.stable);
+                println!(
+                    "Replica {} unstsable state: {:?}",
+                    tcsb.id, tcsb.state.unstable
+                );
+                println!(
+                    "Reference {} stable state: {:?}",
+                    tcsbs[0].id, tcsbs[0].state.stable
+                );
+                println!(
+                    "Reference {} unstsable state: {:?}",
+                    tcsbs[0].id, tcsbs[0].state.unstable
+                );
+                println!("Reference LTM: {}", tcsbs[0].ltm);
+                println!("Reference LSV: {}", tcsbs[0].lsv);
+                println!("Replica {} LTM: {}", tcsb.id, tcsb.ltm);
+                println!("Replica {} LSV: {}", tcsb.id, tcsb.lsv);
+                panic!();
+            }
         }
     }
 

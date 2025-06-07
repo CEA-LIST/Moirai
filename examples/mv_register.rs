@@ -8,7 +8,7 @@ fn main() {
     // Obviously, increasing the number of members will increase the
     // memory usage (one LTM per member, which is in Theta(n^2)).
     // Time complexity increase when we are not alone because no op is stabilized
-    let mut tcsbs = n_members::<EventGraph<MVRegister<i32>>>(2);
+    let mut tcsbs = n_members::<EventGraph<MVRegister<i32>>>(1);
 
     let max = 40_000;
 

@@ -30,22 +30,36 @@ pub mod test_util {
     }
 
     pub fn n_members<L: Log>(n: usize) -> Vec<Tcsb<L>> {
-        // assert!(n > 1, "The number of members must be greater than 1");
         let mut tcsbs = Vec::new();
         let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
-        let mut idx = 0;
-        for _ in 0..n {
-            let c1 = alphabet[(idx / (26 * 26)) % 26];
-            let c2 = alphabet[(idx / 26) % 26];
-            let c3 = alphabet[idx % 26];
-            let id = format!("{}{}{}", c1, c2, c3);
+        let alpha_len = alphabet.len();
+
+        // Determine the minimum number of chars needed for unique ids
+        let mut chars_needed = 1;
+        let mut max_ids = alpha_len;
+        while n > max_ids {
+            chars_needed += 1;
+            max_ids *= alpha_len;
+        }
+
+        for idx in 0..n {
+            // Generate id with the required number of chars
+            let mut id_chars = Vec::with_capacity(chars_needed);
+            let mut rem = idx;
+            for _ in 0..chars_needed {
+                id_chars.push(alphabet[rem % alpha_len]);
+                rem /= alpha_len;
+            }
+            id_chars.reverse();
+            let id: String = id_chars.into_iter().collect();
+
             #[cfg(feature = "tracer")]
             let tcsb = Tcsb::new_with_trace(&id);
             #[cfg(not(feature = "tracer"))]
             let tcsb = Tcsb::<L>::new(&id);
             tcsbs.push(tcsb);
-            idx += 1;
         }
+
         let view_content = tcsbs
             .iter()
             .map(|tcsb| tcsb.id.clone())
