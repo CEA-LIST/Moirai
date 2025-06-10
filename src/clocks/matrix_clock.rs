@@ -89,6 +89,10 @@ impl MatrixClock {
         None
     }
 
+    pub fn get_by_idx(&self, index: usize) -> Option<&Clock<Full>> {
+        self.clock.get(&index)
+    }
+
     pub fn merge_clock<S: ClockState>(&mut self, clock: &Clock<S>) {
         let i = clock.origin.unwrap();
         self.clock.get_mut(&i).unwrap().merge(clock);
@@ -251,7 +255,7 @@ impl MatrixClock {
             error!("Matrix clock is not square");
         }
         if !valid_entries {
-            error!("Matrix clock has invalid entries");
+            error!("Matrix clock has invalid entries: {}", self);
         }
         if !valid_origin_entries {
             error!("Matrix clock has invalid origin entries");

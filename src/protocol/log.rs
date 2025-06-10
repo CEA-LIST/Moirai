@@ -4,6 +4,7 @@ use super::{event::Event, membership::ViewData, pulling::Since};
 use crate::clocks::{
     clock::{Clock, Full, Partial},
     dot::Dot,
+    matrix_clock::MatrixClock,
 };
 
 pub trait Log: Default + Debug {
@@ -19,9 +20,9 @@ pub trait Log: Default + Debug {
 
     fn new_event(&mut self, event: &Event<Self::Op>);
 
-    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool);
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock);
 
-    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>>;
+    fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>>;
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool;
 
@@ -42,20 +43,22 @@ pub trait Log: Default + Debug {
     /// Apply the effect of an operation to the local state.
     /// Check if the operation is causally redundant and update the PO-Log accordingly.
     /// The event is added to the PO-Log during "prune redundant events".
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(&mut self, event: Event<Self::Op>, ltm: &MatrixClock) {
         self.new_event(&event);
         if self.any_r(&event) {
             // The operation is redundant
-            self.prune_redundant_events(&event, true);
+            self.prune_redundant_events(&event, true, ltm);
         } else {
             // The operation is not redundant
-            self.prune_redundant_events(&event, false);
+            self.prune_redundant_events(&event, false, ltm);
         }
     }
 
     fn purge_stable_metadata(&mut self, dot: &Dot);
 
     fn stable_by_clock(&mut self, clock: &Clock<Full>);
+
+    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full>;
 
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),

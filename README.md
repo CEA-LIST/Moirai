@@ -31,7 +31,7 @@ cargo flamegraph --root --release --example <name>
 ```sh
 cargo build --example <name> --release
 
-/usr/bin/time -l ./target/release/examples/aw_set_unstable 2>&1 | awk '
+/usr/bin/time -l ./target/release/examples/<name> 2>&1 | awk '
 /real/ { real_time = $1 }
 /user/ { user_time = $1 }
 /sys/ { sys_time = $1 }
@@ -85,7 +85,7 @@ RUST_LOG=debug cargo test <name> -- --nocapture
   creating a shortcut path from the head event to the first event in the chain.
   By adding a weight to that shortcut, we can avoid traversing the entire chain.
 
-# To-do
+## To-do
 
 - [ ] Serialize the event's view only once, not for each operation.
 

@@ -70,6 +70,14 @@ impl Clock<Full> {
             _state: std::marker::PhantomData,
         }
     }
+
+    /// Returns true if the clock is a predecessor of the given dot
+    /// Perform in `O(1)` time complexity
+    pub fn is_predecessor(&self, dot: &Dot) -> bool {
+        assert_eq!(self.view_id(), dot.view().id);
+        let self_val = self.get_by_idx(dot.origin_idx()).unwrap();
+        self_val >= dot.val()
+    }
 }
 
 impl Clock<Partial> {
@@ -193,6 +201,7 @@ impl<S: ClockState> Clock<S> {
     }
 
     /// Returns the value of the clock for the given member or None if the member is not in the clock or the value is not set
+    /// Perform in `O(n)` time complexity with n being the number of members in the view
     pub fn get(&self, member: &str) -> Option<usize> {
         let idx = self.view.members.iter().position(|m| m == member);
         if let Some(idx) = idx {
@@ -203,6 +212,10 @@ impl<S: ClockState> Clock<S> {
         None
     }
 
+    pub fn get_by_idx(&self, idx: usize) -> Option<usize> {
+        self.clock.get(&idx).cloned()
+    }
+
     pub fn set(&mut self, member: &str, value: usize) {
         let idx = self
             .view
@@ -210,6 +223,10 @@ impl<S: ClockState> Clock<S> {
             .iter()
             .position(|m| m == member)
             .unwrap_or_else(|| panic!("Member {} not found", member));
+        self.clock.insert(idx, value);
+    }
+
+    pub fn set_by_idx(&mut self, idx: usize, value: usize) {
         self.clock.insert(idx, value);
     }
 
@@ -271,7 +288,6 @@ impl<S: ClockState> Display for Clock<S> {
 }
 
 impl PartialOrd for Clock<Full> {
-    /// Will PANIC if the clocks are not vector clocks
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match self.view.id.cmp(&other.view.id) {
             Ordering::Less => return Some(Ordering::Less),

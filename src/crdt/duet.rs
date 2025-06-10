@@ -4,6 +4,7 @@ use crate::{
     clocks::{
         clock::{Clock, Full, Partial},
         dot::Dot,
+        matrix_clock::MatrixClock,
     },
     protocol::{event::Event, log::Log, membership::ViewData, pulling::Since},
 };
@@ -48,15 +49,15 @@ where
         }
     }
 
-    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock) {
         match &event.op {
             Duet::First(op) => {
                 let event = Event::new(op.clone(), event.metadata().clone());
-                self.first.prune_redundant_events(&event, is_r_0);
+                self.first.prune_redundant_events(&event, is_r_0, ltm);
             }
             Duet::Second(op) => {
                 let event = Event::new(op.clone(), event.metadata().clone());
-                self.second.prune_redundant_events(&event, is_r_0);
+                self.second.prune_redundant_events(&event, is_r_0, ltm);
             }
         }
     }
@@ -71,20 +72,31 @@ where
         self.second.stable_by_clock(clock);
     }
 
-    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+    fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>> {
         let mut result = self
             .first
-            .collect_events_since(since)
+            .collect_events_since(since, ltm)
             .into_iter()
             .map(|e| Event::new(Duet::First(e.op.clone()), e.metadata().clone()))
             .collect::<Vec<_>>();
         result.extend(
             self.second
-                .collect_events_since(since)
+                .collect_events_since(since, ltm)
                 .into_iter()
                 .map(|e| Event::new(Duet::Second(e.op.clone()), e.metadata().clone())),
         );
         result
+    }
+
+    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+        match &event.op {
+            Duet::First(op) => self
+                .first
+                .vector_clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+            Duet::Second(op) => self
+                .second
+                .vector_clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+        }
     }
 
     fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {

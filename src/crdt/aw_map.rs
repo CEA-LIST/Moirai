@@ -5,13 +5,12 @@ use std::{
     rc::Rc,
 };
 
-use petgraph::visit::Dfs;
-
 use super::aw_set::AWSet;
 use crate::{
     clocks::{
         clock::{Clock, Full, Partial},
         dot::Dot,
+        matrix_clock::MatrixClock,
     },
     protocol::{
         event::Event, event_graph::EventGraph, log::Log, membership::ViewData, pulling::Since,
@@ -79,52 +78,45 @@ where
         }
     }
 
-    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool) {
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock) {
         match &event.op {
             AWMap::Update(k, v) => {
                 let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
-                self.keys.prune_redundant_events(&aw_set_event, is_r_0);
+                self.keys.prune_redundant_events(&aw_set_event, is_r_0, ltm);
 
                 let log_metadata = if let Some(m) = event.metadata.get(1) {
                     m.clone()
                 } else {
-                    Clock::<Partial>::new(&event.metadata().view, event.origin())
+                    let mut clock = Clock::<Partial>::new(&event.metadata().view, event.origin());
+                    clock.set_by_idx(
+                        event.metadata().origin.unwrap(),
+                        event
+                            .metadata()
+                            .get_by_idx(event.metadata().origin.unwrap())
+                            .unwrap(),
+                    );
+                    clock
                 };
 
                 let log_event = Event::new(v.clone(), log_metadata);
                 self.values
                     .entry(k.clone())
                     .or_default()
-                    .prune_redundant_events(&log_event, is_r_0);
+                    .prune_redundant_events(&log_event, is_r_0, ltm);
             }
             AWMap::Remove(k) => {
                 let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
-                self.keys.prune_redundant_events(&event, is_r_0);
+                self.keys.prune_redundant_events(&event, is_r_0, ltm);
 
                 if let Some(v) = self.values.get_mut(k) {
                     if !event.metadata().is_empty() {
                         // compute the vector clock of the remove operation
-                        let mut vector_clock =
-                            Clock::<Full>::new(&event.metadata().view, Some(event.origin()));
 
-                        let mut dfs = Dfs::new(
-                            &self.keys.unstable,
-                            *self
-                                .keys
-                                .dot_index_map
-                                .get_by_left(&Dot::from(event.metadata()))
-                                .unwrap(),
-                        );
-
-                        while let Some(nx) = dfs.next(&self.keys.unstable) {
-                            let dot = self.keys.dot_index_map.get_by_right(&nx).unwrap();
-                            if dot.val() > vector_clock.get(dot.origin()).unwrap() {
-                                vector_clock.set(dot.origin(), dot.val());
-                            }
-                        }
+                        let vector_clock =
+                            ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
 
                         // The `true` here is what makes the map a Update-Wins Map
-                        v.r_n(&vector_clock, true);
+                        v.r_n(vector_clock, true);
                     }
                 }
             }
@@ -139,11 +131,24 @@ where
         }
     }
 
-    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
+    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+        match &event.op {
+            AWMap::Update(k, _) => {
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                self.keys.vector_clock_from_event(&aw_set_event)
+            }
+            AWMap::Remove(k) => {
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                self.keys.vector_clock_from_event(&event)
+            }
+        }
+    }
+
+    fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
         for (k, v) in &self.values {
             events.extend(
-                v.collect_events_since(since).into_iter().map(|e| {
+                v.collect_events_since(since, ltm).into_iter().map(|e| {
                     Event::new(AWMap::Update(k.clone(), e.op.clone()), e.metadata().clone())
                 }),
             );

@@ -67,9 +67,7 @@ where
         let id_pos = views
             .installed_view()
             .data
-            .members
-            .iter()
-            .position(|m| m == id)
+            .member_pos(id)
             .unwrap_or_else(|| panic!("Member {} not found in view", id));
         Self {
             id: id.to_string(),
@@ -200,14 +198,15 @@ where
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
             self.my_clock_mut().merge(event.metadata());
-            self.ltm.merge_clock(event.metadata());
+            let vc = self.state.vector_clock_from_event(&event);
+            self.ltm.merge_clock(&vc);
 
             #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
         }
 
         let new_clock = event.metadata().clone();
-        self.state.effect(event);
+        self.state.effect(event, &self.ltm);
 
         // Check if some operations are ready to be stabilized
         self.tc_stable(&Some(new_clock));
@@ -224,7 +223,7 @@ where
         );
 
         let svv = match new_clock {
-            Some(c) => self.ltm.incremental_svv(&c, &self.lsv, &ignore),
+            Some(c) => self.ltm.incremental_svv(c, &self.lsv, &ignore),
             None => self.ltm.svv(&ignore),
         };
 

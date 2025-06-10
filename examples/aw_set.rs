@@ -7,7 +7,7 @@ fn main() {
 
     let mut tcsb_arr = [tcsb_a, tcsb_b, tcsb_c, tcsb_d];
 
-    let max = 1_000_000;
+    let max = 20_000;
 
     for x in 0..max {
         for i in 0..tcsb_arr.len() {

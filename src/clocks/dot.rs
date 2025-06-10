@@ -10,7 +10,10 @@ use std::{
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::protocol::membership::ViewData;
+use crate::{
+    clocks::clock::{Clock, Partial},
+    protocol::membership::ViewData,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(
@@ -42,6 +45,10 @@ impl Dot {
         &self.view.members[self.origin]
     }
 
+    pub fn origin_idx(&self) -> usize {
+        self.origin
+    }
+
     pub fn val(&self) -> usize {
         self.counter
     }
@@ -50,6 +57,14 @@ impl Dot {
 impl Display for Dot {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "({}{})", self.origin(), self.counter)
+    }
+}
+
+impl From<&Dot> for Clock<Partial> {
+    fn from(dot: &Dot) -> Clock<Partial> {
+        let mut clock = Clock::<Partial>::new(&Rc::clone(&dot.view), dot.origin());
+        clock.set_by_idx(dot.origin, dot.counter);
+        clock
     }
 }
 

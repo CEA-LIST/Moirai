@@ -86,11 +86,13 @@ fn event_since_concurrent_complex_aw_set() {
     let _ = tcsb_b.tc_bcast(AWSet::Add("p"));
     let _ = tcsb_b.tc_bcast(AWSet::Remove("e"));
 
-    let batch = tcsb_a.events_since(&Since::new_from(&tcsb_b));
+    let since = Since::new_from(&tcsb_b);
+    let batch = tcsb_a.events_since(&since);
     assert_eq!(batch.clone().unwrap().events.len(), 3);
     tcsb_b.deliver_batch(batch);
 
-    let batch = tcsb_b.events_since(&Since::new_from(&tcsb_a));
+    let since = Since::new_from(&tcsb_a);
+    let batch = tcsb_b.events_since(&since);
     assert_eq!(batch.clone().unwrap().events.len(), 3);
     tcsb_a.deliver_batch(batch);
 
