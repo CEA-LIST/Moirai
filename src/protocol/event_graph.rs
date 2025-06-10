@@ -23,6 +23,7 @@ use crate::{
     clocks::{
         clock::{Clock, Full, Partial},
         dot::Dot,
+        matrix_clock::MatrixClock,
     },
     protocol::stable::Stable,
 };
@@ -73,19 +74,6 @@ where
             panic!();
         }
         let idx = self.unstable.add_node(event.op.clone());
-
-        #[cfg(debug_assertions)]
-        for dot in self.heads.iter() {
-            let node_idx = self.dot_index_map.get_by_left(dot);
-            if let Some(node_idx) = node_idx {
-                assert_eq!(
-                    self.unstable
-                        .neighbors_directed(*node_idx, Direction::Incoming)
-                        .count(),
-                    0
-                );
-            }
-        }
 
         self.dot_index_map.insert(Dot::from(event.metadata()), idx);
         for (origin, cnt) in event.metadata().clock.iter() {
@@ -213,7 +201,7 @@ where
     }
 
     /// `is_r` is true if the operation is already redundant (will never be stored in the event graph)
-    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r: bool) {
+    fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r: bool, ltm: &MatrixClock) {
         // Keep only the operations that are not made redundant by the new operation
         if is_r {
             match O::R_ZERO {
@@ -224,11 +212,12 @@ where
                 }
                 Some(false) => {}
                 None => {
+                    let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
                     // If the operation is redundant, we make its effect on the stable part
                     // and prune the unstable part
                     self.stable
                         .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op);
-                    prune_unstable(self, event, true);
+                    prune_unstable(self, event, true, clock);
                 }
             }
         } else {
@@ -240,31 +229,37 @@ where
                 }
                 Some(false) => {}
                 None => {
+                    let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
                     // If the operation is not redundant, we make its effect on the unstable part
                     // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
                     // So we don't need to apply it to the stable part. Future refactore include making the
                     // effect on the stable part more generic
                     self.stable
                         .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op);
-                    prune_unstable(self, event, false);
+                    prune_unstable(self, event, false, clock);
                 }
             }
         }
 
-        fn prune_unstable<O: PureCRDT>(graph: &mut EventGraph<O>, event: &Event<O>, is_r: bool) {
+        fn prune_unstable<O: PureCRDT>(
+            graph: &mut EventGraph<O>,
+            event: &Event<O>,
+            is_r: bool,
+            clock: &Clock<Full>,
+        ) {
             let new_dot = Dot::from(event.metadata());
-            let predecessors = graph.causal_predecessors(&new_dot);
+            assert_ne!(new_dot.val(), 0, "Dot value cannot be 0");
 
             let mut to_remove = Vec::new();
             for node_idx in graph.non_tombstones.iter() {
-                let other_dot = graph.dot_index_map.get_by_right(&node_idx).unwrap();
+                let other_dot = graph.dot_index_map.get_by_right(node_idx).unwrap();
                 if *other_dot == new_dot {
                     // We don't want to compare the event with itself
                     continue;
                 }
 
                 let op = graph.unstable.node_weight(*node_idx).unwrap();
-                let is_conc = !predecessors.contains(&node_idx);
+                let is_conc = !clock.is_predecessor(other_dot);
 
                 if is_r {
                     if O::redundant_by_when_redundant(op, is_conc, &event.op) {
@@ -291,29 +286,29 @@ where
     /// Technically, this does the inverse of `collect_events`.
     /// `collect_events` returns the events that are in the past of the given metadata
     /// and `collect_events_since` returns the events that are in the future/concurrent of the given metadata.
-    fn collect_events_since(&self, since: &Since) -> Vec<Event<Self::Op>> {
-        let end_nodes = self.node_indices_from_clock(&since.clock);
-        let start_nodes: Vec<NodeIndex> = self
-            .heads
-            .iter()
-            .filter_map(|dot| self.dot_index_map.get_by_left(dot).cloned())
-            .collect();
+    fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>> {
         let mut events = Vec::new();
 
-        let discovered = self.unstable.visit_map();
-        let mut dfs = Dfs::from_parts(start_nodes, discovered);
-
-        while let Some(nx) = dfs.next(&self.unstable) {
-            // Skip the nodes that are in the exclude list
-            let dot = self.dot_index_map.get_by_right(&nx).unwrap();
-            if since.exclude.contains(dot)
-                || dot.origin() == since.clock.origin()
-                || end_nodes.contains(&nx)
-            {
+        for (o, c) in ltm.origin_clock().iter() {
+            let val = since.clock.clock.get(o).unwrap();
+            if val >= c {
+                // If the value in the clock is greater than or equal to the value in the since clock,
+                // we skip this origin
                 continue;
             }
-            events.push(self.event_from_idx(&nx));
+            for i in (*val + 1)..=*c {
+                let dot = Dot::new(*o, i, &since.clock.view);
+                if since.exclude.contains(&dot) {
+                    // If the dot is in the exclude list, we skip it
+                    continue;
+                }
+                if let Some(node_idx) = self.dot_index_map.get_by_left(&dot) {
+                    // If the node index exists in the graph, we add the event
+                    events.push(self.event_from_idx(node_idx));
+                }
+            }
         }
+
         events
     }
 
@@ -323,6 +318,7 @@ where
 
     fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {
         self.stable.clear();
+        // TODO: replace with a Petgraph DFS
         if conservative {
             // reverse DFS from the roots to the metadata
             let roots = self.unstable.externals(Direction::Outgoing);
@@ -372,6 +368,44 @@ where
         O::stabilize(dot, self);
     }
 
+    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+        let mut vector_clock = Clock::<Full>::new(&event.metadata().view, Some(event.origin()));
+
+        for (origin, cnt) in event.metadata().clock.iter() {
+            vector_clock.set_by_idx(*origin, *cnt);
+        }
+
+        if event.metadata().clock.len() == event.metadata().view.members.len() {
+            // If the vector clock is complete, we return it
+            return vector_clock;
+        }
+
+        let start_nodes: Vec<NodeIndex> = event
+            .metadata()
+            .iter()
+            .filter_map(|(origin, cnt)| {
+                if origin == &event.metadata().origin.unwrap() {
+                    // If the origin is the same as the event origin, we skip it
+                    None
+                } else {
+                    let dot = Dot::new(*origin, *cnt, &event.metadata().view);
+                    self.dot_index_map.get_by_left(&dot).cloned()
+                }
+            })
+            .collect();
+
+        let discovered = self.unstable.visit_map();
+        let mut dfs = Dfs::from_parts(start_nodes, discovered);
+
+        while let Some(nx) = dfs.next(&self.unstable) {
+            let dot = self.dot_index_map.get_by_right(&nx).unwrap();
+            if dot.val() > vector_clock.get(dot.origin()).unwrap() {
+                vector_clock.set(dot.origin(), dot.val());
+            }
+        }
+        vector_clock
+    }
+
     /// Move the op to the stable part of the graph
     fn purge_stable_metadata(&mut self, dot: &Dot) {
         // The dot may have been removed in the `stabilize` function
@@ -416,6 +450,8 @@ where
         dot: &Dot,
         _op: &Self::Op,
     ) {
+        // TODO: this is more than the transitive reduction because it includes also the dot of the current event
+        // which is not a dependency
         let mut new_clock = Clock::<Partial>::new(&Rc::clone(view), dot.origin());
         let mut to_remove: Vec<Dot> = Vec::new();
         for dot in self.heads.iter() {

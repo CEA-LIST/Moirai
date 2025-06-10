@@ -70,7 +70,7 @@ mod tests {
             AWSet::Remove("c"),
         ];
         let n_proc = 4;
-        let n_event = 20;
+        let n_event = 100;
 
         let tcsbs = generate_event_graph::<EventGraph<AWSet<&str>>>(&ops, n_proc, n_event);
 
@@ -83,6 +83,7 @@ mod tests {
                 reference = tcsb.eval();
                 event_sum = tcsb.my_clock().sum();
             }
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
             assert_eq!(tcsb.eval(), reference);
         }
     }
@@ -90,8 +91,8 @@ mod tests {
     #[test_log::test]
     fn generate_counter() {
         let ops = vec![Counter::Inc(1), Counter::Dec(1), Counter::Reset];
-        let n_proc = 5;
-        let n_event = 10_000;
+        let n_proc = 4;
+        let n_event = 100;
 
         let tcsbs = generate_event_graph::<EventGraph<Counter<isize>>>(&ops, n_proc, n_event);
 

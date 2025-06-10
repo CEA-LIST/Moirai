@@ -98,7 +98,7 @@ where
             return Err(DeliveryError::UnknownPeer);
         }
 
-        let events = self.state.collect_events_since(since);
+        let events = self.state.collect_events_since(since, &self.ltm);
 
         Ok(Batch::new(events, self.my_clock().clone()))
     }
