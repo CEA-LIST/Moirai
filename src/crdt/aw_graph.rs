@@ -26,7 +26,7 @@ where
         matches!(new_op, Graph::RemoveVertex(_) | Graph::RemoveArc(_, _))
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, _: bool, new_op: &Self) -> bool {
         match (&old_op, &new_op) {
             (Graph::AddVertex(v1), Graph::AddVertex(v2)) => v1 == v2,
             (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => !is_conc && v1 == v2,
@@ -40,8 +40,13 @@ where
         }
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
-        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        is_conc: bool,
+        order: bool,
+        new_op: &Self,
+    ) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, order, new_op)
     }
 
     fn stabilize(_metadata: &Dot, _state: &mut EventGraph<Self>) {}

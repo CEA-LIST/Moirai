@@ -20,7 +20,11 @@ where
         (HashSet::default(), Vec::default()) == *self
     }
 
-    fn apply_redundant(&mut self, _rdnt: fn(&RWSet<V>, bool, &RWSet<V>) -> bool, op: &RWSet<V>) {
+    fn apply_redundant(
+        &mut self,
+        _rdnt: fn(&RWSet<V>, bool, bool, &RWSet<V>) -> bool,
+        op: &RWSet<V>,
+    ) {
         match op {
             RWSet::Add(v) => {
                 self.0.remove(v);
@@ -59,7 +63,7 @@ where
         matches!(new_op, RWSet::Clear)
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, _: bool, new_op: &Self) -> bool {
         !is_conc
             && (matches!(new_op, RWSet::Clear)
                 || match (&old_op, &new_op) {
@@ -71,8 +75,13 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
-        Self::redundant_by_when_redundant(old_op, is_conc, new_op)
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        is_conc: bool,
+        order: bool,
+        new_op: &Self,
+    ) -> bool {
+        Self::redundant_by_when_redundant(old_op, is_conc, order, new_op)
     }
 
     fn stabilize(dot: &Dot, state: &mut EventGraph<Self>) {
