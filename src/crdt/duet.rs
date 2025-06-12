@@ -88,14 +88,14 @@ where
         result
     }
 
-    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+    fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
         match &event.op {
             Duet::First(op) => self
                 .first
-                .vector_clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+                .clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
             Duet::Second(op) => self
                 .second
-                .vector_clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+                .clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
         }
     }
 

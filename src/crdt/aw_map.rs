@@ -65,6 +65,11 @@ where
                 let mut nested_clocks = event.metadata.clone();
                 nested_clocks.pop_front();
 
+                assert!(
+                    !nested_clocks.is_empty(),
+                    "AWMapLog: metadata should not be empty after popping the first element"
+                );
+
                 let log_event = Event::new_nested(v.clone(), nested_clocks);
                 self.values
                     .entry(k.clone())
@@ -131,27 +136,57 @@ where
         }
     }
 
-    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+    fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
         match &event.op {
             AWMap::Update(k, _) => {
                 let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
-                self.keys.vector_clock_from_event(&aw_set_event)
+                self.keys.clock_from_event(&aw_set_event)
             }
             AWMap::Remove(k) => {
                 let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
-                self.keys.vector_clock_from_event(&event)
+                self.keys.clock_from_event(&event)
             }
         }
     }
 
     fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
-        for (k, v) in &self.values {
-            events.extend(
-                v.collect_events_since(since, ltm).into_iter().map(|e| {
-                    Event::new(AWMap::Update(k.clone(), e.op.clone()), e.metadata().clone())
-                }),
-            );
+        let nested_ops: HashMap<K, Vec<Event<L::Op>>> = self
+            .values
+            .iter()
+            .map(|(k, log)| (k.clone(), log.collect_events_since(since, ltm)))
+            .collect();
+
+        for event in self.keys.collect_events_since(since, ltm) {
+            // println!("Processing event: {}", event);
+            // println!("state: {:?}", self.keys.unstable);
+            match &event.op {
+                AWSet::Add(k) => {
+                    let mut corresponding_op = nested_ops
+                        .get(k)
+                        .unwrap()
+                        .iter()
+                        .find(|e| Dot::from(e.metadata()) == Dot::from(event.metadata()))
+                        .unwrap()
+                        .clone();
+                    corresponding_op
+                        .metadata
+                        .push_front(event.metadata().clone());
+                    events.push(Event::new_nested(
+                        AWMap::Update(k.clone(), corresponding_op.op.clone()),
+                        corresponding_op.metadata.clone(),
+                    ));
+                }
+                AWSet::Remove(k) => {
+                    events.push(Event::new(
+                        AWMap::Remove(k.clone()),
+                        event.metadata().clone(),
+                    ));
+                }
+                AWSet::Clear => {
+                    panic!("AWMapLog: Clear operation is not supported");
+                }
+            }
         }
         events
     }

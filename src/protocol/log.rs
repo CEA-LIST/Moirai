@@ -58,7 +58,7 @@ pub trait Log: Default + Debug {
 
     fn stable_by_clock(&mut self, clock: &Clock<Full>);
 
-    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full>;
+    fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full>;
 
     /// The `stable` handler invokes `stabilize` and then strips
     /// the timestamp (if the operation has not been discarded by `stabilize`),
