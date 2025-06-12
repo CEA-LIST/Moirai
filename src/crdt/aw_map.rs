@@ -158,8 +158,6 @@ where
             .collect();
 
         for event in self.keys.collect_events_since(since, ltm) {
-            // println!("Processing event: {}", event);
-            // println!("state: {:?}", self.keys.unstable);
             match &event.op {
                 AWSet::Add(k) => {
                     let mut corresponding_op = nested_ops
@@ -213,8 +211,12 @@ where
 
     fn eval(&self) -> Self::Value {
         let mut map = HashMap::new();
-        for k in &self.keys.eval() {
-            map.insert(k.clone(), self.values.get(k).unwrap().eval());
+        let set = self.keys.eval();
+        for (k, v) in &self.values {
+            let val = v.eval();
+            if set.contains(k) {
+                map.insert(k.clone(), val);
+            }
         }
         map
     }

@@ -39,6 +39,11 @@ impl<O> Event<O> {
         &self.metadata[0]
     }
 
+    /// Returns the first level dependency clock
+    pub fn metadata_mut(&mut self) -> &mut Clock<Partial> {
+        &mut self.metadata[0]
+    }
+
     pub fn origin(&self) -> &str {
         self.metadata().origin()
     }

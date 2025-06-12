@@ -185,15 +185,15 @@ where
 
     /// Deliver an event to the local state.
     pub(super) fn tc_deliver(&mut self, event: Event<L::Op>) {
-        info!(
-            "[{}] - Delivering event {} from {} with timestamp {}",
-            self.id.blue().bold(),
-            format!("{:?}", event.op).green(),
-            event.origin().blue(),
-            format!("{}", event.metadata()).red()
-        );
         // If the event is not from the local replica
         if self.id != event.origin() {
+            info!(
+                "[{}] - Delivering event {} from {} with timestamp {}",
+                self.id.blue().bold(),
+                format!("{:?}", event.op).green(),
+                event.origin().blue(),
+                format!("{}", event).red()
+            );
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
@@ -203,10 +203,23 @@ where
 
             #[cfg(feature = "tracer")]
             self.tracer.append::<L>(event.clone());
+        } else {
+            info!(
+                "[{}] - Delivering local event {} with timestamp {}",
+                self.id.blue().bold(),
+                format!("{:?}", event.op).green(),
+                format!("{}", event).red()
+            );
         }
 
         let new_clock = event.metadata().clone();
         self.state.effect(event, &self.ltm);
+
+        debug!(
+            "[{}] - State eval: {}",
+            self.id.blue().bold(),
+            format!("{:?}", self.eval()).magenta()
+        );
 
         // Check if some operations are ready to be stabilized
         self.tc_stable(&Some(new_clock));
@@ -216,27 +229,26 @@ where
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     pub fn tc_stable(&mut self, new_clock: &Option<Clock<Partial>>) {
         let ignore = self.group_membership.leaving_members(&self.id);
-        info!(
-            "[{}] - Starting the stability phase with ignore list {:?}",
-            self.id.blue().bold(),
-            ignore
-        );
-
+        // debug!(
+        //     "[{}] - Checking stability with clock: {:?} and ignoring members: {:?}",
+        //     self.id.blue().bold(),
+        //     new_clock,
+        //     ignore
+        // );
         let svv = match new_clock {
             Some(c) => self.ltm.incremental_svv(c, &self.lsv, &ignore),
             None => self.ltm.svv(&ignore),
         };
 
         if svv == self.lsv {
-            debug!(
-                "[{}] - SVV is the same as LSV: {}",
-                self.id.blue().bold(),
-                svv
-            );
             return;
         } else {
             self.lsv = svv.clone();
-            debug!("[{}] - LSV updated to: {}", self.id.blue().bold(), self.lsv);
+            debug!(
+                "[{}] - LSV updated to: {}",
+                self.id.blue().bold(),
+                format!("{}", self.lsv).red()
+            );
         }
 
         self.state.stable_by_clock(&svv);
