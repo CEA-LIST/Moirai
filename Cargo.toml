@@ -21,7 +21,6 @@ petgraph = { version = "0.6.4", features = ["serde-1"] }
 tsify = { version = "0.5.5", optional = true }
 wasm-bindgen = { version = "0.2.100", optional = true }
 deepsize = { version = "0.2.0", optional = true }
-po-crdt-proc = { path = "proc" }
 
 [features]
 default = ["crdt", "utils"]

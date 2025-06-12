@@ -320,22 +320,12 @@ dependencies = [
  "env_logger",
  "log",
  "petgraph",
- "po-crdt-proc",
  "rand",
  "serde",
  "serde_json",
  "test-log",
  "tsify",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "po-crdt-proc"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
 ]
 
 [[package]]
