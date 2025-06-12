@@ -359,84 +359,25 @@ where
     }
 
     fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {
-        println!("R_n called with metadata: {}", metadata);
         self.stable.clear();
-        // TODO: replace with a Petgraph DFS
         if conservative {
             // reverse DFS from the roots to the metadata
             let start_nodes = self.unstable.externals(Direction::Outgoing).collect();
-            println!(
-                "{:?}",
-                petgraph::dot::Dot::with_config(
-                    &self.unstable,
-                    &[petgraph::dot::Config::EdgeNoLabel]
-                )
-            );
-            // roots.clone().for_each(|r| {
-            //     let dot = self.dot_index_map.get_by_right(&r).unwrap();
-            //     println!("Root dot: {}", dot);
-            // });
-            // let mut completed = HashSet::new();
-            // let mut visited = HashSet::new();
 
             let discovered = self.unstable.visit_map();
             let mut dfs = Dfs::from_parts(start_nodes, discovered);
 
+            // TODO: stop the DFS when we reach the metadata
             while let Some(nx) = dfs.next(Reversed(&self.unstable)) {
                 let dot = self.dot_index_map.get_by_right(&nx).unwrap();
-                println!(
-                    "Visiting dot: {}, comparing with : {}, result: {}",
-                    dot,
-                    metadata.get(dot.origin()).unwrap(),
-                    dot.val() <= metadata.get(dot.origin()).unwrap()
-                );
                 if dot.val() <= metadata.get(dot.origin()).unwrap() {
                     // If conservative, we remove the event if it is less than or equal to the metadata
                     self.non_tombstones.remove(&nx);
                 }
             }
-
-            // for n in roots {
-            //     let mut stack = Vec::new();
-            //     stack.push(n);
-            //     while let Some(node_idx) = stack.pop() {
-            //         if visited.insert(node_idx) {
-            //             let dot = self.dot_index_map.get_by_right(&node_idx).unwrap();
-            //             println!(
-            //                 "Visiting dot: {}, comparing with : {}, result: {}",
-            //                 dot,
-            //                 metadata.get(dot.origin()).unwrap(),
-            //                 dot.val() <= metadata.get(dot.origin()).unwrap()
-            //             );
-            //             if dot.val() <= metadata.get(dot.origin()).unwrap() {
-            //                 // If conservative, we remove the event if it is less than or equal to the metadata
-            //                 self.non_tombstones.remove(&node_idx);
-            //             } else {
-            //                 completed.insert(dot.origin());
-            //                 if completed.len() == metadata.clock.len() {
-            //                     // If we have visited all the origins in the metadata, we can stop
-            //                     break;
-            //                 }
-            //             }
-
-            //             for edge in self.unstable.edges(node_idx) {
-            //                 let target = edge.source();
-            //                 stack.push(target);
-            //             }
-            //         }
-            //     }
-            // }
         } else {
             // Every ops become a tombstone
             self.non_tombstones.clear();
-        }
-
-        for nt in &self.non_tombstones {
-            println!(
-                "Non-tombstone dot: {}, op: {:?}",
-                self.dot_index_map.get_by_right(nt).unwrap(),
-                self.unstable.node_weight(*nt).unwrap().0
-            );
         }
     }
 
@@ -446,8 +387,6 @@ where
             .iter()
             .map(|&node_idx| self.unstable.node_weight(node_idx).unwrap().0.clone())
             .collect();
-        println!("Unstable ops: {:?}", unstable);
-        println!("Stable ops: {:?}", self.stable);
         O::eval(&self.stable, &unstable)
     }
 
@@ -512,18 +451,6 @@ where
             debug!("Dot {} not found in the graph", dot);
         }
     }
-
-    // fn stable_by_clock(&mut self, clock: &Clock<Full>) {
-    //     let start_nodes = self.node_indices_from_clock(clock);
-
-    //     let discovered = self.unstable.visit_map();
-    //     let mut dfs = Dfs::from_parts(start_nodes, discovered);
-
-    //     while let Some(nx) = dfs.next(&self.unstable) {
-    //         let dot = self.dot_index_map.get_by_right(&nx).unwrap().clone();
-    //         self.stable(&dot);
-    //     }
-    // }
 
     fn stable_by_clock(&mut self, clock: &Clock<Full>) {
         let start_nodes = self.node_indices_from_clock(clock);
