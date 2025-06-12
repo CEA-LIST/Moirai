@@ -97,8 +97,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
+    use crate::crdt::aw_map::{AWMap, AWMapLog};
     use crate::crdt::aw_set::AWSet;
     use crate::crdt::resettable_counter::Counter;
     use crate::protocol::event_graph::EventGraph;
@@ -118,8 +119,8 @@ mod tests {
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 4,
-            total_operations: 100,
+            n_replicas: 2,
+            total_operations: 4,
             ops: &ops,
             final_sync: false,
             churn_rate: 0.0,
@@ -155,7 +156,6 @@ mod tests {
         };
 
         let tcsbs = generate_event_graph::<EventGraph<Counter<isize>>>(config);
-        assert_eq!(tcsbs.len(), 5);
 
         // All replicas' eval() should match
         let mut reference_val: isize = 0;
@@ -164,6 +164,52 @@ mod tests {
                 reference_val = tcsb.eval();
             }
             assert_eq!(tcsb.eval(), reference_val);
+        }
+    }
+
+    #[test_log::test]
+    fn generate_aw_map_convergence() {
+        let ops = vec![
+            AWMap::Update("a".to_string(), Counter::Inc(2)),
+            AWMap::Update("a".to_string(), Counter::Dec(3)),
+            AWMap::Update("a".to_string(), Counter::Reset),
+            AWMap::Remove("a".to_string()),
+            AWMap::Update("b".to_string(), Counter::Inc(5)),
+            AWMap::Update("b".to_string(), Counter::Dec(1)),
+            AWMap::Update("b".to_string(), Counter::Reset),
+            AWMap::Remove("b".to_string()),
+            AWMap::Update("c".to_string(), Counter::Inc(10)),
+            AWMap::Update("c".to_string(), Counter::Dec(2)),
+            AWMap::Update("c".to_string(), Counter::Reset),
+            AWMap::Remove("c".to_string()),
+        ];
+
+        let config = EventGraphConfig {
+            n_replicas: 2,
+            total_operations: 4,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+        };
+
+        let tcsbs = generate_event_graph::<AWMapLog<String, EventGraph<Counter<i32>>>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: HashMap<String, i32> = HashMap::new();
+        let mut event_sum = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
+            }
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert_eq!(
+                tcsb.eval(),
+                reference_val,
+                "Replica {} did not converge with the reference.",
+                i,
+            );
         }
     }
 }

@@ -80,7 +80,9 @@ where
             if *cnt == 0 {
                 continue;
             }
-            let to_dot = if origin == &event.metadata().origin.expect("Origin not set") {
+            // TODO: store the dependencies and the dot separately
+            let to_dot = if origin == &event.metadata().origin.expect("Origin not set") && *cnt > 1
+            {
                 Dot::new(*origin, *cnt - 1, &event.metadata().view)
             } else {
                 Dot::new(*origin, *cnt, &event.metadata().view)
@@ -88,6 +90,8 @@ where
             let to_idx = self.dot_index_map.get_by_left(&to_dot);
             // `to_idx` may be None because the dot has been moved to the stable part.
             if let Some(to_idx) = to_idx {
+                // Direction is important here: we add an edge from the current node to the target node
+                // DAG direction is from child to parent
                 self.unstable.add_edge(idx, *to_idx, ());
                 let to_dot = self.dot_index_map.get_by_right(to_idx).unwrap();
                 if self.heads.contains(to_dot) {
@@ -141,6 +145,7 @@ where
 
     /// Reconstruct the event from the node index
     /// Reconstruct the dependency clock from the event graph
+    /// TODO: miss dependencies that have been stabilized
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.dot_index_map.get_by_right(node_idx).unwrap();
         let mut dependency_clock = Clock::<Partial>::new(&dot.view(), dot.origin());
@@ -368,7 +373,7 @@ where
         O::stabilize(dot, self);
     }
 
-    fn vector_clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
+    fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
         let mut vector_clock = Clock::<Full>::new(&event.metadata().view, Some(event.origin()));
 
         for (origin, cnt) in event.metadata().clock.iter() {
@@ -437,6 +442,33 @@ where
             self.stable(&dot);
         }
     }
+
+    // fn stable_by_clock(&mut self, clock: &Clock<Full>) {
+    //     let start_nodes = self.node_indices_from_clock(clock);
+
+    //     let discovered = self.unstable.visit_map();
+    //     let mut dfs = Dfs::from_parts(start_nodes, discovered);
+
+    //     let mut stable_nx = HashSet::new();
+
+    //     while let Some(nx) = dfs.next(&self.unstable) {
+    //         stable_nx.insert(nx);
+    //     }
+
+    //     for nx in &stable_nx {
+    //         let dot = self.dot_index_map.get_by_right(nx).unwrap().clone();
+    //         // We cannot stabilize a node if there is an unstable node that has an incoming edge to it
+    //         let can_be_stabilized = self
+    //             .unstable
+    //             .neighbors_directed(*nx, Direction::Incoming)
+    //             .all(|n| stable_nx.contains(&n));
+    //         if can_be_stabilized {
+    //             self.stable(&dot);
+    //         } else {
+    //             println!("AHAHAHAHHAH");
+    //         }
+    //     }
+    // }
 
     fn is_empty(&self) -> bool {
         self.stable.is_default()

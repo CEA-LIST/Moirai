@@ -48,3 +48,17 @@ datatype-specific stable storage—a data structure tailored to efficiently stor
 causally stable operations for that datatype. For example, in the case of an
 add-wins set (AWSet), this storage can simply be a sequential set, which is
 highly efficient, as set operations typically run in O(1) time.
+
+## On the matrix clock
+
+A matrix clock is valid if it:
+
+is square no clock i has an entry j greater than the entry j of clock j every
+entry i of the origin clock is equal or greater to the entry i of the clock i
+The row of the replica where the matrix clock is stored is equal to the
+column-wise maximum of the matrix. the column-wise minimum of the matrix is the
+vector clock of events that have been delivered to every replica in the system
+The matrix is ​​monotonically increasing, that is, each new event updates the
+appropriate row in the matrix by merging the incoming vector clock with the one
+stored in the matrix. As a result, the matrix can contain arbitrary high integer
+values
