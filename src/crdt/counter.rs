@@ -30,7 +30,7 @@ where
 
     fn apply_redundant(
         &mut self,
-        _rdnt: fn(&Counter<V>, bool, &Counter<V>) -> bool,
+        _rdnt: fn(&Counter<V>, bool, bool, &Counter<V>) -> bool,
         _op: &Counter<V>,
     ) {
     }
@@ -53,11 +53,21 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
         false
     }
 
-    fn redundant_by_when_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(
+        _old_op: &Self,
+        _is_conc: bool,
+        _order: bool,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 
-    fn redundant_by_when_not_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        _old_op: &Self,
+        _is_conc: bool,
+        _order: bool,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 

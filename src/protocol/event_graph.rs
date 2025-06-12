@@ -301,12 +301,20 @@ where
 
                 let op = graph.unstable.node_weight(*node_idx).unwrap();
                 let is_conc = !clock.is_predecessor(other_dot);
+                // Create a total order for the operations
+                // true if old_op > new_op, false otherwise
+                // if conc, we compare on the lexicographic order of process ids
+                let order = if is_conc {
+                    other_dot.origin() > event.metadata().origin()
+                } else {
+                    false
+                };
 
                 if is_r {
-                    if O::redundant_by_when_redundant(&op.0, is_conc, &event.op) {
+                    if O::redundant_by_when_redundant(&op.0, is_conc, order, &event.op) {
                         to_remove.push(*node_idx);
                     }
-                } else if O::redundant_by_when_not_redundant(&op.0, is_conc, &event.op) {
+                } else if O::redundant_by_when_not_redundant(&op.0, is_conc, order, &event.op) {
                     to_remove.push(*node_idx);
                 }
             }

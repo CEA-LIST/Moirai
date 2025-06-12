@@ -30,7 +30,7 @@ where
 
     fn apply_redundant(
         &mut self,
-        _rdnt: fn(&Counter<V>, bool, &Counter<V>) -> bool,
+        _rdnt: fn(&Counter<V>, bool, bool, &Counter<V>) -> bool,
         op: &Counter<V>,
     ) {
         if let Counter::Reset = op {
@@ -58,11 +58,21 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         matches!(new_op, Counter::Reset)
     }
 
-    fn redundant_by_when_redundant(_old_op: &Self, is_conc: bool, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(
+        _old_op: &Self,
+        is_conc: bool,
+        _order: bool,
+        new_op: &Self,
+    ) -> bool {
         !is_conc && matches!(new_op, Counter::Reset)
     }
 
-    fn redundant_by_when_not_redundant(_old_op: &Self, _is_conc: bool, _new_op: &Self) -> bool {
+    fn redundant_by_when_not_redundant(
+        _old_op: &Self,
+        _is_conc: bool,
+        _order: bool,
+        _new_op: &Self,
+    ) -> bool {
         false
     }
 

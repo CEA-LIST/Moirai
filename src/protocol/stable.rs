@@ -8,7 +8,7 @@ pub trait Stable<O>: Default + Clone + Debug {
         *self = Self::default();
     }
 
-    fn apply_redundant(&mut self, rdnt: fn(&O, bool, &O) -> bool, op: &O);
+    fn apply_redundant(&mut self, rdnt: fn(&O, bool, bool, &O) -> bool, op: &O);
 
     fn apply(&mut self, value: O);
 }
@@ -26,7 +26,7 @@ impl<O: PureCRDT> Stable<O> for Vec<O> {
         self.push(value);
     }
 
-    fn apply_redundant(&mut self, rdnt: fn(&O, bool, &O) -> bool, op: &O) {
-        self.retain(|o| !(rdnt(o, false, op)));
+    fn apply_redundant(&mut self, rdnt: fn(&O, bool, bool, &O) -> bool, op: &O) {
+        self.retain(|o| !(rdnt(o, false, false, op)));
     }
 }

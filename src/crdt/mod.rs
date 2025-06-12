@@ -3,6 +3,7 @@ pub mod aw_map;
 pub mod aw_set;
 pub mod counter;
 pub mod duet;
+pub mod lww_register;
 pub mod mv_register;
 pub mod resettable_counter;
 pub mod rw_set;
