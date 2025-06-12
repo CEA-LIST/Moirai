@@ -170,18 +170,11 @@ mod tests {
         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
         tcsb_b.try_deliver(event);
 
-        // assert_eq!(tcsb_b.state.stable.len(), 1);
-
         let event = tcsb_b.tc_bcast(RWSet::Add("b"));
         tcsb_a.try_deliver(event);
 
-        // assert_eq!(tcsb_a.state.stable.len(), 2);
-
         let event = tcsb_a.tc_bcast(RWSet::Clear);
         tcsb_b.try_deliver(event);
-
-        // assert_eq!(tcsb_a.state.stable.len(), 0);
-        // assert_eq!(tcsb_b.state.stable.len(), 0);
 
         let result = HashSet::new();
         assert_eq!(tcsb_a.eval(), result);
@@ -211,9 +204,7 @@ mod tests {
         tcsb_b.try_deliver(event_a);
         tcsb_a.try_deliver(event_b);
 
-        // assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-        // assert_eq!(tcsb_b.state.stable.len(), 0);
         assert_eq!(tcsb_b.state.unstable.node_count(), 1);
 
         let result = HashSet::from(["a"]);
@@ -244,9 +235,7 @@ mod tests {
         let event = tcsb_a.tc_bcast(RWSet::Remove("a"));
         tcsb_b.try_deliver(event);
 
-        // assert_eq!(tcsb_a.state.stable.len(), 0);
         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-        // assert_eq!(tcsb_b.state.stable.len(), 0);
         assert_eq!(tcsb_b.state.unstable.node_count(), 0);
 
         let result = HashSet::from([]);

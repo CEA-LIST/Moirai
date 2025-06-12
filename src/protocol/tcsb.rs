@@ -229,12 +229,6 @@ where
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
     pub fn tc_stable(&mut self, new_clock: &Option<Clock<Partial>>) {
         let ignore = self.group_membership.leaving_members(&self.id);
-        // debug!(
-        //     "[{}] - Checking stability with clock: {:?} and ignoring members: {:?}",
-        //     self.id.blue().bold(),
-        //     new_clock,
-        //     ignore
-        // );
         let svv = match new_clock {
             Some(c) => self.ltm.incremental_svv(c, &self.lsv, &ignore),
             None => self.ltm.svv(&ignore),
