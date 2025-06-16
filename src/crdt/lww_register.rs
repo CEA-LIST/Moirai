@@ -15,26 +15,39 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     type Value = V;
     type Stable = Vec<Self>;
 
-    fn redundant_itself(new_op: &Self) -> bool {
-        matches!(new_op, LWWRegister::Clear)
+    fn redundant_itself(new_op: &Self, new_dot: &Dot, state: &EventGraph<Self>) -> bool {
+        if matches!(new_op, LWWRegister::Clear) {
+            true
+        } else {
+            let predecessors = state.causal_predecessors(new_dot);
+            let is_not_redundant = state.non_tombstones.iter().any(|nx| {
+                // Create a total order for the operations
+                // true if old_op > new_op, false otherwise
+                // if conc, we compare on the lexicographic order of process ids
+                !predecessors.contains(nx) && state.dot_index_map.nx_to_dot(nx).unwrap().origin() > new_dot.origin()
+            });
+            !is_not_redundant
+        }
     }
 
     fn redundant_by_when_redundant(
         _old_op: &Self,
-        _is_conc: bool,
-        order: bool,
-        _new_op: &Self,
+        _old_dot: Option<&Dot>,
+        is_conc: bool,
+        new_op: &Self,
+        _new_dot: &Dot,
     ) -> bool {
-        !order
+        !is_conc && matches!(new_op, LWWRegister::Clear)
     }
 
     fn redundant_by_when_not_redundant(
-        old_op: &Self,
+        _old_op: &Self,
+        old_dot: Option<&Dot>,
         is_conc: bool,
-        order: bool,
-        new_op: &Self,
+        _new_op: &Self,
+        new_dot: &Dot,
     ) -> bool {
-        Self::redundant_by_when_redundant(old_op, is_conc, order, new_op)
+        !is_conc || old_dot.unwrap().origin() < new_dot.origin()
     }
 
     fn stabilize(_dot: &Dot, _state: &mut EventGraph<Self>) {}
@@ -53,6 +66,7 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
 
 #[cfg(test)]
 mod tests {
+    use crate::crdt::test_util::triplet;
     use crate::crdt::{lww_register::LWWRegister, test_util::twins};
     use crate::protocol::event_graph::EventGraph;
 
@@ -88,15 +102,18 @@ mod tests {
 
     #[test_log::test]
     pub fn lww_register_concurrent_writes() {
-        let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<LWWRegister<String>>>();
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<EventGraph<LWWRegister<String>>>();
 
         let event_a = tcsb_a.tc_bcast(LWWRegister::Write("Hello".to_string()));
         let event_b = tcsb_b.tc_bcast(LWWRegister::Write("World".to_string()));
 
-        tcsb_a.try_deliver(event_b);
-        tcsb_b.try_deliver(event_a);
+        tcsb_a.try_deliver(event_b.clone());
+        tcsb_b.try_deliver(event_a.clone());
+        tcsb_c.try_deliver(event_a);
+        tcsb_c.try_deliver(event_b);
 
         assert!(tcsb_a.eval() == "World");
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_a.eval(), tcsb_c.eval());
     }
 }

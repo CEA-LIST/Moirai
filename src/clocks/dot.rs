@@ -41,6 +41,7 @@ impl Dot {
         Rc::clone(&self.view)
     }
 
+    /// Compute in O(1)
     pub fn origin(&self) -> &str {
         &self.view.members[self.origin]
     }

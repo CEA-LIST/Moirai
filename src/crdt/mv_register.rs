@@ -18,26 +18,16 @@ where
     type Value = HashSet<V>;
     type Stable = Vec<Self>;
 
-    fn redundant_itself(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
         matches!(new_op, MVRegister::Clear)
     }
 
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        is_conc: bool,
-        _order: bool,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_redundant(_old_op: &Self, _old_dot: Option<&Dot>, is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
         !is_conc
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        is_conc: bool,
-        order: bool,
-        new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, is_conc, order, new_op)
+    fn redundant_by_when_not_redundant(old_op: &Self, old_dot: Option<&Dot>, is_conc: bool, new_op: &Self, new_dot: &Dot) -> bool {
+        Self::redundant_by_when_redundant(old_op, old_dot, is_conc, new_op, new_dot)
     }
 
     fn stabilize(_metadata: &Dot, _state: &mut EventGraph<Self>) {}

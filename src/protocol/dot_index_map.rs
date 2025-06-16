@@ -22,7 +22,7 @@ impl DotIndexMap {
         Self(BiMap::new())
     }
 
-    pub fn contains_left(&self, dot: &Dot) -> bool {
+    pub fn contains_dot(&self, dot: &Dot) -> bool {
         self.0.contains_left(dot)
     }
 
@@ -30,19 +30,19 @@ impl DotIndexMap {
         self.0.insert(dot, ni);
     }
 
-    pub fn get_by_left(&self, dot: &Dot) -> Option<&NodeIndex> {
+    pub fn dot_to_nx(&self, dot: &Dot) -> Option<&NodeIndex> {
         self.0.get_by_left(dot)
     }
 
-    pub fn get_by_right(&self, ni: &NodeIndex) -> Option<&Dot> {
+    pub fn nx_to_dot(&self, ni: &NodeIndex) -> Option<&Dot> {
         self.0.get_by_right(ni)
     }
 
-    pub fn remove_by_left(&mut self, dot: &Dot) -> Option<(Dot, NodeIndex)> {
+    pub fn remove_by_dot(&mut self, dot: &Dot) -> Option<(Dot, NodeIndex)> {
         self.0.remove_by_left(dot)
     }
 
-    pub fn remove_by_right(&mut self, ni: &NodeIndex) -> Option<(Dot, NodeIndex)> {
+    pub fn remove_by_nx(&mut self, ni: &NodeIndex) -> Option<(Dot, NodeIndex)> {
         self.0.remove_by_right(ni)
     }
 

@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::clocks::dot::Dot;
+use crate::{clocks::dot::Dot};
 
 use super::{event_graph::EventGraph, stable::Stable};
 
@@ -18,7 +18,7 @@ pub trait PureCRDT: Clone + Debug {
     /// R relation defines whether the delivered operation is itself
     /// redundant and does not need to be added itself to the PO-Log.
     /// `true` means the operation is redundant and can be discarded immediately.
-    fn redundant_itself(new_op: &Self) -> bool;
+    fn redundant_itself(new_op: &Self, new_dot: &Dot, state: &EventGraph<Self>) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
     /// R0 defines which operations in the current PO-Log become redundant
@@ -27,9 +27,10 @@ pub trait PureCRDT: Clone + Debug {
     /// `true` means the operation is redundant and can be discarded immediately.
     fn redundant_by_when_redundant(
         old_op: &Self,
+        old_dot: Option<&Dot>,
         is_conc: bool,
-        order: bool,
         new_op: &Self,
+        new_dot: &Dot,
     ) -> bool;
 
     /// Datatype-specific relation used to define causal redundancy.
@@ -39,9 +40,10 @@ pub trait PureCRDT: Clone + Debug {
     /// `true` means the operation is redundant and can be discarded immediately.
     fn redundant_by_when_not_redundant(
         old_op: &Self,
+        old_dot: Option<&Dot>,
         is_conc: bool,
-        order: bool,
         new_op: &Self,
+        new_dot: &Dot,
     ) -> bool;
 
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
