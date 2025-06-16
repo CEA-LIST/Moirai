@@ -28,11 +28,7 @@ where
         V::default() == *self
     }
 
-    fn apply_redundant(
-        &mut self,
-        _rdnt: fn(&Counter<V>, bool, bool, &Counter<V>) -> bool,
-        op: &Counter<V>,
-    ) {
+    fn apply_redundant(&mut self, _rdnt: fn(&Counter<V>, Option<&Dot>, bool, &Counter<V>, &Dot) -> bool, op: &Counter<V>, _dot: &Dot) {
         if let Counter::Reset = op {
             <V as Stable<Counter<V>>>::clear(self);
         }
@@ -54,24 +50,26 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
     type Value = V;
     const R_ONE: Option<bool> = Some(false);
 
-    fn redundant_itself(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
         matches!(new_op, Counter::Reset)
     }
 
     fn redundant_by_when_redundant(
         _old_op: &Self,
+        _old_dot: Option<&Dot>,
         is_conc: bool,
-        _order: bool,
         new_op: &Self,
+        _new_dot: &Dot,
     ) -> bool {
         !is_conc && matches!(new_op, Counter::Reset)
     }
 
     fn redundant_by_when_not_redundant(
         _old_op: &Self,
+        _old_dot: Option<&Dot>,
         _is_conc: bool,
-        _order: bool,
         _new_op: &Self,
+        _new_dot: &Dot,
     ) -> bool {
         false
     }

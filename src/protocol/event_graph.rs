@@ -25,7 +25,7 @@ use crate::{
         dot::Dot,
         matrix_clock::MatrixClock,
     },
-    protocol::stable::Stable,
+    protocol::{stable::Stable},
 };
 
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ where
     pub fn add_event(&mut self, event: &Event<Op>) {
         let dot = Dot::from(event.metadata());
 
-        if self.dot_index_map.contains_left(&dot) {
+        if self.dot_index_map.contains_dot(&dot) {
             error!(
                 "Event with metadata {} already present in the graph",
                 event.metadata()
@@ -90,14 +90,14 @@ where
             } else {
                 Dot::new(*origin, *cnt, &event.metadata().view)
             };
-            let to_idx = self.dot_index_map.get_by_left(&to_dot);
+            let to_idx = self.dot_index_map.dot_to_nx(&to_dot);
             // `to_idx` may be None because the dot has been moved to the stable part.
             if let Some(to_idx) = to_idx {
                 // Direction is important here: we add an edge from the current node to the target node
                 // DAG direction is from child to parent
                 assert_ne!(*to_idx, idx, "Cannot add self-loop in the event graph");
                 self.unstable.add_edge(idx, *to_idx, ());
-                let other_dot = self.dot_index_map.get_by_right(to_idx).unwrap();
+                let other_dot = self.dot_index_map.nx_to_dot(to_idx).unwrap();
                 if self.heads.contains(other_dot) {
                     self.heads.remove(other_dot);
                 }
@@ -142,17 +142,17 @@ where
     pub fn remove_dot(&mut self, dot: &Dot) -> Option<Op> {
         let node_idx = self
             .dot_index_map
-            .get_by_left(dot)
+            .dot_to_nx(dot)
             .expect("Dot not found in the graph.");
 
         let op = self.unstable.remove_node(*node_idx);
         self.non_tombstones.remove(node_idx);
-        self.dot_index_map.remove_by_left(dot);
+        self.dot_index_map.remove_by_dot(dot);
         op.map(|op| op.0)
     }
 
     pub fn get_op(&self, dot: &Dot) -> Option<Op> {
-        let node_idx = self.dot_index_map.get_by_left(dot)?;
+        let node_idx = self.dot_index_map.dot_to_nx(dot)?;
         self.unstable.node_weight(*node_idx).cloned().map(|op| op.0)
     }
 
@@ -165,10 +165,11 @@ where
 
         let node_idx = self
             .dot_index_map
-            .get_by_left(dot)
+            .dot_to_nx(dot)
             .unwrap_or_else(|| panic!("Dot {} not found in the graph.", dot));
 
         let mut predecessors = HashSet::new();
+        // TODO: skip tombstones?
         let mut dfs = Dfs::new(&self.unstable, *node_idx);
 
         while let Some(node) = dfs.next(&self.unstable) {
@@ -182,7 +183,7 @@ where
     /// Reconstruct the dependency clock from the event graph
     /// TODO: miss dependencies that have been stabilized
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
-        let dot = self.dot_index_map.get_by_right(node_idx).unwrap();
+        let dot = self.dot_index_map.nx_to_dot(node_idx).unwrap();
         let mut dependency_clock = Clock::<Partial>::new(&dot.view(), dot.origin());
         dependency_clock.set(dot.origin(), dot.val());
 
@@ -191,7 +192,7 @@ where
             .unstable
             .neighbors_directed(*node_idx, Direction::Outgoing);
         for neighbor in neighbors {
-            let neighbor_dot = self.dot_index_map.get_by_right(&neighbor).unwrap();
+            let neighbor_dot = self.dot_index_map.nx_to_dot(&neighbor).unwrap();
             if neighbor_dot.origin() == dot.origin() {
                 continue;
             }
@@ -210,7 +211,7 @@ where
                     None
                 } else {
                     let dot = Dot::new(*origin, *cnt, &clock.view);
-                    self.dot_index_map.get_by_left(&dot).cloned()
+                    self.dot_index_map.dot_to_nx(&dot).cloned()
                 }
             })
             .collect()
@@ -256,8 +257,9 @@ where
                     let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
                     // If the operation is redundant, we make its effect on the stable part
                     // and prune the unstable part
+                    let dot = Dot::from(event.metadata());
                     self.stable
-                        .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op);
+                        .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op, &dot);
                     prune_unstable(self, event, true, clock);
                 }
             }
@@ -275,8 +277,9 @@ where
                     // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
                     // So we don't need to apply it to the stable part. Future refactore include making the
                     // effect on the stable part more generic
+                    let dot = Dot::from(event.metadata());
                     self.stable
-                        .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op);
+                        .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op, &dot);
                     prune_unstable(self, event, false, clock);
                 }
             }
@@ -293,7 +296,7 @@ where
 
             let mut to_remove = Vec::new();
             for node_idx in graph.non_tombstones.iter() {
-                let other_dot = graph.dot_index_map.get_by_right(node_idx).unwrap();
+                let other_dot = graph.dot_index_map.nx_to_dot(node_idx).unwrap();
                 if *other_dot == new_dot {
                     // We don't want to compare the event with itself
                     continue;
@@ -301,20 +304,13 @@ where
 
                 let op = graph.unstable.node_weight(*node_idx).unwrap();
                 let is_conc = !clock.is_predecessor(other_dot);
-                // Create a total order for the operations
-                // true if old_op > new_op, false otherwise
-                // if conc, we compare on the lexicographic order of process ids
-                let order = if is_conc {
-                    other_dot.origin() > event.metadata().origin()
-                } else {
-                    false
-                };
 
                 if is_r {
-                    if O::redundant_by_when_redundant(&op.0, is_conc, order, &event.op) {
+                    // Order => old_op `greater_than` new_op (false when not conc, true when conc and old op has a lexicographically greater replica id)
+                    if O::redundant_by_when_redundant(&op.0, Some(other_dot), is_conc, &event.op, &new_dot) {
                         to_remove.push(*node_idx);
                     }
-                } else if O::redundant_by_when_not_redundant(&op.0, is_conc, order, &event.op) {
+                } else if O::redundant_by_when_not_redundant(&op.0, Some(other_dot), is_conc, &event.op, &new_dot) {
                     to_remove.push(*node_idx);
                 }
             }
@@ -325,7 +321,7 @@ where
             if is_r {
                 graph
                     .non_tombstones
-                    .remove(graph.dot_index_map.get_by_left(&new_dot).unwrap());
+                    .remove(graph.dot_index_map.dot_to_nx(&new_dot).unwrap());
             }
         }
     }
@@ -351,7 +347,7 @@ where
                     // If the dot is in the exclude list, we skip it
                     continue;
                 }
-                if let Some(node_idx) = self.dot_index_map.get_by_left(&dot) {
+                if let Some(node_idx) = self.dot_index_map.dot_to_nx(&dot) {
                     // If the node index exists in the graph, we add the event
                     let e = self.event_from_idx(node_idx);
                     events.push(e)
@@ -363,7 +359,8 @@ where
     }
 
     fn any_r(&self, event: &Event<Self::Op>) -> bool {
-        Self::Op::redundant_itself(&event.op)
+        let dot = Dot::from(event.metadata());
+        Self::Op::redundant_itself(&event.op, &dot, self)
     }
 
     fn r_n(&mut self, metadata: &Clock<Full>, conservative: bool) {
@@ -377,7 +374,7 @@ where
 
             // TODO: stop the DFS when we reach the metadata
             while let Some(nx) = dfs.next(Reversed(&self.unstable)) {
-                let dot = self.dot_index_map.get_by_right(&nx).unwrap();
+                let dot = self.dot_index_map.nx_to_dot(&nx).unwrap();
                 if dot.val() <= metadata.get(dot.origin()).unwrap() {
                     // If conservative, we remove the event if it is less than or equal to the metadata
                     self.non_tombstones.remove(&nx);
@@ -423,7 +420,7 @@ where
                     None
                 } else {
                     let dot = Dot::new(*origin, *cnt, &event.metadata().view);
-                    self.dot_index_map.get_by_left(&dot).cloned()
+                    self.dot_index_map.dot_to_nx(&dot).cloned()
                 }
             })
             .collect();
@@ -432,7 +429,7 @@ where
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
 
         while let Some(nx) = dfs.next(&self.unstable) {
-            let dot = self.dot_index_map.get_by_right(&nx).unwrap();
+            let dot = self.dot_index_map.nx_to_dot(&nx).unwrap();
             if dot.val() > vector_clock.get(dot.origin()).unwrap() {
                 vector_clock.set(dot.origin(), dot.val());
             }
@@ -443,13 +440,13 @@ where
     /// Move the op to the stable part of the graph
     fn purge_stable_metadata(&mut self, dot: &Dot) {
         // The dot may have been removed in the `stabilize` function
-        let node_idx = self.dot_index_map.get_by_left(dot);
+        let node_idx = self.dot_index_map.dot_to_nx(dot);
 
         if let Some(node_idx) = node_idx {
             // If the remove was successful, then the op was not a tombstone
             let was_not_tombstone = self.non_tombstones.remove(node_idx);
             let op = self.unstable.remove_node(*node_idx);
-            self.dot_index_map.remove_by_left(dot);
+            self.dot_index_map.remove_by_dot(dot);
             if let Some(op) = op {
                 if was_not_tombstone {
                     self.stable.apply(op.0);
@@ -473,7 +470,7 @@ where
         }
 
         for nx in &stable_nx {
-            let dot = self.dot_index_map.get_by_right(nx).unwrap().clone();
+            let dot = self.dot_index_map.nx_to_dot(nx).unwrap().clone();
             // We cannot stabilize a node if there is an unstable node that has an incoming edge to it
             let can_be_stabilized = self
                 .unstable

@@ -20,11 +20,7 @@ where
         (HashSet::default(), Vec::default()) == *self
     }
 
-    fn apply_redundant(
-        &mut self,
-        _rdnt: fn(&RWSet<V>, bool, bool, &RWSet<V>) -> bool,
-        op: &RWSet<V>,
-    ) {
+    fn apply_redundant(&mut self, _rdnt: fn(&RWSet<V>, Option<&Dot>, bool, &RWSet<V>, &Dot) -> bool, op: &RWSet<V>, _dot: &Dot) {
         match op {
             RWSet::Add(v) => {
                 self.0.remove(v);
@@ -59,11 +55,11 @@ where
     type Value = HashSet<V>;
     type Stable = (HashSet<V>, Vec<RWSet<V>>);
 
-    fn redundant_itself(new_op: &Self) -> bool {
+    fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
         matches!(new_op, RWSet::Clear)
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, is_conc: bool, _: bool, new_op: &Self) -> bool {
+    fn redundant_by_when_redundant(old_op: &Self, _old_dot: Option<&Dot>, is_conc: bool, new_op: &Self, _new_dot: &Dot) -> bool {
         !is_conc
             && (matches!(new_op, RWSet::Clear)
                 || match (&old_op, &new_op) {
@@ -75,13 +71,12 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
+    fn redundant_by_when_not_redundant(old_op: &Self,
+        old_dot: Option<&Dot>,
         is_conc: bool,
-        order: bool,
         new_op: &Self,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, is_conc, order, new_op)
+        new_dot: &Dot,) -> bool {
+        Self::redundant_by_when_redundant(old_op, old_dot, is_conc, new_op, new_dot)
     }
 
     fn stabilize(dot: &Dot, state: &mut EventGraph<Self>) {
@@ -99,7 +94,7 @@ where
                 || state.stable.0.contains(v)
             // Is there another unstable op (add or rmv, not the current op) with the same value?
             || state.unstable.node_indices().zip(state.unstable.node_weights()).any(|(idx, op)| {
-				let other_dot = state.dot_index_map.get_by_right(&idx).unwrap();
+				let other_dot = state.dot_index_map.nx_to_dot(&idx).unwrap();
 				match &op.0 {
 					RWSet::Add(v2) | RWSet::Remove(v2) => v == v2 && other_dot != dot,
 					_ => false,
@@ -123,7 +118,7 @@ where
                         .node_indices()
                         .zip(state.unstable.node_weights())
                         .any(|(idx, op)| {
-                            let other_dot = state.dot_index_map.get_by_right(&idx).unwrap();
+                            let other_dot = state.dot_index_map.nx_to_dot(&idx).unwrap();
                             matches!(&op.0, RWSet::Add(v2) if v == v2 && dot != other_dot)
                         })
             }

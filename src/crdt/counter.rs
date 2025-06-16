@@ -30,8 +30,8 @@ where
 
     fn apply_redundant(
         &mut self,
-        _rdnt: fn(&Counter<V>, bool, bool, &Counter<V>) -> bool,
-        _op: &Counter<V>,
+        _rdnt: fn(&Counter<V>, Option<&Dot>, bool, &Counter<V>, &Dot) -> bool,
+        _op: &Counter<V>, _dot: &Dot,
     ) {
     }
 
@@ -49,25 +49,15 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
     const R_ZERO: Option<bool> = Some(false);
     const R_ONE: Option<bool> = Some(false);
 
-    fn redundant_itself(_new_op: &Self) -> bool {
+    fn redundant_itself(_new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
         false
     }
 
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        _is_conc: bool,
-        _order: bool,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_redundant(_old_op: &Self, _old_dot: Option<&Dot>, _is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
         false
     }
 
-    fn redundant_by_when_not_redundant(
-        _old_op: &Self,
-        _is_conc: bool,
-        _order: bool,
-        _new_op: &Self,
-    ) -> bool {
+    fn redundant_by_when_not_redundant(_old_op: &Self, _old_dot: Option<&Dot>, _is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
         false
     }
 

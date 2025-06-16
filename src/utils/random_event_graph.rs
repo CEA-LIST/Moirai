@@ -102,13 +102,14 @@ mod tests {
 
     use crate::crdt::aw_map::{AWMap, AWMapLog};
     use crate::crdt::aw_set::AWSet;
+    use crate::crdt::lww_register::LWWRegister;
     use crate::crdt::resettable_counter::Counter;
     use crate::protocol::event_graph::EventGraph;
 
     #[test_log::test]
     fn folie() {
         for _ in 0..1_000 {
-            generate_deeply_nested_aw_map_convergence();
+            generate_lww_register_convergence();
         }
     }
 
@@ -221,7 +222,7 @@ mod tests {
                 tcsb.eval(),
                 reference_val,
                 "Replica {} did not converge with the reference.",
-                i,
+                tcsb.id,
             );
         }
     }
@@ -241,7 +242,6 @@ mod tests {
             AWMap::Update("c".to_string(), AWMap::Update(3, Counter::Dec(2))),
             AWMap::Update("c".to_string(), AWMap::Update(3, Counter::Reset)),
             AWMap::Update("c".to_string(), AWMap::Remove(3)),
-            // More deeply nested operations for better coverage
             AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Inc(7))),
             AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Dec(4))),
             AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Reset)),
@@ -283,6 +283,49 @@ mod tests {
                 reference_val,
                 "Replica {} did not converge with the reference.",
                 i,
+            );
+        }
+    }
+
+    #[test_log::test]
+    fn generate_lww_register_convergence() {
+        let ops = vec![
+            LWWRegister::Write("a".to_string()),
+            LWWRegister::Write("b".to_string()),
+            LWWRegister::Write("c".to_string()),
+            LWWRegister::Clear,
+            LWWRegister::Write("d".to_string()),
+            LWWRegister::Write("e".to_string()),
+            LWWRegister::Write("f".to_string()),
+        ];
+
+        let config = EventGraphConfig {
+            n_replicas: 5,
+            total_operations: 100_000,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.5,
+            reachability: None,
+        };
+
+        let tcsbs = generate_event_graph::<EventGraph<LWWRegister<String>>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: String = String::new();
+        let mut event_sum = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
+            }
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert_eq!(
+                tcsb.eval(),
+                reference_val,
+                "Replica '{}' did not converge with the reference '{}'. Ref val: '{}'",
+                tcsb.id,
+                tcsbs[0].id,
+                reference_val
             );
         }
     }

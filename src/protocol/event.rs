@@ -8,7 +8,11 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::clocks::clock::{Clock, Partial};
+use crate::{
+    clocks::{
+        clock::{Clock, Partial},
+    },
+};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(
