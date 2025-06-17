@@ -68,7 +68,7 @@ where
             .installed_view()
             .data
             .member_pos(id)
-            .unwrap_or_else(|| panic!("Member {} not found in view", id));
+            .unwrap_or_else(|| panic!("Member {id} not found in view"));
         Self {
             id: id.to_string(),
             state: L::new(),
@@ -188,11 +188,12 @@ where
         // If the event is not from the local replica
         if self.id != event.origin() {
             info!(
-                "[{}] - Delivering event {} from {} with timestamp {}",
+                "[{}] - {} Delivering event {} from {} with timestamp {}",
                 self.id.blue().bold(),
+                ">>".cyan().bold(),
                 format!("{:?}", event.op).green(),
                 event.origin().blue(),
-                format!("{}", event).red()
+                format!("{event}").red()
             );
             // Update the vector clock of the sender in the LTM
             // Increment the new peer vector clock with its actual value
@@ -205,10 +206,11 @@ where
             self.tracer.append::<L>(event.clone());
         } else {
             info!(
-                "[{}] - Delivering local event {} with timestamp {}",
+                "[{}] - {} Broadcasting event {} with timestamp {}",
                 self.id.blue().bold(),
+                "<<".yellow().bold(),
                 format!("{:?}", event.op).green(),
-                format!("{}", event).red()
+                format!("{event}").red()
             );
         }
 
@@ -356,12 +358,11 @@ where
         for event in self.pending.iter() {
             assert!(
                 event.origin() != self.id,
-                "Local peer should not be in the pending list. Event: {:?}",
-                event
+                "Local peer should not be in the pending list. Event: {event:?}",
             );
             let sending_peer_clock = self.ltm.get(event.origin()).unwrap();
             let sending_peer_lamport = sending_peer_clock.get(event.origin()).unwrap();
-            if event.metadata().dot() > sending_peer_lamport {
+            if event.metadata().dot_val() > sending_peer_lamport {
                 waiting_from.insert(event.origin().to_owned());
             }
         }
@@ -377,18 +378,23 @@ where
             );
             let my_clock = self.my_clock_mut();
             let val = my_clock.increment();
+            let lamport = my_clock.lamport();
             let mut new_clock = Clock::<Partial>::new(&Rc::clone(&v.data), &self.id);
             new_clock.set(&self.id, val);
-            Event::new(op, new_clock)
+            Event::new(op, new_clock, lamport)
         } else {
             let my_clock = self.my_clock_mut();
+            let pos = my_clock
+                .origin
+                .expect("Local peer should have an origin in its clock");
             my_clock.increment();
+            let val = my_clock.dot_val();
+            let lamport = my_clock.lamport();
             let view = &self.group_membership.installed_view().data;
-            let dot = Dot::from(self.my_clock());
-
+            let dot = Dot::new(pos, val, lamport, view);
             let mut clocks = VecDeque::new();
             self.state.deps(&mut clocks, view, &dot, &op);
-            Event::new_nested(op.clone(), clocks)
+            Event::new_nested(op.clone(), clocks, lamport)
         }
     }
 

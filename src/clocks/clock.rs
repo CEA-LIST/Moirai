@@ -12,6 +12,8 @@ use std::{
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
+pub type Lamport = usize;
+
 use super::dot::Dot;
 use crate::protocol::membership::ViewData;
 
@@ -77,6 +79,14 @@ impl Clock<Full> {
         assert_eq!(self.view_id(), dot.view().id);
         let self_val = self.get_by_idx(dot.origin_idx()).unwrap();
         self_val >= dot.val()
+    }
+
+    pub fn sum(&self) -> usize {
+        self.clock.values().sum()
+    }
+
+    pub fn lamport(&self) -> Lamport {
+        self.sum()
     }
 }
 
@@ -150,7 +160,8 @@ impl<S: ClockState> Clock<S> {
         }
     }
 
-    pub fn dot(&self) -> usize {
+    /// Returns the dot value of the clock, which is the value of the origin member
+    pub fn dot_val(&self) -> usize {
         self.get(self.origin()).unwrap()
     }
 
@@ -235,23 +246,9 @@ impl<S: ClockState> Clock<S> {
         &self.view.members[self.origin.expect("Origin not set")]
     }
 
-    pub fn sum(&self) -> usize {
-        self.clock.values().sum()
-    }
-
     /// A clock is "empty" is it contains no entry or every entry is a 0
     pub fn is_empty(&self) -> bool {
         self.clock.len() == 0 || !self.clock.iter().any(|(_, v)| *v > 0)
-    }
-}
-
-impl<S: ClockState> From<&Clock<S>> for Dot {
-    fn from(clock: &Clock<S>) -> Dot {
-        Dot::new(
-            clock.origin.expect("Origin not set"),
-            clock.get(clock.origin()).unwrap(),
-            &Rc::clone(&clock.view),
-        )
     }
 }
 
@@ -272,10 +269,10 @@ impl<S: ClockState> Display for Clock<S> {
         for (idx, m) in self.view.members.iter().enumerate() {
             if let Some(val) = self.clock.get(&idx) {
                 if first {
-                    write!(f, "{}: {}", m, val)?;
+                    write!(f, "{m}: {val}")?;
                     first = false;
                 } else {
-                    write!(f, ", {}: {}", m, val)?;
+                    write!(f, ", {m}: {val}")?;
                 }
             }
         }

@@ -97,7 +97,7 @@ impl<'de> Deserialize<'de> for DotIndexMap {
 impl Display for DotIndexMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (k, v) in self.0.iter() {
-            write!(f, "({} <> {:?}) ", k, v)?;
+            write!(f, "({k} <> {v:?}) ")?;
         }
         Ok(())
     }

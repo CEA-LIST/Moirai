@@ -39,11 +39,11 @@ where
     fn new_event(&mut self, event: &Event<Self::Op>) {
         match event.op {
             Duet::First(ref op) => {
-                let event = Event::new(op.clone(), event.metadata().clone());
+                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
                 self.first.new_event(&event);
             }
             Duet::Second(ref op) => {
-                let event = Event::new(op.clone(), event.metadata().clone());
+                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
                 self.second.new_event(&event);
             }
         }
@@ -52,11 +52,11 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock) {
         match &event.op {
             Duet::First(op) => {
-                let event = Event::new(op.clone(), event.metadata().clone());
+                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
                 self.first.prune_redundant_events(&event, is_r_0, ltm);
             }
             Duet::Second(op) => {
-                let event = Event::new(op.clone(), event.metadata().clone());
+                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
                 self.second.prune_redundant_events(&event, is_r_0, ltm);
             }
         }
@@ -77,13 +77,13 @@ where
             .first
             .collect_events_since(since, ltm)
             .into_iter()
-            .map(|e| Event::new(Duet::First(e.op.clone()), e.metadata().clone()))
+            .map(|e| Event::new(Duet::First(e.op.clone()), e.metadata().clone(), e.lamport()))
             .collect::<Vec<_>>();
         result.extend(
             self.second
                 .collect_events_since(since, ltm)
                 .into_iter()
-                .map(|e| Event::new(Duet::Second(e.op.clone()), e.metadata().clone())),
+                .map(|e| Event::new(Duet::Second(e.op.clone()), e.metadata().clone(), e.lamport())),
         );
         result
     }
@@ -92,10 +92,10 @@ where
         match &event.op {
             Duet::First(op) => self
                 .first
-                .clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+                .clock_from_event(&Event::new(op.clone(), event.metadata().clone(), event.lamport())),
             Duet::Second(op) => self
                 .second
-                .clock_from_event(&Event::new(op.clone(), event.metadata().clone())),
+                .clock_from_event(&Event::new(op.clone(), event.metadata().clone(), event.lamport())),
         }
     }
 
@@ -104,15 +104,15 @@ where
         self.second.r_n(metadata, conservative);
     }
 
-    fn any_r(&self, event: &Event<Self::Op>) -> bool {
+    fn redundant_itself(&self, event: &Event<Self::Op>) -> bool {
         match event.op {
             Duet::First(ref op) => {
-                let first = Event::new(op.clone(), event.metadata().clone());
-                self.first.any_r(&first)
+                let first = Event::new(op.clone(), event.metadata().clone(), event.lamport());
+                self.first.redundant_itself(&first)
             }
             Duet::Second(ref op) => {
-                let second = Event::new(op.clone(), event.metadata().clone());
-                self.second.any_r(&second)
+                let second = Event::new(op.clone(), event.metadata().clone(), event.lamport());
+                self.second.redundant_itself(&second)
             }
         }
     }

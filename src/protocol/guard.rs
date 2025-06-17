@@ -17,7 +17,7 @@ pub fn guard_against_removed_members(
 /// Returns `true` if the event is a duplicate
 pub fn guard_against_duplicates(ltm: &MatrixClock, clock: &Clock<Partial>) -> bool {
     ltm.get(clock.origin())
-        .map(|other_clock| other_clock.dot() >= clock.dot())
+        .map(|other_clock| other_clock.dot_val() >= clock.dot_val())
         .unwrap_or(true)
 }
 
@@ -27,13 +27,13 @@ pub fn guard_against_out_of_order(ltm: &MatrixClock, clock: &Clock<Partial>) -> 
     let map: HashMap<String, usize> = clock.clone().into();
     for (origin, cnt) in map {
         if origin == clock.origin() {
-            if cnt != ltm.dot(&origin) + 1 {
+            if cnt != ltm.dot_val(&origin) + 1 {
                 return true;
             } else {
                 continue;
             }
         }
-        if cnt > ltm.dot(&origin) {
+        if cnt > ltm.dot_val(&origin) {
             return true;
         }
     }
@@ -52,18 +52,18 @@ pub fn loose_guard_against_out_of_order(
     for (origin, cnt) in map {
         if origin == clock.origin() {
             if batch_origin == origin {
-                if cnt <= ltm.dot(&origin) {
+                if cnt <= ltm.dot_val(&origin) {
                     return true;
                 } else {
                     continue;
                 }
-            } else if cnt != ltm.dot(&origin) + 1 {
+            } else if cnt != ltm.dot_val(&origin) + 1 {
                 return true;
             } else {
                 continue;
             }
         }
-        if cnt > ltm.dot(&origin) {
+        if cnt > ltm.dot_val(&origin) {
             return true;
         }
     }

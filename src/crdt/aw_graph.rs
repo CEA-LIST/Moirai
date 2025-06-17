@@ -27,15 +27,18 @@ where
     }
 
     fn redundant_by_when_redundant(old_op: &Self, _old_dot: Option<&Dot>, is_conc: bool, new_op: &Self, _new_dot: &Dot) -> bool {
-        match (&old_op, &new_op) {
-            (Graph::AddVertex(v1), Graph::AddVertex(v2)) => v1 == v2,
-            (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => !is_conc && v1 == v2,
-            (Graph::AddVertex(_), Graph::AddArc(_, _)) => false,
-            (Graph::AddVertex(v1), Graph::RemoveArc(v2, v3)) => !is_conc && (v1 == v2 || v1 == v3),
+        // old_op = addVertex, addArc only
+        !is_conc && match (old_op, new_op) {
+            (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => 
+                v1 == v3 && v2 == v4,
             (Graph::AddArc(_, _), Graph::AddVertex(_)) => false,
-            (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => v3 == v1 || v3 == v2,
-            (Graph::AddArc(v1, v2), Graph::AddArc(v3, v4)) => v1 == v3 && v2 == v4,
-            (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => !is_conc && v1 == v3 && v2 == v4,
+            (Graph::AddArc(v1, v2), Graph::RemoveVertex(v3)) => v1 == v3 || v2 == v3,
+            (Graph::AddArc(v1, v2), Graph::RemoveArc(v3, v4)) => 
+                v1 == v3 && v2 == v4,
+            (Graph::AddVertex(v1), Graph::AddVertex(v2)) => v1 == v2,
+            (Graph::AddVertex(_), Graph::AddArc(_, _)) => false,
+            (Graph::AddVertex(_), Graph::RemoveArc(_, _)) => false,
+            (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => v1 == v2,
             _ => false,
         }
     }
@@ -47,52 +50,26 @@ where
     fn stabilize(_metadata: &Dot, _state: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
+        let mut ops: Vec<&Self> = stable.iter().chain(unstable.iter()).collect();
+        ops.sort_by(|a, b| match (a, b) {
+            (Graph::AddVertex(_), Graph::AddArc(_, _)) => std::cmp::Ordering::Less,
+            (Graph::AddArc(_, _), Graph::AddVertex(_)) => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
+        });
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::new();
-        let mut edge_index = HashMap::new();
-        for o in stable.iter().chain(unstable.iter()) {
+        for o in ops {
             match o {
                 Graph::AddVertex(v) => {
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
                 Graph::AddArc(v1, v2) => {
-                    // probably safe to unwrap because node and edges are inserted in order
-                    // (i.e. node before edge)
                     if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
                         graph.add_edge(*a, *b, ());
                     }
                 }
-                // No "remove" operation can be in the stable set
                 _ => {}
-            }
-        }
-        for o in stable.iter().chain(unstable.iter()) {
-            match o {
-                Graph::AddVertex(v) => {
-                    let idx = graph.add_node(v.clone());
-                    node_index.insert(v, idx);
-                }
-                Graph::AddArc(v1, v2) => {
-                    // probably safe to unwrap because node and edges are inserted in order
-                    // (i.e. node before edge)
-                    if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
-                        let idx = graph.add_edge(*a, *b, ());
-                        edge_index.insert((v1, v2), idx);
-                    }
-                }
-                Graph::RemoveVertex(v) => {
-                    // the vertex should be already in the node_index map anyway
-                    if let Some(idx) = node_index.get(v) {
-                        graph.remove_node(*idx);
-                    }
-                }
-                Graph::RemoveArc(v1, v2) => {
-                    // the vertex should be already in the node_index map anyway
-                    if let Some(idx) = edge_index.get(&(v1, v2)) {
-                        graph.remove_edge(*idx);
-                    }
-                }
             }
         }
         graph

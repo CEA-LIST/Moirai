@@ -24,7 +24,7 @@ pub trait Log: Default + Debug {
 
     fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>>;
 
-    fn any_r(&self, event: &Event<Self::Op>) -> bool;
+    fn redundant_itself(&self, event: &Event<Self::Op>) -> bool;
 
     /// Remove every stable operations and unstable that are:
     /// - less or equal to the metadata if conservative is true
@@ -45,7 +45,7 @@ pub trait Log: Default + Debug {
     /// The event is added to the PO-Log during "prune redundant events".
     fn effect(&mut self, event: Event<Self::Op>, ltm: &MatrixClock) {
         self.new_event(&event);
-        if self.any_r(&event) {
+        if self.redundant_itself(&event) {
             // The operation is redundant
             self.prune_redundant_events(&event, true, ltm);
         } else {
@@ -68,6 +68,7 @@ pub trait Log: Default + Debug {
         // The operation may have been removed by `stabilize`
         self.purge_stable_metadata(dot);
     }
+
 
     /// Create the clocks, including nested ones, for a given operation.
     /// The clocks are the direct dependencies of the operation.

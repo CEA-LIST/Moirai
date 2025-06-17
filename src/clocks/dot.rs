@@ -2,6 +2,7 @@
 use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 use std::{
     cmp::Ordering,
     fmt::{Display, Error, Formatter},
@@ -11,11 +12,11 @@ use std::{
 use tsify::Tsify;
 
 use crate::{
-    clocks::clock::{Clock, Partial},
+    clocks::clock::{Clock, Lamport, Partial},
     protocol::membership::ViewData,
 };
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize, Tsify),
@@ -26,14 +27,16 @@ pub struct Dot {
     view: Rc<ViewData>,
     origin: usize,
     counter: usize,
+    lamport: Lamport,
 }
 
 impl Dot {
-    pub fn new(origin: usize, counter: usize, view: &Rc<ViewData>) -> Self {
+    pub fn new(origin: usize, counter: usize, lamport: Lamport, view: &Rc<ViewData>) -> Self {
         Self {
             view: Rc::clone(view),
             origin,
             counter,
+            lamport,
         }
     }
 
@@ -52,6 +55,10 @@ impl Dot {
 
     pub fn val(&self) -> usize {
         self.counter
+    }
+
+    pub fn lamport(&self) -> Lamport {
+        self.lamport
     }
 }
 
@@ -78,5 +85,21 @@ impl PartialOrd for Dot {
         } else {
             None
         }
+    }
+}
+
+impl PartialEq for Dot {
+    fn eq(&self, other: &Self) -> bool {
+        self.view.id == other.view.id
+            && self.origin == other.origin
+            && self.counter == other.counter
+    }
+}
+
+impl Hash for Dot {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.view.id.hash(state);
+        self.origin.hash(state);
+        self.counter.hash(state);
     }
 }
