@@ -22,15 +22,25 @@ where
         matches!(new_op, MVRegister::Clear)
     }
 
-    fn redundant_by_when_redundant(_old_op: &Self, _old_dot: Option<&Dot>, is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
+    fn redundant_by_when_redundant(
+        _old_op: &Self,
+        _old_dot: Option<&Dot>,
+        is_conc: bool,
+        _new_op: &Self,
+        _new_dot: &Dot,
+    ) -> bool {
         !is_conc
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self, old_dot: Option<&Dot>, is_conc: bool, new_op: &Self, new_dot: &Dot) -> bool {
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
+        old_dot: Option<&Dot>,
+        is_conc: bool,
+        new_op: &Self,
+        new_dot: &Dot,
+    ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_dot, is_conc, new_op, new_dot)
     }
-
-    fn stabilize(_metadata: &Dot, _state: &mut EventGraph<Self>) {}
 
     fn eval(stable: &Self::Stable, ops: &[Self]) -> Self::Value {
         let mut set = Self::Value::new();
