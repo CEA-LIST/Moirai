@@ -10,7 +10,7 @@ use tsify::Tsify;
 
 use crate::{
     clocks::dot::Dot,
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
+    protocol::{pure_crdt::PureCRDT, stable::Stable},
 };
 
 #[derive(Clone, Debug)]
@@ -60,8 +60,6 @@ impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCR
         }
         counter
     }
-
-    fn stabilize(_dot: &Dot, _state: &mut EventGraph<Self>) {}
 }
 
 impl<V> Display for Counter<V>

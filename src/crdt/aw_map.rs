@@ -397,7 +397,6 @@ mod tests {
         ));
         let event_b = tcsb_b.tc_bcast(AWMap::Remove("a".to_string()));
         tcsb_b.try_deliver(event_a);
-        // bug here ->
         tcsb_a.try_deliver(event_b);
 
         let mut map = HashMap::new();
@@ -472,6 +471,7 @@ mod tests {
         tcsb_c.try_deliver(event_a_2.clone());
         tcsb_c.try_deliver(event_a_1.clone());
 
+        println!("tcsb_a: {:?}", tcsb_a.eval());
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
         assert_eq!(tcsb_c.eval(), tcsb_b.eval());
     }

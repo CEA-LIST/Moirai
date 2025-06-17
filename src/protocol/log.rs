@@ -69,7 +69,6 @@ pub trait Log: Default + Debug {
         self.purge_stable_metadata(dot);
     }
 
-
     /// Create the clocks, including nested ones, for a given operation.
     /// The clocks are the direct dependencies of the operation.
     fn deps(
