@@ -24,16 +24,6 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
         is_redundant
     }
 
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        _old_dot: Option<&Dot>,
-        _is_conc: bool,
-        _new_op: &Self,
-        _new_dot: &Dot,
-    ) -> bool {
-        false
-    }
-
     fn redundant_by_when_not_redundant(
         _old_op: &Self,
         old_dot: Option<&Dot>,

@@ -69,8 +69,6 @@ impl<V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + Parti
         !is_conc && matches!(new_op, Counter::Reset)
     }
 
-    fn stabilize(_: &Dot, _: &mut EventGraph<Self>) {}
-
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut counter = Self::Value::default();
         for op in stable.iter().chain(unstable.iter()) {

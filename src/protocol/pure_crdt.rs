@@ -55,7 +55,7 @@ pub trait PureCRDT: Clone + Debug {
     /// `stabilize` takes a stable timestamp `t` (fed by the TCSB middleware) and
     /// the full PO-Log `s` as input, and returns a new PO-Log (i.e., a map),
     /// possibly discarding a set of operations at once.
-    fn stabilize(dot: &Dot, state: &mut EventGraph<Self>);
+    fn stabilize(_dot: &Dot, _state: &mut EventGraph<Self>) {}
 
     /// `eval` takes the query and the state as input and returns a result, leaving the state unchanged.
     /// Note: only supports the `read` query for now.
