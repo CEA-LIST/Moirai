@@ -59,7 +59,7 @@ where
     fn new_event(&mut self, event: &Event<Self::Op>) {
         match &event.op {
             AWMap::Update(k, v) => {
-                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.new_event(&aw_set_event);
 
                 let mut nested_clocks = event.metadata.clone();
@@ -70,14 +70,14 @@ where
                     "AWMapLog: metadata should not be empty after popping the first element"
                 );
 
-                let log_event = Event::new_nested(v.clone(), nested_clocks);
+                let log_event = Event::new_nested(v.clone(), nested_clocks, event.lamport());
                 self.values
                     .entry(k.clone())
                     .or_default()
                     .new_event(&log_event);
             }
             AWMap::Remove(k) => {
-                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.new_event(&event);
             }
         }
@@ -86,7 +86,7 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock) {
         match &event.op {
             AWMap::Update(k, v) => {
-                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.prune_redundant_events(&aw_set_event, is_r_0, ltm);
 
                 let log_metadata = if let Some(m) = event.metadata.get(1) {
@@ -103,14 +103,14 @@ where
                     clock
                 };
 
-                let log_event = Event::new(v.clone(), log_metadata);
+                let log_event = Event::new(v.clone(), log_metadata, event.lamport());
                 self.values
                     .entry(k.clone())
                     .or_default()
                     .prune_redundant_events(&log_event, is_r_0, ltm);
             }
             AWMap::Remove(k) => {
-                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.prune_redundant_events(&event, is_r_0, ltm);
 
                 if let Some(v) = self.values.get_mut(k) {
@@ -139,11 +139,11 @@ where
     fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
         match &event.op {
             AWMap::Update(k, _) => {
-                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone());
+                let aw_set_event = Event::new(AWSet::Add(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.clock_from_event(&aw_set_event)
             }
             AWMap::Remove(k) => {
-                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone());
+                let event = Event::new(AWSet::Remove(k.clone()), event.metadata().clone(), event.lamport());
                 self.keys.clock_from_event(&event)
             }
         }
@@ -160,25 +160,27 @@ where
         for event in self.keys.collect_events_since(since, ltm) {
             match &event.op {
                 AWSet::Add(k) => {
-                    let mut corresponding_op = nested_ops
+                    let mut event_found = nested_ops
                         .get(k)
                         .unwrap()
                         .iter()
-                        .find(|e| Dot::from(e.metadata()) == Dot::from(event.metadata()))
+                        .find(|e| Dot::from(*e) == Dot::from(&event))
                         .unwrap()
                         .clone();
-                    corresponding_op
+                    event_found
                         .metadata
                         .push_front(event.metadata().clone());
                     events.push(Event::new_nested(
-                        AWMap::Update(k.clone(), corresponding_op.op.clone()),
-                        corresponding_op.metadata.clone(),
+                        AWMap::Update(k.clone(), event_found.op.clone()),
+                        event_found.metadata.clone(),
+                        event_found.lamport(),
                     ));
                 }
                 AWSet::Remove(k) => {
                     events.push(Event::new(
                         AWMap::Remove(k.clone()),
                         event.metadata().clone(),
+                        event.lamport(),
                     ));
                 }
                 AWSet::Clear => {
@@ -201,12 +203,12 @@ where
         }
     }
 
-    fn any_r(&self, event: &Event<Self::Op>) -> bool {
+    fn redundant_itself(&self, event: &Event<Self::Op>) -> bool {
         let event = match &event.op {
-            AWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata().clone()),
-            AWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata().clone()),
+            AWMap::Update(k, _) => Event::new(AWSet::Add(k.clone()), event.metadata().clone(), event.lamport()),
+            AWMap::Remove(k) => Event::new(AWSet::Remove(k.clone()), event.metadata().clone(), event.lamport()),
         };
-        self.keys.any_r(&event)
+        self.keys.redundant_itself(&event)
     }
 
     fn eval(&self) -> Self::Value {

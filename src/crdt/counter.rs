@@ -31,7 +31,8 @@ where
     fn apply_redundant(
         &mut self,
         _rdnt: fn(&Counter<V>, Option<&Dot>, bool, &Counter<V>, &Dot) -> bool,
-        _op: &Counter<V>, _dot: &Dot,
+        _op: &Counter<V>,
+        _dot: &Dot,
     ) {
     }
 
@@ -46,20 +47,8 @@ where
 impl<V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq> PureCRDT for Counter<V> {
     type Value = V;
     type Stable = V;
-    const R_ZERO: Option<bool> = Some(false);
-    const R_ONE: Option<bool> = Some(false);
-
-    fn redundant_itself(_new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
-        false
-    }
-
-    fn redundant_by_when_redundant(_old_op: &Self, _old_dot: Option<&Dot>, _is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
-        false
-    }
-
-    fn redundant_by_when_not_redundant(_old_op: &Self, _old_dot: Option<&Dot>, _is_conc: bool, _new_op: &Self, _new_dot: &Dot) -> bool {
-        false
-    }
+    const DISABLE_R_WHEN_R: bool = true;
+    const DISABLE_R_WHEN_NOT_R: bool = true;
 
     fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
         let mut counter = *stable;
@@ -81,8 +70,8 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Counter::Inc(v) => write!(f, "Inc({})", v),
-            Counter::Dec(v) => write!(f, "Dec({})", v),
+            Counter::Inc(v) => write!(f, "Inc({v})"),
+            Counter::Dec(v) => write!(f, "Dec({v})"),
         }
     }
 }

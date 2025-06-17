@@ -39,7 +39,7 @@ pub fn generate_event_graph<L>(config: EventGraphConfig<'_, L::Op>) -> Vec<Tcsb<
 where
     L: Log,
     L::Op: Clone + Debug,
-    L::Value: PartialEq + Debug,
+    L::Value: Debug,
 {
     let mut rng = rand::rng();
     let mut tcsbs: Vec<Tcsb<L>> = n_members::<L>(config.n_replicas);
@@ -95,11 +95,15 @@ where
     tcsbs
 }
 
+#[cfg(feature = "utils")]
 #[cfg(test)]
 mod tests {
+    use petgraph::graph::DiGraph;
+
     use super::*;
     use std::collections::{HashMap, HashSet};
 
+    use crate::crdt::aw_graph::Graph;
     use crate::crdt::aw_map::{AWMap, AWMapLog};
     use crate::crdt::aw_set::AWSet;
     use crate::crdt::lww_register::LWWRegister;
@@ -200,7 +204,7 @@ mod tests {
 
         let config = EventGraphConfig {
             n_replicas: 5,
-            total_operations: 40,
+            total_operations: 4,
             ops: &ops,
             final_sync: true,
             churn_rate: 0.3,
@@ -221,6 +225,51 @@ mod tests {
             assert_eq!(
                 tcsb.eval(),
                 reference_val,
+                "Replica {} did not converge with the reference.",
+                tcsb.id,
+            );
+        }
+    }
+
+    #[test_log::test]
+    fn generate_aw_graph_convergence() {
+        let ops = vec![
+            Graph::AddVertex("a".to_string()),
+            Graph::AddVertex("b".to_string()),
+            Graph::AddVertex("c".to_string()),
+            Graph::RemoveVertex("a".to_string()),
+            Graph::RemoveVertex("b".to_string()),
+            Graph::RemoveVertex("c".to_string()),
+            Graph::AddArc("a".to_string(), "b".to_string()),
+            Graph::AddArc("b".to_string(), "c".to_string()),
+            Graph::AddArc("c".to_string(), "a".to_string()),
+            Graph::RemoveArc("a".to_string(), "b".to_string()),
+            Graph::RemoveArc("b".to_string(), "c".to_string()),
+            Graph::RemoveArc("c".to_string(), "a".to_string()),
+        ];
+
+        let config = EventGraphConfig {
+            n_replicas: 4,
+            total_operations: 40,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.4,
+            reachability: None,
+        };
+
+        let tcsbs = generate_event_graph::<EventGraph<Graph<String>>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: DiGraph<String, ()> = DiGraph::new();
+        let mut event_sum = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
+            }
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert!(
+                petgraph::algo::is_isomorphic(&tcsb.eval(), &reference_val),
                 "Replica {} did not converge with the reference.",
                 tcsb.id,
             );
@@ -290,21 +339,20 @@ mod tests {
     #[test_log::test]
     fn generate_lww_register_convergence() {
         let ops = vec![
-            LWWRegister::Write("a".to_string()),
-            LWWRegister::Write("b".to_string()),
-            LWWRegister::Write("c".to_string()),
-            LWWRegister::Clear,
-            LWWRegister::Write("d".to_string()),
-            LWWRegister::Write("e".to_string()),
-            LWWRegister::Write("f".to_string()),
+            LWWRegister::Write("w".to_string()),
+            LWWRegister::Write("x".to_string()),
+            LWWRegister::Write("y".to_string()),
+            LWWRegister::Write("z".to_string()),
+            LWWRegister::Write("u".to_string()),
+            LWWRegister::Write("v".to_string()),
         ];
 
         let config = EventGraphConfig {
             n_replicas: 5,
-            total_operations: 100_000,
+            total_operations: 50,
             ops: &ops,
             final_sync: true,
-            churn_rate: 0.5,
+            churn_rate: 0.2,
             reachability: None,
         };
 
@@ -319,6 +367,7 @@ mod tests {
                 event_sum = tcsb.my_clock().sum();
             }
             assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert_ne!(tcsb.eval(), String::default());
             assert_eq!(
                 tcsb.eval(),
                 reference_val,

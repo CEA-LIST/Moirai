@@ -66,11 +66,11 @@ impl MatrixClock {
     }
 
     /// Can panic if the member is not found
-    pub fn dot(&self, member: &str) -> usize {
+    pub fn dot_val(&self, member: &str) -> usize {
         self.clock
             .get(&self.view.members.iter().position(|m| m == member).unwrap())
             .unwrap()
-            .dot()
+            .dot_val()
     }
 
     pub fn get(&self, member: &str) -> Option<&Clock<Full>> {

@@ -25,7 +25,7 @@ use crate::{
         dot::Dot,
         matrix_clock::MatrixClock,
     },
-    protocol::{stable::Stable},
+    protocol::stable::Stable,
 };
 
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ where
     pub non_tombstones: HashSet<NodeIndex>,
     // Contains the heads of the graph
     // The heads are the nodes that have no incoming edges
-    // It includes the nodes that are not in the graph anymore (that are in the stable part)
+    // It may includes nodes that are not in the graph anymore (that are in the stable part)
     pub heads: HashSet<Dot>,
 }
 
@@ -64,7 +64,7 @@ where
     }
 
     pub fn add_event(&mut self, event: &Event<Op>) {
-        let dot = Dot::from(event.metadata());
+        let dot = Dot::from(event);
 
         if self.dot_index_map.contains_dot(&dot) {
             error!(
@@ -78,7 +78,7 @@ where
             Clock::<Partial>::new(&event.metadata().view, event.metadata().origin()),
         ));
 
-        self.dot_index_map.insert(Dot::from(event.metadata()), idx);
+        self.dot_index_map.insert(Dot::from(event), idx);
         for (origin, cnt) in event.metadata().clock.iter() {
             // or origin and cnt equals 1
             if *cnt == 0 {
@@ -86,9 +86,9 @@ where
             }
             // TODO: store the dependencies and the dot separately
             let to_dot = if origin == &event.metadata().origin.expect("Origin not set") {
-                Dot::new(*origin, *cnt - 1, &event.metadata().view)
+                Dot::new(*origin, *cnt - 1, event.lamport, &event.metadata().view)
             } else {
-                Dot::new(*origin, *cnt, &event.metadata().view)
+                Dot::new(*origin, *cnt, event.lamport, &event.metadata().view)
             };
             let to_idx = self.dot_index_map.dot_to_nx(&to_dot);
             // `to_idx` may be None because the dot has been moved to the stable part.
@@ -106,9 +106,9 @@ where
                 node.1.set_by_idx(*origin, *cnt);
                 // if the dot is in heads, we remove it
                 let other_dot = if origin == &event.metadata().origin.expect("Origin not set") {
-                    Dot::new(*origin, *cnt - 1, &event.metadata().view)
+                    Dot::new(*origin, *cnt - 1, event.lamport, &event.metadata().view)
                 } else {
-                    Dot::new(*origin, *cnt, &event.metadata().view)
+                    Dot::new(*origin, *cnt, event.lamport, &event.metadata().view)
                 };
                 if self.heads.contains(&other_dot) {
                     self.heads.remove(&other_dot);
@@ -157,23 +157,19 @@ where
     }
 
     /// Complexity: O(n + m), where n is the number of nodes and m is the number of edges in the graph.
+    /// A dot always has itself as a predecessor
     pub fn causal_predecessors(&self, dot: &Dot) -> HashSet<NodeIndex> {
-        if dot.val() == 0 {
-            // If the dot is a zero value, it has no predecessors
-            return HashSet::new();
-        }
-
         let node_idx = self
             .dot_index_map
             .dot_to_nx(dot)
-            .unwrap_or_else(|| panic!("Dot {} not found in the graph.", dot));
+            .unwrap_or_else(|| panic!("Dot {dot} not found in the graph."));
 
         let mut predecessors = HashSet::new();
         // TODO: skip tombstones?
         let mut dfs = Dfs::new(&self.unstable, *node_idx);
 
-        while let Some(node) = dfs.next(&self.unstable) {
-            predecessors.insert(node);
+        while let Some(nx) = dfs.next(&self.unstable) {
+            predecessors.insert(nx);
         }
 
         predecessors
@@ -181,7 +177,6 @@ where
 
     /// Reconstruct the event from the node index
     /// Reconstruct the dependency clock from the event graph
-    /// TODO: miss dependencies that have been stabilized
     fn event_from_idx(&self, node_idx: &NodeIndex) -> Event<Op> {
         let dot = self.dot_index_map.nx_to_dot(node_idx).unwrap();
         let mut dependency_clock = Clock::<Partial>::new(&dot.view(), dot.origin());
@@ -199,7 +194,7 @@ where
             dependency_clock.set(neighbor_dot.origin(), neighbor_dot.val());
         }
         dependency_clock.merge(&op.1);
-        Event::new(op.0.clone(), dependency_clock)
+        Event::new(op.0.clone(), dependency_clock, dot.lamport())
     }
 
     fn node_indices_from_clock(&self, clock: &Clock<Full>) -> Vec<NodeIndex> {
@@ -210,7 +205,8 @@ where
                 if *cnt == 0 {
                     None
                 } else {
-                    let dot = Dot::new(*origin, *cnt, &clock.view);
+                    // TODO: 0 for lamport is a bad situation
+                    let dot = Dot::new(*origin, *cnt, 0, &clock.view);
                     self.dot_index_map.dot_to_nx(&dot).cloned()
                 }
             })
@@ -246,43 +242,36 @@ where
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r: bool, ltm: &MatrixClock) {
         // Keep only the operations that are not made redundant by the new operation
         if is_r {
-            match O::R_ZERO {
-                Some(true) => {
-                    self.stable.clear();
-                    self.unstable.clear();
-                    self.dot_index_map.clear();
-                }
-                Some(false) => {}
-                None => {
-                    let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-                    // If the operation is redundant, we make its effect on the stable part
-                    // and prune the unstable part
-                    let dot = Dot::from(event.metadata());
-                    self.stable
-                        .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op, &dot);
-                    prune_unstable(self, event, true, clock);
-                }
+            if !O::DISABLE_R_WHEN_R {
+                let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
+                // If the operation is redundant, we make its effect on the stable part
+                // and prune the unstable part
+                let dot = Dot::from(event);
+                self.stable
+                    .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op, &dot);
+                prune_unstable(self, event, true, clock);
             }
         } else {
-            match O::R_ONE {
-                Some(true) => {
-                    self.stable.clear();
-                    self.unstable.clear();
-                    self.dot_index_map.clear();
-                }
-                Some(false) => {}
-                None => {
-                    let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-                    // If the operation is not redundant, we make its effect on the unstable part
-                    // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
-                    // So we don't need to apply it to the stable part. Future refactore include making the
-                    // effect on the stable part more generic
-                    let dot = Dot::from(event.metadata());
-                    self.stable
-                        .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op, &dot);
-                    prune_unstable(self, event, false, clock);
-                }
+            if !O::DISABLE_R_WHEN_NOT_R {
+                let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
+                // If the operation is not redundant, we make its effect on the unstable part
+                // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
+                // So we don't need to apply it to the stable part. Future refactore include making the
+                // effect on the stable part more generic
+                let dot = Dot::from(event);
+                self.stable.apply_redundant(
+                    Self::Op::redundant_by_when_not_redundant,
+                    &event.op,
+                    &dot,
+                );
+                prune_unstable(self, event, false, clock);
             }
+        }
+
+        if is_r {
+            let dot = Dot::from(event);
+            self.non_tombstones
+                .remove(self.dot_index_map.dot_to_nx(&dot).unwrap());
         }
 
         fn prune_unstable<O: PureCRDT>(
@@ -291,7 +280,7 @@ where
             is_r: bool,
             clock: &Clock<Full>,
         ) {
-            let new_dot = Dot::from(event.metadata());
+            let new_dot = Dot::from(event);
             assert_ne!(new_dot.val(), 0, "Dot value cannot be 0");
 
             let mut to_remove = Vec::new();
@@ -306,22 +295,27 @@ where
                 let is_conc = !clock.is_predecessor(other_dot);
 
                 if is_r {
-                    // Order => old_op `greater_than` new_op (false when not conc, true when conc and old op has a lexicographically greater replica id)
-                    if O::redundant_by_when_redundant(&op.0, Some(other_dot), is_conc, &event.op, &new_dot) {
+                    if O::redundant_by_when_redundant(
+                        &op.0,
+                        Some(other_dot),
+                        is_conc,
+                        &event.op,
+                        &new_dot,
+                    ) {
                         to_remove.push(*node_idx);
                     }
-                } else if O::redundant_by_when_not_redundant(&op.0, Some(other_dot), is_conc, &event.op, &new_dot) {
+                } else if O::redundant_by_when_not_redundant(
+                    &op.0,
+                    Some(other_dot),
+                    is_conc,
+                    &event.op,
+                    &new_dot,
+                ) {
                     to_remove.push(*node_idx);
                 }
             }
             for node_idx in to_remove {
                 graph.non_tombstones.remove(&node_idx);
-            }
-
-            if is_r {
-                graph
-                    .non_tombstones
-                    .remove(graph.dot_index_map.dot_to_nx(&new_dot).unwrap());
             }
         }
     }
@@ -342,7 +336,8 @@ where
                 continue;
             }
             for i in (*val + 1)..=*c {
-                let dot = Dot::new(*o, i, &since.clock.view);
+                // TODO: change lamport 0 to the actual lamport of the event
+                let dot = Dot::new(*o, i, 0, &since.clock.view);
                 if since.exclude.contains(&dot) {
                     // If the dot is in the exclude list, we skip it
                     continue;
@@ -358,8 +353,8 @@ where
         events
     }
 
-    fn any_r(&self, event: &Event<Self::Op>) -> bool {
-        let dot = Dot::from(event.metadata());
+    fn redundant_itself(&self, event: &Event<Self::Op>) -> bool {
+        let dot = Dot::from(event);
         Self::Op::redundant_itself(&event.op, &dot, self)
     }
 
@@ -419,7 +414,7 @@ where
                     // If the origin is the same as the event origin, we skip it
                     None
                 } else {
-                    let dot = Dot::new(*origin, *cnt, &event.metadata().view);
+                    let dot = Dot::new(*origin, *cnt, event.lamport, &event.metadata().view);
                     self.dot_index_map.dot_to_nx(&dot).cloned()
                 }
             })

@@ -63,11 +63,7 @@ impl Since {
     pub fn new_from(tcsb: &Tcsb<impl Log>) -> Self {
         Since {
             clock: tcsb.my_clock().clone(),
-            exclude: tcsb
-                .pending
-                .iter()
-                .map(|e| Dot::from(e.metadata()))
-                .collect(),
+            exclude: tcsb.pending.iter().map(|e| Dot::from(e)).collect(),
         }
     }
 }
@@ -123,7 +119,7 @@ where
                     error!("Pull request failed: receiver peer does know us.");
                 }
                 _ => {
-                    panic!("Unexpected error: {:?}", e);
+                    panic!("Unexpected error: {e:?}");
                 }
             },
         }
