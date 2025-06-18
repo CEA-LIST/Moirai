@@ -471,7 +471,6 @@ mod tests {
         tcsb_c.try_deliver(event_a_2.clone());
         tcsb_c.try_deliver(event_a_1.clone());
 
-        println!("tcsb_a: {:?}", tcsb_a.eval());
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
         assert_eq!(tcsb_c.eval(), tcsb_b.eval());
     }

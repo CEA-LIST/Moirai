@@ -6,20 +6,17 @@ use rand::{
     seq::{IndexedRandom, IteratorRandom},
     Rng,
 };
-use std::fmt::Debug;
+use std::{fmt::Debug, fs::File, io::Write, time::Instant};
 
 /// Configuration for random event graph generation in a partially connected distributed system.
-/// If `churn_rate` is set to 0, `final_sync` is false and `reachability` is None,
-/// the graph will be fully connected and all replicas will be online throughout the simulation.
-/// Thus, they will converge to the same state after all operations are applied.
 pub struct EventGraphConfig<'a, Op> {
     pub n_replicas: usize,
     pub total_operations: usize,
     pub ops: &'a [Op],
     pub final_sync: bool,
-    /// The probability that a replica switch offline/online at each operation.
     pub churn_rate: f64,
-    pub reachability: Option<Vec<Vec<bool>>>, // Optional static reachability matrix
+    pub reachability: Option<Vec<Vec<bool>>>,
+    pub log_timing_csv: bool, // NEW FIELD: enable CSV logging
 }
 
 impl<'a, Op> Default for EventGraphConfig<'a, Op> {
@@ -31,6 +28,7 @@ impl<'a, Op> Default for EventGraphConfig<'a, Op> {
             final_sync: true,
             churn_rate: 0.0,
             reachability: None,
+            log_timing_csv: false,
         }
     }
 }
@@ -50,13 +48,14 @@ where
     let mut local_ops_issued = 0;
     let mut online = vec![true; config.n_replicas];
 
+    // Timing logs: one Vec per replica
+    let mut timing_logs: Vec<Vec<(String, u128)>> = vec![Vec::new(); config.n_replicas];
+
     while local_ops_issued < config.total_operations {
-        // Churn simulation: determine which replicas are online.
         for online_flag in &mut online {
             *online_flag = rng.random::<f64>() >= config.churn_rate;
         }
 
-        // Broadcast step
         if let Some(replica_idx) = (0..config.n_replicas)
             .filter(|&i| online[i])
             .choose(&mut rng)
@@ -66,32 +65,76 @@ where
                 .choose(&mut rng)
                 .expect("`ops` slice cannot be empty")
                 .clone();
+
+            let start = Instant::now();
             let _ = tcsbs[replica_idx].tc_bcast(op);
+            let duration = start.elapsed().as_micros();
+
+            if config.log_timing_csv {
+                timing_logs[replica_idx].push(("tc_bcast".to_string(), duration));
+            }
+
             local_ops_issued += 1;
 
-            // Sync step from replica_idx to all others that are online and  reachable
             for j in 0..config.n_replicas {
                 if j != replica_idx && online[j] && reachability[replica_idx][j] {
                     let since = Since::new_from(&tcsbs[j]);
                     let batch = tcsbs[replica_idx].events_since(&since);
+
+                    let batch_size: u128 = if let Ok(ref ok_batch) = batch {
+                        ok_batch.events.len() as u128
+                    } else {
+                        0
+                    };
+
+                    let start = Instant::now();
                     tcsbs[j].deliver_batch(batch);
+                    let duration = start.elapsed().as_micros();
+
+                    if config.log_timing_csv && batch_size > 0 {
+                        timing_logs[j].push(("deliver_batch".to_string(), duration / batch_size));
+                    }
                 }
             }
         }
     }
 
-    // Final all-to-all sync (if enabled)
     if config.final_sync {
         for i in 0..config.n_replicas {
             for j in 0..config.n_replicas {
                 if i != j && reachability[i][j] {
                     let batch = tcsbs[i].events_since(&Since::new_from(&tcsbs[j]));
+
+                    let batch_size: u128 = if let Ok(ref ok_batch) = batch {
+                        ok_batch.events.len() as u128
+                    } else {
+                        0
+                    };
+
+                    let start = Instant::now();
                     tcsbs[j].deliver_batch(batch);
+                    let duration = start.elapsed().as_micros();
+
+                    if config.log_timing_csv && batch_size > 0 {
+                        timing_logs[j].push(("deliver_batch".to_string(), duration / batch_size));
+                    }
                 }
             }
         }
     }
 
+    // Export to CSV if enabled
+    if config.log_timing_csv {
+        for (i, log) in timing_logs.into_iter().enumerate() {
+            let filename = format!("replica_{}_timings.csv", i);
+            let mut file = File::create(&filename)
+                .unwrap_or_else(|e| panic!("Failed to create {}: {}", filename, e));
+            writeln!(file, "operation,time_per_event_micros").unwrap();
+            for (op, time) in log {
+                writeln!(file, "{},{}", op, time).unwrap();
+            }
+        }
+    }
     tcsbs
 }
 
@@ -133,11 +176,12 @@ mod tests {
 
         let config = EventGraphConfig {
             n_replicas: 20,
-            total_operations: 30,
+            total_operations: 300,
             ops: &ops,
             final_sync: true,
             churn_rate: 0.2,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<EventGraph<AWSet<&str>>>(config);
@@ -171,6 +215,7 @@ mod tests {
             final_sync: true,
             churn_rate: 0.7,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<EventGraph<Counter<isize>>>(config);
@@ -209,6 +254,7 @@ mod tests {
             final_sync: true,
             churn_rate: 0.3,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<AWMapLog<String, EventGraph<Counter<i32>>>>(config);
@@ -255,6 +301,7 @@ mod tests {
             final_sync: true,
             churn_rate: 0.4,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<EventGraph<Graph<String>>>(config);
@@ -312,6 +359,7 @@ mod tests {
             final_sync: true,
             churn_rate: 0.3,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<AWMapLog<String, AWMapLog<i32, EventGraph<Counter<i32>>>>>(
@@ -354,6 +402,7 @@ mod tests {
             final_sync: true,
             churn_rate: 0.2,
             reachability: None,
+            log_timing_csv: false,
         };
 
         let tcsbs = generate_event_graph::<EventGraph<LWWRegister<String>>>(config);
