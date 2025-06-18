@@ -229,7 +229,7 @@ where
 
     /// The TCSB middleware can offer this causal stability information through extending its API with tcstablei(τ),
     /// which informs the upper layers that message with timestamp τ is now known to be causally stable
-    pub fn tc_stable(&mut self, new_clock: &Option<Clock<Partial>>) {
+    fn tc_stable(&mut self, new_clock: &Option<Clock<Partial>>) {
         let ignore = self.group_membership.leaving_members(&self.id);
         let svv = match new_clock {
             Some(c) => self.ltm.incremental_svv(c, &self.lsv, &ignore),
