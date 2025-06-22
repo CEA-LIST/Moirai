@@ -63,7 +63,7 @@ impl Since {
     pub fn new_from(tcsb: &Tcsb<impl Log>) -> Self {
         Since {
             clock: tcsb.my_clock().clone(),
-            exclude: tcsb.pending.iter().map(|e| Dot::from(e)).collect(),
+            exclude: tcsb.pending.iter().map(Dot::from).collect(),
         }
     }
 }

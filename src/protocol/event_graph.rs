@@ -241,31 +241,24 @@ where
     /// `is_r` is true if the operation is already redundant (will never be stored in the event graph)
     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r: bool, ltm: &MatrixClock) {
         // Keep only the operations that are not made redundant by the new operation
-        if is_r {
-            if !O::DISABLE_R_WHEN_R {
-                let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-                // If the operation is redundant, we make its effect on the stable part
-                // and prune the unstable part
-                let dot = Dot::from(event);
-                self.stable
-                    .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op, &dot);
-                prune_unstable(self, event, true, clock);
-            }
-        } else {
-            if !O::DISABLE_R_WHEN_NOT_R {
-                let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-                // If the operation is not redundant, we make its effect on the unstable part
-                // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
-                // So we don't need to apply it to the stable part. Future refactore include making the
-                // effect on the stable part more generic
-                let dot = Dot::from(event);
-                self.stable.apply_redundant(
-                    Self::Op::redundant_by_when_not_redundant,
-                    &event.op,
-                    &dot,
-                );
-                prune_unstable(self, event, false, clock);
-            }
+        if is_r && !O::DISABLE_R_WHEN_R {
+            let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
+            // If the operation is redundant, we make its effect on the stable part
+            // and prune the unstable part
+            let dot = Dot::from(event);
+            self.stable
+                .apply_redundant(Self::Op::redundant_by_when_redundant, &event.op, &dot);
+            prune_unstable(self, event, true, clock);
+        } else if !O::DISABLE_R_WHEN_NOT_R {
+            let clock = ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
+            // If the operation is not redundant, we make its effect on the unstable part
+            // but not on the stable part: what it makes redundant will be 'shadowed' by it anyway
+            // So we don't need to apply it to the stable part. Future refactore include making the
+            // effect on the stable part more generic
+            let dot = Dot::from(event);
+            self.stable
+                .apply_redundant(Self::Op::redundant_by_when_not_redundant, &event.op, &dot);
+            prune_unstable(self, event, false, clock);
         }
 
         if is_r {
