@@ -126,12 +126,12 @@ where
     // Export to CSV if enabled
     if config.log_timing_csv {
         for (i, log) in timing_logs.into_iter().enumerate() {
-            let filename = format!("replica_{}_timings.csv", i);
+            let filename = format!("replica_{i}_timings.csv");
             let mut file = File::create(&filename)
-                .unwrap_or_else(|e| panic!("Failed to create {}: {}", filename, e));
+                .unwrap_or_else(|e| panic!("Failed to create {filename}: {e}"));
             writeln!(file, "operation,time_per_event_micros").unwrap();
             for (op, time) in log {
-                writeln!(file, "{},{}", op, time).unwrap();
+                writeln!(file, "{op},{time}").unwrap();
             }
         }
     }
@@ -146,7 +146,7 @@ mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
 
-    use crate::crdt::aw_graph::Graph;
+    use crate::crdt::aw_graph::AWGraph;
     use crate::crdt::aw_map::{AWMap, AWMapLog};
     use crate::crdt::aw_set::AWSet;
     use crate::crdt::lww_register::LWWRegister;
@@ -175,11 +175,11 @@ mod tests {
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 20,
-            total_operations: 300,
+            n_replicas: 32,
+            total_operations: 10_000,
             ops: &ops,
             final_sync: true,
-            churn_rate: 0.2,
+            churn_rate: 0.3,
             reachability: None,
             log_timing_csv: false,
         };
@@ -280,18 +280,18 @@ mod tests {
     #[test_log::test]
     fn generate_aw_graph_convergence() {
         let ops = vec![
-            Graph::AddVertex("a".to_string()),
-            Graph::AddVertex("b".to_string()),
-            Graph::AddVertex("c".to_string()),
-            Graph::RemoveVertex("a".to_string()),
-            Graph::RemoveVertex("b".to_string()),
-            Graph::RemoveVertex("c".to_string()),
-            Graph::AddArc("a".to_string(), "b".to_string()),
-            Graph::AddArc("b".to_string(), "c".to_string()),
-            Graph::AddArc("c".to_string(), "a".to_string()),
-            Graph::RemoveArc("a".to_string(), "b".to_string()),
-            Graph::RemoveArc("b".to_string(), "c".to_string()),
-            Graph::RemoveArc("c".to_string(), "a".to_string()),
+            AWGraph::AddVertex("a".to_string()),
+            AWGraph::AddVertex("b".to_string()),
+            AWGraph::AddVertex("c".to_string()),
+            AWGraph::RemoveVertex("a".to_string()),
+            AWGraph::RemoveVertex("b".to_string()),
+            AWGraph::RemoveVertex("c".to_string()),
+            AWGraph::AddArc("a".to_string(), "b".to_string()),
+            AWGraph::AddArc("b".to_string(), "c".to_string()),
+            AWGraph::AddArc("c".to_string(), "a".to_string()),
+            AWGraph::RemoveArc("a".to_string(), "b".to_string()),
+            AWGraph::RemoveArc("b".to_string(), "c".to_string()),
+            AWGraph::RemoveArc("c".to_string(), "a".to_string()),
         ];
 
         let config = EventGraphConfig {
@@ -304,7 +304,7 @@ mod tests {
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<EventGraph<Graph<String>>>(config);
+        let tcsbs = generate_event_graph::<EventGraph<AWGraph<String>>>(config);
 
         // All replicas' eval() should match
         let mut reference_val: DiGraph<String, ()> = DiGraph::new();

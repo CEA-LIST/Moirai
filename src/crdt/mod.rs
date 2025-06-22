@@ -7,6 +7,7 @@ pub mod lww_register;
 pub mod mv_register;
 pub mod resettable_counter;
 pub mod rw_set;
+pub mod uw_graph;
 
 pub mod test_util {
     use colored::Colorize;

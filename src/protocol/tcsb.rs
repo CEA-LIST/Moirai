@@ -199,6 +199,7 @@ where
             // Increment the new peer vector clock with its actual value
             // And our own vector clock with the new event
             self.my_clock_mut().merge(event.metadata());
+            // TODO: this is expensive
             let vc = self.state.clock_from_event(&event);
             self.ltm.merge_clock(&vc);
 
