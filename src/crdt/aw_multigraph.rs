@@ -89,12 +89,12 @@ where
                 AWGraph::AddArc(v1, v2, e) => {
                     // TODO: Check this it is correct. The non-tombstones are stored in a
                     // TODO: HashSet, which means that that arcs ops may be applied in any order.
-                    if edge_index.contains(&(&v1, &v2, &e)) {
+                    if edge_index.contains(&(v1, v2, e)) {
                         continue; // Skip if the edge already exists
                     }
                     if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
                         graph.add_edge(*a, *b, e.clone());
-                        edge_index.insert((&v1, &v2, &e));
+                        edge_index.insert((v1, v2, e));
                     }
                 }
                 _ => {}
