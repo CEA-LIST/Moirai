@@ -152,13 +152,19 @@ mod tests {
     use crate::crdt::aw_multigraph::AWGraph;
     use crate::crdt::aw_set::AWSet;
     use crate::crdt::lww_register::LWWRegister;
+    use crate::crdt::mv_register::MVRegister;
     use crate::crdt::resettable_counter::Counter;
     use crate::crdt::uw_multigraph::{UWGraph, UWGraphLog};
+    use crate::object;
     use crate::protocol::event_graph::EventGraph;
 
     #[test_log::test]
     fn folie() {
         for _ in 0..100 {
+            // generate_deeply_nested_aw_map_convergence();
+            // generate_aw_set_convergence();
+            // generate_aw_map_convergence();
+            // generate_aw_graph_convergence();
             generate_uw_multigraph_convergence();
         }
     }
@@ -178,7 +184,7 @@ mod tests {
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 32,
+            n_replicas: 8,
             total_operations: 10_000,
             ops: &ops,
             final_sync: true,
@@ -209,7 +215,7 @@ mod tests {
 
     #[test_log::test]
     fn generate_counter_convergence() {
-        let ops = vec![Counter::Inc(1), Counter::Dec(1), Counter::Reset];
+        let ops: Vec<Counter<isize>> = vec![Counter::Inc(1), Counter::Dec(1), Counter::Reset];
 
         let config = EventGraphConfig {
             n_replicas: 5,
@@ -236,23 +242,23 @@ mod tests {
     #[test_log::test]
     fn generate_aw_map_convergence() {
         let ops = vec![
-            AWMap::Update("a".to_string(), Counter::Inc(2)),
-            AWMap::Update("a".to_string(), Counter::Dec(3)),
-            AWMap::Update("a".to_string(), Counter::Reset),
+            AWMap::Update("a".to_string(), MVRegister::Write(1)),
+            AWMap::Update("a".to_string(), MVRegister::Write(2)),
+            AWMap::Update("a".to_string(), MVRegister::Write(3)),
             AWMap::Remove("a".to_string()),
-            AWMap::Update("b".to_string(), Counter::Inc(5)),
-            AWMap::Update("b".to_string(), Counter::Dec(1)),
-            AWMap::Update("b".to_string(), Counter::Reset),
+            AWMap::Update("b".to_string(), MVRegister::Write(5)),
+            AWMap::Update("b".to_string(), MVRegister::Write(6)),
+            AWMap::Update("b".to_string(), MVRegister::Write(7)),
             AWMap::Remove("b".to_string()),
-            AWMap::Update("c".to_string(), Counter::Inc(10)),
-            AWMap::Update("c".to_string(), Counter::Dec(2)),
-            AWMap::Update("c".to_string(), Counter::Reset),
+            AWMap::Update("c".to_string(), MVRegister::Write(10)),
+            AWMap::Update("c".to_string(), MVRegister::Write(20)),
+            AWMap::Update("c".to_string(), MVRegister::Write(30)),
             AWMap::Remove("c".to_string()),
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 5,
-            total_operations: 4,
+            n_replicas: 8,
+            total_operations: 100,
             ops: &ops,
             final_sync: true,
             churn_rate: 0.3,
@@ -260,10 +266,10 @@ mod tests {
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<AWMapLog<String, EventGraph<Counter<i32>>>>(config);
+        let tcsbs = generate_event_graph::<AWMapLog<String, EventGraph<MVRegister<i32>>>>(config);
 
         // All replicas' eval() should match
-        let mut reference_val: HashMap<String, i32> = HashMap::new();
+        let mut reference_val: HashMap<String, HashSet<i32>> = HashMap::new();
         let mut event_sum = 0;
         for (i, tcsb) in tcsbs.iter().enumerate() {
             if i == 0 {
@@ -277,12 +283,195 @@ mod tests {
                 "Replica {} did not converge with the reference.",
                 tcsb.id,
             );
+            println!("Replica {}: {:?}", tcsb.id, tcsb.eval(),)
+        }
+    }
+
+    #[test_log::test]
+    fn generate_class_diagram() {
+        let ops = vec![
+            UWGraph::UpdateVertex("Car", Class::Name(MVRegister::Write("Car".to_string()))),
+            // UWGraph::UpdateVertex(
+            //     "Wheel",
+            //     Class::Features(AWMap::Update(
+            //         "brand".to_string(),
+            //         MVRegister::Write(PrimitiveType::String),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Engine",
+            //     Class::Features(AWMap::Update(
+            //         "horsepower".to_string(),
+            //         MVRegister::Write(PrimitiveType::Number),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Driver",
+            //     Class::Features(AWMap::Update(
+            //         "name".to_string(),
+            //         MVRegister::Write(PrimitiveType::String),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Car",
+            //     Class::Features(AWMap::Update(
+            //         "wheels".to_string(),
+            //         MVRegister::Write(PrimitiveType::Number),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Car",
+            //     Class::Features(AWMap::Update(
+            //         "engine".to_string(),
+            //         MVRegister::Write(PrimitiveType::String),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Driver",
+            //     Class::Features(AWMap::Update(
+            //         "age".to_string(),
+            //         MVRegister::Write(PrimitiveType::Number),
+            //     )),
+            // ),
+            // UWGraph::UpdateVertex(
+            //     "Driver",
+            //     Class::Features(AWMap::Update(
+            //         "license".to_string(),
+            //         MVRegister::Write(PrimitiveType::String),
+            //     )),
+            // ),
+            // UWGraph::RemoveVertex("Wheel"),
+            // UWGraph::RemoveVertex("Engine"),
+            // UWGraph::RemoveVertex("Driver"),
+            // UWGraph::UpdateArc(
+            //     "Car",
+            //     "Wheel",
+            //     "arc1",
+            //     Relation::Label(MVRegister::Write("has".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Car",
+            //     "Wheel",
+            //     "arc1",
+            //     Relation::Label(MVRegister::Write("wheelcar".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Wheel",
+            //     "Car",
+            //     "arc2",
+            //     Relation::RelationType(MVRegister::Write("aggregates".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Car",
+            //     "Wheel",
+            //     "arc1",
+            //     Relation::RelationType(MVRegister::Write("composes".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Wheel",
+            //     "Car",
+            //     "arc2",
+            //     Relation::RelationType(MVRegister::Write("aggregates".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Car",
+            //     "Engine",
+            //     "arc3",
+            //     Relation::Label(MVRegister::Write("has".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Driver",
+            //     "Car",
+            //     "arc4",
+            //     Relation::Label(MVRegister::Write("drives".to_string())),
+            // ),
+            // UWGraph::UpdateArc(
+            //     "Car",
+            //     "Driver",
+            //     "arc5",
+            //     Relation::Label(MVRegister::Write("owned_by".to_string())),
+            // ),
+        ];
+
+        let config = EventGraphConfig {
+            n_replicas: 8,
+            total_operations: 100,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.2,
+            reachability: None,
+            log_timing_csv: false,
+        };
+
+        #[derive(Debug, Clone)]
+        enum RelationType {
+            Extends,
+            Implements,
+            Aggregates,
+            Composes,
+            Associates,
+        }
+
+        impl Default for RelationType {
+            fn default() -> Self {
+                RelationType::Associates
+            }
+        }
+
+        #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+        enum PrimitiveType {
+            String,
+            Number,
+            Bool,
+            Null,
+        }
+
+        impl Default for PrimitiveType {
+            fn default() -> Self {
+                PrimitiveType::Null
+            }
+        }
+
+        object!(Class {
+            name: EventGraph::<MVRegister::<String>>,
+            features: AWMapLog::<String, EventGraph<MVRegister<PrimitiveType>>>,
+        });
+
+        object!(Relation {
+            label: EventGraph::<MVRegister::<String>>,
+            relation_type: EventGraph::<MVRegister::<String>>,
+        });
+
+        let tcsbs = generate_event_graph::<UWGraphLog<&str, &str, ClassLog, RelationLog>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: DiGraph<ClassValue, RelationValue> = DiGraph::new();
+        let mut event_sum = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
+            }
+            let new_eval = tcsb.eval();
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert!(
+                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                "Replica {} did not converge with the reference. Reference: {:?}, Replica: {:?}",
+                tcsb.id,
+                petgraph::dot::Dot::with_config(&new_eval, &[]),
+                petgraph::dot::Dot::with_config(&reference_val, &[]),
+            );
+            println!(
+                "Replica {}: {:?}",
+                tcsb.id,
+                petgraph::dot::Dot::with_config(&new_eval, &[])
+            );
         }
     }
 
     #[test_log::test]
     fn generate_aw_graph_convergence() {
-        let ops = vec![
+        let ops: Vec<AWGraph<&'static str, u8>> = vec![
             AWGraph::AddVertex("a"),
             AWGraph::AddVertex("b"),
             AWGraph::AddVertex("c"),

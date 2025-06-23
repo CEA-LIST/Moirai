@@ -39,11 +39,11 @@ where
     fn new_event(&mut self, event: &Event<Self::Op>) {
         match event.op {
             Duet::First(ref op) => {
-                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
+                let event = Event::new_nested(op.clone(), event.metadata.clone(), event.lamport());
                 self.first.new_event(&event);
             }
             Duet::Second(ref op) => {
-                let event = Event::new(op.clone(), event.metadata().clone(), event.lamport());
+                let event = Event::new_nested(op.clone(), event.metadata.clone(), event.lamport());
                 self.second.new_event(&event);
             }
         }
@@ -83,19 +83,29 @@ where
             self.second
                 .collect_events_since(since, ltm)
                 .into_iter()
-                .map(|e| Event::new(Duet::Second(e.op.clone()), e.metadata().clone(), e.lamport())),
+                .map(|e| {
+                    Event::new(
+                        Duet::Second(e.op.clone()),
+                        e.metadata().clone(),
+                        e.lamport(),
+                    )
+                }),
         );
         result
     }
 
     fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full> {
         match &event.op {
-            Duet::First(op) => self
-                .first
-                .clock_from_event(&Event::new(op.clone(), event.metadata().clone(), event.lamport())),
-            Duet::Second(op) => self
-                .second
-                .clock_from_event(&Event::new(op.clone(), event.metadata().clone(), event.lamport())),
+            Duet::First(op) => self.first.clock_from_event(&Event::new(
+                op.clone(),
+                event.metadata().clone(),
+                event.lamport(),
+            )),
+            Duet::Second(op) => self.second.clock_from_event(&Event::new(
+                op.clone(),
+                event.metadata().clone(),
+                event.lamport(),
+            )),
         }
     }
 

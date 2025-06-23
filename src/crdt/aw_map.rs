@@ -71,7 +71,8 @@ where
 
                 assert!(
                     !nested_clocks.is_empty(),
-                    "AWMapLog: metadata should not be empty after popping the first element"
+                    "AWMapLog: metadata should not be empty after popping the first element. Event: {}",
+                    event
                 );
 
                 let log_event = Event::new_nested(v.clone(), nested_clocks, event.lamport());

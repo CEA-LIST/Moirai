@@ -91,6 +91,7 @@ where
                 );
 
                 let log_event = Event::new_nested(no.clone(), nested_clocks, event.lamport());
+
                 self.vertex_content
                     .entry(v.clone())
                     .or_default()
@@ -245,12 +246,14 @@ where
 
     fn collect_events_since(&self, since: &Since, ltm: &MatrixClock) -> Vec<Event<Self::Op>> {
         let mut events = vec![];
-        let nested_vertex: HashMap<V, Vec<Event<Nl::Op>>> = self
+        type NestedVertexes<V, O> = HashMap<V, Vec<Event<O>>>;
+        let nested_vertexes: NestedVertexes<V, Nl::Op> = self
             .vertex_content
             .iter()
             .map(|(k, log)| (k.clone(), log.collect_events_since(since, ltm)))
             .collect();
-        let nested_arc: HashMap<(V, V, E), Vec<Event<El::Op>>> = self
+        type NestedArcs<V, E, O> = HashMap<(V, V, E), Vec<Event<O>>>;
+        let nested_arcs: NestedArcs<V, E, El::Op> = self
             .arc_content
             .iter()
             .map(|((v1, v2, e), log)| {
@@ -264,7 +267,7 @@ where
         for event in self.graph.collect_events_since(since, ltm) {
             match &event.op {
                 AWGraph::AddVertex(v) => {
-                    let mut event_found = nested_vertex
+                    let mut event_found = nested_vertexes
                         .get(v)
                         .unwrap()
                         .iter()
@@ -286,7 +289,7 @@ where
                     ));
                 }
                 AWGraph::AddArc(v1, v2, e) => {
-                    let mut event_found = nested_arc
+                    let mut event_found = nested_arcs
                         .get(&(v1.clone(), v2.clone(), e.clone()))
                         .unwrap()
                         .iter()
@@ -496,12 +499,14 @@ where
 mod tests {
     use crate::{
         crdt::{
+            aw_map::{AWMap, AWMapLog},
             lww_register::LWWRegister,
+            mv_register::MVRegister,
             resettable_counter::Counter,
             test_util::twins,
             uw_multigraph::{UWGraph, UWGraphLog},
         },
-        protocol::event_graph::EventGraph,
+        protocol::{event_graph::EventGraph, pulling::Since},
     };
 
     #[test_log::test]
@@ -551,6 +556,78 @@ mod tests {
             "Eval B: {:?}",
             petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
         );
+
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_b.eval()
+        ));
+    }
+
+    #[test_log::test]
+    fn class_diagram() {
+        #[derive(Debug, Clone)]
+        enum RelationType {
+            Extends,
+            Implements,
+            Aggregates,
+            Composes,
+            Associates,
+        }
+
+        impl Default for RelationType {
+            fn default() -> Self {
+                RelationType::Associates
+            }
+        }
+
+        #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+        enum PrimitiveType {
+            String,
+            Number,
+            Bool,
+            Null,
+        }
+
+        impl Default for PrimitiveType {
+            fn default() -> Self {
+                PrimitiveType::Null
+            }
+        }
+
+        crate::object!(Class {
+            name: EventGraph::<MVRegister::<String>>,
+            features: AWMapLog::<String, EventGraph<MVRegister<PrimitiveType>>>,
+        });
+
+        crate::object!(Relation {
+            label: EventGraph::<MVRegister::<String>>,
+            relation_type: EventGraph::<MVRegister::<String>>,
+        });
+
+        let (mut tcsb_a, mut tcsb_b) = twins::<UWGraphLog<&str, &str, ClassLog, RelationLog>>();
+
+        let event = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "Wheel",
+            Class::Features(AWMap::Update(
+                "brand".to_string(),
+                MVRegister::Write(PrimitiveType::String),
+            )),
+        ));
+
+        println!("Begin ---------------------");
+        let events = tcsb_a.events_since(&Since::new_from(&tcsb_b));
+        println!("End   ---------------------");
+        println!(
+            "Events since: {:?}",
+            events
+                .unwrap()
+                .events
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        tcsb_b.try_deliver(event);
 
         assert!(petgraph::algo::is_isomorphic(
             &tcsb_a.eval(),
