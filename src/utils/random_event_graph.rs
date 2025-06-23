@@ -12,6 +12,7 @@ use std::{fmt::Debug, fs::File, io::Write, time::Instant};
 pub struct EventGraphConfig<'a, Op> {
     pub n_replicas: usize,
     pub total_operations: usize,
+    // TODO: associate a probability with each operation
     pub ops: &'a [Op],
     pub final_sync: bool,
     pub churn_rate: f64,
@@ -33,6 +34,7 @@ impl<'a, Op> Default for EventGraphConfig<'a, Op> {
     }
 }
 
+// TODO: An offline replica should be able to perform operations, but not broadcast them.
 pub fn generate_event_graph<L>(config: EventGraphConfig<'_, L::Op>) -> Vec<Tcsb<L>>
 where
     L: Log,
@@ -146,17 +148,18 @@ mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
 
-    use crate::crdt::aw_graph::AWGraph;
     use crate::crdt::aw_map::{AWMap, AWMapLog};
+    use crate::crdt::aw_multigraph::AWGraph;
     use crate::crdt::aw_set::AWSet;
     use crate::crdt::lww_register::LWWRegister;
     use crate::crdt::resettable_counter::Counter;
+    use crate::crdt::uw_multigraph::{UWGraph, UWGraphLog};
     use crate::protocol::event_graph::EventGraph;
 
     #[test_log::test]
     fn folie() {
-        for _ in 0..1_000 {
-            generate_lww_register_convergence();
+        for _ in 0..100 {
+            generate_uw_multigraph_convergence();
         }
     }
 
@@ -280,45 +283,123 @@ mod tests {
     #[test_log::test]
     fn generate_aw_graph_convergence() {
         let ops = vec![
-            AWGraph::AddVertex("a".to_string()),
-            AWGraph::AddVertex("b".to_string()),
-            AWGraph::AddVertex("c".to_string()),
-            AWGraph::RemoveVertex("a".to_string()),
-            AWGraph::RemoveVertex("b".to_string()),
-            AWGraph::RemoveVertex("c".to_string()),
-            AWGraph::AddArc("a".to_string(), "b".to_string()),
-            AWGraph::AddArc("b".to_string(), "c".to_string()),
-            AWGraph::AddArc("c".to_string(), "a".to_string()),
-            AWGraph::RemoveArc("a".to_string(), "b".to_string()),
-            AWGraph::RemoveArc("b".to_string(), "c".to_string()),
-            AWGraph::RemoveArc("c".to_string(), "a".to_string()),
+            AWGraph::AddVertex("a"),
+            AWGraph::AddVertex("b"),
+            AWGraph::AddVertex("c"),
+            AWGraph::RemoveVertex("a"),
+            AWGraph::RemoveVertex("b"),
+            AWGraph::RemoveVertex("c"),
+            AWGraph::AddArc("a", "b", 1),
+            AWGraph::AddArc("a", "b", 2),
+            AWGraph::AddArc("b", "c", 1),
+            AWGraph::AddArc("b", "c", 2),
+            AWGraph::AddArc("c", "a", 1),
+            AWGraph::AddArc("c", "a", 2),
+            AWGraph::RemoveArc("a", "b", 1),
+            AWGraph::RemoveArc("a", "b", 2),
+            AWGraph::RemoveArc("b", "c", 1),
+            AWGraph::RemoveArc("b", "c", 2),
+            AWGraph::RemoveArc("c", "a", 1),
+            AWGraph::RemoveArc("c", "a", 2),
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 4,
-            total_operations: 40,
+            n_replicas: 8,
+            total_operations: 100,
             ops: &ops,
             final_sync: true,
-            churn_rate: 0.4,
+            churn_rate: 0.2,
             reachability: None,
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<EventGraph<AWGraph<String>>>(config);
+        let tcsbs = generate_event_graph::<EventGraph<AWGraph<&str, u8>>>(config);
 
         // All replicas' eval() should match
-        let mut reference_val: DiGraph<String, ()> = DiGraph::new();
+        let mut reference_val: DiGraph<&str, u8> = DiGraph::new();
         let mut event_sum = 0;
         for (i, tcsb) in tcsbs.iter().enumerate() {
             if i == 0 {
                 reference_val = tcsb.eval();
                 event_sum = tcsb.my_clock().sum();
             }
+            let new_eval = tcsb.eval();
             assert_eq!(tcsb.my_clock().sum(), event_sum);
             assert!(
-                petgraph::algo::is_isomorphic(&tcsb.eval(), &reference_val),
-                "Replica {} did not converge with the reference.",
+                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                "Replica {} did not converge with the reference. Reference: {}, Replica: {}",
                 tcsb.id,
+                petgraph::dot::Dot::with_config(&new_eval, &[]),
+                petgraph::dot::Dot::with_config(&reference_val, &[]),
+            );
+        }
+    }
+
+    #[test_log::test]
+    fn generate_uw_multigraph_convergence() {
+        let ops = vec![
+            UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
+            UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
+            UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
+            UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
+            UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
+            UWGraph::RemoveVertex("a"),
+            UWGraph::RemoveVertex("b"),
+            UWGraph::RemoveVertex("c"),
+            UWGraph::RemoveVertex("d"),
+            UWGraph::RemoveVertex("e"),
+            UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
+            UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
+            UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
+            UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
+            UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
+            UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
+            UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
+            UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
+            UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
+            UWGraph::RemoveArc("a", "b", 1),
+            UWGraph::RemoveArc("a", "b", 2),
+            UWGraph::RemoveArc("b", "c", 1),
+            UWGraph::RemoveArc("c", "d", 1),
+            UWGraph::RemoveArc("d", "e", 1),
+            UWGraph::RemoveArc("e", "a", 1),
+        ];
+
+        let config = EventGraphConfig {
+            n_replicas: 8,
+            total_operations: 100,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.2,
+            reachability: None,
+            log_timing_csv: false,
+        };
+
+        let tcsbs = generate_event_graph::<
+            UWGraphLog<&str, u8, EventGraph<LWWRegister<&str>>, EventGraph<Counter<i32>>>,
+        >(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: DiGraph<&str, i32> = DiGraph::new();
+        let mut event_sum = 0;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+                event_sum = tcsb.my_clock().sum();
+            }
+            let new_eval = tcsb.eval();
+            assert_eq!(tcsb.my_clock().sum(), event_sum);
+            assert!(
+                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                "Replica {} did not converge with the reference. Reference: {}, Replica: {}",
+                tcsb.id,
+                petgraph::dot::Dot::with_config(&new_eval, &[]),
+                petgraph::dot::Dot::with_config(&reference_val, &[]),
+            );
+            println!(
+                "Replica {}: {}",
+                tcsb.id,
+                petgraph::dot::Dot::with_config(&new_eval, &[])
             );
         }
     }
