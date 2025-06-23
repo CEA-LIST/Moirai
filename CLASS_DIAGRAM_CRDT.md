@@ -19,3 +19,9 @@ Edges contain:
 - Source: the class that contains the relationship.
 - Target: the class that is related to the source class.
 - Label: a description of the relationship.
+
+## Implementation
+
+We first define a non-nested multigraph CRDT that we later extend to a nested multigraph CRDT.
+
+Because we need to distinguish between potentially multiple parallel edges, we use a triple to represent an edge, which contains the source, target, and id of the edge.

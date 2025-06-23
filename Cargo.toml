@@ -22,13 +22,14 @@ tsify = { version = "0.5.5", optional = true }
 wasm-bindgen = { version = "0.2.100", optional = true }
 deepsize = { version = "0.2.0", optional = true }
 paste = "1.0.15"
+vf2 = { version = "1.0.1", optional = true }
 
 [features]
 default = ["crdt", "utils"]
 tracer = []
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
-utils = ["dep:anyhow", "dep:rand", "dep:deepsize"]
+utils = ["dep:anyhow", "dep:rand", "dep:deepsize", "vf2"]
 
 [profile.release]
 debug = 1

@@ -1,5 +1,5 @@
-pub mod aw_graph;
 pub mod aw_map;
+pub mod aw_multigraph;
 pub mod aw_set;
 pub mod counter;
 pub mod duet;
@@ -7,7 +7,7 @@ pub mod lww_register;
 pub mod mv_register;
 pub mod resettable_counter;
 pub mod rw_set;
-pub mod uw_graph;
+pub mod uw_multigraph;
 
 pub mod test_util {
     use colored::Colorize;
