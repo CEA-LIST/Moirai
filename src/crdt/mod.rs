@@ -1,6 +1,7 @@
 pub mod aw_map;
 pub mod aw_multigraph;
 pub mod aw_set;
+pub mod class_diagram;
 pub mod counter;
 pub mod duet;
 pub mod lww_register;

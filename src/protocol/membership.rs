@@ -1,9 +1,10 @@
+use std::rc::Rc;
+
 #[cfg(feature = "utils")]
 use deepsize::DeepSizeOf;
 use log::info;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 

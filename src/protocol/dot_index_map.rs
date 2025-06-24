@@ -1,10 +1,11 @@
+use std::fmt::{Debug, Display};
+
 use bimap::BiMap;
 use petgraph::graph::NodeIndex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use serde::{Deserializer, Serializer};
-use std::fmt::{Debug, Display};
 
 use crate::clocks::dot::Dot;
 

@@ -43,7 +43,7 @@ where
     }
 
     fn eval(stable: &Self::Stable, ops: &[Self]) -> Self::Value {
-        let mut set = Self::Value::new();
+        let mut set = Self::Value::default();
         for o in stable.iter().chain(ops.iter()) {
             if let MVRegister::Write(v) = o {
                 set.insert(v.clone());

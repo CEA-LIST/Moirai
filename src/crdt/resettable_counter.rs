@@ -1,9 +1,10 @@
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 

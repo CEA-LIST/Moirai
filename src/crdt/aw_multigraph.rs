@@ -108,10 +108,7 @@ where
 mod tests {
     use petgraph::{algo::is_isomorphic, graph::DiGraph};
 
-    use crate::{
-        crdt::{aw_multigraph::AWGraph, test_util::twins_graph},
-        protocol::tcsb,
-    };
+    use crate::crdt::{aw_multigraph::AWGraph, test_util::twins_graph};
 
     #[test_log::test]
     fn simple_graph() {

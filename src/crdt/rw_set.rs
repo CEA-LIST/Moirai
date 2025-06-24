@@ -20,7 +20,12 @@ where
         (HashSet::default(), Vec::default()) == *self
     }
 
-    fn apply_redundant(&mut self, _rdnt: fn(&RWSet<V>, Option<&Dot>, bool, &RWSet<V>, &Dot) -> bool, op: &RWSet<V>, _dot: &Dot) {
+    fn apply_redundant(
+        &mut self,
+        _rdnt: fn(&RWSet<V>, Option<&Dot>, bool, &RWSet<V>, &Dot) -> bool,
+        op: &RWSet<V>,
+        _dot: &Dot,
+    ) {
         match op {
             RWSet::Add(v) => {
                 self.0.remove(v);
@@ -59,7 +64,13 @@ where
         matches!(new_op, RWSet::Clear)
     }
 
-    fn redundant_by_when_redundant(old_op: &Self, _old_dot: Option<&Dot>, is_conc: bool, new_op: &Self, _new_dot: &Dot) -> bool {
+    fn redundant_by_when_redundant(
+        old_op: &Self,
+        _old_dot: Option<&Dot>,
+        is_conc: bool,
+        new_op: &Self,
+        _new_dot: &Dot,
+    ) -> bool {
         !is_conc
             && (matches!(new_op, RWSet::Clear)
                 || match (&old_op, &new_op) {
@@ -71,11 +82,13 @@ where
                 })
     }
 
-    fn redundant_by_when_not_redundant(old_op: &Self,
+    fn redundant_by_when_not_redundant(
+        old_op: &Self,
         old_dot: Option<&Dot>,
         is_conc: bool,
         new_op: &Self,
-        new_dot: &Dot,) -> bool {
+        new_dot: &Dot,
+    ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_dot, is_conc, new_op, new_dot)
     }
 

@@ -1,3 +1,9 @@
+use std::{
+    collections::{HashSet, VecDeque},
+    fmt::Debug,
+    rc::Rc,
+};
+
 use log::{debug, error};
 use petgraph::{
     graph::NodeIndex,
@@ -7,11 +13,6 @@ use petgraph::{
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashSet, VecDeque},
-    fmt::Debug,
-    rc::Rc,
-};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
