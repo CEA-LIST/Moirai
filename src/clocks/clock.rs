@@ -1,14 +1,15 @@
 use core::panic;
-#[cfg(feature = "utils")]
-use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::{
     cmp::{min, Ordering},
     collections::{HashMap, HashSet},
     fmt::{Display, Error, Formatter},
     rc::Rc,
 };
+
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 

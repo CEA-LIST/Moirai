@@ -1,7 +1,8 @@
+use std::fmt::Debug;
+
 use log::{debug, error};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 

@@ -499,14 +499,12 @@ where
 mod tests {
     use crate::{
         crdt::{
-            aw_map::{AWMap, AWMapLog},
             lww_register::LWWRegister,
-            mv_register::MVRegister,
             resettable_counter::Counter,
             test_util::twins,
             uw_multigraph::{UWGraph, UWGraphLog},
         },
-        protocol::{event_graph::EventGraph, pulling::Since},
+        protocol::event_graph::EventGraph,
     };
 
     #[test_log::test]
@@ -556,78 +554,6 @@ mod tests {
             "Eval B: {:?}",
             petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
         );
-
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_a.eval(),
-            &tcsb_b.eval()
-        ));
-    }
-
-    #[test_log::test]
-    fn class_diagram() {
-        #[derive(Debug, Clone)]
-        enum RelationType {
-            Extends,
-            Implements,
-            Aggregates,
-            Composes,
-            Associates,
-        }
-
-        impl Default for RelationType {
-            fn default() -> Self {
-                RelationType::Associates
-            }
-        }
-
-        #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-        enum PrimitiveType {
-            String,
-            Number,
-            Bool,
-            Null,
-        }
-
-        impl Default for PrimitiveType {
-            fn default() -> Self {
-                PrimitiveType::Null
-            }
-        }
-
-        crate::object!(Class {
-            name: EventGraph::<MVRegister::<String>>,
-            features: AWMapLog::<String, EventGraph<MVRegister<PrimitiveType>>>,
-        });
-
-        crate::object!(Relation {
-            label: EventGraph::<MVRegister::<String>>,
-            relation_type: EventGraph::<MVRegister::<String>>,
-        });
-
-        let (mut tcsb_a, mut tcsb_b) = twins::<UWGraphLog<&str, &str, ClassLog, RelationLog>>();
-
-        let event = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
-            "Wheel",
-            Class::Features(AWMap::Update(
-                "brand".to_string(),
-                MVRegister::Write(PrimitiveType::String),
-            )),
-        ));
-
-        println!("Begin ---------------------");
-        let events = tcsb_a.events_since(&Since::new_from(&tcsb_b));
-        println!("End   ---------------------");
-        println!(
-            "Events since: {:?}",
-            events
-                .unwrap()
-                .events
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-        );
-
-        tcsb_b.try_deliver(event);
 
         assert!(petgraph::algo::is_isomorphic(
             &tcsb_a.eval(),

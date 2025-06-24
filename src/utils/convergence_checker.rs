@@ -1,8 +1,9 @@
+use std::fmt::Debug;
+
 use crate::{
     crdt::test_util::n_members,
     protocol::{event::Event, log::Log},
 };
-use std::fmt::Debug;
 
 fn factorial(number: usize) -> usize {
     let mut factorial: usize = 1;

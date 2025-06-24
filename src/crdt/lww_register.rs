@@ -1,8 +1,9 @@
+use std::fmt::Debug;
+
 use crate::{
     clocks::dot::Dot,
     protocol::{event_graph::EventGraph, pure_crdt::PureCRDT},
 };
-use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
@@ -54,9 +55,13 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::crdt::test_util::triplet;
-    use crate::crdt::{lww_register::LWWRegister, test_util::twins};
-    use crate::protocol::event_graph::EventGraph;
+    use crate::{
+        crdt::{
+            lww_register::LWWRegister,
+            test_util::{triplet, twins},
+        },
+        protocol::event_graph::EventGraph,
+    };
 
     #[test_log::test]
     pub fn lww_register_with_write() {

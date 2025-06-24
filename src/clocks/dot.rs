@@ -1,13 +1,14 @@
+use std::{
+    cmp::Ordering,
+    fmt::{Display, Error, Formatter},
+    hash::Hash,
+    rc::Rc,
+};
+
 #[cfg(feature = "utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::hash::Hash;
-use std::{
-    cmp::Ordering,
-    fmt::{Display, Error, Formatter},
-    rc::Rc,
-};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 

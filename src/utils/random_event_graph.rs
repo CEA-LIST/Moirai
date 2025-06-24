@@ -1,12 +1,14 @@
-use crate::{
-    crdt::test_util::n_members,
-    protocol::{log::Log, pulling::Since, tcsb::Tcsb},
-};
+use std::{fmt::Debug, fs::File, io::Write, time::Instant};
+
 use rand::{
     seq::{IndexedRandom, IteratorRandom},
     Rng,
 };
-use std::{fmt::Debug, fs::File, io::Write, time::Instant};
+
+use crate::{
+    crdt::test_util::n_members,
+    protocol::{log::Log, pulling::Since, tcsb::Tcsb},
+};
 
 /// Configuration for random event graph generation in a partially connected distributed system.
 pub struct EventGraphConfig<'a, Op> {
@@ -143,28 +145,31 @@ where
 #[cfg(feature = "utils")]
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use petgraph::graph::DiGraph;
 
     use super::*;
-    use std::collections::{HashMap, HashSet};
-
-    use crate::crdt::aw_map::{AWMap, AWMapLog};
-    use crate::crdt::aw_multigraph::AWGraph;
-    use crate::crdt::aw_set::AWSet;
-    use crate::crdt::lww_register::LWWRegister;
-    use crate::crdt::mv_register::MVRegister;
-    use crate::crdt::resettable_counter::Counter;
-    use crate::crdt::uw_multigraph::{UWGraph, UWGraphLog};
-    use crate::object;
-    use crate::protocol::event_graph::EventGraph;
+    use crate::{
+        crdt::{
+            aw_map::{AWMap, AWMapLog},
+            aw_multigraph::AWGraph,
+            aw_set::AWSet,
+            class_diagram::{
+                export_fancy_class_diagram, Class, ClassDiagram, ClassDiagramCrdt, Feature,
+                PrimitiveType, Relation, RelationType,
+            },
+            lww_register::LWWRegister,
+            mv_register::MVRegister,
+            resettable_counter::Counter,
+            uw_multigraph::{UWGraph, UWGraphLog},
+        },
+        protocol::event_graph::EventGraph,
+    };
 
     #[test_log::test]
     fn folie() {
         for _ in 0..100 {
-            // generate_deeply_nested_aw_map_convergence();
-            // generate_aw_set_convergence();
-            // generate_aw_map_convergence();
-            // generate_aw_graph_convergence();
             generate_uw_multigraph_convergence();
         }
     }
@@ -291,106 +296,106 @@ mod tests {
     fn generate_class_diagram() {
         let ops = vec![
             UWGraph::UpdateVertex("Car", Class::Name(MVRegister::Write("Car".to_string()))),
-            // UWGraph::UpdateVertex(
-            //     "Wheel",
-            //     Class::Features(AWMap::Update(
-            //         "brand".to_string(),
-            //         MVRegister::Write(PrimitiveType::String),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Engine",
-            //     Class::Features(AWMap::Update(
-            //         "horsepower".to_string(),
-            //         MVRegister::Write(PrimitiveType::Number),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Driver",
-            //     Class::Features(AWMap::Update(
-            //         "name".to_string(),
-            //         MVRegister::Write(PrimitiveType::String),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Car",
-            //     Class::Features(AWMap::Update(
-            //         "wheels".to_string(),
-            //         MVRegister::Write(PrimitiveType::Number),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Car",
-            //     Class::Features(AWMap::Update(
-            //         "engine".to_string(),
-            //         MVRegister::Write(PrimitiveType::String),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Driver",
-            //     Class::Features(AWMap::Update(
-            //         "age".to_string(),
-            //         MVRegister::Write(PrimitiveType::Number),
-            //     )),
-            // ),
-            // UWGraph::UpdateVertex(
-            //     "Driver",
-            //     Class::Features(AWMap::Update(
-            //         "license".to_string(),
-            //         MVRegister::Write(PrimitiveType::String),
-            //     )),
-            // ),
-            // UWGraph::RemoveVertex("Wheel"),
-            // UWGraph::RemoveVertex("Engine"),
-            // UWGraph::RemoveVertex("Driver"),
-            // UWGraph::UpdateArc(
-            //     "Car",
-            //     "Wheel",
-            //     "arc1",
-            //     Relation::Label(MVRegister::Write("has".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Car",
-            //     "Wheel",
-            //     "arc1",
-            //     Relation::Label(MVRegister::Write("wheelcar".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Wheel",
-            //     "Car",
-            //     "arc2",
-            //     Relation::RelationType(MVRegister::Write("aggregates".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Car",
-            //     "Wheel",
-            //     "arc1",
-            //     Relation::RelationType(MVRegister::Write("composes".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Wheel",
-            //     "Car",
-            //     "arc2",
-            //     Relation::RelationType(MVRegister::Write("aggregates".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Car",
-            //     "Engine",
-            //     "arc3",
-            //     Relation::Label(MVRegister::Write("has".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Driver",
-            //     "Car",
-            //     "arc4",
-            //     Relation::Label(MVRegister::Write("drives".to_string())),
-            // ),
-            // UWGraph::UpdateArc(
-            //     "Car",
-            //     "Driver",
-            //     "arc5",
-            //     Relation::Label(MVRegister::Write("owned_by".to_string())),
-            // ),
+            UWGraph::UpdateVertex(
+                "Wheel",
+                Class::Features(AWMap::Update(
+                    "brand".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Engine",
+                Class::Features(AWMap::Update(
+                    "horsepower".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Driver",
+                Class::Features(AWMap::Update(
+                    "name".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Car",
+                Class::Features(AWMap::Update(
+                    "wheels".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Car",
+                Class::Features(AWMap::Update(
+                    "engine".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Driver",
+                Class::Features(AWMap::Update(
+                    "age".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Driver",
+                Class::Features(AWMap::Update(
+                    "license".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::RemoveVertex("Wheel"),
+            UWGraph::RemoveVertex("Engine"),
+            UWGraph::RemoveVertex("Driver"),
+            UWGraph::UpdateArc(
+                "Car",
+                "Wheel",
+                "arc1",
+                Relation::Label(MVRegister::Write("has".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "Car",
+                "Wheel",
+                "arc1",
+                Relation::Label(MVRegister::Write("wheelcar".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "Wheel",
+                "Car",
+                "arc2",
+                Relation::RelationType(LWWRegister::Write(RelationType::Composes)),
+            ),
+            UWGraph::UpdateArc(
+                "Car",
+                "Wheel",
+                "arc1",
+                Relation::RelationType(LWWRegister::Write(RelationType::Extends)),
+            ),
+            UWGraph::UpdateArc(
+                "Wheel",
+                "Car",
+                "arc2",
+                Relation::RelationType(LWWRegister::Write(RelationType::Implements)),
+            ),
+            UWGraph::UpdateArc(
+                "Car",
+                "Engine",
+                "arc3",
+                Relation::Label(MVRegister::Write("has".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "Driver",
+                "Car",
+                "arc4",
+                Relation::Label(MVRegister::Write("drives".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "Car",
+                "Driver",
+                "arc5",
+                Relation::Label(MVRegister::Write("owned_by".to_string())),
+            ),
         ];
 
         let config = EventGraphConfig {
@@ -403,49 +408,10 @@ mod tests {
             log_timing_csv: false,
         };
 
-        #[derive(Debug, Clone)]
-        enum RelationType {
-            Extends,
-            Implements,
-            Aggregates,
-            Composes,
-            Associates,
-        }
-
-        impl Default for RelationType {
-            fn default() -> Self {
-                RelationType::Associates
-            }
-        }
-
-        #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-        enum PrimitiveType {
-            String,
-            Number,
-            Bool,
-            Null,
-        }
-
-        impl Default for PrimitiveType {
-            fn default() -> Self {
-                PrimitiveType::Null
-            }
-        }
-
-        object!(Class {
-            name: EventGraph::<MVRegister::<String>>,
-            features: AWMapLog::<String, EventGraph<MVRegister<PrimitiveType>>>,
-        });
-
-        object!(Relation {
-            label: EventGraph::<MVRegister::<String>>,
-            relation_type: EventGraph::<MVRegister::<String>>,
-        });
-
-        let tcsbs = generate_event_graph::<UWGraphLog<&str, &str, ClassLog, RelationLog>>(config);
+        let tcsbs = generate_event_graph::<ClassDiagramCrdt>(config);
 
         // All replicas' eval() should match
-        let mut reference_val: DiGraph<ClassValue, RelationValue> = DiGraph::new();
+        let mut reference_val: ClassDiagram = DiGraph::new();
         let mut event_sum = 0;
         for (i, tcsb) in tcsbs.iter().enumerate() {
             if i == 0 {
@@ -462,9 +428,9 @@ mod tests {
                 petgraph::dot::Dot::with_config(&reference_val, &[]),
             );
             println!(
-                "Replica {}: {:?}",
+                "Replica {}: {}",
                 tcsb.id,
-                petgraph::dot::Dot::with_config(&new_eval, &[])
+                export_fancy_class_diagram(&new_eval)
             );
         }
     }

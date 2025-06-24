@@ -1,17 +1,19 @@
-use super::clock::{Clock, ClockState, Full};
-use crate::protocol::membership::ViewData;
-#[cfg(feature = "utils")]
-use deepsize::DeepSizeOf;
-use log::error;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter, Result},
     rc::Rc,
 };
+
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+use log::error;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
+
+use super::clock::{Clock, ClockState, Full};
+use crate::protocol::membership::ViewData;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(
