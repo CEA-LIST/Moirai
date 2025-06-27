@@ -231,6 +231,62 @@ mod tests {
     }
 
     #[test_log::test]
+    fn generate_ewflag_convergence() {
+        use crate::crdt::ew_flag::EWFlag;
+
+        let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
+
+        let config = EventGraphConfig {
+            n_replicas: 5,
+            total_operations: 100,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.7,
+            reachability: None,
+            log_timing_csv: false,
+        };
+
+        let tcsbs = generate_event_graph::<EventGraph<EWFlag>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: bool = false;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+            }
+            assert_eq!(tcsb.eval(), reference_val, "Replica {} did not converge", i);
+        }
+    }
+
+    #[test_log::test]
+    fn generate_dwflag_convergence() {
+        use crate::crdt::dw_flag::DWFlag;
+
+        let ops = vec![DWFlag::Enable, DWFlag::Disable, DWFlag::Clear];
+
+        let config = EventGraphConfig {
+            n_replicas: 5,
+            total_operations: 100,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.7,
+            reachability: None,
+            log_timing_csv: false,
+        };
+
+        let tcsbs = generate_event_graph::<EventGraph<DWFlag>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: bool = false;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+            }
+            assert_eq!(tcsb.eval(), reference_val, "Replica {} did not converge", i);
+        }
+    }
+
+    #[test_log::test]
     fn generate_aw_map_convergence() {
         let ops = vec![
             AWMap::Update("a".to_string(), Counter::Inc(2)),
