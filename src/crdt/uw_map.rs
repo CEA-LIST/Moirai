@@ -30,6 +30,7 @@ where
     K: Clone + Debug + Eq + Hash,
 {
     // TODO: No need to store the keys in a separate EventGraph, we can use the values directly.
+    // TODO: Must change `clock_from_event` to use the values directly.
     keys: EventGraph<AWSet<K>>,
     values: HashMap<K, L>,
 }
@@ -246,12 +247,14 @@ where
 
     fn eval(&self) -> Self::Value {
         let mut map = HashMap::new();
-        let set = self.keys.eval();
+        // let set = self.keys.eval();
         for (k, v) in &self.values {
-            let val = v.eval();
-            if set.contains(k) {
-                map.insert(k.clone(), val);
+            if v.is_empty() {
+                // If the value is empty, we don't need to add it to the map
+                continue;
             }
+            let val = v.eval();
+            map.insert(k.clone(), val);
         }
         // for (k, v) in self.values.iter() {
         //     assert!(map.contains_key(k) || v.is_empty());
@@ -272,6 +275,7 @@ where
         self.keys.is_empty()
     }
 
+    // TODO: deps has access to the LTM and return the full vector clock for a remove op.
     fn deps(
         &mut self,
         clocks: &mut VecDeque<Clock<Partial>>,
