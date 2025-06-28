@@ -44,18 +44,13 @@ where
         // old_op = addVertex, addArc only
         !is_conc
             && match (old_op, new_op) {
-                (AWGraph::AddArc(v1, v2, e1), AWGraph::AddArc(v3, v4, e2)) => {
-                    v1 == v3 && v2 == v4 && e1 == e2
-                }
-                (AWGraph::AddArc(_, _, _), AWGraph::AddVertex(_)) => false,
                 (AWGraph::AddArc(v1, v2, _), AWGraph::RemoveVertex(v3)) => v1 == v3 || v2 == v3,
-                (AWGraph::AddArc(v1, v2, e1), AWGraph::RemoveArc(v3, v4, e2)) => {
+                (AWGraph::AddArc(v1, v2, e1), AWGraph::AddArc(v3, v4, e2))
+                | (AWGraph::AddArc(v1, v2, e1), AWGraph::RemoveArc(v3, v4, e2)) => {
                     v1 == v3 && v2 == v4 && e1 == e2
                 }
-                (AWGraph::AddVertex(v1), AWGraph::AddVertex(v2)) => v1 == v2,
-                (AWGraph::AddVertex(_), AWGraph::AddArc(_, _, _)) => false,
-                (AWGraph::AddVertex(_), AWGraph::RemoveArc(_, _, _)) => false,
-                (AWGraph::AddVertex(v1), AWGraph::RemoveVertex(v2)) => v1 == v2,
+                (AWGraph::AddVertex(v1), AWGraph::AddVertex(v2))
+                | (AWGraph::AddVertex(v1), AWGraph::RemoveVertex(v2)) => v1 == v2,
                 _ => false,
             }
     }
@@ -83,12 +78,13 @@ where
         for o in ops {
             match o {
                 AWGraph::AddVertex(v) => {
+                    if node_index.contains_key(v) {
+                        continue; // Skip if the vertex already exists
+                    }
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
                 AWGraph::AddArc(v1, v2, e) => {
-                    // TODO: Check this it is correct. The non-tombstones are stored in a
-                    // TODO: HashSet, which means that that arcs ops may be applied in any order.
                     if edge_index.contains(&(v1, v2, e)) {
                         continue; // Skip if the edge already exists
                     }
@@ -130,7 +126,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn concurrent_graph() {
+    fn concurrent_graph_arc() {
         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
 
         let event = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
@@ -144,6 +140,19 @@ mod tests {
         tcsb_b.try_deliver(event_a);
         tcsb_a.try_deliver(event_b);
 
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+    }
+
+    #[test_log::test]
+    fn concurrent_graph_vertex() {
+        let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
+
+        let event_a = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
+        let event_b = tcsb_b.tc_bcast(AWGraph::AddVertex("A"));
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        assert_eq!(tcsb_a.eval().node_count(), 1);
         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
 

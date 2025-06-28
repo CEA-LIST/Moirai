@@ -26,6 +26,8 @@ pub trait PureCRDT: Clone + Debug {
     /// given the delivery of the new operation.
     /// R0 is used when the new arrival is discarded being redundant.
     /// `true` means the operation is redundant and can be discarded immediately.
+    // TODO: find a way to specify the ops that can live in the PO-Log and those that can't (e.g., remove of the AWSet)
+    // TODO: It would be useful for eval too
     fn redundant_by_when_redundant(
         _old_op: &Self,
         _old_dot: Option<&Dot>,

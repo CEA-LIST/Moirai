@@ -386,6 +386,12 @@ where
                 .eval();
             graph.add_edge(*nx1, *nx2, weight);
         }
+        // for (v, l) in self.vertex_content.iter() {
+        //     assert!(aux.raw_nodes().iter().any(|n| &n.weight == v) || l.is_empty());
+        // }
+        // for ((v1, v2, e), l) in self.arc_content.iter() {
+        //     assert!(aux.raw_edges().iter().any(|edge| &edge.weight == e) || l.is_empty());
+        // }
         graph
     }
 
@@ -559,5 +565,36 @@ mod tests {
             &tcsb_a.eval(),
             &tcsb_b.eval()
         ));
+    }
+
+    #[test_log::test]
+    fn simple_graph() {
+        let (mut tcsb_a, mut tcsb_b) =
+            twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(2)));
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        // let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        // let event_b = tcsb_b.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)));
+
+        // tcsb_b.try_deliver(event_a);
+        // tcsb_a.try_deliver(event_b);
+
+        println!(
+            "Eval A: {:?}",
+            petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[])
+        );
+        println!(
+            "Eval B: {:?}",
+            petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
+        );
+
+        // assert!(petgraph::algo::is_isomorphic(
+        //     &tcsb_a.eval(),
+        //     &tcsb_b.eval()
+        // ));
     }
 }
