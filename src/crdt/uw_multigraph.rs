@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use petgraph::{graph::DiGraph, visit::EdgeRef};
+use petgraph::graph::DiGraph;
 
 use crate::{
     clocks::{
@@ -184,7 +184,7 @@ where
                         let vector_clock =
                             ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
 
-                        // The `true` here is what makes the map a Update-Wins Map
+                        // The `true` here is what makes the map a Update-Wins graph
                         v_content.r_n(vector_clock, true);
                     }
                 }
@@ -236,7 +236,7 @@ where
                         let vector_clock =
                             ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
 
-                        // The `true` here is what makes the map a Update-Wins Map
+                        // The `true` here is what makes the map a Update-Wins graph
                         arc_content.r_n(vector_clock, true);
                     }
                 }
@@ -366,32 +366,24 @@ where
 
     fn eval(&self) -> Self::Value {
         let mut graph = Self::Value::new();
-        let aux = self.graph.eval();
-        let mut node_index = HashMap::new();
-        for v in aux.node_weights() {
-            let idx = graph.add_node(self.vertex_content.get(v).unwrap().eval());
-            node_index.insert(v.clone(), idx);
+        let mut node_idx = HashMap::new();
+        for (v, log) in self.vertex_content.iter() {
+            let idx = graph.add_node(log.eval());
+            node_idx.insert(v.clone(), idx);
         }
-        for e in aux.edge_references() {
-            let source = e.source();
-            let target = e.target();
-            let v1 = aux.node_weight(source).unwrap();
-            let v2 = aux.node_weight(target).unwrap();
-            let nx1 = node_index.get(v1).unwrap();
-            let nx2 = node_index.get(v2).unwrap();
-            let weight = self
-                .arc_content
-                .get(&(v1.clone(), v2.clone(), e.weight().clone()))
-                .unwrap()
-                .eval();
-            graph.add_edge(*nx1, *nx2, weight);
+        for ((v1, v2, _), log) in self.arc_content.iter() {
+            let idx1 = node_idx.get(v1);
+            let idx2 = node_idx.get(v2);
+            match (idx1, idx2) {
+                (Some(i1), Some(i2)) => {
+                    graph.add_edge(*i1, *i2, log.eval());
+                }
+                _ => {
+                    // If either vertex is not found, we skip adding the edge
+                    continue;
+                }
+            }
         }
-        // for (v, l) in self.vertex_content.iter() {
-        //     assert!(aux.raw_nodes().iter().any(|n| &n.weight == v) || l.is_empty());
-        // }
-        // for ((v1, v2, e), l) in self.arc_content.iter() {
-        //     assert!(aux.raw_edges().iter().any(|edge| &edge.weight == e) || l.is_empty());
-        // }
         graph
     }
 

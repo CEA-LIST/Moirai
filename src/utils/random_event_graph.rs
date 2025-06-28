@@ -170,7 +170,9 @@ mod tests {
     #[test_log::test]
     fn folie() {
         for _ in 0..100 {
-            generate_uw_multigraph_convergence();
+            // generate_uw_multigraph_convergence();
+            generate_class_diagram();
+            // generate_uw_map_convergence();
         }
     }
 

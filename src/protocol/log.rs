@@ -58,6 +58,7 @@ pub trait Log: Default + Debug {
 
     fn stable_by_clock(&mut self, clock: &Clock<Full>);
 
+    // TODO: prevent us to remove `keys` in `uw_map`
     fn clock_from_event(&self, event: &Event<Self::Op>) -> Clock<Full>;
 
     /// The `stable` handler invokes `stabilize` and then strips
