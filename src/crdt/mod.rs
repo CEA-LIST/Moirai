@@ -1,4 +1,3 @@
-pub mod aw_map;
 pub mod aw_multigraph;
 pub mod aw_set;
 pub mod class_diagram;
@@ -8,6 +7,7 @@ pub mod lww_register;
 pub mod mv_register;
 pub mod resettable_counter;
 pub mod rw_set;
+pub mod uw_map;
 pub mod uw_multigraph;
 
 pub mod test_util {

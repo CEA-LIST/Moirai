@@ -152,16 +152,16 @@ mod tests {
     use super::*;
     use crate::{
         crdt::{
-            aw_map::{AWMap, AWMapLog},
             aw_multigraph::AWGraph,
             aw_set::AWSet,
             class_diagram::{
                 export_fancy_class_diagram, Class, ClassDiagram, ClassDiagramCrdt, Feature,
-                PrimitiveType, Relation, RelationType,
+                Operation, PrimitiveType, Relation, RelationType,
             },
             lww_register::LWWRegister,
             mv_register::MVRegister,
             resettable_counter::Counter,
+            uw_map::{UWMap, UWMapLog},
             uw_multigraph::{UWGraph, UWGraphLog},
         },
         protocol::event_graph::EventGraph,
@@ -224,7 +224,7 @@ mod tests {
 
         let config = EventGraphConfig {
             n_replicas: 5,
-            total_operations: 100,
+            total_operations: 10_000,
             ops: &ops,
             final_sync: true,
             churn_rate: 0.7,
@@ -245,20 +245,20 @@ mod tests {
     }
 
     #[test_log::test]
-    fn generate_aw_map_convergence() {
+    fn generate_uw_map_convergence() {
         let ops = vec![
-            AWMap::Update("a".to_string(), MVRegister::Write(1)),
-            AWMap::Update("a".to_string(), MVRegister::Write(2)),
-            AWMap::Update("a".to_string(), MVRegister::Write(3)),
-            AWMap::Remove("a".to_string()),
-            AWMap::Update("b".to_string(), MVRegister::Write(5)),
-            AWMap::Update("b".to_string(), MVRegister::Write(6)),
-            AWMap::Update("b".to_string(), MVRegister::Write(7)),
-            AWMap::Remove("b".to_string()),
-            AWMap::Update("c".to_string(), MVRegister::Write(10)),
-            AWMap::Update("c".to_string(), MVRegister::Write(20)),
-            AWMap::Update("c".to_string(), MVRegister::Write(30)),
-            AWMap::Remove("c".to_string()),
+            UWMap::Update("a".to_string(), MVRegister::Write(1)),
+            UWMap::Update("a".to_string(), MVRegister::Write(2)),
+            UWMap::Update("a".to_string(), MVRegister::Write(3)),
+            UWMap::Remove("a".to_string()),
+            UWMap::Update("b".to_string(), MVRegister::Write(5)),
+            UWMap::Update("b".to_string(), MVRegister::Write(6)),
+            UWMap::Update("b".to_string(), MVRegister::Write(7)),
+            UWMap::Remove("b".to_string()),
+            UWMap::Update("c".to_string(), MVRegister::Write(10)),
+            UWMap::Update("c".to_string(), MVRegister::Write(20)),
+            UWMap::Update("c".to_string(), MVRegister::Write(30)),
+            UWMap::Remove("c".to_string()),
         ];
 
         let config = EventGraphConfig {
@@ -271,7 +271,7 @@ mod tests {
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<AWMapLog<String, EventGraph<MVRegister<i32>>>>(config);
+        let tcsbs = generate_event_graph::<UWMapLog<String, EventGraph<MVRegister<i32>>>>(config);
 
         // All replicas' eval() should match
         let mut reference_val: HashMap<String, HashSet<i32>> = HashMap::new();
@@ -297,50 +297,67 @@ mod tests {
         let ops = vec![
             UWGraph::UpdateVertex("Car", Class::Name(MVRegister::Write("Car".to_string()))),
             UWGraph::UpdateVertex(
+                "Car",
+                Class::Operations(UWMap::Update(
+                    "start".to_string(),
+                    Operation::ReturnType(MVRegister::Write(PrimitiveType::Void)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "Car",
+                Class::Operations(UWMap::Update(
+                    "start".to_string(),
+                    Operation::Parameters(UWMap::Update(
+                        "driver".to_string(),
+                        MVRegister::Write(PrimitiveType::String),
+                    )),
+                )),
+            ),
+            UWGraph::UpdateVertex(
                 "Wheel",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "brand".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Engine",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "horsepower".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Driver",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "name".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Car",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "wheels".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Car",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "engine".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Driver",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "age".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
                 )),
             ),
             UWGraph::UpdateVertex(
                 "Driver",
-                Class::Features(AWMap::Update(
+                Class::Features(UWMap::Update(
                     "license".to_string(),
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
@@ -560,32 +577,32 @@ mod tests {
     }
 
     #[test_log::test]
-    fn generate_deeply_nested_aw_map_convergence() {
+    fn generate_deeply_nested_uw_map_convergence() {
         let ops = vec![
-            AWMap::Update("a".to_string(), AWMap::Update(1, Counter::Inc(2))),
-            AWMap::Update("a".to_string(), AWMap::Update(1, Counter::Dec(3))),
-            AWMap::Update("a".to_string(), AWMap::Update(1, Counter::Reset)),
-            AWMap::Update("a".to_string(), AWMap::Remove(1)),
-            AWMap::Update("b".to_string(), AWMap::Update(2, Counter::Inc(5))),
-            AWMap::Update("b".to_string(), AWMap::Update(2, Counter::Dec(1))),
-            AWMap::Update("b".to_string(), AWMap::Update(2, Counter::Reset)),
-            AWMap::Update("b".to_string(), AWMap::Remove(2)),
-            AWMap::Update("c".to_string(), AWMap::Update(3, Counter::Inc(10))),
-            AWMap::Update("c".to_string(), AWMap::Update(3, Counter::Dec(2))),
-            AWMap::Update("c".to_string(), AWMap::Update(3, Counter::Reset)),
-            AWMap::Update("c".to_string(), AWMap::Remove(3)),
-            AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Inc(7))),
-            AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Dec(4))),
-            AWMap::Update("d".to_string(), AWMap::Update(4, Counter::Reset)),
-            AWMap::Update("d".to_string(), AWMap::Remove(4)),
-            AWMap::Update("e".to_string(), AWMap::Update(5, Counter::Inc(3))),
-            AWMap::Update("e".to_string(), AWMap::Update(5, Counter::Dec(1))),
-            AWMap::Update("e".to_string(), AWMap::Update(5, Counter::Reset)),
-            AWMap::Update("e".to_string(), AWMap::Remove(5)),
-            AWMap::Update("a".to_string(), AWMap::Update(6, Counter::Inc(2))),
-            AWMap::Update("a".to_string(), AWMap::Update(6, Counter::Dec(2))),
-            AWMap::Update("a".to_string(), AWMap::Update(6, Counter::Reset)),
-            AWMap::Update("a".to_string(), AWMap::Remove(6)),
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Inc(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Dec(3))),
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Reset)),
+            UWMap::Update("a".to_string(), UWMap::Remove(1)),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Inc(5))),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Dec(1))),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Reset)),
+            UWMap::Update("b".to_string(), UWMap::Remove(2)),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Inc(10))),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Dec(2))),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Reset)),
+            UWMap::Update("c".to_string(), UWMap::Remove(3)),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Inc(7))),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Dec(4))),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Reset)),
+            UWMap::Update("d".to_string(), UWMap::Remove(4)),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Inc(3))),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Dec(1))),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Reset)),
+            UWMap::Update("e".to_string(), UWMap::Remove(5)),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Inc(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Dec(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Reset)),
+            UWMap::Update("a".to_string(), UWMap::Remove(6)),
         ];
 
         let config = EventGraphConfig {
@@ -598,7 +615,7 @@ mod tests {
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<AWMapLog<String, AWMapLog<i32, EventGraph<Counter<i32>>>>>(
+        let tcsbs = generate_event_graph::<UWMapLog<String, UWMapLog<i32, EventGraph<Counter<i32>>>>>(
             config,
         );
 

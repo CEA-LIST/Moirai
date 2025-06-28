@@ -1,3 +1,5 @@
+use std::ops::{Add, AddAssign, SubAssign};
+
 use petgraph::{
     dot::{Config, Dot},
     graph::DiGraph,
@@ -5,7 +7,7 @@ use petgraph::{
 
 use crate::{
     crdt::{
-        aw_map::AWMapLog, lww_register::LWWRegister, mv_register::MVRegister,
+        lww_register::LWWRegister, mv_register::MVRegister, uw_map::UWMapLog,
         uw_multigraph::UWGraphLog,
     },
     object,
@@ -14,13 +16,20 @@ use crate::{
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
 pub enum RelationType {
-    Extends,
-    Implements,
-    Aggregates,
-    Composes,
+    Extends,    // 1
+    Implements, // 4
+    Aggregates, // 3
+    Composes,   // 2
     #[default]
-    Associates,
+    Associates, // 0
 }
+
+// Multiplicity : from - to
+// Extends: 1 - 1
+// Implements: 1 - 1
+// Composes: 1 - *
+// Aggregates: 1 - *
+// Associates: * - *
 
 #[derive(Debug, Clone, Eq, Default, PartialEq, Hash)]
 pub enum PrimitiveType {
@@ -28,7 +37,7 @@ pub enum PrimitiveType {
     Number,
     Bool,
     #[default]
-    Null,
+    Void,
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
@@ -40,17 +49,35 @@ pub enum Visibility {
     Package,
 }
 
+#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+pub enum Multiplicity<V: Add + AddAssign + SubAssign + Default + Copy> {
+    #[default]
+    Unspecified,
+    One,
+    ZeroOrOne,
+    ZeroOrMany,
+    OneOrMany,
+    ManyToMany(V, V), // (min, max) with max >= min
+}
+
 object!(Feature {
+    // replace typ with enum Multiplicity { Collection, Scalar }
     typ: EventGraph::<MVRegister::<PrimitiveType>>,
     visibility: EventGraph::<LWWRegister::<Visibility>>,
-    // is_ordered: EventGraph::<Flag>,
-    // is_unique: EventGraph::<Flag>,
+});
+
+object!(Operation {
+    // is_abstract: EventGraph::<Flag>,
+    visibility: EventGraph::<LWWRegister::<Visibility>>,
+    parameters: UWMapLog::<String, EventGraph::<MVRegister::<PrimitiveType>>>,
+    return_type: EventGraph::<MVRegister::<PrimitiveType>>,
 });
 
 object!(Class {
     // is_abstract: EventGraph::<Flag>,
     name: EventGraph::<MVRegister::<String>>,
-    features: AWMapLog::<String, FeatureLog>,
+    features: UWMapLog::<String, FeatureLog>,
+    operations: UWMapLog::<String, OperationLog>,
 });
 
 object!(Relation {
@@ -111,7 +138,36 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 })
                 .collect::<Vec<String>>()
                 .join("\\l");
-            format!("label=\"{{{}|{}\\l}}\"", name, features)
+            let operations = class
+                .operations
+                .iter()
+                .map(|(k, v)| {
+                    let op_name = k.clone();
+                    let params: Vec<String> = v
+                        .parameters
+                        .iter()
+                        .map(|(p, t)| {
+                            let types: Vec<String> =
+                                t.iter().cloned().map(|ty| format!("{:?}", ty)).collect();
+                            format!("{}: {}", p, types.join("|"))
+                        })
+                        .collect();
+                    let return_types: Vec<String> = v
+                        .return_type
+                        .iter()
+                        .cloned()
+                        .map(|t| format!("{:?}", t))
+                        .collect();
+                    let return_type_str = if return_types.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(": {}", return_types.join("|"))
+                    };
+                    format!("{}({}){}", op_name, params.join(", "), return_type_str)
+                })
+                .collect::<Vec<String>>()
+                .join("\\l");
+            format!("label=\"{{{}|{}\\l|{}\\l}}\"", name, features, operations)
         },
     );
     let mut fancy_string = format!("{:?}", fancy_dot);
@@ -122,13 +178,11 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
     fancy_string
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::crdt::test_util::twins;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crdt::{test_util::twins, uw_multigraph::UWGraph};
 
-//     #[test_log::test]
-//     fn car_class_diagram() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<ClassDiagramCrdt>();
-//     }
-// }
+    #[test_log::test]
+    fn car_class_diagram() {}
+}
