@@ -58,6 +58,9 @@ pub enum Multiplicity<V: Add + AddAssign + SubAssign + Default + Copy> {
     ZeroOrMany,
     OneOrMany,
     ManyToMany(V, V), // (min, max) with max >= min
+    Exactly(V),       // exactly N
+    ZeroToMany(V),    // zero to N
+    OneToMany(V),     // one to N
 }
 
 object!(Feature {
@@ -80,7 +83,13 @@ object!(Class {
     operations: UWMapLog::<String, OperationLog>,
 });
 
+object!(RelationMultiplicity {
+    from: EventGraph::<LWWRegister::<Multiplicity::<u8>>>,
+    to: EventGraph::<LWWRegister::<Multiplicity::<u8>>>,
+});
+
 object!(Relation {
+    multiplicity: RelationMultiplicityLog,
     label: EventGraph::<MVRegister::<String>>,
     relation_type: EventGraph::<LWWRegister::<RelationType>>,
 });
@@ -101,6 +110,25 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 .collect::<Vec<String>>()
                 .join(", ");
             let rtype = &edge.weight().relation_type;
+
+            // Helper to format multiplicity
+            fn format_mult(m: &Multiplicity<u8>) -> String {
+                match m {
+                    Multiplicity::Unspecified => "".to_string(),
+                    Multiplicity::One => "1".to_string(),
+                    Multiplicity::ZeroOrOne => "0..1".to_string(),
+                    Multiplicity::ZeroOrMany => "0..*".to_string(),
+                    Multiplicity::OneOrMany => "1..*".to_string(),
+                    Multiplicity::ManyToMany(min, max) => format!("{}..{}", min, max),
+                    Multiplicity::Exactly(n) => format!("{}", n),
+                    Multiplicity::ZeroToMany(n) => format!("0..{}", n),
+                    Multiplicity::OneToMany(n) => format!("1..{}", n),
+                }
+            }
+
+            let multiplicity_from = format_mult(&edge.weight().multiplicity.from);
+            let multiplicity_to = format_mult(&edge.weight().multiplicity.to);
+
             let (head, style) = match rtype {
                 RelationType::Extends => ("empty", "normal"),
                 RelationType::Implements => ("empty", "dashed"),
@@ -109,8 +137,8 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 RelationType::Associates => ("normal", "normal"),
             };
             format!(
-                "label=\"{}\", arrowhead=\"{}\", style=\"{}\"",
-                label, head, style
+                "label=\"{}\", arrowhead=\"{}\", style=\"{}\", taillabel=\"{}\", headlabel=\"{}\", labeldistance=1.25",
+                label, head, style, multiplicity_from, multiplicity_to
             )
         },
         &|_g, (_, class)| {
@@ -266,7 +294,7 @@ mod tests {
         // Manufacturer "1..*" --> "0..*" WindTurbine : repairs
         // @enduml
 
-        let (mut tcsb_a, mut tcsb_b) = twins::<ClassDiagramCrdt>();
+        let (mut tcsb_a, mut _tcsb_b) = twins::<ClassDiagramCrdt>();
 
         // WindTurbine class
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
@@ -346,6 +374,22 @@ mod tests {
             "rotor",
             "comprises",
             Relation::RelationType(LWWRegister::Write(RelationType::Composes)),
+        ));
+        let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Multiplicity(RelationMultiplicity::From(LWWRegister::Write(
+                Multiplicity::One,
+            ))),
+        ));
+        let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Multiplicity(RelationMultiplicity::To(LWWRegister::Write(
+                Multiplicity::Exactly(3),
+            ))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "blade",
