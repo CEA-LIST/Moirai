@@ -140,6 +140,26 @@ mod tests {
         assert_eq!(eval_a, eval_b);
     }
 
+    #[test_log::test]
+    fn mv_register_instability() {
+        let (mut tcsb_a, mut tcsb_b) = twins_graph::<MVRegister<u32>>();
+
+        let event_a_1 = tcsb_a.tc_bcast(MVRegister::Write(4));
+        assert_eq!(tcsb_a.eval(), HashSet::from([4]));
+        let event_b_1 = tcsb_b.tc_bcast(MVRegister::Write(5));
+        assert_eq!(tcsb_b.eval(), HashSet::from([5]));
+        tcsb_a.try_deliver(event_b_1);
+        assert_eq!(tcsb_a.eval(), HashSet::from([4, 5]));
+
+        let event_b_2 = tcsb_b.tc_bcast(MVRegister::Write(2));
+        assert_eq!(tcsb_b.eval(), HashSet::from([2]));
+        tcsb_a.try_deliver(event_b_2);
+        tcsb_b.try_deliver(event_a_1);
+
+        assert_eq!(tcsb_a.eval(), HashSet::from([4, 2]));
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {

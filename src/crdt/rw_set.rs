@@ -274,6 +274,29 @@ mod tests {
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     }
 
+    #[test_log::test]
+    fn concurrent_add_remove_add() {
+        let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
+        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
+        tcsb_b.try_deliver(event_a);
+
+        assert_eq!(tcsb_b.eval(), HashSet::from(["a"]));
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+
+        let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
+        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
+        tcsb_b.try_deliver(event_a);
+        tcsb_a.try_deliver(event_b);
+
+        assert_eq!(tcsb_b.eval(), HashSet::from([]));
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+
+        let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
+        tcsb_b.try_deliver(event_a);
+
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+    }
+
     #[cfg(feature = "utils")]
     #[test_log::test]
     fn convergence_check() {

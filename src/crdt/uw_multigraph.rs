@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::{Debug, Display},
     hash::Hash,
     rc::Rc,
@@ -13,7 +13,7 @@ use crate::{
         dot::Dot,
         matrix_clock::MatrixClock,
     },
-    crdt::aw_multigraph::AWGraph,
+    crdt::multidigraph::Graph,
     protocol::{
         event::Event, event_graph::EventGraph, log::Log, membership::ViewData, pulling::Since,
     },
@@ -33,9 +33,11 @@ where
     V: Clone + Debug + Eq + PartialEq + Hash,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
-    graph: EventGraph<AWGraph<V, E>>,
+    // TODO: the graph is not necessary, the CRDT can be recomputed from the arc_content and vertex_content
+    graph: EventGraph<Graph<V, E>>,
     arc_content: HashMap<(V, V, E), El>,
     vertex_content: HashMap<V, Nl>,
+    vertex_index: HashMap<V, HashSet<(V, V, E)>>,
 }
 
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
@@ -50,6 +52,7 @@ where
             graph: EventGraph::new(),
             arc_content: HashMap::new(),
             vertex_content: HashMap::new(),
+            vertex_index: HashMap::new(),
         }
     }
 }
@@ -69,6 +72,7 @@ where
             graph: EventGraph::new(),
             arc_content: HashMap::new(),
             vertex_content: HashMap::new(),
+            vertex_index: HashMap::new(),
         }
     }
 
@@ -76,7 +80,7 @@ where
         match &event.op {
             UWGraph::UpdateVertex(v, no) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddVertex(v.clone()),
+                    Graph::AddVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -99,7 +103,7 @@ where
             }
             UWGraph::RemoveVertex(v) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::RemoveVertex(v.clone()),
+                    Graph::RemoveVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -107,7 +111,7 @@ where
             }
             UWGraph::UpdateArc(v1, v2, e_id, eo) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddArc(v1.clone(), v2.clone(), e_id.clone()),
+                    Graph::AddArc(v1.clone(), v2.clone(), e_id.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -129,7 +133,7 @@ where
             }
             UWGraph::RemoveArc(v1, v2, e1) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
+                    Graph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -142,7 +146,7 @@ where
         match &event.op {
             UWGraph::UpdateVertex(v, vo) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddVertex(v.clone()),
+                    Graph::AddVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -171,7 +175,7 @@ where
             }
             UWGraph::RemoveVertex(v) => {
                 let event = Event::new(
-                    AWGraph::RemoveVertex(v.clone()),
+                    Graph::RemoveVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -188,10 +192,29 @@ where
                         v_content.r_n(vector_clock, true);
                     }
                 }
+                if let Some(vidx) = self.vertex_index.get(v) {
+                    for (v1, v2, e1) in vidx.iter() {
+                        if let Some(arc_content) =
+                            self.arc_content
+                                .get_mut(&(v1.clone(), v2.clone(), e1.clone()))
+                        {
+                            // If the arc content is not empty, we need to prune the events
+                            if !arc_content.is_empty() {
+                                // compute the vector clock of the remove operation
+                                let vector_clock =
+                                    ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
+
+                                // The `true` here is what makes the map a Update-Wins graph
+                                arc_content.r_n(vector_clock, true);
+                            }
+                        }
+                    }
+                }
+                self.vertex_index.entry(v.clone()).or_default().clear();
             }
             UWGraph::UpdateArc(v1, v2, e1, lo) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddArc(v1.clone(), v2.clone(), e1.clone()),
+                    Graph::AddArc(v1.clone(), v2.clone(), e1.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -217,10 +240,16 @@ where
                     .entry((v1.clone(), v2.clone(), e1.clone()))
                     .or_default()
                     .prune_redundant_events(&log_event, is_r_0, ltm);
+
+                self.vertex_index.entry(v1.clone()).or_default().insert((
+                    v1.clone(),
+                    v2.clone(),
+                    e1.clone(),
+                ));
             }
             UWGraph::RemoveArc(v1, v2, e1) => {
                 let event = Event::new(
-                    AWGraph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
+                    Graph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -240,6 +269,12 @@ where
                         arc_content.r_n(vector_clock, true);
                     }
                 }
+
+                self.vertex_index.entry(v1.clone()).or_default().remove(&(
+                    v1.clone(),
+                    v2.clone(),
+                    e1.clone(),
+                ));
             }
         }
     }
@@ -266,7 +301,7 @@ where
 
         for event in self.graph.collect_events_since(since, ltm) {
             match &event.op {
-                AWGraph::AddVertex(v) => {
+                Graph::AddVertex(v) => {
                     let mut event_found = nested_vertexes
                         .get(v)
                         .unwrap()
@@ -281,14 +316,14 @@ where
                         event_found.lamport(),
                     ));
                 }
-                AWGraph::RemoveVertex(v) => {
+                Graph::RemoveVertex(v) => {
                     events.push(Event::new(
                         UWGraph::RemoveVertex(v.clone()),
                         event.metadata().clone(),
                         event.lamport(),
                     ));
                 }
-                AWGraph::AddArc(v1, v2, e) => {
+                Graph::AddArc(v1, v2, e) => {
                     let mut event_found = nested_arcs
                         .get(&(v1.clone(), v2.clone(), e.clone()))
                         .unwrap()
@@ -308,7 +343,7 @@ where
                         event_found.lamport(),
                     ));
                 }
-                AWGraph::RemoveArc(v1, v2, e1) => {
+                Graph::RemoveArc(v1, v2, e1) => {
                     events.push(Event::new(
                         UWGraph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
                         event.metadata().clone(),
@@ -323,22 +358,22 @@ where
     fn redundant_itself(&self, event: &Event<Self::Op>) -> bool {
         let event = match &event.op {
             UWGraph::UpdateVertex(v, _) => Event::new(
-                AWGraph::AddVertex(v.clone()),
+                Graph::AddVertex(v.clone()),
                 event.metadata().clone(),
                 event.lamport(),
             ),
             UWGraph::UpdateArc(v1, v2, e1, _) => Event::new(
-                AWGraph::AddArc(v1.clone(), v2.clone(), e1.clone()),
+                Graph::AddArc(v1.clone(), v2.clone(), e1.clone()),
                 event.metadata().clone(),
                 event.lamport(),
             ),
             UWGraph::RemoveVertex(v) => Event::new(
-                AWGraph::RemoveVertex(v.clone()),
+                Graph::RemoveVertex(v.clone()),
                 event.metadata().clone(),
                 event.lamport(),
             ),
             UWGraph::RemoveArc(v1, v2, e) => Event::new(
-                AWGraph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
+                Graph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
                 event.metadata().clone(),
                 event.lamport(),
             ),
@@ -379,7 +414,6 @@ where
                     graph.add_edge(*i1, *i2, log.eval());
                 }
                 _ => {
-                    // If either vertex is not found, we skip adding the edge
                     continue;
                 }
             }
@@ -413,7 +447,7 @@ where
         match &event.op {
             UWGraph::UpdateVertex(v, _) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddVertex(v.clone()),
+                    Graph::AddVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -421,7 +455,7 @@ where
             }
             UWGraph::RemoveVertex(v) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::RemoveVertex(v.clone()),
+                    Graph::RemoveVertex(v.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -429,7 +463,7 @@ where
             }
             UWGraph::UpdateArc(v1, v2, e1, _) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::AddArc(v1.clone(), v2.clone(), e1.clone()),
+                    Graph::AddArc(v1.clone(), v2.clone(), e1.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -437,7 +471,7 @@ where
             }
             UWGraph::RemoveArc(v1, v2, e) => {
                 let aw_graph_event = Event::new(
-                    AWGraph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
+                    Graph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
                     event.metadata().clone(),
                     event.lamport(),
                 );
@@ -456,20 +490,20 @@ where
         match op {
             UWGraph::UpdateVertex(v, vo) => {
                 self.graph
-                    .deps(clocks, view, dot, &AWGraph::AddVertex(v.clone()));
+                    .deps(clocks, view, dot, &Graph::AddVertex(v.clone()));
                 let log = self.vertex_content.entry(v.clone()).or_default();
                 log.deps(clocks, view, dot, vo);
             }
             UWGraph::RemoveVertex(v) => {
                 self.graph
-                    .deps(clocks, view, dot, &AWGraph::RemoveVertex(v.clone()));
+                    .deps(clocks, view, dot, &Graph::RemoveVertex(v.clone()));
             }
             UWGraph::UpdateArc(v1, v2, e1, eo) => {
                 self.graph.deps(
                     clocks,
                     view,
                     dot,
-                    &AWGraph::AddArc(v1.clone(), v2.clone(), e1.clone()),
+                    &Graph::AddArc(v1.clone(), v2.clone(), e1.clone()),
                 );
                 let log = self
                     .arc_content
@@ -482,7 +516,7 @@ where
                     clocks,
                     view,
                     dot,
-                    &AWGraph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
+                    &Graph::RemoveArc(v1.clone(), v2.clone(), e.clone()),
                 );
             }
         }

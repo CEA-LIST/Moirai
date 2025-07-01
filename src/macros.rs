@@ -9,7 +9,7 @@ macro_rules! object {
                 )*
             }
 
-            #[derive(Clone, Debug, Default)]
+            #[derive(Clone, Debug, Default, PartialEq)]
             pub struct [<$name Value>] {
                 $(
                     pub $field: <$T as $crate::protocol::log::Log>::Value,
