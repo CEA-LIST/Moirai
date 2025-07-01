@@ -29,10 +29,13 @@ impl Stable<EWFlag> for bool {
         _op: &EWFlag,
         _dot: &Dot,
     ) {
-        // match op {
-        //     EWFlag::Enable => *self = true,
-        //     EWFlag::Disable | EWFlag::Clear => *self = false,
-        // }
+        *self = false; //Clear the flag in all cases because it will be re-evaluated later
+                       // old implementation: It will not cause any problems,
+                       // but it doesn't comply to the function goal
+                       // match op {
+                       //     EWFlag::Enable => *self = true,
+                       //     EWFlag::Disable | EWFlag::Clear => *self = false,
+                       // }
     }
 
     fn apply(&mut self, value: EWFlag) {
@@ -46,8 +49,8 @@ impl Stable<EWFlag> for bool {
 impl PureCRDT for EWFlag {
     type Value = bool;
     type Stable = bool;
-    const DISABLE_R_WHEN_R: bool = true;
-    const DISABLE_R_WHEN_NOT_R: bool = true;
+    // const DISABLE_R_WHEN_R: bool = true;
+    // const DISABLE_R_WHEN_NOT_R: bool = true;
 
     fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
         matches!(new_op, EWFlag::Disable | EWFlag::Clear)
@@ -116,5 +119,12 @@ mod tests {
         tcsb_b.try_deliver(event);
         assert_eq!(tcsb_a.eval(), true);
         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Concurrent Enable and Disable: Disable wins
+        let event_a = tcsb_a.tc_bcast(EWFlag::Enable);
+        let event_b = tcsb_b.tc_bcast(EWFlag::Disable);
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+        assert_eq!(tcsb_a.eval(), true);
+        assert_eq!(tcsb_b.eval(), true);
     }
 }
