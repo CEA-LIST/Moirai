@@ -152,13 +152,13 @@ mod tests {
     use super::*;
     use crate::{
         crdt::{
-            aw_multigraph::AWGraph,
             aw_set::AWSet,
             class_diagram::{
                 export_fancy_class_diagram, Class, ClassDiagram, ClassDiagramCrdt, Feature,
                 Operation, PrimitiveType, Relation, RelationType,
             },
             lww_register::LWWRegister,
+            multidigraph::Graph,
             mv_register::MVRegister,
             resettable_counter::Counter,
             uw_map::{UWMap, UWMapLog},
@@ -171,8 +171,11 @@ mod tests {
     fn folie() {
         for _ in 0..100 {
             // generate_uw_multigraph_convergence();
-            generate_class_diagram();
+            // generate_class_diagram();
             // generate_uw_map_convergence();
+            // generate_lww_register_convergence();
+            // generate_aw_graph_convergence();
+            generate_deeply_nested_uw_map_convergence();
         }
     }
 
@@ -455,26 +458,26 @@ mod tests {
     }
 
     #[test_log::test]
-    fn generate_aw_graph_convergence() {
-        let ops: Vec<AWGraph<&'static str, u8>> = vec![
-            AWGraph::AddVertex("a"),
-            AWGraph::AddVertex("b"),
-            AWGraph::AddVertex("c"),
-            AWGraph::RemoveVertex("a"),
-            AWGraph::RemoveVertex("b"),
-            AWGraph::RemoveVertex("c"),
-            AWGraph::AddArc("a", "b", 1),
-            AWGraph::AddArc("a", "b", 2),
-            AWGraph::AddArc("b", "c", 1),
-            AWGraph::AddArc("b", "c", 2),
-            AWGraph::AddArc("c", "a", 1),
-            AWGraph::AddArc("c", "a", 2),
-            AWGraph::RemoveArc("a", "b", 1),
-            AWGraph::RemoveArc("a", "b", 2),
-            AWGraph::RemoveArc("b", "c", 1),
-            AWGraph::RemoveArc("b", "c", 2),
-            AWGraph::RemoveArc("c", "a", 1),
-            AWGraph::RemoveArc("c", "a", 2),
+    fn generate_graph_convergence() {
+        let ops: Vec<Graph<&'static str, u8>> = vec![
+            Graph::AddVertex("a"),
+            Graph::AddVertex("b"),
+            Graph::AddVertex("c"),
+            Graph::RemoveVertex("a"),
+            Graph::RemoveVertex("b"),
+            Graph::RemoveVertex("c"),
+            Graph::AddArc("a", "b", 1),
+            Graph::AddArc("a", "b", 2),
+            Graph::AddArc("b", "c", 1),
+            Graph::AddArc("b", "c", 2),
+            Graph::AddArc("c", "a", 1),
+            Graph::AddArc("c", "a", 2),
+            Graph::RemoveArc("a", "b", 1),
+            Graph::RemoveArc("a", "b", 2),
+            Graph::RemoveArc("b", "c", 1),
+            Graph::RemoveArc("b", "c", 2),
+            Graph::RemoveArc("c", "a", 1),
+            Graph::RemoveArc("c", "a", 2),
         ];
 
         let config = EventGraphConfig {
@@ -487,7 +490,7 @@ mod tests {
             log_timing_csv: false,
         };
 
-        let tcsbs = generate_event_graph::<EventGraph<AWGraph<&str, u8>>>(config);
+        let tcsbs = generate_event_graph::<EventGraph<Graph<&str, u8>>>(config);
 
         // All replicas' eval() should match
         let mut reference_val: DiGraph<&str, u8> = DiGraph::new();

@@ -48,6 +48,7 @@ impl<K, L> Log for UWMapLog<K, L>
 where
     L: Log,
     K: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    <L as Log>::Value: Default + PartialEq,
 {
     type Op = UWMap<K, L::Op>;
     type Value = HashMap<K, L::Value>;
@@ -249,7 +250,7 @@ where
         let mut map = HashMap::new();
         // let set = self.keys.eval();
         for (k, v) in &self.values {
-            if v.is_empty() {
+            if v.eval() == <L as Log>::Value::default() {
                 // If the value is empty, we don't need to add it to the map
                 continue;
             }

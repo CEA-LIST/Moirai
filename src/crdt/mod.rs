@@ -1,12 +1,15 @@
-pub mod aw_multigraph;
+pub mod aw_multidigraph;
 pub mod aw_set;
 pub mod class_diagram;
 pub mod counter;
 pub mod duet;
 pub mod lww_register;
+pub mod multidigraph;
 pub mod mv_register;
+pub mod po_register;
 pub mod resettable_counter;
 pub mod rw_set;
+pub mod to_register;
 pub mod uw_map;
 pub mod uw_multigraph;
 
