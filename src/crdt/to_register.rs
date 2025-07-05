@@ -174,6 +174,7 @@ mod tests {
                 TORegister::Clear,
             ],
             "b",
+            |a, b| a == b,
         );
     }
 }

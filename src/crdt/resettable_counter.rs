@@ -179,6 +179,7 @@ mod tests {
         convergence_checker::<EventGraph<Counter<isize>>>(
             &[Counter::Inc(7), Counter::Dec(15), Counter::Reset],
             -8,
+            |a, b| a == b,
         );
     }
 }

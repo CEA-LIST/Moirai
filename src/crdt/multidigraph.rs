@@ -19,12 +19,76 @@ pub enum Graph<V, E> {
     RemoveArc(V, V, E),
 }
 
+impl<V, E> Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+{
+    /// Returns true if there is no vertex `v1` and `v2` in the graph.
+    pub fn lookup_arc(v1: &V, v2: &V, dot: &Dot, state: &EventGraph<Self>) -> bool {
+        let mut v1_found = false;
+        let mut v2_found = false;
+        for op in state.stable.iter() {
+            match op {
+                Graph::AddVertex(v) if v == v1 => v1_found = true,
+                Graph::AddVertex(v) if v == v2 => v2_found = true,
+                _ => {}
+            }
+            if v1_found && v2_found {
+                break; // Both vertices found, no need to continue
+            }
+        }
+        if !v1_found || !v2_found {
+            let predecessors = state.causal_predecessors(dot);
+            for idx in predecessors.iter() {
+                let op = &state.unstable.node_weight(*idx).unwrap().0;
+                match op {
+                    Graph::AddVertex(v) if v == v1 => v1_found = true,
+                    Graph::AddVertex(v) if v == v2 => v2_found = true,
+                    _ => {}
+                }
+                if v1_found && v2_found {
+                    break; // Both vertices found, no need to continue
+                }
+            }
+        }
+        !v1_found || !v2_found
+    }
+
+    /// Returns true if there is already a vertex `v` in the graph.
+    pub fn lookup_vertex(v: &V, dot: &Dot, state: &EventGraph<Self>) -> bool {
+        let mut found = false;
+        for op in state.stable.iter() {
+            if let Graph::AddVertex(vertex) = op {
+                if vertex == v {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            let predecessors = state.causal_predecessors(dot);
+            for idx in predecessors.iter() {
+                let op = &state.unstable.node_weight(*idx).unwrap().0;
+                if let Graph::AddVertex(vertex) = op {
+                    if vertex == v {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        found
+    }
+}
+
 impl<V, E> PureCRDT for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
 {
     type Value = DiGraph<V, E>;
+    // The stable part can be a tuple of HashSet
     type Stable = Vec<Self>;
 
     fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
@@ -82,9 +146,9 @@ where
                     node_index.insert(v, idx);
                 }
                 Graph::AddArc(v1, v2, e) => {
-                    if edge_index.contains(&(v1, v2, e)) {
-                        continue; // Skip if the edge already exists
-                    }
+                    // if edge_index.contains(&(v1, v2, e)) {
+                    //     continue; // Skip if the edge already exists
+                    // }
                     if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
                         graph.add_edge(*a, *b, e.clone());
                         edge_index.insert((v1, v2, e));
@@ -101,7 +165,10 @@ where
 mod tests {
     use petgraph::{algo::is_isomorphic, graph::DiGraph};
 
-    use crate::crdt::{multidigraph::Graph, test_util::twins_graph};
+    use crate::crdt::{
+        multidigraph::Graph,
+        test_util::{triplet_graph, twins_graph},
+    };
 
     #[test_log::test]
     fn simple_graph() {
@@ -178,6 +245,82 @@ mod tests {
     }
 
     #[test_log::test]
+    fn revive_arc() {
+        let (mut tcsb_a, mut tcsb_b) = twins_graph::<Graph<&str, u8>>();
+
+        let event_a = tcsb_a.tc_bcast(Graph::AddVertex("A"));
+        tcsb_b.try_deliver(event_a);
+        let event_b = tcsb_b.tc_bcast(Graph::AddVertex("B"));
+        tcsb_a.try_deliver(event_b);
+
+        let event_a = tcsb_a.tc_bcast(Graph::AddArc("A", "B", 1));
+        let event_b = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+
+        assert_eq!(tcsb_a.eval().node_count(), 1);
+        assert_eq!(tcsb_a.eval().edge_count(), 0);
+
+        let event_a = tcsb_a.tc_bcast(Graph::AddVertex("B"));
+        tcsb_b.try_deliver(event_a);
+
+        println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
+        println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
+
+        assert_eq!(tcsb_a.eval().node_count(), 2);
+        assert_eq!(tcsb_a.eval().edge_count(), 1);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+    }
+
+    #[test_log::test]
+    fn revive_arc_2() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Graph<&str, u8>>();
+
+        let event_b_1 = tcsb_b.tc_bcast(Graph::AddVertex("A"));
+        tcsb_c.try_deliver(event_b_1.clone());
+        let event_c_1 = tcsb_c.tc_bcast(Graph::AddVertex("B"));
+        let event_c_2 = tcsb_c.tc_bcast(Graph::AddArc("A", "B", 1));
+        tcsb_b.try_deliver(event_c_1.clone());
+        tcsb_b.try_deliver(event_c_2.clone());
+
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_b.eval(),
+            &tcsb_c.eval()
+        ));
+
+        let event_a_1 = tcsb_a.tc_bcast(Graph::RemoveVertex("B"));
+        let event_a_2 = tcsb_a.tc_bcast(Graph::RemoveArc("A", "B", 1));
+        tcsb_b.try_deliver(event_a_1.clone());
+        tcsb_b.try_deliver(event_a_2.clone());
+
+        tcsb_c.try_deliver(event_a_1);
+        tcsb_c.try_deliver(event_a_2);
+
+        tcsb_a.try_deliver(event_b_1);
+        tcsb_a.try_deliver(event_c_1);
+        tcsb_a.try_deliver(event_c_2);
+
+        assert_eq!(tcsb_a.eval().node_count(), 2);
+        assert_eq!(tcsb_a.eval().edge_count(), 1);
+
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_b.eval()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_c.eval()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_b.eval(),
+            &tcsb_c.eval()
+        ));
+    }
+
+    #[test_log::test]
     fn multigraph() {
         let (mut tcsb_a, mut tcsb_b) = twins_graph::<Graph<&str, u8>>();
 
@@ -201,5 +344,30 @@ mod tests {
             &tcsb_a.eval(),
             &tcsb_b.eval()
         ));
+    }
+
+    #[cfg(feature = "utils")]
+    #[test_log::test]
+    fn convergence_check() {
+        use crate::{
+            protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+        };
+
+        let mut graph = DiGraph::new();
+        let idx_a = graph.add_node("A");
+        let idx_b = graph.add_node("B");
+        graph.add_edge(idx_a, idx_b, "arc1");
+        convergence_checker::<EventGraph<Graph<&str, &str>>>(
+            &[
+                Graph::AddVertex("A"),
+                Graph::AddVertex("B"),
+                Graph::RemoveVertex("B"),
+                Graph::RemoveVertex("A"),
+                Graph::AddArc("A", "B", "arc1"),
+                Graph::RemoveArc("A", "B", "arc1"),
+            ],
+            graph,
+            |g1, g2| petgraph::algo::is_isomorphic(g1, g2),
+        );
     }
 }

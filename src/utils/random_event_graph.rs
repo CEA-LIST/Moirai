@@ -161,6 +161,7 @@ mod tests {
             multidigraph::Graph,
             mv_register::MVRegister,
             resettable_counter::Counter,
+            to_register::TORegister,
             uw_map::{UWMap, UWMapLog},
             uw_multigraph::{UWGraph, UWGraphLog},
         },
@@ -169,13 +170,42 @@ mod tests {
 
     #[test_log::test]
     fn folie() {
-        for _ in 0..100 {
+        for _ in 0..1_000 {
             // generate_uw_multigraph_convergence();
             // generate_class_diagram();
             // generate_uw_map_convergence();
             // generate_lww_register_convergence();
-            // generate_aw_graph_convergence();
-            generate_deeply_nested_uw_map_convergence();
+            // generate_deeply_nested_uw_map_convergence();
+            // generate_ewflag_convergence();
+            generate_graph_convergence();
+        }
+    }
+
+    #[test_log::test]
+    fn generate_ewflag_convergence() {
+        use crate::crdt::ew_flag::EWFlag;
+
+        let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
+
+        let config = EventGraphConfig {
+            n_replicas: 5,
+            total_operations: 100,
+            ops: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            log_timing_csv: false,
+        };
+
+        let tcsbs = generate_event_graph::<EventGraph<EWFlag>>(config);
+
+        // All replicas' eval() should match
+        let mut reference_val: bool = false;
+        for (i, tcsb) in tcsbs.iter().enumerate() {
+            if i == 0 {
+                reference_val = tcsb.eval();
+            }
+            assert_eq!(tcsb.eval(), reference_val, "Replica {} did not converge", i);
         }
     }
 
@@ -386,19 +416,19 @@ mod tests {
                 "Wheel",
                 "Car",
                 "arc2",
-                Relation::RelationType(LWWRegister::Write(RelationType::Composes)),
+                Relation::RelationType(TORegister::Write(RelationType::Composes)),
             ),
             UWGraph::UpdateArc(
                 "Car",
                 "Wheel",
                 "arc1",
-                Relation::RelationType(LWWRegister::Write(RelationType::Extends)),
+                Relation::RelationType(TORegister::Write(RelationType::Extends)),
             ),
             UWGraph::UpdateArc(
                 "Wheel",
                 "Car",
                 "arc2",
-                Relation::RelationType(LWWRegister::Write(RelationType::Implements)),
+                Relation::RelationType(TORegister::Write(RelationType::Implements)),
             ),
             UWGraph::UpdateArc(
                 "Car",
@@ -481,11 +511,11 @@ mod tests {
         ];
 
         let config = EventGraphConfig {
-            n_replicas: 8,
-            total_operations: 100,
+            n_replicas: 5,
+            total_operations: 12,
             ops: &ops,
             final_sync: true,
-            churn_rate: 0.2,
+            churn_rate: 0.6,
             reachability: None,
             log_timing_csv: false,
         };

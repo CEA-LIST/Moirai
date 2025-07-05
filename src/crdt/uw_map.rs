@@ -504,6 +504,7 @@ mod tests {
                 UWMap::Remove("b".to_string()),
             ],
             result,
+            HashMap::eq,
         );
     }
 }

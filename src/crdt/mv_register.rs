@@ -174,6 +174,7 @@ mod tests {
                 MVRegister::Clear,
             ],
             HashSet::from(["a", "b"]),
+            HashSet::eq,
         );
     }
 }

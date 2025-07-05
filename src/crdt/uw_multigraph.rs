@@ -37,6 +37,7 @@ where
     graph: EventGraph<Graph<V, E>>,
     arc_content: HashMap<(V, V, E), El>,
     vertex_content: HashMap<V, Nl>,
+    // For fast lookup of arcs by vertex
     vertex_index: HashMap<V, HashSet<(V, V, E)>>,
 }
 
@@ -210,7 +211,7 @@ where
                         }
                     }
                 }
-                self.vertex_index.entry(v.clone()).or_default().clear();
+                // TODO: remove the vertex from the vertex index
             }
             UWGraph::UpdateArc(v1, v2, e1, lo) => {
                 let aw_graph_event = Event::new(
@@ -242,6 +243,11 @@ where
                     .prune_redundant_events(&log_event, is_r_0, ltm);
 
                 self.vertex_index.entry(v1.clone()).or_default().insert((
+                    v1.clone(),
+                    v2.clone(),
+                    e1.clone(),
+                ));
+                self.vertex_index.entry(v2.clone()).or_default().insert((
                     v1.clone(),
                     v2.clone(),
                     e1.clone(),
@@ -403,10 +409,16 @@ where
         let mut graph = Self::Value::new();
         let mut node_idx = HashMap::new();
         for (v, log) in self.vertex_content.iter() {
+            if log.is_empty() {
+                continue; // Skip empty vertices
+            }
             let idx = graph.add_node(log.eval());
             node_idx.insert(v.clone(), idx);
         }
         for ((v1, v2, _), log) in self.arc_content.iter() {
+            if log.is_empty() {
+                continue; // Skip empty edges
+            }
             let idx1 = node_idx.get(v1);
             let idx2 = node_idx.get(v2);
             match (idx1, idx2) {
@@ -529,11 +541,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use petgraph::{algo::is_isomorphic, graph::DiGraph};
+
     use crate::{
         crdt::{
             lww_register::LWWRegister,
             resettable_counter::Counter,
-            test_util::twins,
+            test_util::{triplet, twins},
             uw_multigraph::{UWGraph, UWGraphLog},
         },
         protocol::event_graph::EventGraph,
@@ -603,24 +617,139 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a);
 
-        // let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-        // let event_b = tcsb_b.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)));
+        let mut graph: DiGraph<i32, i32> = DiGraph::new();
+        graph.add_node(2);
 
-        // tcsb_b.try_deliver(event_a);
-        // tcsb_a.try_deliver(event_b);
+        assert!(petgraph::algo::is_isomorphic(&tcsb_a.eval(), &graph));
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_b.eval()
+        ));
+    }
 
-        println!(
-            "Eval A: {:?}",
-            petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[])
-        );
-        println!(
-            "Eval B: {:?}",
-            petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
-        );
+    #[test_log::test]
+    fn remove_vertex() {
+        let (mut tcsb_a, mut tcsb_b) =
+            twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
 
-        // assert!(petgraph::algo::is_isomorphic(
-        //     &tcsb_a.eval(),
-        //     &tcsb_b.eval()
-        // ));
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        tcsb_b.try_deliver(event_a);
+        let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("A"));
+        tcsb_a.try_deliver(event_b);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+    }
+
+    #[test_log::test]
+    fn revive_arc() {
+        let (mut tcsb_a, mut tcsb_b) =
+            twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        tcsb_b.try_deliver(event_a);
+        let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        tcsb_a.try_deliver(event_b);
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("B"));
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+
+        assert_eq!(tcsb_a.eval().node_count(), 1);
+        assert_eq!(tcsb_a.eval().edge_count(), 0);
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        tcsb_b.try_deliver(event_a);
+
+        assert_eq!(tcsb_a.eval().node_count(), 2);
+        assert_eq!(tcsb_a.eval().edge_count(), 1);
+
+        println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
+        println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+    }
+
+    #[test_log::test]
+    fn revive_arc_2() {
+        let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<
+            UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>,
+        >();
+
+        let event_b_1 = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        tcsb_c.try_deliver(event_b_1.clone());
+        let event_c_1 = tcsb_c.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(1)));
+        let event_c_2 = tcsb_c.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        tcsb_b.try_deliver(event_c_1.clone());
+        tcsb_b.try_deliver(event_c_2.clone());
+
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_b.eval(),
+            &tcsb_c.eval()
+        ));
+
+        let event_a_1 = tcsb_a.tc_bcast(UWGraph::RemoveVertex("B"));
+        let event_a_2 = tcsb_a.tc_bcast(UWGraph::RemoveArc("A", "B", 1));
+        tcsb_b.try_deliver(event_a_1.clone());
+        tcsb_b.try_deliver(event_a_2.clone());
+
+        tcsb_c.try_deliver(event_a_1);
+        tcsb_c.try_deliver(event_a_2);
+
+        tcsb_a.try_deliver(event_b_1);
+        tcsb_a.try_deliver(event_c_1);
+        tcsb_a.try_deliver(event_c_2);
+
+        assert_eq!(tcsb_a.eval().node_count(), 2);
+        assert_eq!(tcsb_a.eval().edge_count(), 1);
+
+        println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
+
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_b.eval()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_a.eval(),
+            &tcsb_c.eval()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &tcsb_b.eval(),
+            &tcsb_c.eval()
+        ));
+    }
+
+    #[test_log::test]
+    fn revive_arc_3() {
+        let (mut tcsb_a, mut tcsb_b) =
+            twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        tcsb_b.try_deliver(event_a);
+        let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        tcsb_a.try_deliver(event_b);
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        tcsb_b.try_deliver(event_a);
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)));
+        let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("B"));
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+
+        assert_eq!(tcsb_a.eval().node_count(), 1);
+        assert_eq!(tcsb_a.eval().edge_count(), 0);
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        tcsb_b.try_deliver(event_a);
+
+        assert_eq!(tcsb_a.eval().node_count(), 2);
+        assert_eq!(tcsb_a.eval().edge_count(), 1);
+
+        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
     }
 }

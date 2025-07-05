@@ -307,6 +307,7 @@ mod tests {
         convergence_checker::<EventGraph<RWSet<&str>>>(
             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
             HashSet::new(),
+            HashSet::eq,
         );
     }
 }
