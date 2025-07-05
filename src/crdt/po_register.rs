@@ -77,10 +77,7 @@ where
 mod tests {
     use std::{cmp::Ordering, collections::HashSet};
 
-    use crate::crdt::{
-        po_register::PORegister,
-        test_util::{triplet_graph, twins_graph},
-    };
+    use crate::crdt::{po_register::PORegister, test_util::twins_graph};
 
     #[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
     pub enum Family {
@@ -215,6 +212,7 @@ mod tests {
                 PORegister::Clear,
             ],
             HashSet::from([Family::Parent(30), Family::Parent(40)]),
+            HashSet::eq,
         );
     }
 }

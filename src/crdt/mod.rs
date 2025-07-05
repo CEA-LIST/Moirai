@@ -3,6 +3,7 @@ pub mod aw_set;
 pub mod class_diagram;
 pub mod counter;
 pub mod duet;
+pub mod ew_flag;
 pub mod lww_register;
 pub mod multidigraph;
 pub mod mv_register;

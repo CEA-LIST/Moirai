@@ -158,7 +158,9 @@ where
     }
 
     /// Complexity: O(n + m), where n is the number of nodes and m is the number of edges in the graph.
-    /// A dot always has itself as a predecessor
+    /// A dot NEVER has itself as a predecessor
+    /// Return only the causal prdecessors that are not tombstones in the UNSTABLE graph. Every operation in the stable part
+    /// is also a predecessor, but we don't return them here.
     pub fn causal_predecessors(&self, dot: &Dot) -> HashSet<NodeIndex> {
         let node_idx = self
             .dot_index_map
@@ -166,11 +168,12 @@ where
             .unwrap_or_else(|| panic!("Dot {dot} not found in the graph."));
 
         let mut predecessors = HashSet::new();
-        // TODO: skip tombstones?
         let mut dfs = Dfs::new(&self.unstable, *node_idx);
 
         while let Some(nx) = dfs.next(&self.unstable) {
-            predecessors.insert(nx);
+            if self.non_tombstones.contains(&nx) && nx != *node_idx {
+                predecessors.insert(nx);
+            }
         }
 
         predecessors

@@ -21,6 +21,7 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     /// Because of the causal broadcast, new_op can only be concurrent or causally after old_op.
     /// The new op is redundant if there is an old op that is concurrent to it and has a higher origin identifier.
     /// i.e. (t, o) R s = \exists (t', o') \in s : t ≮ t' \land t.id < t'.id
+    // TODO: just implements Ord on Dot and use it here.
     fn redundant_itself(_new_op: &Self, new_dot: &Dot, state: &EventGraph<Self>) -> bool {
         let is_redundant = state.non_tombstones.iter().any(|nx| {
             let old_dot = state.dot_index_map.nx_to_dot(nx).unwrap();
