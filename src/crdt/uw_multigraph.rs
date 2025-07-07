@@ -58,6 +58,21 @@ where
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Content<Id, Val> {
+    pub id: Id,
+    pub val: Val,
+}
+
+impl<Id, Val> Display for Content<Id, Val>
+where
+    Val: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.val)
+    }
+}
+
 impl<V, E, Nl, El> Log for UWGraphLog<V, E, Nl, El>
 where
     Nl: Log,
@@ -66,7 +81,7 @@ where
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     type Op = UWGraph<V, E, Nl::Op, El::Op>;
-    type Value = DiGraph<Nl::Value, El::Value>;
+    type Value = DiGraph<Content<V, Nl::Value>, Content<(V, V, E), El::Value>>;
 
     fn new() -> Self {
         Self {
@@ -412,10 +427,13 @@ where
             if log.is_empty() {
                 continue; // Skip empty vertices
             }
-            let idx = graph.add_node(log.eval());
+            let idx = graph.add_node(Content {
+                id: v.clone(),
+                val: log.eval(),
+            });
             node_idx.insert(v.clone(), idx);
         }
-        for ((v1, v2, _), log) in self.arc_content.iter() {
+        for ((v1, v2, e), log) in self.arc_content.iter() {
             if log.is_empty() {
                 continue; // Skip empty edges
             }
@@ -423,7 +441,14 @@ where
             let idx2 = node_idx.get(v2);
             match (idx1, idx2) {
                 (Some(i1), Some(i2)) => {
-                    graph.add_edge(*i1, *i2, log.eval());
+                    graph.add_edge(
+                        *i1,
+                        *i2,
+                        Content {
+                            id: (v1.clone(), v2.clone(), e.clone()),
+                            val: log.eval(),
+                        },
+                    );
                 }
                 _ => {
                     continue;
@@ -541,7 +566,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use petgraph::{algo::is_isomorphic, graph::DiGraph};
+    use petgraph::graph::DiGraph;
 
     use crate::{
         crdt::{
@@ -601,10 +626,9 @@ mod tests {
             petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
         );
 
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_a.eval(),
-            &tcsb_b.eval()
-        ));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -637,7 +661,8 @@ mod tests {
         let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("A"));
         tcsb_a.try_deliver(event_b);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert_eq!(tcsb_a.eval().node_count(), 0);
+        assert_eq!(&tcsb_a.eval().node_count(), &tcsb_b.eval().node_count());
     }
 
     #[test_log::test]
@@ -655,7 +680,9 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
 
         assert_eq!(tcsb_a.eval().node_count(), 1);
         assert_eq!(tcsb_a.eval().edge_count(), 0);
@@ -669,7 +696,9 @@ mod tests {
         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -739,7 +768,9 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
 
         assert_eq!(tcsb_a.eval().node_count(), 1);
         assert_eq!(tcsb_a.eval().edge_count(), 0);
@@ -750,6 +781,8 @@ mod tests {
         assert_eq!(tcsb_a.eval().node_count(), 2);
         assert_eq!(tcsb_a.eval().edge_count(), 1);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
     }
 }

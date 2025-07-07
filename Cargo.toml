@@ -30,6 +30,7 @@ tracer = []
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
 utils = ["dep:anyhow", "dep:rand", "dep:deepsize", "vf2"]
+vf2 = ["dep:vf2"]
 
 [profile.release]
 debug = 1

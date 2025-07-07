@@ -13,11 +13,14 @@ use petgraph::{
 
 use crate::{
     crdt::{
-        ew_flag::EWFlag, mv_register::MVRegister, to_register::TORegister, uw_map::UWMapLog,
-        uw_multigraph::UWGraphLog,
+        ew_flag::EWFlag,
+        mv_register::MVRegister,
+        to_register::TORegister,
+        uw_map::UWMapLog,
+        uw_multigraph::{Content, UWGraphLog},
     },
-    object,
     protocol::event_graph::EventGraph,
+    record,
 };
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
@@ -61,6 +64,18 @@ pub enum PrimitiveType {
     Bool,
     #[default]
     Void,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum TypeRef {
+    Primitive(PrimitiveType),
+    Class(String),
+}
+
+impl Default for TypeRef {
+    fn default() -> Self {
+        TypeRef::Primitive(PrimitiveType::Void)
+    }
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
@@ -156,38 +171,39 @@ impl Ord for Multiplicity {
     }
 }
 
-object!(Feature {
+record!(Feature {
     typ: EventGraph::<MVRegister::<PrimitiveType>>,
     visibility: EventGraph::<TORegister::<Visibility>>,
 });
 
-object!(Operation {
+record!(Operation {
     is_abstract: EventGraph::<EWFlag>,
     visibility: EventGraph::<TORegister::<Visibility>>,
-    parameters: UWMapLog::<String, EventGraph::<MVRegister::<PrimitiveType>>>,
-    return_type: EventGraph::<MVRegister::<PrimitiveType>>,
+    parameters: UWMapLog::<String, EventGraph::<MVRegister::<TypeRef>>>,
+    return_type: EventGraph::<MVRegister::<TypeRef>>,
 });
 
-object!(Class {
+record!(Class {
     is_abstract: EventGraph::<EWFlag>,
     name: EventGraph::<MVRegister::<String>>,
     features: UWMapLog::<String, FeatureLog>,
     operations: UWMapLog::<String, OperationLog>,
 });
 
-object!(RelationMultiplicity {
-    from: EventGraph::<TORegister::<Multiplicity>>,
-    to: EventGraph::<TORegister::<Multiplicity>>,
+record!(Ends {
+    source: EventGraph::<TORegister::<Multiplicity>>,
+    target: EventGraph::<TORegister::<Multiplicity>>,
 });
 
-object!(Relation {
-    multiplicity: RelationMultiplicityLog,
+record!(Relation {
+    ends: EndsLog,
     label: EventGraph::<MVRegister::<String>>,
-    relation_type: EventGraph::<TORegister::<RelationType>>,
+    typ: EventGraph::<TORegister::<RelationType>>,
 });
 
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
-pub type ClassDiagram = DiGraph<ClassValue, RelationValue>;
+pub type ClassDiagram<'a> =
+    DiGraph<Content<&'a str, ClassValue>, Content<(&'a str, &'a str, &'a str), RelationValue>>;
 
 pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
     let fancy_dot = Dot::with_attr_getters(
@@ -196,12 +212,13 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
         &|_g, edge| {
             let label = &edge
                 .weight()
+                .val
                 .label
                 .iter()
                 .cloned()
                 .collect::<Vec<String>>()
                 .join(", ");
-            let rtype = &edge.weight().relation_type;
+            let rtype = &edge.weight().val.typ;
 
             // Helper to format multiplicity
             fn format_mult(m: &Multiplicity) -> String {
@@ -218,8 +235,8 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 }
             }
 
-            let multiplicity_from = format_mult(&edge.weight().multiplicity.from);
-            let multiplicity_to = format_mult(&edge.weight().multiplicity.to);
+            let multiplicity_from = format_mult(&edge.weight().val.ends.source);
+            let multiplicity_to = format_mult(&edge.weight().val.ends.target);
 
             let (head, style) = match rtype {
                 RelationType::Extends => ("empty", "normal"),
@@ -233,25 +250,30 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 label, head, style, multiplicity_from, multiplicity_to
             )
         },
-        &|_g, (_, class)| {
-            let name_vec: Vec<String> = class.name.iter().cloned().collect();
+        &|g, (_, class)| {
+            let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
             let name = {
-                let prefix = if class.is_abstract { "🅐 " } else { "🅒 " };
+                let prefix = if class.val.is_abstract {
+                    "🅐 "
+                } else {
+                    "🅒 "
+                };
                 let name_str = if name_vec.is_empty() {
                     "Unnamed".to_string()
                 } else {
-                    name_vec.join(", ")
+                    name_vec.join(" / ")
                 };
                 format!("{}{}", prefix, name_str)
             };
             let features = class
+                .val
                 .features
                 .iter()
                 .map(|(k, v)| {
                     let feature_name = k.clone();
                     let types: Vec<String> =
                         v.typ.iter().cloned().map(|t| format!("{:?}", t)).collect();
-                    let feature_type = types.join(",");
+                    let feature_type = types.join(" / ");
                     let feature_vis = match v.visibility {
                         Visibility::Public => "+",
                         Visibility::Private => "-",
@@ -263,6 +285,7 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 .collect::<Vec<String>>()
                 .join("\\l");
             let operations = class
+                .val
                 .operations
                 .iter()
                 .map(|(k, v)| {
@@ -286,12 +309,33 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                         .return_type
                         .iter()
                         .cloned()
-                        .map(|t| format!("{:?}", t))
+                        .map(|t| match t {
+                            TypeRef::Primitive(pt) => format!("{:?}", pt),
+                            TypeRef::Class(c) => g
+                                .raw_nodes()
+                                .iter()
+                                .find_map(|n| {
+                                    if n.weight.id == &c {
+                                        Some(
+                                            n.weight
+                                                .val
+                                                .name
+                                                .iter()
+                                                .cloned()
+                                                .collect::<Vec<String>>()
+                                                .join(" / "),
+                                        )
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_else(|| "Unknown".to_string()),
+                        })
                         .collect();
                     let return_type_str = if return_types.is_empty() {
                         "".to_string()
                     } else {
-                        format!(": {}", return_types.join(", "))
+                        format!(": {}", return_types.join(" / "))
                     };
                     format!(
                         "{}{}{}({}){}",
@@ -304,7 +348,7 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
                 })
                 .collect::<Vec<String>>()
                 .join("\\l");
-            let is_abstract = if class.is_abstract {
+            let is_abstract = if class.val.is_abstract {
                 "style=filled, fillcolor=\"#CCE5FFFF\""
             } else {
                 "style=filled, fillcolor=\"#CCFFCCFF\""
@@ -325,8 +369,6 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
 
 #[cfg(test)]
 mod tests {
-    use petgraph::algo::is_isomorphic;
-
     use super::*;
     use crate::{
         crdt::{test_util::twins, uw_map::UWMap, uw_multigraph::UWGraph},
@@ -400,14 +442,14 @@ mod tests {
             "wt",
             Class::Operations(UWMap::Update(
                 "start".to_string(),
-                Operation::ReturnType(MVRegister::Write(PrimitiveType::Void)),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
             )),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
             "wt",
             Class::Operations(UWMap::Update(
                 "shutdown".to_string(),
-                Operation::ReturnType(MVRegister::Write(PrimitiveType::Void)),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
             )),
         ));
         // EnergyGenerator class
@@ -419,7 +461,7 @@ mod tests {
             "eg",
             Class::Operations(UWMap::Update(
                 "getEnergyOutput".to_string(),
-                Operation::ReturnType(MVRegister::Write(PrimitiveType::Number)),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Class("wt".to_string()))),
             )),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
@@ -437,7 +479,7 @@ mod tests {
             "wt",
             "eg",
             "ext",
-            Relation::RelationType(TORegister::Write(RelationType::Extends)),
+            Relation::Typ(TORegister::Write(RelationType::Extends)),
         ));
 
         // Rotor class
@@ -475,23 +517,19 @@ mod tests {
             "blade",
             "rotor",
             "comprises",
-            Relation::RelationType(TORegister::Write(RelationType::Composes)),
+            Relation::Typ(TORegister::Write(RelationType::Composes)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "blade",
             "rotor",
             "comprises",
-            Relation::Multiplicity(RelationMultiplicity::From(TORegister::Write(
-                Multiplicity::One,
-            ))),
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "blade",
             "rotor",
             "comprises",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::Exactly(3),
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::Exactly(3)))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "blade",
@@ -503,7 +541,7 @@ mod tests {
             "rotor",
             "wt",
             "hasRotor",
-            Relation::RelationType(TORegister::Write(RelationType::Aggregates)),
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "rotor",
@@ -534,7 +572,7 @@ mod tests {
             "tower",
             "wt",
             "mountedOn",
-            Relation::RelationType(TORegister::Write(RelationType::Aggregates)),
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "tower",
@@ -572,7 +610,7 @@ mod tests {
             "nacelle",
             "wt",
             "hasNacelle",
-            Relation::RelationType(TORegister::Write(RelationType::Aggregates)),
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "nacelle",
@@ -603,7 +641,7 @@ mod tests {
             "eg",
             "energy_grid",
             "feedsInto",
-            Relation::RelationType(TORegister::Write(RelationType::Associates)),
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "eg",
@@ -615,23 +653,19 @@ mod tests {
             "eg",
             "energy_grid",
             "feedsInto",
-            Relation::Multiplicity(RelationMultiplicity::From(TORegister::Write(
-                Multiplicity::OneOrMany,
-            ))),
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "eg",
             "energy_grid",
             "feedsInto",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::One,
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "energy_grid",
             "energy_grid",
             "connectedTo",
-            Relation::RelationType(TORegister::Write(RelationType::Associates)),
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "energy_grid",
@@ -655,7 +689,7 @@ mod tests {
             "manufacturer",
             "wt",
             "owns",
-            Relation::RelationType(TORegister::Write(RelationType::Associates)),
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
@@ -667,23 +701,19 @@ mod tests {
             "manufacturer",
             "wt",
             "owns",
-            Relation::Multiplicity(RelationMultiplicity::From(TORegister::Write(
-                Multiplicity::One,
-            ))),
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
             "wt",
             "owns",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::ZeroOrMany,
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
             "wt",
             "repairs",
-            Relation::RelationType(TORegister::Write(RelationType::Associates)),
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
@@ -695,28 +725,50 @@ mod tests {
             "manufacturer",
             "wt",
             "repairs",
-            Relation::Multiplicity(RelationMultiplicity::From(TORegister::Write(
-                Multiplicity::OneOrMany,
-            ))),
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
         ));
         let _ = tcsb_a.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
             "wt",
             "repairs",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::ZeroOrMany,
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
         ));
 
         let batch = tcsb_a.events_since(&Since::new_from(&tcsb_b));
         tcsb_b.deliver_batch(batch);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
 
         (tcsb_a, tcsb_b)
     }
 
     // Conflict resolution tests
+
+    // Alice and Bob both concurrently edit the WindTurbine class diagram name
+    #[test_log::test]
+    fn concurrent_class_name() {
+        let (mut tcsb_a, mut tcsb_b) = wind_turbine_diagram();
+
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "wt",
+            Class::Name(MVRegister::Write("WindGenerator".to_string())),
+        ));
+        let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex(
+            "wt",
+            Class::Name(MVRegister::Write("WindTurbineGenerator".to_string())),
+        ));
+        // Deliver events
+        tcsb_a.try_deliver(event_b);
+        tcsb_b.try_deliver(event_a);
+
+        let eval_a = tcsb_a.eval();
+        let eval_b = tcsb_b.eval();
+
+        println!("Class Diagram A: {}", export_fancy_class_diagram(&eval_a));
+        println!("Class Diagram B: {}", export_fancy_class_diagram(&eval_b));
+    }
 
     /// Alice believe that the WindTurbine class should be removed, while Bob believes it should be renamed to WindGenerator.
     #[test_log::test]
@@ -748,7 +800,7 @@ mod tests {
 
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
-        assert!(is_isomorphic(&eval_a, &eval_b));
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -772,9 +824,7 @@ mod tests {
             "eg",
             "energy_grid",
             "feedsInto",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::OneToMany(2),
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneToMany(2)))),
         ));
 
         println!(
@@ -788,7 +838,7 @@ mod tests {
 
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
-        assert!(is_isomorphic(&eval_a, &eval_b));
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -808,23 +858,19 @@ mod tests {
             "manufacturer",
             "energy_grid",
             "operates",
-            Relation::RelationType(TORegister::Write(RelationType::Associates)),
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
         ));
         let event_b_2 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
             "energy_grid",
             "operates",
-            Relation::Multiplicity(RelationMultiplicity::From(TORegister::Write(
-                Multiplicity::ZeroOrMany,
-            ))),
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
         ));
         let event_b_3 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
             "energy_grid",
             "operates",
-            Relation::Multiplicity(RelationMultiplicity::To(TORegister::Write(
-                Multiplicity::One,
-            ))),
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
         ));
         let event_b_4 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
             "manufacturer",
@@ -852,7 +898,7 @@ mod tests {
 
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
-        assert!(is_isomorphic(&eval_a, &eval_b));
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -897,7 +943,7 @@ mod tests {
 
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
-        assert!(is_isomorphic(&eval_a, &eval_b));
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -913,7 +959,7 @@ mod tests {
             "wt",
             Class::Operations(UWMap::Update(
                 "start".to_string(),
-                Operation::ReturnType(MVRegister::Write(PrimitiveType::Bool)),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
             )),
         ));
 
@@ -927,7 +973,7 @@ mod tests {
             "wt",
             Class::Operations(UWMap::Update(
                 "start".to_string(),
-                Operation::ReturnType(MVRegister::Write(PrimitiveType::Number)),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
             )),
         ));
 
@@ -942,8 +988,93 @@ mod tests {
 
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
-        assert!(is_isomorphic(&eval_a, &eval_b));
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
+        println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
+    }
+
+    /// Alice and Bob believes there should be a relation from Manufacturer to EnergyGrid.
+    /// But they concurrently update the relation.
+    /// Alice: label="employ", type=Aggregates, multiplicity=0..* from Manufacturer to EnergyGrid and 1..* from EnergyGrid to Manufacturer.
+    /// Bob: label="operates" type=Associates, multiplicity=1..2 from Manufacturer to EnergyGrid and 1 from EnergyGrid to Manufacturer.
+    #[test_log::test]
+    fn concurrent_update_relation() {
+        let (mut tcsb_a, mut tcsb_b) = wind_turbine_diagram();
+
+        // A updates the relation
+        let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+        ));
+        let event_a_2 = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
+        ));
+        let event_a_3 = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneOrMany))),
+        ));
+        let event_a_4 = tcsb_a.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Label(MVRegister::Write("employs".to_string())),
+        ));
+
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&tcsb_a.eval())
+        );
+
+        // B updates the relation
+        let event_b = tcsb_b.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
+        ));
+        let event_b_2 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneToMany(2)))),
+        ));
+        let event_b_3 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+        ));
+        let event_b_4 = tcsb_b.tc_bcast(UWGraph::UpdateArc(
+            "manufacturer",
+            "energy_grid",
+            "rel",
+            Relation::Label(MVRegister::Write("operates".to_string())),
+        ));
+
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&tcsb_b.eval())
+        );
+
+        // Deliver events
+        tcsb_a.try_deliver(event_b);
+        tcsb_a.try_deliver(event_b_2);
+        tcsb_a.try_deliver(event_b_3);
+        tcsb_a.try_deliver(event_b_4);
+        tcsb_b.try_deliver(event_a);
+        tcsb_b.try_deliver(event_a_2);
+        tcsb_b.try_deliver(event_a_3);
+        tcsb_b.try_deliver(event_a_4);
+        let eval_a = tcsb_a.eval();
+        let eval_b = tcsb_b.eval();
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
 }

@@ -35,8 +35,9 @@ fn permute(indices: &[usize]) -> Vec<Vec<usize>> {
     result
 }
 
-/// Checks the convergence of a set of operations on a log.
-/// Corresponds to the Principle of Permutation Equivalence (PPE).
+/// Generate all sequential permutations of a given set of operations and check if they converge to the expected value.
+/// The number of operations must be less than or equal to 15 to avoid overflow.
+/// This function is useful for testing convergence properties of CRDTs but is factorial in complexity,
 pub fn convergence_checker<L: Log>(
     ops: &[L::Op],
     value: L::Value,
@@ -51,7 +52,6 @@ pub fn convergence_checker<L: Log>(
         "The number of operations must be greater than 0"
     );
     let fac = factorial(ops.len());
-    println!("Number of permutations: {}", fac);
     let mut tcsbs = n_members::<L>(fac);
     let permutations = generate_permutations(ops.len());
     assert!(permutations.len() == fac);
