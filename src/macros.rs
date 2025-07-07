@@ -1,5 +1,5 @@
 #[macro_export]
-macro_rules! object {
+macro_rules! record {
     ($name:ident { $($field:ident : $T:path),* $(,)? }) => {
         paste::paste! {
             #[derive(Clone, Debug)]

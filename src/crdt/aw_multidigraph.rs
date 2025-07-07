@@ -136,7 +136,6 @@ where
                 _ => {}
             }
         }
-        println!("rmvset {:?}", rmv_set);
         graph
     }
 }

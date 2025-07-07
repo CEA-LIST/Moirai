@@ -155,7 +155,7 @@ mod tests {
             aw_set::AWSet,
             class_diagram::{
                 export_fancy_class_diagram, Class, ClassDiagram, ClassDiagramCrdt, Feature,
-                Operation, PrimitiveType, Relation, RelationType,
+                Operation, PrimitiveType, Relation, RelationType, TypeRef,
             },
             lww_register::LWWRegister,
             multidigraph::Graph,
@@ -163,7 +163,7 @@ mod tests {
             resettable_counter::Counter,
             to_register::TORegister,
             uw_map::{UWMap, UWMapLog},
-            uw_multigraph::{UWGraph, UWGraphLog},
+            uw_multigraph::{Content, UWGraph, UWGraphLog},
         },
         protocol::event_graph::EventGraph,
     };
@@ -323,7 +323,7 @@ mod tests {
                 "Replica {} did not converge with the reference.",
                 tcsb.id,
             );
-            println!("Replica {}: {:?}", tcsb.id, tcsb.eval(),)
+            // println!("Replica {}: {:?}", tcsb.id, tcsb.eval(),)
         }
     }
 
@@ -335,7 +335,9 @@ mod tests {
                 "Car",
                 Class::Operations(UWMap::Update(
                     "start".to_string(),
-                    Operation::ReturnType(MVRegister::Write(PrimitiveType::Void)),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
                 )),
             ),
             UWGraph::UpdateVertex(
@@ -344,7 +346,7 @@ mod tests {
                     "start".to_string(),
                     Operation::Parameters(UWMap::Update(
                         "driver".to_string(),
-                        MVRegister::Write(PrimitiveType::String),
+                        MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void)),
                     )),
                 )),
             ),
@@ -416,19 +418,19 @@ mod tests {
                 "Wheel",
                 "Car",
                 "arc2",
-                Relation::RelationType(TORegister::Write(RelationType::Composes)),
+                Relation::Typ(TORegister::Write(RelationType::Composes)),
             ),
             UWGraph::UpdateArc(
                 "Car",
                 "Wheel",
                 "arc1",
-                Relation::RelationType(TORegister::Write(RelationType::Extends)),
+                Relation::Typ(TORegister::Write(RelationType::Extends)),
             ),
             UWGraph::UpdateArc(
                 "Wheel",
                 "Car",
                 "arc2",
-                Relation::RelationType(TORegister::Write(RelationType::Implements)),
+                Relation::Typ(TORegister::Write(RelationType::Implements)),
             ),
             UWGraph::UpdateArc(
                 "Car",
@@ -473,7 +475,9 @@ mod tests {
             let new_eval = tcsb.eval();
             assert_eq!(tcsb.my_clock().sum(), event_sum);
             assert!(
-                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                vf2::isomorphisms(&new_eval, &reference_val)
+                    .first()
+                    .is_some(),
                 "Replica {} did not converge with the reference. Reference: {:?}, Replica: {:?}",
                 tcsb.id,
                 petgraph::dot::Dot::with_config(&new_eval, &[]),
@@ -533,7 +537,9 @@ mod tests {
             let new_eval = tcsb.eval();
             assert_eq!(tcsb.my_clock().sum(), event_sum);
             assert!(
-                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                vf2::isomorphisms(&new_eval, &reference_val)
+                    .first()
+                    .is_some(),
                 "Replica {} did not converge with the reference. Reference: {}, Replica: {}",
                 tcsb.id,
                 petgraph::dot::Dot::with_config(&new_eval, &[]),
@@ -587,7 +593,8 @@ mod tests {
         >(config);
 
         // All replicas' eval() should match
-        let mut reference_val: DiGraph<&str, i32> = DiGraph::new();
+        let mut reference_val: DiGraph<Content<&str, &str>, Content<(&str, &str, u8), i32>> =
+            DiGraph::new();
         let mut event_sum = 0;
         for (i, tcsb) in tcsbs.iter().enumerate() {
             if i == 0 {
@@ -597,7 +604,9 @@ mod tests {
             let new_eval = tcsb.eval();
             assert_eq!(tcsb.my_clock().sum(), event_sum);
             assert!(
-                petgraph::algo::is_isomorphic(&new_eval, &reference_val),
+                vf2::isomorphisms(&new_eval, &reference_val)
+                    .first()
+                    .is_some(),
                 "Replica {} did not converge with the reference. Reference: {}, Replica: {}",
                 tcsb.id,
                 petgraph::dot::Dot::with_config(&new_eval, &[]),

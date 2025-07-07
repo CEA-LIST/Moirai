@@ -163,7 +163,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use petgraph::{algo::is_isomorphic, graph::DiGraph};
+    use petgraph::graph::DiGraph;
 
     use crate::crdt::{
         multidigraph::Graph,
@@ -186,7 +186,9 @@ mod tests {
         let event = tcsb_b.tc_bcast(Graph::RemoveVertex("B"));
         tcsb_a.try_deliver(event);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval(),)
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -204,7 +206,9 @@ mod tests {
         tcsb_b.try_deliver(event_a);
         tcsb_a.try_deliver(event_b);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval(),)
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -217,7 +221,9 @@ mod tests {
         tcsb_b.try_deliver(event_a);
 
         assert_eq!(tcsb_a.eval().node_count(), 1);
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval(),)
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -227,7 +233,11 @@ mod tests {
         let event = tcsb_a.tc_bcast(Graph::AddArc("A", "B", 1));
         tcsb_b.try_deliver(event);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &DiGraph::<&str, ()>::new()));
+        assert!(
+            vf2::isomorphisms(&tcsb_a.eval(), &DiGraph::<&str, u8>::new(),)
+                .first()
+                .is_some()
+        );
     }
 
     #[test_log::test]
@@ -258,7 +268,9 @@ mod tests {
         tcsb_a.try_deliver(event_b);
         tcsb_b.try_deliver(event_a);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval(),)
+            .first()
+            .is_some());
 
         assert_eq!(tcsb_a.eval().node_count(), 1);
         assert_eq!(tcsb_a.eval().edge_count(), 0);
@@ -272,7 +284,9 @@ mod tests {
         assert_eq!(tcsb_a.eval().node_count(), 2);
         assert_eq!(tcsb_a.eval().edge_count(), 1);
 
-        assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval(),)
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -286,10 +300,9 @@ mod tests {
         tcsb_b.try_deliver(event_c_1.clone());
         tcsb_b.try_deliver(event_c_2.clone());
 
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_b.eval(),
-            &tcsb_c.eval()
-        ));
+        assert!(vf2::isomorphisms(&tcsb_b.eval(), &tcsb_c.eval(),)
+            .first()
+            .is_some());
 
         let event_a_1 = tcsb_a.tc_bcast(Graph::RemoveVertex("B"));
         let event_a_2 = tcsb_a.tc_bcast(Graph::RemoveArc("A", "B", 1));
@@ -306,18 +319,15 @@ mod tests {
         assert_eq!(tcsb_a.eval().node_count(), 2);
         assert_eq!(tcsb_a.eval().edge_count(), 1);
 
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_a.eval(),
-            &tcsb_b.eval()
-        ));
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_a.eval(),
-            &tcsb_c.eval()
-        ));
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_b.eval(),
-            &tcsb_c.eval()
-        ));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_c.eval())
+            .first()
+            .is_some());
+        assert!(vf2::isomorphisms(&tcsb_b.eval(), &tcsb_c.eval())
+            .first()
+            .is_some());
     }
 
     #[test_log::test]
@@ -340,10 +350,9 @@ mod tests {
 
         assert_eq!(tcsb_a.eval().edge_count(), 2);
         assert_eq!(tcsb_a.eval().node_count(), 2);
-        assert!(petgraph::algo::is_isomorphic(
-            &tcsb_a.eval(),
-            &tcsb_b.eval()
-        ));
+        assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
+            .first()
+            .is_some());
     }
 
     #[cfg(feature = "utils")]
@@ -367,7 +376,7 @@ mod tests {
                 Graph::RemoveArc("A", "B", "arc1"),
             ],
             graph,
-            |g1, g2| petgraph::algo::is_isomorphic(g1, g2),
+            |g1, g2| vf2::isomorphisms(g1, g2).first().is_some(),
         );
     }
 }
