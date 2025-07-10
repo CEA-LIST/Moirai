@@ -8,29 +8,38 @@ license = "proprietary"
 repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Based_CRDT.git"
 
 [dependencies]
-rand = { version = "0.9.1", optional = true }
 bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11.2"
 test-log = "0.2.15"
-serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 colored = "2.1.0"
+paste = "1.0.15"
+petgraph = { version = "0.6.4", features = ["serde-1"] }
+rand = { version = "0.9.1", optional = true }
+serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 serde_json = { version = "1.0.128", optional = true }
 anyhow = { version = "1.0.89", optional = true }
-petgraph = { version = "0.6.4", features = ["serde-1"] }
 tsify = { version = "0.5.5", optional = true }
 wasm-bindgen = { version = "0.2.100", optional = true }
 deepsize = { version = "0.2.0", optional = true }
-paste = "1.0.15"
 vf2 = { version = "1.0.1", optional = true }
+rand_chacha = { version = "0.9.0", optional = true }
+chrono = { version = "0.4.41", optional = true }
+indicatif = { version = "0.18.0", optional = true }
 
 [features]
-default = ["crdt", "utils"]
-tracer = []
+utils = ["dep:anyhow", "dep:deepsize", "dep:vf2", "dep:serde_json"]
+opweaver = [
+    "dep:chrono",
+    "dep:rand",
+    "dep:serde",
+    "dep:rand_chacha",
+    "dep:serde_json",
+    "dep:indicatif",
+]
+default = ["crdt", "utils", "opweaver"]
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
-utils = ["dep:anyhow", "dep:rand", "dep:deepsize", "vf2"]
-vf2 = ["dep:vf2"]
 
 [profile.release]
 debug = 1

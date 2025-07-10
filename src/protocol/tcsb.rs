@@ -5,7 +5,7 @@ use std::{
 };
 
 use colored::*;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -15,8 +15,6 @@ use super::{
     event::Event,
     membership::{ViewInstallingStatus, Views},
 };
-#[cfg(feature = "tracer")]
-use crate::utils::tracer::Tracer;
 use crate::{
     clocks::{
         clock::{Clock, Full, Partial},
@@ -52,9 +50,6 @@ where
     pub ltm: MatrixClock,
     /// Last Stable Vector (LSV)
     pub lsv: Clock<Full>,
-    /// Trace of events for debugging purposes
-    #[cfg(feature = "tracer")]
-    pub tracer: Tracer,
 }
 
 impl<L> Tcsb<L>
@@ -76,19 +71,7 @@ where
             lsv: Clock::<Full>::new(&Rc::clone(&views.installed_view().data), None),
             group_membership: views,
             pending: VecDeque::new(),
-            #[cfg(feature = "tracer")]
-            tracer: Tracer::new(String::from(id)),
         }
-    }
-
-    #[cfg(feature = "tracer")]
-    /// Create a new TCSB instance with a tracer for debugging purposes.
-    pub fn new_with_trace(id: &str) -> Self {
-        use log::warn;
-        warn!("[{}] - Creating a new TCSB instance with a tracer", id);
-        let mut tcsb = Self::new(id);
-        tcsb.tracer = Tracer::new(String::from(id));
-        tcsb
     }
 
     pub fn try_deliver(&mut self, event: Event<L::Op>) {
@@ -140,7 +123,7 @@ where
             return DeliveryStatus::Error;
         }
         if guard_against_duplicates(&self.ltm, event.metadata()) {
-            error!(
+            warn!(
                 "[{}] - Duplicated event detected from {} with timestamp {}",
                 self.id.blue().bold(),
                 event.origin().red(),
@@ -149,7 +132,7 @@ where
             return DeliveryStatus::Error;
         }
         if guard_against_out_of_order(&self.ltm, event.metadata()) {
-            error!(
+            warn!(
                 "[{}] - Out-of-order event from {} detected with timestamp {}. Operation: {}",
                 self.id.blue().bold(),
                 event.origin().blue(),
@@ -178,8 +161,6 @@ where
     pub fn tc_bcast(&mut self, op: L::Op) -> Event<L::Op> {
         let event = self.create_event(op);
         self.tc_deliver(event.clone());
-        #[cfg(feature = "tracer")]
-        self.tracer.append::<L>(event.clone());
         event
     }
 
@@ -202,9 +183,6 @@ where
             // TODO: this is expensive
             let vc = self.state.clock_from_event(&event);
             self.ltm.merge_clock(&vc);
-
-            #[cfg(feature = "tracer")]
-            self.tracer.append::<L>(event.clone());
         } else {
             info!(
                 "[{}] - {} Broadcasting event {} with timestamp {}",

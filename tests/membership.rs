@@ -184,11 +184,6 @@ fn rejoin() {
     assert_eq!(tcsb_c.group_members(), tcsb_b.group_members());
     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
-    #[cfg(feature = "tracer")]
-    tcsb_a
-        .tracer
-        .serialize_to_file(std::path::Path::new("traces/membership.json"))
-        .unwrap();
 }
 
 #[test_log::test]

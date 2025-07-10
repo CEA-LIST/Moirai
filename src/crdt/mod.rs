@@ -60,9 +60,6 @@ pub mod test_util {
             id_chars.reverse();
             let id: String = id_chars.into_iter().collect();
 
-            #[cfg(feature = "tracer")]
-            let tcsb = Tcsb::new_with_trace(&id);
-            #[cfg(not(feature = "tracer"))]
             let tcsb = Tcsb::<L>::new(&id);
             tcsbs.push(tcsb);
         }
@@ -88,13 +85,7 @@ pub mod test_util {
     }
 
     pub fn twins<L: Log + Clone>() -> Twins<L> {
-        #[cfg(feature = "tracer")]
-        let mut tcsb_a = Tcsb::new_with_trace("a");
-        #[cfg(feature = "tracer")]
-        let mut tcsb_b = Tcsb::new_with_trace("b");
-        #[cfg(not(feature = "tracer"))]
         let mut tcsb_a = Tcsb::<L>::new("a");
-        #[cfg(not(feature = "tracer"))]
         let mut tcsb_b = Tcsb::new("b");
 
         tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
