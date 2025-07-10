@@ -24,6 +24,7 @@ cargo install flamegraph
 cargo flamegraph --root --dev --unit-test po-crdt -- test_graph
 cargo flamegraph --test eval_nested
 cargo flamegraph --root --release --example <name>
+cargo flamegraph --root --release --unit-test -- utils::op_weaver::tests::generate_class_diagram
 ```
 
 ### Memory used

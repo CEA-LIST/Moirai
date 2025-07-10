@@ -86,6 +86,7 @@ where
                 continue;
             }
             // TODO: store the dependencies and the dot separately
+            // TODO: totally dogshit: we should store the dot separately and always have at least one dep towards our previous dot (except for the first event)
             let to_dot = if origin == &event.metadata().origin.expect("Origin not set") {
                 Dot::new(*origin, *cnt - 1, event.lamport, &event.metadata().view)
             } else {
@@ -335,7 +336,7 @@ where
             for i in (*val + 1)..=*c {
                 // TODO: change lamport 0 to the actual lamport of the event
                 let dot = Dot::new(*o, i, 0, &since.clock.view);
-                if since.exclude.contains(&dot) {
+                if since.exclude.contains(&dot) || dot.origin() == since.clock.origin() {
                     // If the dot is in the exclude list, we skip it
                     continue;
                 }

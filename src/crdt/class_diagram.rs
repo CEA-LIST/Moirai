@@ -4,11 +4,11 @@
 // and convergence across different instances of the class diagram.
 // It does not support: interfaces, enums, generics, static members, packages
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap};
 
 use petgraph::{
     dot::{Config, Dot},
-    graph::DiGraph,
+    graph::{DiGraph, NodeIndex},
 };
 
 use crate::{
@@ -61,7 +61,7 @@ impl Ord for RelationType {
 pub enum PrimitiveType {
     String,
     Number,
-    Bool,
+    Boolean,
     #[default]
     Void,
 }
@@ -209,155 +209,8 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
     let fancy_dot = Dot::with_attr_getters(
         graph,
         &[Config::EdgeNoLabel, Config::NodeNoLabel],
-        &|_g, edge| {
-            let label = &edge
-                .weight()
-                .val
-                .label
-                .iter()
-                .cloned()
-                .collect::<Vec<String>>()
-                .join(", ");
-            let rtype = &edge.weight().val.typ;
-
-            // Helper to format multiplicity
-            fn format_mult(m: &Multiplicity) -> String {
-                match m {
-                    Multiplicity::Unspecified => "".to_string(),
-                    Multiplicity::One => "1".to_string(),
-                    Multiplicity::ZeroOrOne => "0..1".to_string(),
-                    Multiplicity::ZeroOrMany => "0..*".to_string(),
-                    Multiplicity::OneOrMany => "1..*".to_string(),
-                    Multiplicity::ManyToMany(min, max) => format!("{}..{}", min, max),
-                    Multiplicity::Exactly(n) => format!("{}", n),
-                    Multiplicity::ZeroToMany(n) => format!("0..{}", n),
-                    Multiplicity::OneToMany(n) => format!("1..{}", n),
-                }
-            }
-
-            let multiplicity_from = format_mult(&edge.weight().val.ends.source);
-            let multiplicity_to = format_mult(&edge.weight().val.ends.target);
-
-            let (head, style) = match rtype {
-                RelationType::Extends => ("empty", "normal"),
-                RelationType::Implements => ("empty", "dashed"),
-                RelationType::Aggregates => ("odiamond", "normal"),
-                RelationType::Composes => ("diamond", "normal"),
-                RelationType::Associates => ("normal", "normal"),
-            };
-            format!(
-                "label=\"{}\", arrowhead=\"{}\", style=\"{}\", taillabel=\"{}\", headlabel=\"{}\", labeldistance=1.25, fontcolor=brown",
-                label, head, style, multiplicity_from, multiplicity_to
-            )
-        },
-        &|g, (_, class)| {
-            let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
-            let name = {
-                let prefix = if class.val.is_abstract {
-                    "🅐 "
-                } else {
-                    "🅒 "
-                };
-                let name_str = if name_vec.is_empty() {
-                    "Unnamed".to_string()
-                } else {
-                    name_vec.join(" / ")
-                };
-                format!("{}{}", prefix, name_str)
-            };
-            let features = class
-                .val
-                .features
-                .iter()
-                .map(|(k, v)| {
-                    let feature_name = k.clone();
-                    let types: Vec<String> =
-                        v.typ.iter().cloned().map(|t| format!("{:?}", t)).collect();
-                    let feature_type = types.join(" / ");
-                    let feature_vis = match v.visibility {
-                        Visibility::Public => "+",
-                        Visibility::Private => "-",
-                        Visibility::Protected => "#",
-                        Visibility::Package => "~",
-                    };
-                    format!("{}{}: {}", feature_vis, feature_name, feature_type)
-                })
-                .collect::<Vec<String>>()
-                .join("\\l");
-            let operations = class
-                .val
-                .operations
-                .iter()
-                .map(|(k, v)| {
-                    let op_name = k.clone();
-                    let op_vis = match v.visibility {
-                        Visibility::Public => "+",
-                        Visibility::Private => "-",
-                        Visibility::Protected => "#",
-                        Visibility::Package => "~",
-                    };
-                    let params: Vec<String> = v
-                        .parameters
-                        .iter()
-                        .map(|(p, t)| {
-                            let types: Vec<String> =
-                                t.iter().cloned().map(|ty| format!("{:?}", ty)).collect();
-                            format!("{}: {}", p, types.join(", "))
-                        })
-                        .collect();
-                    let return_types: Vec<String> = v
-                        .return_type
-                        .iter()
-                        .cloned()
-                        .map(|t| match t {
-                            TypeRef::Primitive(pt) => format!("{:?}", pt),
-                            TypeRef::Class(c) => g
-                                .raw_nodes()
-                                .iter()
-                                .find_map(|n| {
-                                    if n.weight.id == &c {
-                                        Some(
-                                            n.weight
-                                                .val
-                                                .name
-                                                .iter()
-                                                .cloned()
-                                                .collect::<Vec<String>>()
-                                                .join(" / "),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_else(|| "Unknown".to_string()),
-                        })
-                        .collect();
-                    let return_type_str = if return_types.is_empty() {
-                        "".to_string()
-                    } else {
-                        format!(": {}", return_types.join(" / "))
-                    };
-                    format!(
-                        "{}{}{}({}){}",
-                        op_vis,
-                        if v.is_abstract { "🅐 " } else { "" },
-                        op_name,
-                        params.join(", "),
-                        return_type_str
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join("\\l");
-            let is_abstract = if class.val.is_abstract {
-                "style=filled, fillcolor=\"#CCE5FFFF\""
-            } else {
-                "style=filled, fillcolor=\"#CCFFCCFF\""
-            };
-            format!(
-                "label=\"{{{}|{}\\l|{}\\l}}\",{}",
-                name, features, operations, is_abstract
-            )
-        },
+        &edge_attr,
+        &node_attr,
     );
     let mut fancy_string = format!("{:?}", fancy_dot);
     fancy_string = fancy_string.replace(
@@ -365,6 +218,164 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
         "digraph {\n    rankdir=BT\n    node [shape=record, fontname=\"Helvetica\", fontsize=10]\n    edge [fontname=\"Helvetica\", fontsize=10]\n",
     );
     fancy_string
+}
+
+fn edge_attr(
+    _g: &ClassDiagram,
+    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationValue>>,
+) -> String {
+    let label = &edge
+        .weight()
+        .val
+        .label
+        .iter()
+        .cloned()
+        .collect::<Vec<String>>()
+        .join("/");
+    let rtype = &edge.weight().val.typ;
+
+    let multiplicity_from = format_mult(&edge.weight().val.ends.source);
+    let multiplicity_to = format_mult(&edge.weight().val.ends.target);
+
+    let (head, style) = match rtype {
+        RelationType::Extends => ("empty", "normal"),
+        RelationType::Implements => ("empty", "dashed"),
+        RelationType::Aggregates => ("odiamond", "normal"),
+        RelationType::Composes => ("diamond", "normal"),
+        RelationType::Associates => ("normal", "normal"),
+    };
+    format!(
+        "label=\"{}\", arrowhead=\"{}\", style=\"{}\", taillabel=\"{}\", headlabel=\"{}\", labeldistance=1.25, labelangle=45, fontcolor=brown",
+        label, head, style, multiplicity_from, multiplicity_to
+    )
+}
+
+fn format_mult(m: &Multiplicity) -> String {
+    match m {
+        Multiplicity::Unspecified => "".to_string(),
+        Multiplicity::One => "1".to_string(),
+        Multiplicity::ZeroOrOne => "0..1".to_string(),
+        Multiplicity::ZeroOrMany => "0..*".to_string(),
+        Multiplicity::OneOrMany => "1..*".to_string(),
+        Multiplicity::ManyToMany(min, max) => format!("{}..{}", min, max),
+        Multiplicity::Exactly(n) => format!("{}", n),
+        Multiplicity::ZeroToMany(n) => format!("0..{}", n),
+        Multiplicity::OneToMany(n) => format!("1..{}", n),
+    }
+}
+
+fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue>)) -> String {
+    let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
+    let name = format_node_name(&class.val, &name_vec);
+    let features = format_features(&class.val.features);
+    let operations = format_operations(g, &class.val.operations);
+    let is_abstract = if class.val.is_abstract {
+        "style=filled, fillcolor=\"#e5f2ff\""
+    } else {
+        "style=filled, fillcolor=\"#e5ffe5\""
+    };
+    format!(
+        "label=\"{{{}|{}\\l|{}\\l}}\",{}",
+        name, features, operations, is_abstract
+    )
+}
+
+fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
+    let prefix = if class.is_abstract { "Ⓐ " } else { "Ⓒ " };
+    let name_str = if name_vec.is_empty() {
+        "Unnamed".to_string()
+    } else {
+        name_vec.join("/")
+    };
+    format!("{}{}", prefix, name_str)
+}
+
+fn format_features(features: &HashMap<String, FeatureValue>) -> String {
+    features
+        .iter()
+        .map(|(k, v)| {
+            let feature_name = k.clone();
+            let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{:?}", t)).collect();
+            let feature_type = if types.is_empty() {
+                "Unknown".to_string()
+            } else {
+                types.join("/")
+            };
+            let feature_vis = match v.visibility {
+                Visibility::Public => "+",
+                Visibility::Private => "-",
+                Visibility::Protected => "#",
+                Visibility::Package => "~",
+            };
+            format!("{}{}: {}", feature_vis, feature_name, feature_type)
+        })
+        .collect::<Vec<String>>()
+        .join("\\l")
+}
+
+fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationValue>) -> String {
+    operations
+        .iter()
+        .map(|(k, v)| {
+            let op_name = k.clone();
+            let op_vis = match v.visibility {
+                Visibility::Public => "+",
+                Visibility::Private => "-",
+                Visibility::Protected => "#",
+                Visibility::Package => "~",
+            };
+            let params: Vec<String> = v
+                .parameters
+                .iter()
+                .map(|(p, t)| {
+                    let types: Vec<String> =
+                        t.iter().cloned().map(|ty| format!("{:?}", ty)).collect();
+                    format!("{}: {}", p, types.join("/"))
+                })
+                .collect();
+            let return_types: Vec<String> = v
+                .return_type
+                .iter()
+                .cloned()
+                .map(|t| match t {
+                    TypeRef::Primitive(pt) => format!("{:?}", pt),
+                    TypeRef::Class(c) => g
+                        .raw_nodes()
+                        .iter()
+                        .find_map(|n| {
+                            if n.weight.id == c {
+                                Some(
+                                    n.weight
+                                        .val
+                                        .name
+                                        .iter()
+                                        .cloned()
+                                        .collect::<Vec<String>>()
+                                        .join("/"),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                })
+                .collect();
+            let return_type_str = if return_types.is_empty() {
+                "".to_string()
+            } else {
+                format!(": {}", return_types.join("/"))
+            };
+            format!(
+                "{}{}{}({}){}",
+                op_vis,
+                if v.is_abstract { "Ⓐ " } else { "" },
+                op_name,
+                params.join("/"),
+                return_type_str
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\\l")
 }
 
 #[cfg(test)]
@@ -904,12 +915,16 @@ mod tests {
     }
 
     /// Alice believes that the `maxRpm` feature of the Rotor class should be public,
-    /// while Bob believes it should be protected.
+    /// and have its unit type rad/s directly in the field as a string,
+    /// while Bob believes it should be protected and remain a Number.
+    /// In addition, Alice wants to remove the diameter feature,
+    /// while Bob wants to keep it be private.
+    /// They both update the class name: Alice to "RotorUnit" and Bob to "RotorSystem".
     #[test_log::test]
-    fn concurrent_update_feature_visibility() {
+    fn concurrent_update_feature_visibility_class_name() {
         let (mut tcsb_a, mut tcsb_b) = wind_turbine_diagram();
 
-        // A updates the visibility to private
+        // A updates the feature visibility and type
         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
             "rotor",
             Class::Features(UWMap::Update(
@@ -917,13 +932,36 @@ mod tests {
                 Feature::Visibility(TORegister::Write(Visibility::Public)),
             )),
         ));
+        let event_a_2 = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "maxRpm".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+            )),
+        ));
+        let event_a_3 = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "maxRpm".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+            )),
+        ));
+        let event_a_4 = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Remove("diameter".to_string())),
+        ));
+
+        let event_a_5 = tcsb_a.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Name(MVRegister::Write("RotorUnit".to_string())),
+        ));
 
         println!(
             "Class Diagram A: {}",
             export_fancy_class_diagram(&tcsb_a.eval())
         );
 
-        // B updates the visibility to protected
+        // B updates the feature visibility and type
         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex(
             "rotor",
             Class::Features(UWMap::Update(
@@ -931,7 +969,24 @@ mod tests {
                 Feature::Visibility(TORegister::Write(Visibility::Protected)),
             )),
         ));
-
+        let event_b_2 = tcsb_b.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "maxRpm".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let event_b_3 = tcsb_b.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Name(MVRegister::Write("RotorSystem".to_string())),
+        ));
+        let event_b_4 = tcsb_b.tc_bcast(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "diameter".to_string(),
+                Feature::Visibility(TORegister::Write(Visibility::Private)),
+            )),
+        ));
         println!(
             "Class Diagram B: {}",
             export_fancy_class_diagram(&tcsb_b.eval())
@@ -939,12 +994,17 @@ mod tests {
 
         // Deliver events
         tcsb_a.try_deliver(event_b);
+        tcsb_a.try_deliver(event_b_2);
+        tcsb_a.try_deliver(event_b_3);
+        tcsb_a.try_deliver(event_b_4);
         tcsb_b.try_deliver(event_a);
-
+        tcsb_b.try_deliver(event_a_2);
+        tcsb_b.try_deliver(event_a_3);
+        tcsb_b.try_deliver(event_a_4);
+        tcsb_b.try_deliver(event_a_5);
         let eval_a = tcsb_a.eval();
         let eval_b = tcsb_b.eval();
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
-
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
 

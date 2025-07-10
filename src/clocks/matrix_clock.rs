@@ -113,7 +113,7 @@ impl MatrixClock {
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
-    #[deprecated]
+    // #[deprecated]
     pub fn svv(&self, ignore: &[&String]) -> Clock<Full> {
         let mut svv = self.clock[&self.id].clone();
         for (o, d) in &self.clock {
