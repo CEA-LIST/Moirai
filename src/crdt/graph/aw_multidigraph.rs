@@ -166,7 +166,7 @@ mod tests {
     use petgraph::graph::DiGraph;
 
     use crate::crdt::{
-        multidigraph::Graph,
+        graph::aw_multidigraph::Graph,
         test_util::{triplet_graph, twins_graph},
     };
 
@@ -378,5 +378,77 @@ mod tests {
             graph,
             |g1, g2| vf2::isomorphisms(g1, g2).first().is_some(),
         );
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_multidigraph() {
+        use crate::{
+            protocol::event_graph::EventGraph,
+            utils::op_weaver::{op_weaver, EventGraphConfig},
+        };
+
+        let alphabet = ['a', 'b', 'c', 'd', 'e', 'f'];
+        let mut names = Vec::new();
+
+        // Generate combinations like "aa", "ab", ..., "ff" (36 total), then "aaa", ...
+        for &c1 in &alphabet {
+            for &c2 in &alphabet {
+                names.push(format!("{}{}", c1, c2));
+            }
+        }
+        for &c1 in &alphabet {
+            for &c2 in &alphabet {
+                for &c3 in &alphabet {
+                    names.push(format!("{}{}{}", c1, c2, c3));
+                }
+            }
+        }
+
+        let mut ops: Vec<Graph<String, usize>> = Vec::new();
+        let mut index = 0;
+
+        // AddVertex and RemoveVertex: 15,000 of each
+        while ops.len() < 15000 {
+            let name = &names[index % names.len()];
+            ops.push(Graph::AddVertex(name.clone()));
+            ops.push(Graph::RemoveVertex(name.clone()));
+            index += 1;
+        }
+
+        // AddArc and RemoveArc: 7,500 of each
+        index = 0;
+        while ops.len() < 30000 {
+            let from = &names[index % names.len()];
+            let to = &names[(index + 1) % names.len()];
+            let weight1 = (index % 10) + 1;
+            let weight2 = ((index + 5) % 10) + 1;
+
+            ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
+            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
+            ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
+            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
+
+            index += 1;
+        }
+
+        let config = EventGraphConfig {
+            name: "aw_multidigraph",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.8,
+            reachability: None,
+            compare: |a: &DiGraph<String, usize>, b: &DiGraph<String, usize>| {
+                vf2::isomorphisms(a, b).first().is_some()
+            },
+            record_results: false,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<Graph<String, usize>>>(config);
     }
 }

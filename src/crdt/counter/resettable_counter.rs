@@ -100,7 +100,7 @@ where
 mod tests {
     use crate::{
         crdt::{
-            resettable_counter::Counter,
+            counter::resettable_counter::Counter,
             test_util::{triplet, twins},
         },
         protocol::event_graph::EventGraph,
@@ -181,5 +181,41 @@ mod tests {
             -8,
             |a, b| a == b,
         );
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_resettable_counter() {
+        use crate::{
+            protocol::event_graph::EventGraph,
+            utils::op_weaver::{op_weaver, EventGraphConfig},
+        };
+
+        let ops: Vec<Counter<isize>> = vec![
+            Counter::Inc(1),
+            Counter::Dec(1),
+            Counter::Inc(2),
+            Counter::Dec(2),
+            Counter::Inc(3),
+            Counter::Dec(3),
+            Counter::Reset,
+        ];
+
+        let config = EventGraphConfig {
+            name: "resettable_counter",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &isize, b: &isize| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<Counter<isize>>>(config);
     }
 }

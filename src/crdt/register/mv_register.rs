@@ -58,7 +58,7 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::crdt::{
-        mv_register::MVRegister,
+        register::mv_register::MVRegister,
         test_util::{triplet_graph, twins_graph},
     };
 
@@ -164,7 +164,8 @@ mod tests {
     #[test_log::test]
     fn convergence_check() {
         use crate::{
-            protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+            crdt::register::mv_register::MVRegister, protocol::event_graph::EventGraph,
+            utils::convergence_checker::convergence_checker,
         };
 
         convergence_checker::<EventGraph<MVRegister<&str>>>(

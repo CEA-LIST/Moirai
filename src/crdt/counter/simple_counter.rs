@@ -77,8 +77,9 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::{counter::Counter, test_util::twins},
+        crdt::{counter::simple_counter::Counter, test_util::twins},
         protocol::event_graph::EventGraph,
+        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     #[test_log::test]
@@ -115,5 +116,30 @@ mod tests {
     }
 
     #[test_log::test]
-    fn convergence_checker() {}
+    fn convergence_checker() {
+        // TODO: Implement a convergence checker for Counter
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_counter() {
+        let ops = vec![Counter::Inc(1), Counter::Dec(1)];
+
+        let config = EventGraphConfig {
+            name: "counter",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &isize, b: &isize| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<Counter<isize>>>(config);
+    }
 }

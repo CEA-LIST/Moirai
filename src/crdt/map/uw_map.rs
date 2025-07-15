@@ -5,13 +5,13 @@ use std::{
     rc::Rc,
 };
 
-use super::aw_set::AWSet;
 use crate::{
     clocks::{
         clock::{Clock, Full, Partial},
         dot::Dot,
         matrix_clock::MatrixClock,
     },
+    crdt::set::aw_set::AWSet,
     protocol::{
         event::Event, event_graph::EventGraph, log::Log, membership::ViewData, pulling::Since,
     },
@@ -303,10 +303,10 @@ mod tests {
 
     use crate::{
         crdt::{
-            counter::Counter,
-            duet::{Duet, DuetLog},
+            counter::resettable_counter::Counter,
+            map::uw_map::{UWMap, UWMapLog},
+            object::duet::{Duet, DuetLog},
             test_util::{triplet, twins},
-            uw_map::{UWMap, UWMapLog},
         },
         protocol::event_graph::EventGraph,
     };
@@ -482,10 +482,8 @@ mod tests {
         tcsb_c.try_deliver(event_a_2.clone());
         tcsb_c.try_deliver(event_a_1.clone());
 
-        tcsb_a.eval();
-
-        // assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-        // assert_eq!(tcsb_c.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(tcsb_c.eval(), tcsb_b.eval());
     }
 
     #[cfg(feature = "utils")]
@@ -506,5 +504,57 @@ mod tests {
             result,
             HashMap::eq,
         );
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_deeply_nested_map() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
+        let ops = vec![
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Inc(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Dec(3))),
+            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Reset)),
+            UWMap::Update("a".to_string(), UWMap::Remove(1)),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Inc(5))),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Dec(1))),
+            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Reset)),
+            UWMap::Update("b".to_string(), UWMap::Remove(2)),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Inc(10))),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Dec(2))),
+            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Reset)),
+            UWMap::Update("c".to_string(), UWMap::Remove(3)),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Inc(7))),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Dec(4))),
+            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Reset)),
+            UWMap::Update("d".to_string(), UWMap::Remove(4)),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Inc(3))),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Dec(1))),
+            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Reset)),
+            UWMap::Update("e".to_string(), UWMap::Remove(5)),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Inc(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Dec(2))),
+            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Reset)),
+            UWMap::Update("a".to_string(), UWMap::Remove(6)),
+        ];
+
+        type MapValue = HashMap<String, HashMap<i32, i32>>;
+
+        let config = EventGraphConfig {
+            name: "uw_map_2_nested",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &MapValue, b: &MapValue| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<UWMapLog<String, UWMapLog<i32, EventGraph<Counter<i32>>>>>(config);
     }
 }

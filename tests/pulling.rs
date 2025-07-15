@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use po_crdt::{
-    crdt::{aw_set::AWSet, counter::Counter, test_util::twins_graph},
+use moirai::{
+    crdt::{counter::resettable_counter::Counter, set::aw_set::AWSet, test_util::twins_graph},
     protocol::pulling::Since,
 };
 

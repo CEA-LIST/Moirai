@@ -1,7 +1,7 @@
 #![cfg(feature = "crdt")]
 
-use po_crdt::{
-    crdt::{counter::Counter, test_util::triplet_graph},
+use moirai::{
+    crdt::{counter::resettable_counter::Counter, test_util::triplet_graph},
     protocol::{event_graph::EventGraph, pulling::Since, tcsb::Tcsb},
 };
 

@@ -1,6 +1,12 @@
-# Notes on CRDTs and Event Graphs
+# Notes
 
-Currently, in the Rust library, CRDT operations are stored in an event graph—a
+A collection of thoughts, ideas, and notes on the design and implementation of the
+Moirai CRDT framework. Some of these notes may be outdated or no longer relevant,
+but they are preserved for reference and historical context.
+
+## The Event Graph
+
+Currently, in the Rust framework, CRDT operations are stored in an event graph—a
 causal DAG or PO-log—where operations are represented as nodes, and direct
 causal predecessors are the edges of the graph. As a result, the event graph
 corresponds to the transitive reduction of the causal order.
@@ -11,9 +17,9 @@ In the "add-wins" policy, this means that a "remove" operation only affects its
 causal predecessors, not its concurrent operations. Consequently, an "add"
 operation is never impacted by a concurrent "remove".
 
-The library supports the composition and combination of CRDTs to create complex
+The framework supports the composition and combination of CRDTs to create complex
 data types. These nested data types naturally form a tree structure. Thus, the
-library can be viewed as a tree of event graphs, where operations at upper nodes
+framework can be viewed as a tree of event graphs, where operations at upper nodes
 can affect lower nodes.
 
 Consider an "Update-Wins Map" (UWMap) where adding a key-value pair takes
@@ -27,7 +33,7 @@ reconstruct the vector clock of `remove(k)`, as it is the only universal
 representation of causal order that applies across all nested event graph
 children. This reconstruction incurs the cost of a depth-first search (DFS).
 Moreover, identifying the causal predecessors of this vector clock in each child
-event graph also requires a DFS per child. To favor genericity, the library is
+event graph also requires a DFS per child. To favor genericity, the framework is
 currently "dumb"—it only considers causal relationships between operations and
 ignores semantic links. For example, in an add-wins set, it is inefficient to
 examine all keys to determine the effect of a particular remove operation on the
@@ -49,13 +55,13 @@ causally stable operations for that datatype. For example, in the case of an
 add-wins set (AWSet), this storage can simply be a sequential set, which is
 highly efficient, as set operations typically run in O(1) time.
 
-# On the matrix clock
+## The Matrix Clock
 
 A matrix clock is valid if it:
 
 - is square;
-- no clock i has an entry j greater than the entry j of clock j;
-- every entry i of the origin clock is equal or greater to the entry i of the clock i.
+- no clock $i$ has an entry $j$ greater than the entry $j$ of clock $j$;
+- every entry $i$ of the origin clock is equal or greater to the entry $i$ of the clock $i$.
 
 The row of the replica where the matrix clock is stored is equal to the
 column-wise maximum of the matrix. the column-wise minimum of the matrix is the
@@ -65,7 +71,7 @@ appropriate row in the matrix by merging the incoming vector clock with the one
 stored in the matrix. As a result, the matrix can contain arbitrary high integer
 values.
 
-# Feature Comparison of CRDT Frameworks
+## Feature Comparison of CRDT Frameworks
 
 | Feature                                       | **⭐ [Moirai](https://gitlab.deeplab.fr/leo.olivier/po-crdt)**                                                                    | **[yjs](https://github.com/yjs/yjs)/[yrs](https://docs.rs/yrs/latest/yrs/)** | **[Automerge](https://github.com/automerge)**    | **[Collabs](https://github.com/composablesys/collabs)**                                                   | **[Loro](https://github.com/loro-dev/loro)**                                                        | **[Flec](https://gitlab.soft.vub.ac.be/jimbauwens/flec/)**                      |
 | --------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------- | :----------------------------------------------- | :-------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------ |

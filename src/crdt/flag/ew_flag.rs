@@ -93,8 +93,9 @@ impl PureCRDT for EWFlag {
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::{ew_flag::EWFlag, test_util::twins},
+        crdt::{flag::ew_flag::EWFlag, test_util::twins},
         protocol::event_graph::EventGraph,
+        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     // Test the Enable-Wins Flag CRDT using two replicas (twins)
@@ -126,5 +127,28 @@ mod tests {
         tcsb_b.try_deliver(event_a);
         assert_eq!(tcsb_a.eval(), true);
         assert_eq!(tcsb_b.eval(), true);
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_ew_flag() {
+        let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
+
+        let config = EventGraphConfig {
+            name: "ewflag",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &bool, b: &bool| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<EWFlag>>(config);
     }
 }

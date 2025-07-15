@@ -64,7 +64,7 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
 mod tests {
     use crate::{
         crdt::{
-            lww_register::LWWRegister,
+            register::lww_register::LWWRegister,
             test_util::{triplet, twins},
         },
         protocol::event_graph::EventGraph,
@@ -125,5 +125,37 @@ mod tests {
         assert_eq!(tcsb_a.eval(), "y".to_string());
         assert_eq!(tcsb_b.eval(), "y".to_string());
         assert_eq!(tcsb_c.eval(), "y".to_string());
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn generate_lww_register_convergence() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
+        let ops = vec![
+            LWWRegister::Write("w".to_string()),
+            LWWRegister::Write("x".to_string()),
+            LWWRegister::Write("y".to_string()),
+            LWWRegister::Write("z".to_string()),
+            LWWRegister::Write("u".to_string()),
+            LWWRegister::Write("v".to_string()),
+        ];
+
+        let config = EventGraphConfig {
+            name: "lww_register",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &String, b: &String| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<LWWRegister<String>>>(config);
     }
 }
