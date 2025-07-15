@@ -10,6 +10,10 @@ _This project is currently under active development. The API and features are su
 
 </div>
 
+## Architecture
+
+![Moirai Architecture Diagram](figures/architecture.png "Moirai Architecture Diagram")
+
 ## Project Structure
 
 The project is organized into several key components:
