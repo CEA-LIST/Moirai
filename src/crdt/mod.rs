@@ -1,18 +1,11 @@
-pub mod aw_multidigraph;
-pub mod aw_set;
-pub mod class_diagram;
 pub mod counter;
-pub mod duet;
-pub mod ew_flag;
-pub mod lww_register;
-pub mod multidigraph;
-pub mod mv_register;
-pub mod po_register;
-pub mod resettable_counter;
-pub mod rw_set;
-pub mod to_register;
-pub mod uw_map;
-pub mod uw_multigraph;
+pub mod flag;
+pub mod graph;
+pub mod map;
+pub mod model;
+pub mod object;
+pub mod register;
+pub mod set;
 
 pub mod test_util {
     use colored::Colorize;
@@ -191,36 +184,5 @@ pub mod test_util {
         );
 
         (tcsb_a, tcsb_b, tcsb_c, tcsb_d)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        crdt::{
-            counter::Counter,
-            test_util::{n_members, quadruplet, triplet, twins},
-        },
-        protocol::event_graph::EventGraph,
-    };
-
-    #[test_log::test]
-    fn test_twins() {
-        let _ = twins::<EventGraph<Counter<i32>>>();
-    }
-
-    #[test_log::test]
-    fn test_triplet() {
-        let _ = triplet::<EventGraph<Counter<i32>>>();
-    }
-
-    #[test_log::test]
-    fn test_quadruplet() {
-        let _ = quadruplet::<EventGraph<Counter<i32>>>();
-    }
-
-    #[test_log::test]
-    fn test_n_members() {
-        let _ = n_members::<EventGraph<Counter<i32>>>(8);
     }
 }

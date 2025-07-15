@@ -100,8 +100,9 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        crdt::{aw_set::AWSet, test_util::twins},
+        crdt::{set::aw_set::AWSet, test_util::twins},
         protocol::event_graph::EventGraph,
+        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     #[test_log::test]
@@ -237,6 +238,42 @@ mod tests {
         assert_eq!(tcsb_b.eval(), tcsb_a.eval());
     }
 
+    #[cfg(feature = "utils")]
     #[test_log::test]
-    fn convergence_checker() {}
+    fn convergence_checker() {
+        // TODO: Implement a convergence checker for AWSet
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_aw_set() {
+        let mut ops = Vec::with_capacity(10_000);
+
+        // Add operations from 0 to 4999
+        for val in 0..5000 {
+            ops.push(AWSet::Add(val));
+        }
+
+        // Remove operations from 0 to 4999
+        for val in 0..5000 {
+            ops.push(AWSet::Remove(val));
+        }
+
+        let config = EventGraphConfig {
+            name: "aw_set",
+            num_replicas: 8,
+            num_operations: 100_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.4,
+            reachability: None,
+            compare: |a: &HashSet<i32>, b: &HashSet<i32>| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<AWSet<i32>>>(config);
+    }
 }

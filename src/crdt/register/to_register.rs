@@ -58,8 +58,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::crdt::{
+        register::to_register::TORegister,
         test_util::{triplet_graph, twins_graph},
-        to_register::TORegister,
     };
 
     #[test_log::test]

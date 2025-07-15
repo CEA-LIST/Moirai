@@ -13,11 +13,10 @@ use petgraph::{
 
 use crate::{
     crdt::{
-        ew_flag::EWFlag,
-        mv_register::MVRegister,
-        to_register::TORegister,
-        uw_map::UWMapLog,
-        uw_multigraph::{Content, UWGraphLog},
+        flag::ew_flag::EWFlag,
+        graph::uw_multidigraph::{Content, UWGraphLog},
+        map::uw_map::UWMapLog,
+        register::{mv_register::MVRegister, to_register::TORegister},
     },
     protocol::event_graph::EventGraph,
     record,
@@ -382,7 +381,7 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationVal
 mod tests {
     use super::*;
     use crate::{
-        crdt::{test_util::twins, uw_map::UWMap, uw_multigraph::UWGraph},
+        crdt::{graph::uw_multidigraph::UWGraph, map::uw_map::UWMap, test_util::twins},
         protocol::{pulling::Since, tcsb::Tcsb},
     };
 
@@ -1136,5 +1135,478 @@ mod tests {
         let eval_b = tcsb_b.eval();
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_class_diagram() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
+        let ops = vec![
+            UWGraph::UpdateVertex(
+                "wt",
+                Class::Name(MVRegister::Write("WindTurbine".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "wt",
+                Class::Operations(UWMap::Update(
+                    "start".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "wt",
+                Class::Operations(UWMap::Update(
+                    "shutdown".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            // EnergyGenerator class
+            UWGraph::UpdateVertex(
+                "eg",
+                Class::Name(MVRegister::Write("EnergyGenerator".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "eg",
+                Class::Operations(UWMap::Update(
+                    "getEnergyOutput".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Class("wt".to_string()))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "eg",
+                Class::Operations(UWMap::Update(
+                    "getEnergyOutput".to_string(),
+                    Operation::IsAbstract(EWFlag::Enable),
+                )),
+            ),
+            UWGraph::UpdateVertex("eg", Class::IsAbstract(EWFlag::Enable)),
+            UWGraph::UpdateArc(
+                "wt",
+                "eg",
+                "ext",
+                Relation::Typ(TORegister::Write(RelationType::Extends)),
+            ),
+            // Rotor class
+            UWGraph::UpdateVertex("rotor", Class::Name(MVRegister::Write("Rotor".to_string()))),
+            UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "diameter".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Visibility(TORegister::Write(Visibility::Private)),
+                )),
+            ),
+            // Blade class
+            UWGraph::UpdateVertex("blade", Class::Name(MVRegister::Write("Blade".to_string()))),
+            UWGraph::UpdateArc(
+                "blade",
+                "rotor",
+                "comprises",
+                Relation::Typ(TORegister::Write(RelationType::Composes)),
+            ),
+            UWGraph::UpdateArc(
+                "blade",
+                "rotor",
+                "comprises",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+            ),
+            UWGraph::UpdateArc(
+                "blade",
+                "rotor",
+                "comprises",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::Exactly(3)))),
+            ),
+            UWGraph::UpdateArc(
+                "blade",
+                "rotor",
+                "comprises",
+                Relation::Label(MVRegister::Write("comprises".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "rotor",
+                "wt",
+                "hasRotor",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "rotor",
+                "wt",
+                "hasRotor",
+                Relation::Label(MVRegister::Write("hasRotor".to_string())),
+            ),
+            // Tower class
+            UWGraph::UpdateVertex("tower", Class::Name(MVRegister::Write("Tower".to_string()))),
+            UWGraph::UpdateVertex(
+                "tower",
+                Class::Features(UWMap::Update(
+                    "heightM".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "tower",
+                Class::Features(UWMap::Update(
+                    "material".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateArc(
+                "tower",
+                "wt",
+                "mountedOn",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "tower",
+                "wt",
+                "mountedOn",
+                Relation::Label(MVRegister::Write("mountedOn".to_string())),
+            ),
+            // Nacelle class
+            UWGraph::UpdateVertex(
+                "nacelle",
+                Class::Name(MVRegister::Write("Nacelle".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "nacelle",
+                Class::Features(UWMap::Update(
+                    "weightTons".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "nacelle",
+                Class::Features(UWMap::Update(
+                    "internalTempC".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "nacelle",
+                Class::Features(UWMap::Update(
+                    "internalTempC".to_string(),
+                    Feature::Visibility(TORegister::Write(Visibility::Private)),
+                )),
+            ),
+            UWGraph::UpdateArc(
+                "nacelle",
+                "wt",
+                "hasNacelle",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "nacelle",
+                "wt",
+                "hasNacelle",
+                Relation::Label(MVRegister::Write("hasNacelle".to_string())),
+            ),
+            // EnergyGrid class
+            UWGraph::UpdateVertex(
+                "energy_grid",
+                Class::Name(MVRegister::Write("EnergyGrid".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "energy_grid",
+                Class::Features(UWMap::Update(
+                    "gridName".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "energy_grid",
+                Class::Features(UWMap::Update(
+                    "capacityMW".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateArc(
+                "eg",
+                "energy_grid",
+                "feedsInto",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "eg",
+                "energy_grid",
+                "feedsInto",
+                Relation::Label(MVRegister::Write("feedsInto".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "eg",
+                "energy_grid",
+                "feedsInto",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+            ),
+            UWGraph::UpdateArc(
+                "eg",
+                "energy_grid",
+                "feedsInto",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+            ),
+            UWGraph::UpdateArc(
+                "energy_grid",
+                "energy_grid",
+                "connectedTo",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "energy_grid",
+                "energy_grid",
+                "connectedTo",
+                Relation::Label(MVRegister::Write("connectedTo".to_string())),
+            ),
+            // Manufacturer class
+            UWGraph::UpdateVertex(
+                "manufacturer",
+                Class::Name(MVRegister::Write("Manufacturer".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "manufacturer",
+                Class::Features(UWMap::Update(
+                    "name".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "owns",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "owns",
+                Relation::Label(MVRegister::Write("owns".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "owns",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "owns",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "repairs",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "repairs",
+                Relation::Label(MVRegister::Write("repairs".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "repairs",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+            ),
+            UWGraph::UpdateArc(
+                "manufacturer",
+                "wt",
+                "repairs",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+            ),
+            // Remove ops
+            UWGraph::RemoveVertex("wt"),
+            UWGraph::RemoveVertex("eg"),
+            UWGraph::RemoveVertex("rotor"),
+            UWGraph::RemoveVertex("blade"),
+            UWGraph::RemoveVertex("tower"),
+            UWGraph::RemoveVertex("nacelle"),
+            UWGraph::RemoveVertex("energy_grid"),
+            UWGraph::RemoveVertex("manufacturer"),
+            UWGraph::RemoveArc("wt", "eg", "ext"),
+            UWGraph::RemoveArc("eg", "energy_grid", "feedsInto"),
+            UWGraph::RemoveArc("energy_grid", "energy_grid", "connectedTo"),
+            UWGraph::RemoveArc("rotor", "wt", "hasRotor"),
+            UWGraph::RemoveArc("nacelle", "wt", "hasNacelle"),
+            UWGraph::RemoveArc("blade", "rotor", "comprises"),
+            UWGraph::RemoveArc("tower", "wt", "mountedOn"),
+            UWGraph::RemoveArc("manufacturer", "wt", "owns"),
+            UWGraph::RemoveArc("manufacturer", "wt", "repairs"),
+            // --- DOUBLED OPERATIONS BELOW ---
+            // Add more operations, same as above, but with slight variations for diversity
+
+            // WindTurbine - add new operation and feature
+            UWGraph::UpdateVertex(
+                "wt",
+                Class::Operations(UWMap::Update(
+                    "restart".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "wt",
+                Class::Features(UWMap::Update(
+                    "serialNumber".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            // EnergyGenerator - add new operation
+            UWGraph::UpdateVertex(
+                "eg",
+                Class::Operations(UWMap::Update(
+                    "reset".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            // Rotor - add new feature
+            UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "material".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            // Blade - add new feature
+            UWGraph::UpdateVertex(
+                "blade",
+                Class::Features(UWMap::Update(
+                    "length".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            // Tower - add new feature
+            UWGraph::UpdateVertex(
+                "tower",
+                Class::Features(UWMap::Update(
+                    "foundationDepth".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            // Nacelle - add new feature
+            UWGraph::UpdateVertex(
+                "nacelle",
+                Class::Features(UWMap::Update(
+                    "manufacturer".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            // EnergyGrid - add new feature
+            UWGraph::UpdateVertex(
+                "energy_grid",
+                Class::Features(UWMap::Update(
+                    "region".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            // Manufacturer - add new feature
+            UWGraph::UpdateVertex(
+                "manufacturer",
+                Class::Features(UWMap::Update(
+                    "country".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            // Add new arcs for more relations
+            UWGraph::UpdateArc(
+                "wt",
+                "energy_grid",
+                "supplies",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "wt",
+                "energy_grid",
+                "supplies",
+                Relation::Label(MVRegister::Write("supplies".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "rotor",
+                "blade",
+                "contains",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "rotor",
+                "blade",
+                "contains",
+                Relation::Label(MVRegister::Write("contains".to_string())),
+            ),
+            UWGraph::UpdateArc(
+                "tower",
+                "manufacturer",
+                "builtBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "tower",
+                "manufacturer",
+                "builtBy",
+                Relation::Label(MVRegister::Write("builtBy".to_string())),
+            ),
+            // Remove the new arcs
+            UWGraph::RemoveArc("wt", "energy_grid", "supplies"),
+            UWGraph::RemoveArc("rotor", "blade", "contains"),
+            UWGraph::RemoveArc("tower", "manufacturer", "builtBy"),
+            // Remove the new features/vertices (simulate deletions)
+            UWGraph::RemoveVertex("energy_grid"),
+            UWGraph::RemoveVertex("manufacturer"),
+            UWGraph::RemoveVertex("nacelle"),
+            UWGraph::RemoveVertex("tower"),
+            UWGraph::RemoveVertex("blade"),
+            UWGraph::RemoveVertex("rotor"),
+            UWGraph::RemoveVertex("eg"),
+            UWGraph::RemoveVertex("wt"),
+        ];
+
+        let config = EventGraphConfig {
+            name: "wind_turbine_class_diagram",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.4,
+            reachability: None,
+            compare: |a: &ClassDiagram, b: &ClassDiagram| petgraph::algo::is_isomorphic(a, b),
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<ClassDiagramCrdt>(config);
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn class_diagram_lot_of_iterations() {
+        for i in 0..1_000 {
+            use log::info;
+
+            info!("Completed: {:.2}%", (i as f64 / 1_000.0) * 100.0);
+            op_weaver_class_diagram();
+        }
     }
 }

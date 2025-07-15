@@ -1,7 +1,7 @@
 #![cfg(feature = "crdt")]
 
-use po_crdt::crdt::{
-    counter::Counter,
+use moirai::crdt::{
+    counter::resettable_counter::Counter,
     test_util::{triplet_graph, twins_graph},
 };
 

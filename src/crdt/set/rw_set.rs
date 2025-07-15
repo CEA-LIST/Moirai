@@ -178,7 +178,7 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::crdt::{rw_set::RWSet, test_util::twins_graph};
+    use crate::crdt::{set::rw_set::RWSet, test_util::twins_graph};
 
     #[test_log::test]
     fn clear_rw_set() {
@@ -309,5 +309,41 @@ mod tests {
             HashSet::new(),
             HashSet::eq,
         );
+    }
+
+    #[cfg(feature = "op_weaver")]
+    #[test_log::test]
+    fn op_weaver_rw_set() {
+        use crate::{
+            protocol::event_graph::EventGraph,
+            utils::op_weaver::{op_weaver, EventGraphConfig},
+        };
+
+        let ops = vec![
+            RWSet::Add("a"),
+            RWSet::Add("b"),
+            RWSet::Add("c"),
+            RWSet::Remove("a"),
+            RWSet::Remove("b"),
+            RWSet::Remove("c"),
+            RWSet::Clear,
+        ];
+
+        let config = EventGraphConfig {
+            name: "rw_set",
+            num_replicas: 8,
+            num_operations: 10_000,
+            operations: &ops,
+            final_sync: true,
+            churn_rate: 0.3,
+            reachability: None,
+            compare: |a: &HashSet<&str>, b: &HashSet<&str>| a == b,
+            record_results: true,
+            seed: None,
+            witness_graph: false,
+            concurrency_score: false,
+        };
+
+        op_weaver::<EventGraph<RWSet<&str>>>(config);
     }
 }

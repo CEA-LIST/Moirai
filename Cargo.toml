@@ -1,11 +1,14 @@
 [package]
-name = "po-crdt"
+name = "moirai"
 version = "0.1.0"
 edition = "2021"
-authors = ["Léo Olivier <leo.olivier@cea.fr>"]
-description = "A library for Conflict-free Replicated Data Types (CRDTs) in Rust"
-license = "proprietary"
-repository = "https://tuleap.deeplab.fr/plugins/git/sustainable-mbse/Pure_Op-Based_CRDT.git"
+authors = [
+    "Léo Olivier <leo.olivier@cea.fr>",
+    "MORCOS Kirollos <Kirollos.MORCOS@cea.fr>",
+]
+description = "Moirai: An Extensible, Generic Operation-based CRDT Framework with Customizable Conflict Resolution"
+license = "Apache-2.0"
+repository = "https://github.com/CEA-LIST/Moirai.git"
 
 [dependencies]
 bimap = { version = "0.6.3", features = ["serde"] }
@@ -29,7 +32,7 @@ indicatif = { version = "0.18.0", optional = true }
 
 [features]
 utils = ["dep:anyhow", "dep:deepsize", "dep:vf2", "dep:serde_json"]
-opweaver = [
+op_weaver = [
     "dep:chrono",
     "dep:rand",
     "dep:serde",
@@ -37,7 +40,7 @@ opweaver = [
     "dep:serde_json",
     "dep:indicatif",
 ]
-default = ["crdt", "utils", "opweaver"]
+default = ["crdt", "utils", "op_weaver"]
 crdt = []
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
 
