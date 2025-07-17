@@ -79,7 +79,6 @@ mod tests {
     use crate::{
         crdt::{counter::simple_counter::Counter, test_util::twins},
         protocol::event_graph::EventGraph,
-        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     #[test_log::test]
@@ -123,6 +122,8 @@ mod tests {
     #[cfg(feature = "op_weaver")]
     #[test_log::test]
     fn op_weaver_counter() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
         let ops = vec![Counter::Inc(1), Counter::Dec(1)];
 
         let config = EventGraphConfig {

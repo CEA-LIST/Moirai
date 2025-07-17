@@ -6,7 +6,10 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
+)]
 pub enum LWWRegister<V> {
     Write(V),
 }
