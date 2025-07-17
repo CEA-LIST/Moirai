@@ -102,7 +102,6 @@ mod tests {
     use crate::{
         crdt::{set::aw_set::AWSet, test_util::twins},
         protocol::event_graph::EventGraph,
-        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     #[test_log::test]
@@ -247,6 +246,8 @@ mod tests {
     #[cfg(feature = "op_weaver")]
     #[test_log::test]
     fn op_weaver_aw_set() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
         let mut ops = Vec::with_capacity(10_000);
 
         // Add operations from 0 to 4999

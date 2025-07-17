@@ -31,7 +31,8 @@ chrono = { version = "0.4.41", optional = true }
 indicatif = { version = "0.18.0", optional = true }
 
 [features]
-utils = ["dep:anyhow", "dep:deepsize", "dep:vf2", "dep:serde_json"]
+default = ["crdt", "op_weaver", "utils", "serde"]
+utils = ["dep:anyhow", "dep:deepsize", "dep:serde_json"]
 op_weaver = [
     "dep:chrono",
     "dep:rand",
@@ -40,8 +41,7 @@ op_weaver = [
     "dep:serde_json",
     "dep:indicatif",
 ]
-default = ["crdt", "utils", "op_weaver"]
-crdt = []
+crdt = ["dep:vf2"]
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
 
 [profile.release]

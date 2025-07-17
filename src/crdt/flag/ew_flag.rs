@@ -95,7 +95,6 @@ mod tests {
     use crate::{
         crdt::{flag::ew_flag::EWFlag, test_util::twins},
         protocol::event_graph::EventGraph,
-        utils::op_weaver::{op_weaver, EventGraphConfig},
     };
 
     // Test the Enable-Wins Flag CRDT using two replicas (twins)
@@ -132,6 +131,8 @@ mod tests {
     #[cfg(feature = "op_weaver")]
     #[test_log::test]
     fn op_weaver_ew_flag() {
+        use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+
         let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
 
         let config = EventGraphConfig {
