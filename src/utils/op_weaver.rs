@@ -183,7 +183,7 @@ impl WitnessGraphNode {
     pub fn new<Op: Debug>(dot: &Dot, op: &Op) -> Self {
         Self {
             dot: dot.clone(),
-            op: format!("{:?}", op),
+            op: format!("{op:?}"),
         }
     }
 }
@@ -223,12 +223,12 @@ where
 struct Record {
     name: String,
     operation_seconds: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    concurrency_score: Option<f64>,
-    distinct_ops: usize,
-    cumulated_time_to_deliver: HashMap<String, time::Duration>,
     num_replicas: usize,
     num_operations: usize,
+    distinct_ops: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    concurrency_score: Option<f64>,
+    cumulated_time_to_deliver: HashMap<String, time::Duration>,
     churn_rate: f64,
     seed: [u8; 32],
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -454,12 +454,9 @@ where
 
     if config.record_results {
         // write the results in a JSON file
-        create_dir_all("logs").unwrap();
-        let file_path = format!(
-            "logs/{}_{}.json",
-            config.name,
-            Local::now().format("%Y-%m-%d_%H-%M-%S")
-        );
+        let path = format!("logs/{}", config.name);
+        create_dir_all(&path).unwrap();
+        let file_path = format!("{}/{}.json", path, Local::now().format("%Y-%m-%d_%H-%M-%S"));
         let mut file = File::create(&file_path).unwrap();
         let record = Record {
             name: config.name.to_string(),
