@@ -1,6 +1,4 @@
 pub mod counter;
-pub mod dw_flag;
-pub mod ew_flag;
 pub mod flag;
 pub mod graph;
 pub mod map;
