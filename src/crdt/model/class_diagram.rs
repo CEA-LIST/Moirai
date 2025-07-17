@@ -211,7 +211,7 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
         &edge_attr,
         &node_attr,
     );
-    let mut fancy_string = format!("{:?}", fancy_dot);
+    let mut fancy_string = format!("{fancy_dot:?}");
     fancy_string = fancy_string.replace(
         "digraph {",
         "digraph {\n    rankdir=BT\n    node [shape=record, fontname=\"Helvetica\", fontsize=10]\n    edge [fontname=\"Helvetica\", fontsize=10]\n",
@@ -244,8 +244,7 @@ fn edge_attr(
         RelationType::Associates => ("normal", "normal"),
     };
     format!(
-        "label=\"{}\", arrowhead=\"{}\", style=\"{}\", taillabel=\"{}\", headlabel=\"{}\", labeldistance=1.25, labelangle=45, fontcolor=brown",
-        label, head, style, multiplicity_from, multiplicity_to
+        "label=\"{label}\", arrowhead=\"{head}\", style=\"{style}\", taillabel=\"{multiplicity_from}\", headlabel=\"{multiplicity_to}\", labeldistance=1.25, labelangle=45, fontcolor=brown"
     )
 }
 
@@ -256,10 +255,10 @@ fn format_mult(m: &Multiplicity) -> String {
         Multiplicity::ZeroOrOne => "0..1".to_string(),
         Multiplicity::ZeroOrMany => "0..*".to_string(),
         Multiplicity::OneOrMany => "1..*".to_string(),
-        Multiplicity::ManyToMany(min, max) => format!("{}..{}", min, max),
-        Multiplicity::Exactly(n) => format!("{}", n),
-        Multiplicity::ZeroToMany(n) => format!("0..{}", n),
-        Multiplicity::OneToMany(n) => format!("1..{}", n),
+        Multiplicity::ManyToMany(min, max) => format!("{min}..{max}"),
+        Multiplicity::Exactly(n) => format!("{n}"),
+        Multiplicity::ZeroToMany(n) => format!("0..{n}"),
+        Multiplicity::OneToMany(n) => format!("1..{n}"),
     }
 }
 
@@ -274,8 +273,7 @@ fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue
         "style=filled, fillcolor=\"#e5ffe5\""
     };
     format!(
-        "label=\"{{{}|{}\\l|{}\\l}}\",{}",
-        name, features, operations, is_abstract
+        "label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}"
     )
 }
 
@@ -286,7 +284,7 @@ fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
     } else {
         name_vec.join("/")
     };
-    format!("{}{}", prefix, name_str)
+    format!("{prefix}{name_str}")
 }
 
 fn format_features(features: &HashMap<String, FeatureValue>) -> String {
@@ -294,7 +292,7 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
         .iter()
         .map(|(k, v)| {
             let feature_name = k.clone();
-            let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{:?}", t)).collect();
+            let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{t:?}")).collect();
             let feature_type = if types.is_empty() {
                 "Unknown".to_string()
             } else {
@@ -306,7 +304,7 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
                 Visibility::Protected => "#",
                 Visibility::Package => "~",
             };
-            format!("{}{}: {}", feature_vis, feature_name, feature_type)
+            format!("{feature_vis}{feature_name}: {feature_type}")
         })
         .collect::<Vec<String>>()
         .join("\\l")
@@ -328,7 +326,7 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationVal
                 .iter()
                 .map(|(p, t)| {
                     let types: Vec<String> =
-                        t.iter().cloned().map(|ty| format!("{:?}", ty)).collect();
+                        t.iter().cloned().map(|ty| format!("{ty:?}")).collect();
                     format!("{}: {}", p, types.join("/"))
                 })
                 .collect();
@@ -337,7 +335,7 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationVal
                 .iter()
                 .cloned()
                 .map(|t| match t {
-                    TypeRef::Primitive(pt) => format!("{:?}", pt),
+                    TypeRef::Primitive(pt) => format!("{pt:?}"),
                     TypeRef::Class(c) => g
                         .raw_nodes()
                         .iter()

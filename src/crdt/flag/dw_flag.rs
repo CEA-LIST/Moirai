@@ -20,7 +20,7 @@ pub enum DWFlag {
 
 impl Stable<DWFlag> for bool {
     fn is_default(&self) -> bool {
-        *self == false
+        !(*self)
     }
 
     fn apply_redundant(
