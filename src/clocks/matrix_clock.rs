@@ -15,6 +15,9 @@ use tsify::Tsify;
 use super::clock::{Clock, ClockState, Full};
 use crate::protocol::membership::ViewData;
 
+/// A matrix clock is a generalization of a vector clock. It is a square matrix of positive integers.
+/// Each row represents the last vector clock known by the local replica from each member of the view.
+/// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(
     feature = "serde",

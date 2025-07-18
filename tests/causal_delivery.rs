@@ -1,5 +1,7 @@
 #![cfg(feature = "crdt")]
 
+// Tests for causal delivery in CRDTs.
+
 use moirai::crdt::{
     counter::resettable_counter::Counter,
     test_util::{triplet_graph, twins_graph},

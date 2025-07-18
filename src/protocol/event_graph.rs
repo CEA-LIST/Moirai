@@ -29,6 +29,13 @@ use crate::{
     protocol::stable::Stable,
 };
 
+/// Default storage for events. It is divided into two parts:
+/// - `stable`: a stable storage that contains the operations that are causally stable.
+/// - `unstable`: an unstable storage that contains the operations that are not causally stable.
+/// - `dot_index_map`: a map from `Dot` to `NodeIndex` (and vice-versa) that allows for efficient lookups and insertions
+/// in the graph of events
+/// - `non_tombstones`: a set of node indices that are not tombstones in the unstable graph.
+/// - `heads`: a set of dots that are the heads of the graph (i.e., they have no incoming edges).
 #[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
@@ -64,6 +71,7 @@ where
         }
     }
 
+    /// Add an event to the event graph.
     pub fn add_event(&mut self, event: &Event<Op>) {
         let dot = Dot::from(event);
 

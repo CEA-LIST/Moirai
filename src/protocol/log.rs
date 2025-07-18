@@ -7,6 +7,7 @@ use crate::clocks::{
     matrix_clock::MatrixClock,
 };
 
+/// Define the interface of a log structure for CRDTs that store events.
 pub trait Log: Default + Debug {
     type Op: Debug + Clone;
     type Value: Debug;
