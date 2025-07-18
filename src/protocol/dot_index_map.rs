@@ -9,6 +9,8 @@ use serde::{Deserializer, Serializer};
 
 use crate::clocks::dot::Dot;
 
+/// A double map from `Dot` to `NodeIndex` (and vice-versa) that allows for efficient lookups and insertions
+/// in the graph of events.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DotIndexMap(pub BiMap<Dot, NodeIndex>);
 

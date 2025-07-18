@@ -1,3 +1,5 @@
+// Entry point of the framework.
+
 use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
@@ -27,12 +29,18 @@ use crate::{
     },
 };
 
+/// Delivery status of an event.
 pub enum DeliveryStatus {
+    /// Causally ready to be delivered.
     Ready,
+    /// Pending, needs to wait for more events.
     Pending,
+    /// Error, event cannot be delivered.
     Error,
 }
 
+/// The TCSB  (Tagged Causal Stable Broadcast) protocol is a middleware that provides causal delivery of events
+/// and causal stability information.
 #[derive(Clone)]
 pub struct Tcsb<L>
 where
@@ -74,6 +82,8 @@ where
         }
     }
 
+    /// Try to deliver an event to the local replica.
+    /// If not causally ready, the event is added to the pending queue.
     pub fn try_deliver(&mut self, event: Event<L::Op>) {
         match self.can_deliver(&event) {
             DeliveryStatus::Ready => {
@@ -87,7 +97,10 @@ where
         }
     }
 
-    fn can_deliver(&self, event: &Event<L::Op>) -> DeliveryStatus {
+    /// Check if an event can be delivered to the local replica.
+    /// Returns `DeliveryStatus::Ready` if the event is causally ready to be delivered,
+    /// `DeliveryStatus::Pending` if it needs to wait for more events, or `DeliveryStatus::Error` if it cannot be delivered.
+    pub fn can_deliver(&self, event: &Event<L::Op>) -> DeliveryStatus {
         assert_ne!(
             self.id,
             event.origin(),
@@ -144,6 +157,7 @@ where
         DeliveryStatus::Ready
     }
 
+    /// Try to deliver all pending events that are causally ready.
     fn try_deliver_pending(&mut self) {
         let mut i = 0;
         while i < self.pending.len() {

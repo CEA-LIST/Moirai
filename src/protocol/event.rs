@@ -13,6 +13,7 @@ use crate::clocks::{
     dot::Dot,
 };
 
+/// An event is pair (op, timestamp)
 #[derive(Clone, Debug)]
 #[cfg_attr(
     feature = "serde",

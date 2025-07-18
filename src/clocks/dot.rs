@@ -17,6 +17,7 @@ use crate::{
     protocol::membership::ViewData,
 };
 
+/// A dot is a pair (id, counter) that uniquely identifies an operation.
 #[derive(Debug, Clone, Eq)]
 #[cfg_attr(
     feature = "serde",
@@ -28,6 +29,7 @@ pub struct Dot {
     view: Rc<ViewData>,
     origin: usize,
     counter: usize,
+    /// Lamport timestamp (just the sum of the vector clock entries)
     lamport: Lamport,
 }
 

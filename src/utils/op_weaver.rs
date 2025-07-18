@@ -33,6 +33,7 @@ use crate::{
     },
 };
 
+/// A graph that represents the causal relationships between events in an execution.
 #[derive(Debug)]
 struct WitnessGraph {
     graph: DiGraph<WitnessGraphNode, ()>,
@@ -236,6 +237,7 @@ struct Record {
     // num_iterations: usize,
 }
 
+/// The `op_weaver` function simulates a distributed system where replicas issue operations and deliver them to each other.
 pub fn op_weaver<L>(config: EventGraphConfig<'_, L>)
 where
     L: Log,

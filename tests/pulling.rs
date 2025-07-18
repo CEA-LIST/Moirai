@@ -1,5 +1,7 @@
 #![cfg(feature = "crdt")]
 
+// Tests for event pulling in CRDTs.
+
 use std::collections::HashSet;
 
 use moirai::{

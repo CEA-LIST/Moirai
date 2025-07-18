@@ -1,5 +1,10 @@
 #![cfg(feature = "crdt")]
 
+// Tests for group membership in CRDTs. The group membership protocol
+// used is based on the View-Synchronous Communication (VSC) model.
+// This means that views are totally ordered and all members of the group
+// are aware of the current view.
+
 use moirai::{
     crdt::{counter::resettable_counter::Counter, test_util::triplet_graph},
     protocol::{event_graph::EventGraph, pulling::Since, tcsb::Tcsb},

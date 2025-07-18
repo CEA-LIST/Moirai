@@ -1,3 +1,6 @@
+// A macro to define a record type with multiple fields, each field being a different log type.
+// It generates the necessary structures and implements the Log trait for the record.
+
 #[macro_export]
 macro_rules! record {
     ($name:ident { $($field:ident : $T:path),* $(,)? }) => {
