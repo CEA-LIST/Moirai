@@ -26,7 +26,7 @@ cargo install flamegraph
 cargo flamegraph --root --dev --unit-test po-crdt -- test_graph
 cargo flamegraph --test eval_nested
 cargo flamegraph --root --release --example <name>
-cargo flamegraph --root --release --unit-test -- utils::op_weaver::tests::generate_class_diagram
+cargo flamegraph --root --release --unit-test -- crdt::graph::aw_multidigraph::tests::op_weaver_multidigraph
 ```
 
 ### Memory used
@@ -71,9 +71,12 @@ END {
 }'
 ```
 
-### Logging
+### Unit-Tests
 
 ```sh
+# List all tests
+cargo test -- --list
+
 RUST_LOG=debug cargo test -- --nocapture
 RUST_LOG=debug cargo test <name> -- --nocapture
 ```

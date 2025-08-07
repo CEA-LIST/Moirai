@@ -1,0 +1,60 @@
+{
+  "name": "wind_turbine_class_diagram",
+  "operation_seconds": 49054.36965109183,
+  "num_replicas": 4,
+  "num_operations": 100000,
+  "distinct_ops": 192,
+  "cumulated_time_to_deliver": {
+    "a": {
+      "secs": 2,
+      "nanos": 20441534
+    },
+    "b": {
+      "secs": 2,
+      "nanos": 37752770
+    },
+    "d": {
+      "secs": 2,
+      "nanos": 40344525
+    },
+    "c": {
+      "secs": 2,
+      "nanos": 55678682
+    }
+  },
+  "churn_rate": 0.4,
+  "seed": [
+    63,
+    170,
+    244,
+    61,
+    189,
+    36,
+    134,
+    216,
+    33,
+    106,
+    161,
+    107,
+    223,
+    213,
+    68,
+    176,
+    101,
+    54,
+    96,
+    28,
+    58,
+    11,
+    150,
+    197,
+    220,
+    6,
+    242,
+    246,
+    173,
+    157,
+    127,
+    84
+  ]
+}

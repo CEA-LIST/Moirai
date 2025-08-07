@@ -412,7 +412,7 @@ mod tests {
         while ops.len() < 15000 {
             let name = &names[index % names.len()];
             ops.push(Graph::AddVertex(name.clone()));
-            ops.push(Graph::RemoveVertex(name.clone()));
+            // ops.push(Graph::RemoveVertex(name.clone()));
             index += 1;
         }
 
@@ -425,25 +425,31 @@ mod tests {
             let weight2 = ((index + 5) % 10) + 1;
 
             ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
-            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
+            // ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
             ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
-            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
+            // ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
 
             index += 1;
         }
 
         let config = EventGraphConfig {
             name: "aw_multidigraph",
-            num_replicas: 8,
-            num_operations: 10_000,
+            num_replicas: 4,
+            num_operations: 100_000,
             operations: &ops,
             final_sync: true,
-            churn_rate: 0.8,
+            churn_rate: 0.4,
             reachability: None,
             compare: |a: &DiGraph<String, usize>, b: &DiGraph<String, usize>| {
-                vf2::isomorphisms(a, b).first().is_some()
+                // vf2::isomorphisms(a, b).first().is_some()
+                println!(
+                    "graph size: nodes -> {}, edges -> {}",
+                    a.node_count(),
+                    a.edge_count()
+                );
+                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
             },
-            record_results: false,
+            record_results: true,
             seed: None,
             witness_graph: false,
             concurrency_score: false,

@@ -31,7 +31,7 @@ chrono = { version = "0.4.41", optional = true }
 indicatif = { version = "0.18.0", optional = true }
 
 [features]
-default = ["crdt", "utils"]
+default = ["crdt", "utils", "op_weaver"]
 utils = ["dep:anyhow", "dep:deepsize"]
 op_weaver = [
     "dep:chrono",

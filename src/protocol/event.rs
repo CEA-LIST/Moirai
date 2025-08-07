@@ -1,10 +1,11 @@
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     fmt::{Debug, Display, Error, Formatter},
 };
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -20,6 +21,7 @@ use crate::clocks::{
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Event<O> {
     pub op: O,
     /// An event can contain multiple metadata clocks if its a nested operation.

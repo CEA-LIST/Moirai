@@ -14,6 +14,7 @@ use tsify::Tsify;
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub enum ViewStatus {
     /// The view has been installed. At least one view is always installed and the last installed view is the current view.
     Installed,
@@ -62,6 +63,7 @@ impl ViewData {
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct View {
     pub data: Rc<ViewData>,
     pub status: ViewStatus,
@@ -94,6 +96,7 @@ impl View {
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Views {
     views: Vec<View>,
     current_view_id: usize,
