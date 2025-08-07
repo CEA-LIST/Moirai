@@ -1,8 +1,9 @@
-use std::fmt::Debug;
-
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
 use log::{debug, error};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -21,6 +22,7 @@ use crate::{
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
     pub metadata: Clock<Full>,

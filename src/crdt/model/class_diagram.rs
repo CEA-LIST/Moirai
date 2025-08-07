@@ -272,9 +272,7 @@ fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue
     } else {
         "style=filled, fillcolor=\"#e5ffe5\""
     };
-    format!(
-        "label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}"
-    )
+    format!("label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}")
 }
 
 fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
@@ -1322,6 +1320,687 @@ mod tests {
                 Class::Name(MVRegister::Write("EnergyGrid".to_string())),
             ),
             UWGraph::UpdateVertex(
+                "substation",
+                Class::Name(MVRegister::Write("Substation".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "substation",
+                Class::Features(UWMap::Update(
+                    "location".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "substation",
+                Class::Operations(UWMap::Update(
+                    "monitor".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "transformer",
+                Class::Name(MVRegister::Write("Transformer".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "transformer",
+                Class::Features(UWMap::Update(
+                    "capacity".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "transformer",
+                Class::Operations(UWMap::Update(
+                    "stepUp".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "control_unit",
+                Class::Name(MVRegister::Write("ControlUnit".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "control_unit",
+                Class::Features(UWMap::Update(
+                    "firmwareVersion".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "control_unit",
+                Class::Operations(UWMap::Update(
+                    "reset".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "sensor",
+                Class::Name(MVRegister::Write("Sensor".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "sensor",
+                Class::Features(UWMap::Update(
+                    "type".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "sensor",
+                Class::Operations(UWMap::Update(
+                    "readValue".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Number,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "maintenance_team",
+                Class::Name(MVRegister::Write("MaintenanceTeam".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "maintenance_team",
+                Class::Features(UWMap::Update(
+                    "teamSize".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "maintenance_team",
+                Class::Operations(UWMap::Update(
+                    "scheduleMaintenance".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "operator",
+                Class::Name(MVRegister::Write("Operator".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "operator",
+                Class::Features(UWMap::Update(
+                    "certification".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "operator",
+                Class::Operations(UWMap::Update(
+                    "operate".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "customer",
+                Class::Name(MVRegister::Write("Customer".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "customer",
+                Class::Features(UWMap::Update(
+                    "accountNumber".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "customer",
+                Class::Operations(UWMap::Update(
+                    "requestService".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "power_plant",
+                Class::Name(MVRegister::Write("PowerPlant".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "power_plant",
+                Class::Features(UWMap::Update(
+                    "outputMW".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "power_plant",
+                Class::Operations(UWMap::Update(
+                    "generatePower".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Number,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "solar_panel",
+                Class::Name(MVRegister::Write("SolarPanel".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "solar_panel",
+                Class::Features(UWMap::Update(
+                    "panelType".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "solar_panel",
+                Class::Operations(UWMap::Update(
+                    "produceEnergy".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Number,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "battery_storage",
+                Class::Name(MVRegister::Write("BatteryStorage".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "battery_storage",
+                Class::Features(UWMap::Update(
+                    "capacityKWh".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "battery_storage",
+                Class::Operations(UWMap::Update(
+                    "storeEnergy".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "distribution_line",
+                Class::Name(MVRegister::Write("DistributionLine".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "distribution_line",
+                Class::Features(UWMap::Update(
+                    "lengthKm".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "distribution_line",
+                Class::Operations(UWMap::Update(
+                    "inspect".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "switchgear",
+                Class::Name(MVRegister::Write("Switchgear".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "switchgear",
+                Class::Features(UWMap::Update(
+                    "voltageRating".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "switchgear",
+                Class::Operations(UWMap::Update(
+                    "switchOn".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex("relay", Class::Name(MVRegister::Write("Relay".to_string()))),
+            UWGraph::UpdateVertex(
+                "relay",
+                Class::Features(UWMap::Update(
+                    "relayType".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "relay",
+                Class::Operations(UWMap::Update(
+                    "trigger".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex("meter", Class::Name(MVRegister::Write("Meter".to_string()))),
+            UWGraph::UpdateVertex(
+                "meter",
+                Class::Features(UWMap::Update(
+                    "reading".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "meter",
+                Class::Operations(UWMap::Update(
+                    "readMeter".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Number,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "grid_controller",
+                Class::Name(MVRegister::Write("GridController".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "grid_controller",
+                Class::Features(UWMap::Update(
+                    "controlMode".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "grid_controller",
+                Class::Operations(UWMap::Update(
+                    "balanceLoad".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "weather_station",
+                Class::Name(MVRegister::Write("WeatherStation".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "weather_station",
+                Class::Features(UWMap::Update(
+                    "temperature".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "weather_station",
+                Class::Operations(UWMap::Update(
+                    "reportWeather".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "data_logger",
+                Class::Name(MVRegister::Write("DataLogger".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "data_logger",
+                Class::Features(UWMap::Update(
+                    "storageMB".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "data_logger",
+                Class::Operations(UWMap::Update(
+                    "logData".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "alarm_system",
+                Class::Name(MVRegister::Write("AlarmSystem".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "alarm_system",
+                Class::Features(UWMap::Update(
+                    "alarmType".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "alarm_system",
+                Class::Operations(UWMap::Update(
+                    "activateAlarm".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "remote_terminal",
+                Class::Name(MVRegister::Write("RemoteTerminal".to_string())),
+            ),
+            UWGraph::UpdateVertex(
+                "remote_terminal",
+                Class::Features(UWMap::Update(
+                    "ipAddress".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ),
+            UWGraph::UpdateVertex(
+                "remote_terminal",
+                Class::Operations(UWMap::Update(
+                    "connect".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Boolean,
+                    ))),
+                )),
+            ),
+            // 50 relations between these classes
+            UWGraph::UpdateArc(
+                "substation",
+                "transformer",
+                "contains",
+                Relation::Typ(TORegister::Write(RelationType::Composes)),
+            ),
+            UWGraph::UpdateArc(
+                "transformer",
+                "distribution_line",
+                "connectedTo",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "distribution_line",
+                "meter",
+                "feeds",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "meter",
+                "customer",
+                "measures",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "power_plant",
+                "substation",
+                "supplies",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "solar_panel",
+                "battery_storage",
+                "charges",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "battery_storage",
+                "distribution_line",
+                "discharges",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "switchgear",
+                "relay",
+                "controls",
+                Relation::Typ(TORegister::Write(RelationType::Composes)),
+            ),
+            UWGraph::UpdateArc(
+                "relay",
+                "alarm_system",
+                "triggers",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "control_unit",
+                "switchgear",
+                "manages",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "grid_controller",
+                "control_unit",
+                "controls",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "weather_station",
+                "grid_controller",
+                "reportsTo",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "data_logger",
+                "weather_station",
+                "logs",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "remote_terminal",
+                "grid_controller",
+                "connectsTo",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "maintenance_team",
+                "substation",
+                "maintains",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "operator",
+                "control_unit",
+                "operates",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "customer",
+                "meter",
+                "owns",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "alarm_system",
+                "remote_terminal",
+                "alerts",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "data_logger",
+                "meter",
+                "records",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "maintenance_team",
+                "distribution_line",
+                "inspects",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "operator",
+                "switchgear",
+                "switches",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "relay",
+                "control_unit",
+                "communicatesWith",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "battery_storage",
+                "meter",
+                "monitors",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "solar_panel",
+                "weather_station",
+                "senses",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "power_plant",
+                "grid_controller",
+                "managedBy",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "substation",
+                "alarm_system",
+                "protectedBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "transformer",
+                "sensor",
+                "monitoredBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "sensor",
+                "data_logger",
+                "logsTo",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "remote_terminal",
+                "maintenance_team",
+                "notifies",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "customer",
+                "operator",
+                "contacts",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "meter",
+                "data_logger",
+                "sendsData",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "distribution_line",
+                "relay",
+                "protectedBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "switchgear",
+                "alarm_system",
+                "alertsOnFault",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "grid_controller",
+                "battery_storage",
+                "controlsStorage",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ),
+            UWGraph::UpdateArc(
+                "weather_station",
+                "solar_panel",
+                "providesData",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "data_logger",
+                "remote_terminal",
+                "transmits",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "alarm_system",
+                "maintenance_team",
+                "alertsTeam",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "remote_terminal",
+                "operator",
+                "communicatesWith",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "substation",
+                "meter",
+                "measuredBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "transformer",
+                "battery_storage",
+                "chargesFrom",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "control_unit",
+                "sensor",
+                "receivesData",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "sensor",
+                "alarm_system",
+                "triggersAlarm",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "maintenance_team",
+                "relay",
+                "services",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "operator",
+                "data_logger",
+                "reviewsLogs",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "customer",
+                "remote_terminal",
+                "accesses",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "power_plant",
+                "weather_station",
+                "monitorsWeather",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "solar_panel",
+                "meter",
+                "measuredBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "battery_storage",
+                "alarm_system",
+                "alertsOnLow",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "distribution_line",
+                "data_logger",
+                "logsStatus",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "switchgear",
+                "remote_terminal",
+                "remotelyControlledBy",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateArc(
+                "relay",
+                "meter",
+                "monitorsCurrent",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ),
+            UWGraph::UpdateVertex(
                 "energy_grid",
                 Class::Features(UWMap::Update(
                     "gridName".to_string(),
@@ -1431,28 +2110,6 @@ mod tests {
                 "repairs",
                 Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
             ),
-            // Remove ops
-            UWGraph::RemoveVertex("wt"),
-            UWGraph::RemoveVertex("eg"),
-            UWGraph::RemoveVertex("rotor"),
-            UWGraph::RemoveVertex("blade"),
-            UWGraph::RemoveVertex("tower"),
-            UWGraph::RemoveVertex("nacelle"),
-            UWGraph::RemoveVertex("energy_grid"),
-            UWGraph::RemoveVertex("manufacturer"),
-            UWGraph::RemoveArc("wt", "eg", "ext"),
-            UWGraph::RemoveArc("eg", "energy_grid", "feedsInto"),
-            UWGraph::RemoveArc("energy_grid", "energy_grid", "connectedTo"),
-            UWGraph::RemoveArc("rotor", "wt", "hasRotor"),
-            UWGraph::RemoveArc("nacelle", "wt", "hasNacelle"),
-            UWGraph::RemoveArc("blade", "rotor", "comprises"),
-            UWGraph::RemoveArc("tower", "wt", "mountedOn"),
-            UWGraph::RemoveArc("manufacturer", "wt", "owns"),
-            UWGraph::RemoveArc("manufacturer", "wt", "repairs"),
-            // --- DOUBLED OPERATIONS BELOW ---
-            // Add more operations, same as above, but with slight variations for diversity
-
-            // WindTurbine - add new operation and feature
             UWGraph::UpdateVertex(
                 "wt",
                 Class::Operations(UWMap::Update(
@@ -1469,7 +2126,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
-            // EnergyGenerator - add new operation
             UWGraph::UpdateVertex(
                 "eg",
                 Class::Operations(UWMap::Update(
@@ -1479,7 +2135,6 @@ mod tests {
                     ))),
                 )),
             ),
-            // Rotor - add new feature
             UWGraph::UpdateVertex(
                 "rotor",
                 Class::Features(UWMap::Update(
@@ -1487,7 +2142,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
-            // Blade - add new feature
             UWGraph::UpdateVertex(
                 "blade",
                 Class::Features(UWMap::Update(
@@ -1495,7 +2149,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
                 )),
             ),
-            // Tower - add new feature
             UWGraph::UpdateVertex(
                 "tower",
                 Class::Features(UWMap::Update(
@@ -1503,7 +2156,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
                 )),
             ),
-            // Nacelle - add new feature
             UWGraph::UpdateVertex(
                 "nacelle",
                 Class::Features(UWMap::Update(
@@ -1511,7 +2163,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
-            // EnergyGrid - add new feature
             UWGraph::UpdateVertex(
                 "energy_grid",
                 Class::Features(UWMap::Update(
@@ -1519,7 +2170,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
-            // Manufacturer - add new feature
             UWGraph::UpdateVertex(
                 "manufacturer",
                 Class::Features(UWMap::Update(
@@ -1527,7 +2177,6 @@ mod tests {
                     Feature::Typ(MVRegister::Write(PrimitiveType::String)),
                 )),
             ),
-            // Add new arcs for more relations
             UWGraph::UpdateArc(
                 "wt",
                 "energy_grid",
@@ -1564,25 +2213,32 @@ mod tests {
                 "builtBy",
                 Relation::Label(MVRegister::Write("builtBy".to_string())),
             ),
-            // Remove the new arcs
-            UWGraph::RemoveArc("wt", "energy_grid", "supplies"),
-            UWGraph::RemoveArc("rotor", "blade", "contains"),
-            UWGraph::RemoveArc("tower", "manufacturer", "builtBy"),
-            // Remove the new features/vertices (simulate deletions)
+            UWGraph::RemoveVertex("blade"),
+            UWGraph::RemoveVertex("eg"),
             UWGraph::RemoveVertex("energy_grid"),
             UWGraph::RemoveVertex("manufacturer"),
             UWGraph::RemoveVertex("nacelle"),
-            UWGraph::RemoveVertex("tower"),
-            UWGraph::RemoveVertex("blade"),
             UWGraph::RemoveVertex("rotor"),
-            UWGraph::RemoveVertex("eg"),
+            UWGraph::RemoveVertex("tower"),
+            UWGraph::RemoveArc("blade", "rotor", "comprises"),
+            UWGraph::RemoveArc("eg", "energy_grid", "feedsInto"),
+            UWGraph::RemoveArc("energy_grid", "energy_grid", "connectedTo"),
+            UWGraph::RemoveArc("manufacturer", "wt", "owns"),
+            UWGraph::RemoveArc("manufacturer", "wt", "repairs"),
+            UWGraph::RemoveArc("nacelle", "wt", "hasNacelle"),
+            UWGraph::RemoveArc("rotor", "blade", "contains"),
+            UWGraph::RemoveArc("rotor", "wt", "hasRotor"),
+            UWGraph::RemoveArc("tower", "manufacturer", "builtBy"),
+            UWGraph::RemoveArc("tower", "wt", "mountedOn"),
+            UWGraph::RemoveArc("wt", "eg", "ext"),
             UWGraph::RemoveVertex("wt"),
+            UWGraph::RemoveArc("wt", "energy_grid", "supplies"),
         ];
 
         let config = EventGraphConfig {
             name: "wind_turbine_class_diagram",
-            num_replicas: 8,
-            num_operations: 10_000,
+            num_replicas: 16,
+            num_operations: 100_000,
             operations: &ops,
             final_sync: true,
             churn_rate: 0.4,

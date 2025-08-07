@@ -7,6 +7,8 @@ use std::{
 };
 
 use colored::*;
+#[cfg(feature = "utils")]
+use deepsize::DeepSizeOf;
 use log::{debug, error, info, warn};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -42,6 +44,7 @@ pub enum DeliveryStatus {
 /// The TCSB  (Tagged Causal Stable Broadcast) protocol is a middleware that provides causal delivery of events
 /// and causal stability information.
 #[derive(Clone)]
+// #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct Tcsb<L>
 where
     L: Log,
@@ -410,6 +413,8 @@ where
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg(feature = "utils")]
+#[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 pub struct StateTransfer<L> {
     pub group_membership: Views,
     pub state: L,
