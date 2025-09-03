@@ -1,6 +1,6 @@
 use crate::{
     crdt::test_util::n_members,
-    protocol::{event::Event, log::Log},
+    protocol::{event::Event, state::log::IsLog},
 };
 
 fn factorial(number: usize) -> usize {
@@ -38,7 +38,7 @@ fn permute(indices: &[usize]) -> Vec<Vec<usize>> {
 /// Generate all sequential permutations of a given set of operations and check if they converge to the expected value.
 /// The number of operations must be less than or equal to 15 to avoid overflow.
 /// This function is useful for testing convergence properties of CRDTs but is factorial in complexity,
-pub fn convergence_checker<L: Log>(
+pub fn convergence_checker<L: IsLog>(
     ops: &[L::Op],
     value: L::Value,
     cmp: fn(&L::Value, &L::Value) -> bool,
