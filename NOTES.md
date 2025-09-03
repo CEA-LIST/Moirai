@@ -55,7 +55,7 @@ causally stable operations for that datatype. For example, in the case of an
 add-wins set (AWSet), this storage can simply be a sequential set, which is
 highly efficient, as set operations typically run in O(1) time.
 
-## The Matrix Clock
+## The Matrix Version
 
 A matrix clock is valid if it:
 
@@ -70,6 +70,10 @@ The matrix is monotonically increasing, that is, each new event updates the
 appropriate row in the matrix by merging the incoming vector clock with the one
 stored in the matrix. As a result, the matrix can contain arbitrary high integer
 values.
+
+## The Membership system
+
+- The membership system is based on a view abstraction. Multiple other components rely on a pointer to the current view to retrieve the membership information. It is clear that the current implementation will produce issues in the future as the serialization/deserialization will have to convert the index of the "local replica" of the sender's view to its index in the receiver view.
 
 ## Feature Comparison of CRDT Frameworks
 

@@ -71,6 +71,12 @@ END {
 }'
 ```
 
+There is three interesting Rust crates to know the memory used by an object at runtime:
+
+- https://github.com/bircni/get-size2
+- https://github.com/nhtyy/deepsize2
+- https://github.com/Aeledfyr/deepsize
+
 ### Unit-Tests
 
 ```sh

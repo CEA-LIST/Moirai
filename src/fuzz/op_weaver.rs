@@ -25,12 +25,7 @@ use std::{
 use crate::{
     clocks::dot::Dot,
     crdt::test_util::n_members,
-    protocol::{
-        event::Event,
-        log::Log,
-        pulling::{Batch, Since},
-        tcsb::Tcsb,
-    },
+    protocol::{broadcast::batch::Batch, event::Event, replica::Replica, state::log::IsLog},
 };
 
 /// A graph that represents the causal relationships between events in an execution.
@@ -50,7 +45,7 @@ impl WitnessGraph {
 
     pub fn add_node<Op: Debug>(&mut self, event: &Event<Op>) {
         let dot_event = Dot::from(event);
-        let node = WitnessGraphNode::new(&dot_event, &event.op);
+        let node = WitnessGraphNode::new(&dot_event, &event.op());
         let index = self.graph.add_node(node);
         self.dot_index_map.insert(dot_event.clone(), index);
         for (idx, cnt) in event.metadata().iter() {
@@ -59,9 +54,9 @@ impl WitnessGraph {
                 continue;
             }
             let dot = if *cnt > 1 && idx == &event.metadata().origin.expect("Origin not set") {
-                Dot::new(*idx, *cnt - 1, event.lamport, &event.metadata().view)
+                Dot::new(*idx, *cnt - 1, event.lamport(), &event.metadata().view)
             } else {
-                Dot::new(*idx, *cnt, event.lamport, &event.metadata().view)
+                Dot::new(*idx, *cnt, event.lamport(), &event.metadata().view)
             };
             let parent_idx = self.dot_index_map.get(&dot).unwrap_or_else(|| {
                 panic!(
@@ -191,7 +186,7 @@ impl WitnessGraphNode {
 
 pub struct EventGraphConfig<'a, L>
 where
-    L: Log,
+    L: IsLog,
 {
     /// Name of the simulation, used for logging
     pub name: &'a str,
@@ -240,7 +235,7 @@ struct Record {
 /// The `op_weaver` function simulates a distributed system where replicas issue operations and deliver them to each other.
 pub fn op_weaver<L>(config: EventGraphConfig<'_, L>)
 where
-    L: Log,
+    L: IsLog,
     L::Value: Default,
 {
     // <--- Configuration Validation --->
@@ -308,7 +303,7 @@ where
         ChaCha8Rng::from_os_rng()
     };
     // Create a vector of replicas
-    let mut tcsbs: Vec<Tcsb<L>> = n_members::<L>(config.num_replicas);
+    let mut replicas: Vec<Replica<L>> = n_members::<L>(config.num_replicas);
     // Initialize the reachability matrix if not provided
     let reachability = config
         .reachability
@@ -326,16 +321,16 @@ where
     // Initialize the total time spent to deliver the operations per replica
     let mut deliver_time = HashMap::<String, time::Duration>::new();
 
-    fn deliver_batch<L: Log>(
+    fn deliver_batch<L: IsLog>(
         batch: Batch<L::Op>,
-        tcsbs: &mut [Tcsb<L>],
+        replicas: &mut [Replica<L>],
         r_idx: usize,
         deliver_time: &mut time::Duration,
     ) {
         for event in batch.events {
-            if tcsbs[r_idx].id != event.origin() {
+            if replicas[r_idx].id != event.origin() {
                 let start = Instant::now();
-                tcsbs[r_idx].try_deliver(event);
+                replicas[r_idx].try_deliver(event);
                 let elapsed = start.elapsed();
                 // Update the cumulated time to deliver for the replica
                 *deliver_time += elapsed;
@@ -355,11 +350,12 @@ where
             for i in (0..config.num_replicas)
                 .filter(|&i| i != r_idx && online[i] && reachability[r_idx][i])
             {
-                let batch = tcsbs[i]
-                    .events_since(&Since::new_from(&tcsbs[r_idx]))
+                let batch = replicas[i]
+                    .events_since(&Since::new_from(&replicas[r_idx]))
                     .unwrap();
-                let r_idx_deliver_time = deliver_time.entry(tcsbs[r_idx].id.clone()).or_default();
-                deliver_batch(batch, &mut tcsbs, r_idx, r_idx_deliver_time);
+                let r_idx_deliver_time =
+                    deliver_time.entry(replicas[r_idx].id.clone()).or_default();
+                deliver_batch(batch, &mut replicas, r_idx, r_idx_deliver_time);
             }
         }
 
@@ -367,7 +363,7 @@ where
         ops_pb.inc(1);
         count += 1;
         // Create a new event with the operation
-        let event = tcsbs[r_idx].tc_bcast(op.clone());
+        let event = replicas[r_idx].tc_bcast(op.clone());
 
         if let Some(wg) = &mut witness_graph {
             // Add the event to the witness graph for debugging
@@ -379,10 +375,10 @@ where
                 .filter(|&i| i != r_idx && online[i] && reachability[r_idx][i])
             {
                 let start = Instant::now();
-                tcsbs[i].try_deliver(event.clone());
+                replicas[i].try_deliver(event.clone());
                 let elapsed = start.elapsed();
                 // Update the cumulated time to deliver for the replica
-                let r_idx_deliver_time = deliver_time.entry(tcsbs[i].id.clone()).or_default();
+                let r_idx_deliver_time = deliver_time.entry(replicas[i].id.clone()).or_default();
                 *r_idx_deliver_time += elapsed;
             }
         }
@@ -399,9 +395,11 @@ where
         for i in 0..config.num_replicas {
             for j in 0..config.num_replicas {
                 if i != j {
-                    let batch = tcsbs[i].events_since(&Since::new_from(&tcsbs[j])).unwrap();
-                    let j_deliver_time = deliver_time.entry(tcsbs[j].id.clone()).or_default();
-                    deliver_batch(batch, &mut tcsbs, j, j_deliver_time);
+                    let batch = replicas[i]
+                        .events_since(&Since::new_from(&replicas[j]))
+                        .unwrap();
+                    let j_deliver_time = deliver_time.entry(replicas[j].id.clone()).or_default();
+                    deliver_batch(batch, &mut replicas, j, j_deliver_time);
                 }
             }
         }
@@ -410,7 +408,7 @@ where
     // Verify that all replicas converge to the same value
     let mut reference: L::Value = L::Value::default();
     let mut event_sum = 0;
-    for (i, tcsb) in tcsbs.iter().enumerate() {
+    for (i, tcsb) in replicas.iter().enumerate() {
         if i == 0 {
             reference = tcsb.eval();
             event_sum = tcsb.my_clock().sum();

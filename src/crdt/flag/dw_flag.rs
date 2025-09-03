@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::{
-    clocks::dot::Dot,
-    protocol::{event_graph::EventGraph, pure_crdt::PureCRDT, stable::Stable},
+use crate::protocol::{
+    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+    event::{tag::Tag, tagged_op::TaggedOp},
+    state::stable_state::IsStableState,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -18,63 +19,77 @@ pub enum DWFlag {
     Clear,
 }
 
-impl Stable<DWFlag> for bool {
-    fn is_default(&self) -> bool {
-        !(*self)
+impl IsStableState<DWFlag> for bool {
+    fn len(&self) -> usize {
+        // TODO: change to 'is_empty'
+        1
     }
 
-    fn apply_redundant(
-        &mut self,
-        _rdnt: fn(&DWFlag, Option<&Dot>, bool, &DWFlag, &Dot) -> bool,
-        _op: &DWFlag,
-        _dot: &Dot,
-    ) {
-        // No-op for redundant
+    fn is_empty(&self) -> bool {
+        !*self
     }
 
     fn apply(&mut self, value: DWFlag) {
         match value {
             DWFlag::Enable => *self = true,
-            DWFlag::Disable | DWFlag::Clear => *self = false,
+            DWFlag::Disable => *self = false,
+            DWFlag::Clear => *self = false,
         }
+    }
+
+    fn clear(&mut self) {
+        *self = false;
+    }
+
+    fn prune_redundant_ops(
+        &mut self,
+        _rdnt: RedundancyRelation<DWFlag>,
+        _tagged_op: &TaggedOp<DWFlag>,
+    ) {
+        <bool as IsStableState<DWFlag>>::clear(self);
     }
 }
 
 impl PureCRDT for DWFlag {
     type Value = bool;
-    type Stable = bool;
-    const DISABLE_R_WHEN_R: bool = true;
-    const DISABLE_R_WHEN_NOT_R: bool = true;
+    type StableState = bool;
 
-    fn redundant_itself(new_op: &Self, _new_dot: &Dot, _state: &EventGraph<Self>) -> bool {
-        matches!(new_op, DWFlag::Clear)
+    fn redundant_itself<'a>(
+        new_tagged_op: &TaggedOp<Self>,
+        _stable: &Self::StableState,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+    ) -> bool
+    where
+        Self: 'a,
+    {
+        matches!(new_tagged_op.op(), DWFlag::Clear)
     }
 
     fn redundant_by_when_redundant(
         _old_op: &Self,
-        _old_dot: Option<&Dot>,
+        _old_event_id: Option<&Tag>,
         is_conc: bool,
-        _new_op: &Self,
-        _new_dot: &Dot,
+        _new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
-        // In DWFlag, any new operation with larger timestamp makes previous ones redundant
         !is_conc
     }
 
     fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        old_dot: Option<&Dot>,
+        _old_op: &Self,
+        _old_tag: Option<&Tag>,
         is_conc: bool,
-        new_op: &Self,
-        new_dot: &Dot,
+        _new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
-        Self::redundant_by_when_redundant(old_op, old_dot, is_conc, new_op, new_dot)
+        !is_conc
     }
 
-    fn eval(stable: &Self::Stable, unstable: &[Self]) -> Self::Value {
+    fn eval<'a>(
+        stable: &Self::StableState,
+        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+    ) -> Self::Value {
         let mut flag = *stable;
         // In DWFlag, any concurrent Disable wins over Enable
-        for op in unstable.iter() {
+        for op in unstable.map(|t| t.op()) {
             match op {
                 DWFlag::Disable => {
                     flag = false;
@@ -86,8 +101,6 @@ impl PureCRDT for DWFlag {
         }
         flag
     }
-
-    fn stabilize(_dot: &Dot, _state: &mut EventGraph<Self>) {}
 }
 
 // #[cfg(test)]

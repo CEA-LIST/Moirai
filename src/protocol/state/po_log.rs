@@ -1,0 +1,124 @@
+use std::fmt::Debug;
+
+use crate::protocol::{
+    clock::version_vector::Version,
+    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+    event::{tagged_op::TaggedOp, Event},
+    state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
+};
+
+pub type VLog<O> = POLog<O, Vec<TaggedOp<O>>>;
+
+#[derive(Debug)]
+pub struct POLog<O, U>
+where
+    O: PureCRDT,
+{
+    stable: O::StableState,
+    unstable: U,
+}
+
+impl<O, U> IsLog for POLog<O, U>
+where
+    O: PureCRDT + Clone,
+    U: IsUnstableState<O> + Default + Debug,
+{
+    type Op = O;
+    type Value = O::Value;
+
+    fn new() -> Self {
+        Self {
+            stable: O::StableState::default(),
+            unstable: U::default(),
+        }
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>) {
+        let new_tagged_op = TaggedOp::from(&event);
+        if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter())
+            && !O::DISABLE_R_WHEN_R
+        {
+            self.prune_redundant_ops(
+                O::redundant_by_when_redundant,
+                &new_tagged_op,
+                event.version(),
+            );
+        } else {
+            if !O::DISABLE_R_WHEN_NOT_R {
+                self.prune_redundant_ops(
+                    O::redundant_by_when_not_redundant,
+                    &new_tagged_op,
+                    event.version(),
+                );
+            }
+            self.unstable.append(new_tagged_op);
+        }
+    }
+
+    fn eval(&self) -> Self::Value {
+        O::eval(&self.stable, self.unstable.iter())
+    }
+
+    fn stabilize(&mut self, version: &Version) {
+        // 1. select all ops in unstable that are predecessors of a version
+        // 2. for each of them, call stabilize, which may modify stable and/or unstable
+        // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
+
+        let candidates = self.unstable.predecessors(version);
+
+        for tagged_op in candidates {
+            O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
+            if self.unstable.get(tagged_op.id()).is_some() {
+                self.stable.apply(tagged_op.op().clone());
+                self.unstable.remove(tagged_op.id());
+            }
+        }
+    }
+
+    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        self.stable.clear();
+        if conservative {
+            self.unstable
+                .retain(|tagged_op| tagged_op.id().is_predecessor_of(version))
+        } else {
+            self.unstable.clear();
+        }
+    }
+}
+
+impl<O, U> Default for POLog<O, U>
+where
+    O: PureCRDT,
+    U: Default,
+{
+    fn default() -> Self {
+        Self {
+            stable: Default::default(),
+            unstable: Default::default(),
+        }
+    }
+}
+
+impl<O, U> POLog<O, U>
+where
+    O: PureCRDT,
+    U: IsUnstableState<O>,
+{
+    fn prune_redundant_ops(
+        &mut self,
+        rdnt: RedundancyRelation<O>,
+        new_tagged_op: &TaggedOp<O>,
+        version: &Version,
+    ) {
+        self.stable.prune_redundant_ops(rdnt, new_tagged_op);
+        self.unstable.retain(|old_tagged_op| {
+            let is_conc = old_tagged_op.id().is_predecessor_of(version);
+            !rdnt(
+                old_tagged_op.op(),
+                Some(old_tagged_op.tag()),
+                is_conc,
+                new_tagged_op,
+            )
+        });
+    }
+}
