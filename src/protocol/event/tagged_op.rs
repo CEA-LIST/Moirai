@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display};
+
 use crate::protocol::event::{id::EventId, lamport::Lamport, tag::Tag, Event};
 
 #[derive(Debug, Clone)]
@@ -40,5 +42,14 @@ where
             op: event.op().clone(),
             tag: Tag::new(event.id().clone(), event.lamport().clone()),
         }
+    }
+}
+
+impl<O> Display for TaggedOp<O>
+where
+    O: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{:?}@{}]", self.op, self.tag.id())
     }
 }

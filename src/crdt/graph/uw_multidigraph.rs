@@ -96,10 +96,7 @@ where
                     .effect(child_op);
             }
             UWGraph::RemoveArc(v1, v2, e) => {
-                if let Some(child) = self
-                    .arc_content
-                    .get_mut(&(v1, v2, e))
-                {
+                if let Some(child) = self.arc_content.get_mut(&(v1, v2, e)) {
                     child.redundant_by_parent(event.version(), true);
                 }
             }
@@ -154,495 +151,293 @@ where
     }
 }
 
-//     fn new_event(&mut self, event: &Event<Self::Op>) {
-//         match &event.op {
-//             UWGraph::UpdateVertex(v, no) => {
-//
-
-//                 let log_event = Event::new_nested(no.clone(), nested_clocks, event.lamport());
-
-//                 self.vertex_content
-//                     .entry(v.clone())
-//                     .or_default()
-//                     .new_event(&log_event);
-//             }
-//             UWGraph::UpdateArc(v1, v2, e_id, eo) => {
-//                 let aw_graph_event = Event::new(
-//                     Graph::AddArc(v1.clone(), v2.clone(), e_id.clone()),
-//                     event.metadata().clone(),
-//                     event.lamport(),
-//                 );
-//                 self.graph.new_event(&aw_graph_event);
-
-//                 let mut nested_clocks = event.metadata.clone();
-//                 nested_clocks.pop_front();
-
-//                 assert!(
-//                     !nested_clocks.is_empty(),
-//                     "UWGraphLog: metadata should not be empty after popping the first element"
-//                 );
-
-//                 let log_event = Event::new_nested(eo.clone(), nested_clocks, event.lamport());
-//                 self.arc_content
-//                     .entry((v1.clone(), v2.clone(), e_id.clone()))
-//                     .or_default()
-//                     .new_event(&log_event);
-//             }
-//         }
-//     }
-
-//     fn prune_redundant_events(&mut self, event: &Event<Self::Op>, is_r_0: bool, ltm: &MatrixClock) {
-//         match &event.op {
-//             UWGraph::UpdateVertex(v, vo) => {
-
-//                 let log_metadata = if let Some(m) = event.metadata.get(1) {
-//                     m.clone()
-//                 } else {
-//                     let mut clock = Version::<Partial>::new(&event.metadata().view, event.origin());
-//                     clock.set_by_idx(
-//                         event.metadata().origin.unwrap(),
-//                         event
-//                             .metadata()
-//                             .get_by_idx(event.metadata().origin.unwrap())
-//                             .unwrap(),
-//                     );
-//                     clock
-//                 };
-
-//                 let log_event = Event::new(vo.clone(), log_metadata, event.lamport());
-//                 self.vertex_content
-//                     .entry(v.clone())
-//                     .or_default()
-//                     .prune_redundant_events(&log_event, is_r_0, ltm);
-//             }
-//             UWGraph::RemoveVertex(v) => {
-//                 let event = Event::new(
-//                     Graph::RemoveVertex(v.clone()),
-//                     event.metadata().clone(),
-//                     event.lamport(),
-//                 );
-//                 self.graph.prune_redundant_events(&event, is_r_0, ltm);
-
-//                 if let Some(v_content) = self.vertex_content.get_mut(v) {
-//                     // If the vertex content is not empty, we need to prune the events
-//                     if !v_content.is_empty() {
-//                         // compute the vector clock of the remove operation
-//                         let vector_clock =
-//                             ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-
-//                         // The `true` here is what makes the map a Update-Wins graph
-//                         v_content.r_n(vector_clock, true);
-//                     }
-//                 }
-//                 if let Some(vidx) = self.vertex_index.get(v) {
-//                     for (v1, v2, e1) in vidx.iter() {
-//                         if let Some(arc_content) =
-//                             self.arc_content
-//                                 .get_mut(&(v1.clone(), v2.clone(), e1.clone()))
-//                         {
-//                             // If the arc content is not empty, we need to prune the events
-//                             if !arc_content.is_empty() {
-//                                 // compute the vector clock of the remove operation
-//                                 let vector_clock =
-//                                     ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-
-//                                 // The `true` here is what makes the map a Update-Wins graph
-//                                 arc_content.r_n(vector_clock, true);
-//                             }
-//                         }
-//                     }
-//                 }
-//                 // TODO: remove the vertex from the vertex index
-//             }
-//             UWGraph::UpdateArc(v1, v2, e1, lo) => {
-//                 let aw_graph_event = Event::new(
-//                     Graph::AddArc(v1.clone(), v2.clone(), e1.clone()),
-//                     event.metadata().clone(),
-//                     event.lamport(),
-//                 );
-//                 self.graph
-//                     .prune_redundant_events(&aw_graph_event, is_r_0, ltm);
-
-//                 let log_metadata = if let Some(m) = event.metadata.get(1) {
-//                     m.clone()
-//                 } else {
-//                     let mut clock = Version::<Partial>::new(&event.metadata().view, event.origin());
-//                     clock.set_by_idx(
-//                         event.metadata().origin.unwrap(),
-//                         event
-//                             .metadata()
-//                             .get_by_idx(event.metadata().origin.unwrap())
-//                             .unwrap(),
-//                     );
-//                     clock
-//                 };
-
-//                 let log_event = Event::new(lo.clone(), log_metadata, event.lamport());
-//                 self.arc_content
-//                     .entry((v1.clone(), v2.clone(), e1.clone()))
-//                     .or_default()
-//                     .prune_redundant_events(&log_event, is_r_0, ltm);
-
-//                 self.vertex_index.entry(v1.clone()).or_default().insert((
-//                     v1.clone(),
-//                     v2.clone(),
-//                     e1.clone(),
-//                 ));
-//                 self.vertex_index.entry(v2.clone()).or_default().insert((
-//                     v1.clone(),
-//                     v2.clone(),
-//                     e1.clone(),
-//                 ));
-//             }
-//             UWGraph::RemoveArc(v1, v2, e1) => {
-//                 let event = Event::new(
-//                     Graph::RemoveArc(v1.clone(), v2.clone(), e1.clone()),
-//                     event.metadata().clone(),
-//                     event.lamport(),
-//                 );
-//                 self.graph.prune_redundant_events(&event, is_r_0, ltm);
-
-//                 if let Some(arc_content) =
-//                     self.arc_content
-//                         .get_mut(&(v1.clone(), v2.clone(), e1.clone()))
-//                 {
-//                     // If the arc content is not empty, we need to prune the events
-//                     if !arc_content.is_empty() {
-//                         // compute the vector clock of the remove operation
-//                         let vector_clock =
-//                             ltm.get_by_idx(event.metadata().origin.unwrap()).unwrap();
-
-//                         // The `true` here is what makes the map a Update-Wins graph
-//                         arc_content.r_n(vector_clock, true);
-//                     }
-//                 }
-
-//                 self.vertex_index.entry(v1.clone()).or_default().remove(&(
-//                     v1.clone(),
-//                     v2.clone(),
-//                     e1.clone(),
-//                 ));
-//             }
-//         }
-//     }
-
-//     fn eval(&self) -> Self::Value {
-//         let mut graph = Self::Value::new();
-//         let mut node_idx = HashMap::new();
-//         for (v, log) in self.vertex_content.iter() {
-//             if log.is_empty() {
-//                 continue; // Skip empty vertices
-//             }
-//             let idx = graph.add_node(Content {
-//                 id: v.clone(),
-//                 val: log.eval(),
-//             });
-//             node_idx.insert(v.clone(), idx);
-//         }
-//         for ((v1, v2, e), log) in self.arc_content.iter() {
-//             if log.is_empty() {
-//                 continue; // Skip empty edges
-//             }
-//             let idx1 = node_idx.get(v1);
-//             let idx2 = node_idx.get(v2);
-//             match (idx1, idx2) {
-//                 (Some(i1), Some(i2)) => {
-//                     graph.add_edge(
-//                         *i1,
-//                         *i2,
-//                         Content {
-//                             id: (v1.clone(), v2.clone(), e.clone()),
-//                             val: log.eval(),
-//                         },
-//                     );
-//                 }
-//                 _ => {
-//                     continue;
-//                 }
-//             }
-//         }
-//         graph
-//     }
-// }
-
-// #[cfg(test)]
-// mod tests {
-//     use petgraph::graph::DiGraph;
-
-//     use crate::{
-//         crdt::{
-//             counter::resettable_counter::Counter,
-//             graph::uw_multidigraph::{UWGraph, UWGraphLog},
-//             register::lww_register::LWWRegister,
-//             test_util::{triplet, twins},
-//         },
-//         protocol::event_graph::EventGraph,
-//     };
-
-//     #[test_log::test]
-//     fn nested_graph() {
-//         let (mut tcsb_a, mut tcsb_b) =
-//             twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
-
-//         let event = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         tcsb_b.try_deliver(event);
-
-//         let event = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
-//         tcsb_a.try_deliver(event);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-//         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)));
-//         let event_b_2 = tcsb_b.tc_bcast(UWGraph::UpdateArc("A", "B", 2, Counter::Dec(9)));
-
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_a.try_deliver(event_b_2);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(5)));
-//         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(10)));
-//         let event_b_2 = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(8)));
-
-//         tcsb_b.try_deliver(event_a);
-
-//         let event_b_3 = tcsb_b.tc_bcast(UWGraph::RemoveArc("A", "B", 1));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_a.try_deliver(event_b_2);
-//         tcsb_a.try_deliver(event_b_3);
-
-//         let event = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(3)));
-//         tcsb_b.try_deliver(event);
-
-//         let event = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(4)));
-//         tcsb_a.try_deliver(event);
-
-//         let event = tcsb_a.tc_bcast(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(3)));
-//         tcsb_b.try_deliver(event);
-
-//         println!(
-//             "Eval A: {:?}",
-//             petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[])
-//         );
-//         println!(
-//             "Eval B: {:?}",
-//             petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[])
-//         );
-
-//         assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
-//             .first()
-//             .is_some());
-//     }
-
-//     #[test_log::test]
-//     fn simple_graph() {
-//         let (mut tcsb_a, mut tcsb_b) =
-//             twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(2)));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
-
-//         let mut graph: DiGraph<i32, i32> = DiGraph::new();
-//         graph.add_node(2);
-
-//         assert!(petgraph::algo::is_isomorphic(&tcsb_a.eval(), &graph));
-//         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_a.eval(),
-//             &tcsb_b.eval()
-//         ));
-//     }
-
-//     #[test_log::test]
-//     fn remove_vertex() {
-//         let (mut tcsb_a, mut tcsb_b) =
-//             twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         tcsb_b.try_deliver(event_a);
-//         let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("A"));
-//         tcsb_a.try_deliver(event_b);
-
-//         assert_eq!(tcsb_a.eval().node_count(), 0);
-//         assert_eq!(&tcsb_a.eval().node_count(), &tcsb_b.eval().node_count());
-//     }
-
-//     #[test_log::test]
-//     fn revive_arc() {
-//         let (mut tcsb_a, mut tcsb_b) =
-//             twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         tcsb_b.try_deliver(event_a);
-//         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
-//         tcsb_a.try_deliver(event_b);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-//         let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("B"));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
-
-//         assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
-//             .first()
-//             .is_some());
-
-//         assert_eq!(tcsb_a.eval().node_count(), 1);
-//         assert_eq!(tcsb_a.eval().edge_count(), 0);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
-//         tcsb_b.try_deliver(event_a);
-
-//         assert_eq!(tcsb_a.eval().node_count(), 2);
-//         assert_eq!(tcsb_a.eval().edge_count(), 1);
-
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
-
-//         assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
-//             .first()
-//             .is_some());
-//     }
-
-//     #[test_log::test]
-//     fn revive_arc_2() {
-//         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<
-//             UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>,
-//         >();
-
-//         let event_b_1 = tcsb_b.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         tcsb_c.try_deliver(event_b_1.clone());
-//         let event_c_1 = tcsb_c.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(1)));
-//         let event_c_2 = tcsb_c.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-//         tcsb_b.try_deliver(event_c_1.clone());
-//         tcsb_b.try_deliver(event_c_2.clone());
-
-//         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_b.eval(),
-//             &tcsb_c.eval()
-//         ));
-
-//         let event_a_1 = tcsb_a.tc_bcast(UWGraph::RemoveVertex("B"));
-//         let event_a_2 = tcsb_a.tc_bcast(UWGraph::RemoveArc("A", "B", 1));
-//         tcsb_b.try_deliver(event_a_1.clone());
-//         tcsb_b.try_deliver(event_a_2.clone());
-
-//         tcsb_c.try_deliver(event_a_1);
-//         tcsb_c.try_deliver(event_a_2);
-
-//         tcsb_a.try_deliver(event_b_1);
-//         tcsb_a.try_deliver(event_c_1);
-//         tcsb_a.try_deliver(event_c_2);
-
-//         assert_eq!(tcsb_a.eval().node_count(), 2);
-//         assert_eq!(tcsb_a.eval().edge_count(), 1);
-
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
-
-//         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_a.eval(),
-//             &tcsb_b.eval()
-//         ));
-//         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_a.eval(),
-//             &tcsb_c.eval()
-//         ));
-//         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_b.eval(),
-//             &tcsb_c.eval()
-//         ));
-//     }
-
-//     #[test_log::test]
-//     fn revive_arc_3() {
-//         let (mut tcsb_a, mut tcsb_b) =
-//             twins::<UWGraphLog<&str, u8, EventGraph<LWWRegister<i32>>, EventGraph<Counter<i32>>>>();
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-//         tcsb_b.try_deliver(event_a);
-//         let event_b = tcsb_b.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
-//         tcsb_a.try_deliver(event_b);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-//         tcsb_b.try_deliver(event_a);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)));
-//         let event_b = tcsb_b.tc_bcast(UWGraph::RemoveVertex("B"));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
-
-//         assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
-//             .first()
-//             .is_some());
-
-//         assert_eq!(tcsb_a.eval().node_count(), 1);
-//         assert_eq!(tcsb_a.eval().edge_count(), 0);
-
-//         let event_a = tcsb_a.tc_bcast(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
-//         tcsb_b.try_deliver(event_a);
-
-//         assert_eq!(tcsb_a.eval().node_count(), 2);
-//         assert_eq!(tcsb_a.eval().edge_count(), 1);
-
-//         assert!(vf2::isomorphisms(&tcsb_a.eval(), &tcsb_b.eval())
-//             .first()
-//             .is_some());
-//     }
-
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_uw_multidigraph() {
-//         use crate::{
-//             crdt::graph::uw_multidigraph::Content,
-//             utils::op_weaver::{op_weaver, EventGraphConfig},
-//         };
-
-//         let ops = vec![
-//             UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
-//             UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
-//             UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
-//             UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
-//             UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
-//             UWGraph::RemoveVertex("a"),
-//             UWGraph::RemoveVertex("b"),
-//             UWGraph::RemoveVertex("c"),
-//             UWGraph::RemoveVertex("d"),
-//             UWGraph::RemoveVertex("e"),
-//             UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
-//             UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
-//             UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
-//             UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
-//             UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
-//             UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
-//             UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
-//             UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
-//             UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
-//             UWGraph::RemoveArc("a", "b", 1),
-//             UWGraph::RemoveArc("a", "b", 2),
-//             UWGraph::RemoveArc("b", "c", 1),
-//             UWGraph::RemoveArc("c", "d", 1),
-//             UWGraph::RemoveArc("d", "e", 1),
-//             UWGraph::RemoveArc("e", "a", 1),
-//         ];
-
-//         type GraphValue<'a> =
-//             DiGraph<Content<&'a str, &'a str>, Content<(&'a str, &'a str, u8), i32>>;
-
-//         let config = EventGraphConfig {
-//             name: "multidigraph",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &GraphValue, b: &GraphValue| vf2::isomorphisms(a, b).first().is_some(),
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
-
-//         op_weaver::<UWGraphLog<&str, u8, EventGraph<LWWRegister<&str>>, EventGraph<Counter<i32>>>>(
-//             config,
-//         );
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use petgraph::graph::DiGraph;
+
+    use crate::{
+        crdt::{
+            counter::resettable_counter::Counter,
+            graph::uw_multidigraph::{UWGraph, UWGraphLog},
+            register::lww_register::LWWRegister,
+            test_util::{triplet_log, twins_log},
+        },
+        protocol::{event::tagged_op::TaggedOp, replica::IsReplica, state::po_log::POLog},
+    };
+
+    type Lww = POLog<LWWRegister<i32>, Vec<TaggedOp<LWWRegister<i32>>>>;
+    type Cntr = POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>;
+
+    #[test]
+    fn nested_graph() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        replica_b.receive(event);
+
+        let event = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        replica_a.receive(event);
+
+        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        let event_b = replica_b.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)));
+        let event_b_2 = replica_b.send(UWGraph::UpdateArc("A", "B", 2, Counter::Dec(9)));
+
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+        replica_a.receive(event_b_2);
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(5)));
+        let event_b = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(10)));
+        let event_b_2 = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(8)));
+
+        replica_b.receive(event_a);
+
+        let event_b_3 = replica_b.send(UWGraph::RemoveArc("A", "B", 1));
+        replica_a.receive(event_b);
+        replica_a.receive(event_b_2);
+        replica_a.receive(event_b_3);
+
+        let event = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(3)));
+        replica_b.receive(event);
+
+        let event = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(4)));
+        replica_a.receive(event);
+
+        let event = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(3)));
+        replica_b.receive(event);
+
+        println!(
+            "Eval A: {:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
+        );
+        println!(
+            "Eval B: {:?}",
+            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
+        );
+
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
+            .first()
+            .is_some());
+    }
+
+    #[test]
+    fn simple_graph() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_b = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(2)));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        let mut graph: DiGraph<i32, i32> = DiGraph::new();
+        graph.add_node(2);
+
+        assert!(petgraph::algo::is_isomorphic(&replica_a.query(), &graph));
+        assert!(petgraph::algo::is_isomorphic(
+            &replica_a.query(),
+            &replica_b.query()
+        ));
+    }
+
+    #[test]
+    fn remove_vertex() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        replica_b.receive(event_a);
+        let event_b = replica_b.send(UWGraph::RemoveVertex("A"));
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query().node_count(), 0);
+        assert_eq!(
+            &replica_a.query().node_count(),
+            &replica_b.query().node_count()
+        );
+    }
+
+    #[test]
+    fn revive_arc() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        replica_b.receive(event_a);
+        let event_b = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        replica_a.receive(event_b);
+
+        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        let event_b = replica_b.send(UWGraph::RemoveVertex("B"));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
+            .first()
+            .is_some());
+
+        assert_eq!(replica_a.query().node_count(), 1);
+        assert_eq!(replica_a.query().edge_count(), 0);
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        replica_b.receive(event_a);
+
+        assert_eq!(replica_a.query().node_count(), 2);
+        assert_eq!(replica_a.query().edge_count(), 1);
+
+        println!(
+            "{:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
+        );
+        println!(
+            "{:?}",
+            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
+        );
+
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
+            .first()
+            .is_some());
+    }
+
+    #[test]
+    fn revive_arc_2() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event_b_1 = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        replica_c.receive(event_b_1.clone());
+        let event_c_1 = replica_c.send(UWGraph::UpdateVertex("B", LWWRegister::Write(1)));
+        let event_c_2 = replica_c.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        replica_b.receive(event_c_1.clone());
+        replica_b.receive(event_c_2.clone());
+
+        assert!(petgraph::algo::is_isomorphic(
+            &replica_b.query(),
+            &replica_c.query()
+        ));
+
+        let event_a_1 = replica_a.send(UWGraph::RemoveVertex("B"));
+        let event_a_2 = replica_a.send(UWGraph::RemoveArc("A", "B", 1));
+        replica_b.receive(event_a_1.clone());
+        replica_b.receive(event_a_2.clone());
+
+        replica_c.receive(event_a_1);
+        replica_c.receive(event_a_2);
+
+        replica_a.receive(event_b_1);
+        replica_a.receive(event_c_1);
+        replica_a.receive(event_c_2);
+
+        assert_eq!(replica_a.query().node_count(), 2);
+        assert_eq!(replica_a.query().edge_count(), 1);
+
+        println!(
+            "{:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
+        );
+
+        assert!(petgraph::algo::is_isomorphic(
+            &replica_a.query(),
+            &replica_b.query()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &replica_a.query(),
+            &replica_c.query()
+        ));
+        assert!(petgraph::algo::is_isomorphic(
+            &replica_b.query(),
+            &replica_c.query()
+        ));
+    }
+
+    #[test]
+    fn revive_arc_3() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        replica_b.receive(event_a);
+        let event_b = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        replica_a.receive(event_b);
+
+        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        replica_b.receive(event_a);
+
+        let event_a = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)));
+        let event_b = replica_b.send(UWGraph::RemoveVertex("B"));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
+            .first()
+            .is_some());
+
+        assert_eq!(replica_a.query().node_count(), 1);
+        assert_eq!(replica_a.query().edge_count(), 0);
+
+        let event_a = replica_a.send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        replica_b.receive(event_a);
+
+        assert_eq!(replica_a.query().node_count(), 2);
+        assert_eq!(replica_a.query().edge_count(), 1);
+
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
+            .first()
+            .is_some());
+    }
+
+    // #[cfg(feature = "op_weaver")]
+    // #[test]
+    // fn op_weaver_uw_multidigraph() {
+    //     use crate::{
+    //         crdt::graph::uw_multidigraph::Content,
+    //         utils::op_weaver::{op_weaver, EventGraphConfig},
+    //     };
+
+    //     let ops = vec![
+    //         UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
+    //         UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
+    //         UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
+    //         UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
+    //         UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
+    //         UWGraph::RemoveVertex("a"),
+    //         UWGraph::RemoveVertex("b"),
+    //         UWGraph::RemoveVertex("c"),
+    //         UWGraph::RemoveVertex("d"),
+    //         UWGraph::RemoveVertex("e"),
+    //         UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
+    //         UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
+    //         UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
+    //         UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
+    //         UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
+    //         UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
+    //         UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
+    //         UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
+    //         UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
+    //         UWGraph::RemoveArc("a", "b", 1),
+    //         UWGraph::RemoveArc("a", "b", 2),
+    //         UWGraph::RemoveArc("b", "c", 1),
+    //         UWGraph::RemoveArc("c", "d", 1),
+    //         UWGraph::RemoveArc("d", "e", 1),
+    //         UWGraph::RemoveArc("e", "a", 1),
+    //     ];
+
+    //     type GraphValue<'a> =
+    //         DiGraph<Content<&'a str, &'a str>, Content<(&'a str, &'a str, u8), i32>>;
+
+    //     let config = EventGraphConfig {
+    //         name: "multidigraph",
+    //         num_replicas: 8,
+    //         num_operations: 10_000,
+    //         operations: &ops,
+    //         final_sync: true,
+    //         churn_rate: 0.3,
+    //         reachability: None,
+    //         compare: |a: &GraphValue, b: &GraphValue| vf2::isomorphisms(a, b).first().is_some(),
+    //         record_results: true,
+    //         seed: None,
+    //         witness_graph: false,
+    //         concurrency_score: false,
+    //     };
+
+    //     op_weaver::<UWGraphLog<&str, u8, EventGraph<LWWRegister<&str>>, EventGraph<Counter<i32>>>>(
+    //         config,
+    //     );
+    // }
+}

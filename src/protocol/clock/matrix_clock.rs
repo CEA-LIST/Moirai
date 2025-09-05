@@ -1,13 +1,15 @@
+use std::fmt::{Display, Formatter};
 use std::{collections::HashMap, fmt::Debug};
 
 // #[cfg(feature = "utils")]
 // use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use tracing::info;
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::protocol::membership::{ReplicaId, ReplicaIdx, View};
+use crate::protocol::membership::{view::View, ReplicaId, ReplicaIdx};
 use crate::{protocol::clock::version_vector::Version, utils::mut_owner::Reader};
 
 /// A matrix clock is a generalization of a vector clock. It is a square matrix of positive integers.
@@ -33,11 +35,13 @@ impl MatrixClock {
             .members()
             .map(|(idx, _)| (*idx, Version::new(view, *idx)))
             .collect();
-        Self {
+        let matrix = Self {
             entries,
             view: Reader::clone(view),
             origin_idx,
-        }
+        };
+        debug_assert!(matrix.is_valid());
+        matrix
     }
 
     pub fn origin_version(&self) -> &Version {
@@ -48,15 +52,34 @@ impl MatrixClock {
         self.entries.get_mut(&self.origin_idx).unwrap()
     }
 
-    pub fn get_by_id(&self, id: &ReplicaId) -> Option<&Version> {
+    pub fn version_by_id(&self, id: &ReplicaId) -> Option<&Version> {
         self.view
             .borrow()
             .get_idx(id)
-            .and_then(|idx| self.get_by_idx(idx))
+            .and_then(|idx| self.version_by_idx(idx))
     }
 
-    pub fn get_by_idx(&self, idx: ReplicaIdx) -> Option<&Version> {
+    fn version_by_idx(&self, idx: ReplicaIdx) -> Option<&Version> {
         self.entries.get(&idx)
+    }
+
+    pub fn set_by_id(&mut self, id: &ReplicaId, version: &Version) {
+        let idx_option = self.view.borrow().get_idx(id);
+        if let Some(idx) = idx_option {
+            self.set_by_idx(idx, version);
+        }
+    }
+
+    fn set_by_idx(&mut self, idx: ReplicaIdx, version: &Version) {
+        self.entries.insert(idx, version.clone());
+    }
+
+    /// Change the view of the matrix clock.
+    /// # Invariant
+    /// The previous indices must be preserved.
+    pub fn change_view(&mut self, new_view: &Reader<View>) {
+        self.view = Reader::clone(new_view);
+        debug_assert!(self.is_valid());
     }
 
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
@@ -68,17 +91,22 @@ impl MatrixClock {
     pub fn column_wise_min(&self) -> Version {
         let mut min_clock = Version::new(&self.view, self.origin_idx);
 
-        for row in self.entries.values() {
-            for (idx, seq) in row.iter() {
-                if let Some(min_seq) = min_clock.seq_by_idx(*idx) {
-                    if *seq < min_seq {
-                        min_clock.set_by_idx(*idx, *seq);
-                    }
-                } else {
-                    min_clock.set_by_idx(*idx, *seq);
+        for (_, col_id) in self.view.borrow().members() {
+            let mut min = usize::MAX;
+            for (_, row_id) in self.view.borrow().members() {
+                let seq = self
+                    .version_by_id(row_id)
+                    .and_then(|v| v.seq_by_id(col_id))
+                    .unwrap_or(0);
+                if seq < min {
+                    min = seq;
                 }
             }
+            min_clock.set_by_id(col_id, min);
         }
+
+        info!("Column-wise minimum: {}", min_clock);
+        info!("Matrix is: {}", self);
 
         min_clock
     }
@@ -133,155 +161,115 @@ impl MatrixClock {
         let diagonal = self.diagonal();
         let dominate = self.dominate();
 
+        if !is_square {
+            println!("Matrix clock is not square");
+        }
+        if !diagonal {
+            println!("Matrix clock is not diagonal");
+        }
+        if !dominate {
+            println!("Matrix clock does not dominate");
+        }
+
         is_square && diagonal && dominate
+    }
+
+    #[cfg(test)]
+    fn build(view: &Reader<View>, origin_idx: ReplicaIdx, values: &[&[usize]]) -> Self {
+        let mut mc = MatrixClock::new(view, origin_idx);
+        for (idx, val) in values.iter().enumerate() {
+            let version = Version::build(view, idx, val);
+            mc.set_by_idx(idx, &version);
+        }
+        mc
     }
 }
 
-// impl Display for MatrixClock {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-//         writeln!(f, "{{")?;
-//         for (i, m) in self.view.members().iter().enumerate() {
-//             writeln!(f, "  {}: {}", m, self.clock.get(&i).unwrap())?;
-//         }
-//         write!(f, "}}")
-//     }
-// }
+impl Display for MatrixClock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{{")?;
+        for (_, id) in self.view.borrow().members() {
+            let version = self.version_by_id(id).unwrap();
+            writeln!(f, "  {id}: {version}")?;
+        }
+        write!(f, "}}")
+    }
+}
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use crate::{
+        protocol::{
+            clock::{matrix_clock::MatrixClock, version_vector::Version},
+            membership::view::View,
+        },
+        utils::mut_owner::MutOwner,
+    };
 
-//     fn view_ab() -> Rc<ViewData> {
-//         Rc::new(ViewData {
-//             members: vec!["A".to_string(), "B".to_string()],
-//             id: 0,
-//         })
-//     }
+    fn view() -> MutOwner<View> {
+        let mut view = View::new(&"a".to_string());
+        view.add(&"b".to_string());
+        view.add(&"c".to_string());
+        MutOwner::new(view)
+    }
 
-//     fn view_abc() -> Rc<ViewData> {
-//         Rc::new(ViewData {
-//             members: vec!["A".to_string(), "B".to_string(), "C".to_string()],
-//             id: 0,
-//         })
-//     }
+    #[test]
+    fn new() {
+        let view = view().as_reader();
+        let mc = MatrixClock::new(&view, 0);
+        assert_eq!(mc.entries.len(), 3);
+        assert_eq!(
+            mc.version_by_id(&"a".to_string()),
+            Some(&Version::new(&view, 0))
+        );
+    }
 
-//     #[test_log::test]
-//     fn new() {
-//         let mc = MatrixClock::build(&view_abc(), 0, &[&[0, 0, 0], &[0, 0, 0], &[0, 0, 0]]);
-//         assert_eq!(mc.clock.len(), 3);
-//         assert_eq!(
-//             mc.get("A"),
-//             Some(&Version::build(&view_abc(), Some("A"), &[0, 0, 0]))
-//         );
-//     }
+    #[test]
+    fn column_wise_min() {
+        let view = view().as_reader();
+        let mc = MatrixClock::build(&view, 0, &[&[10, 6, 5], &[8, 6, 3], &[9, 4, 5]]);
+        assert_eq!(mc.column_wise_min(), Version::build(&view, 0, &[8, 4, 3]));
+    }
 
-//     #[test_log::test]
-//     fn svv() {
-//         let m = MatrixClock::build(&view_ab(), 0, &[&[10, 2], &[8, 6]]);
-//         assert_eq!(m.svv(&[]), Version::build(&view_ab(), None, &[8, 2]));
-//     }
+    //     #[test]
+    //     fn change_view() {
+    //         let mut mc = MatrixClock::build(&view_ab(), 0, &[&[10, 6], &[8, 6]]);
+    //         let view_data = ViewData {
+    //             members: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+    //             id: 1,
+    //         };
+    //         let rc_view_data = &Rc::new(view_data);
+    //         mc.change_view(rc_view_data, 0);
+    //         assert_eq!(
+    //             mc,
+    //             MatrixClock::build(rc_view_data, 0, &[&[10, 6, 0], &[8, 6, 0], &[0, 0, 0]])
+    //         );
+    //     }
 
-//     #[test_log::test]
-//     fn incremental_svv() {
-//         let mut lsv = Version::build(&view_ab(), None, &[0, 0]);
-//         let mut m = MatrixClock::build(&view_ab(), 0, &[&[0, 0], &[0, 0]]);
-//         let c_1: Version = Version::build(&view_ab(), Some("A"), &[1, 0]);
-//         m.merge_clock(&c_1);
-//         assert_eq!(
-//             m.incremental_svv(&c_1, &mut lsv, &[]),
-//             Version::build(&view_ab(), None, &[0, 0])
-//         );
-//         let c_2: Version = Version::build(&view_ab(), Some("B"), &[0, 1]);
-//         m.get_mut("A").unwrap().merge(&c_2);
-//         m.merge_clock(&c_2);
-//         assert_eq!(
-//             m.incremental_svv(&c_2, &mut lsv, &[]),
-//             Version::build(&view_ab(), None, &[0, 1])
-//         );
-//         let c_3: Version = Version::build(&view_ab(), Some("A"), &[2, 1]);
-//         m.get_mut("A").unwrap().merge(&c_3);
-//         m.merge_clock(&c_3);
-//         assert_eq!(
-//             m.incremental_svv(&c_3, &mut lsv, &[]),
-//             Version::build(&view_ab(), None, &[0, 1])
-//         );
-//         let c_4: Version = Version::build(&view_ab(), Some("B"), &[2, 2]);
-//         m.get_mut("A").unwrap().merge(&c_4);
-//         m.merge_clock(&c_4);
-//         assert_eq!(
-//             m.incremental_svv(&c_4, &mut lsv, &[]),
-//             Version::build(&view_ab(), None, &[2, 2])
-//         );
-//     }
-
-//     #[test_log::test]
-//     fn merge() {
-//         let mut mc1 = MatrixClock::build(&view_ab(), 0, &[&[10, 6], &[8, 6]]);
-//         let mc2 = MatrixClock::build(&view_ab(), 0, &[&[7, 13], &[1, 13]]);
-//         mc1.merge(&mc2);
-//         assert_eq!(
-//             mc1,
-//             MatrixClock::build(&view_ab(), 0, &[&[10, 13], &[8, 13]])
-//         );
-//     }
-
-//     #[test_log::test]
-//     fn svv_ignore() {
-//         let mc = MatrixClock::build(&view_abc(), 0, &[&[2, 6, 1], &[2, 5, 2], &[1, 4, 11]]);
-//         assert_eq!(
-//             mc.svv(&[&"C".to_string()]),
-//             Version::build(&view_abc(), None, &[2, 5, 1])
-//         );
-//     }
-
-//     #[test_log::test]
-//     fn display() {
-//         let mc = MatrixClock::build(&view_abc(), 0, &[&[0, 1, 1], &[1, 0, 1], &[1, 1, 0]]);
-//         assert_eq!(
-//             format!("{}", mc),
-//             "{\n  A: { A: 0, B: 1, C: 1 }@A\n  B: { A: 1, B: 0, C: 1 }@B\n  C: { A: 1, B: 1, C: 0 }@C\n}"
-//         );
-//     }
-
-//     #[test_log::test]
-//     fn change_view() {
-//         let mut mc = MatrixClock::build(&view_ab(), 0, &[&[10, 6], &[8, 6]]);
-//         let view_data = ViewData {
-//             members: vec!["A".to_string(), "B".to_string(), "C".to_string()],
-//             id: 1,
-//         };
-//         let rc_view_data = &Rc::new(view_data);
-//         mc.change_view(rc_view_data, 0);
-//         assert_eq!(
-//             mc,
-//             MatrixClock::build(rc_view_data, 0, &[&[10, 6, 0], &[8, 6, 0], &[0, 0, 0]])
-//         );
-//     }
-
-//     #[test_log::test]
-//     fn change_view_complex() {
-//         let view_data_0 = ViewData {
-//             members: vec!["B".to_string(), "C".to_string(), "D".to_string()],
-//             id: 0,
-//         };
-//         let view_data_0_rc = Rc::new(view_data_0);
-//         let mut mc = MatrixClock::build(&view_data_0_rc, 1, &[&[10, 6, 4], &[8, 6, 4], &[9, 0, 4]]);
-//         let view_data_1 = ViewData {
-//             members: vec![
-//                 "E".to_string(),
-//                 "A".to_string(),
-//                 "C".to_string(),
-//                 "D".to_string(),
-//             ],
-//             id: 1,
-//         };
-//         let view_data_1_rc = Rc::new(view_data_1);
-//         mc.change_view(&view_data_1_rc, 2);
-//         let test = MatrixClock::build(
-//             &view_data_1_rc,
-//             2,
-//             &[&[0, 0, 0, 0], &[0, 0, 0, 0], &[0, 0, 6, 4], &[0, 0, 0, 4]],
-//         );
-//         assert_eq!(test, mc);
-//     }
-// }
+    //     #[test]
+    //     fn change_view_complex() {
+    //         let view_data_0 = ViewData {
+    //             members: vec!["B".to_string(), "C".to_string(), "D".to_string()],
+    //             id: 0,
+    //         };
+    //         let view_data_0_rc = Rc::new(view_data_0);
+    //         let mut mc = MatrixClock::build(&view_data_0_rc, 1, &[&[10, 6, 4], &[8, 6, 4], &[9, 0, 4]]);
+    //         let view_data_1 = ViewData {
+    //             members: vec![
+    //                 "E".to_string(),
+    //                 "A".to_string(),
+    //                 "C".to_string(),
+    //                 "D".to_string(),
+    //             ],
+    //             id: 1,
+    //         };
+    //         let view_data_1_rc = Rc::new(view_data_1);
+    //         mc.change_view(&view_data_1_rc, 2);
+    //         let test = MatrixClock::build(
+    //             &view_data_1_rc,
+    //             2,
+    //             &[&[0, 0, 0, 0], &[0, 0, 0, 0], &[0, 0, 6, 4], &[0, 0, 0, 4]],
+    //         );
+    //         assert_eq!(test, mc);
+    //     }
+}

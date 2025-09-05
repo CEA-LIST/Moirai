@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt::Display};
 
 use crate::protocol::event::{id::EventId, lamport::Lamport};
 
@@ -35,9 +35,21 @@ impl Ord for Tag {
         match self.lamport.cmp(&other.lamport) {
             Ordering::Equal => {
                 // Tie-break using origin id
-                self.id.origin_idx().cmp(&other.id.origin_idx())
+                println!(
+                    "{} is {:?} than {}",
+                    self.id.origin_id(),
+                    self.id.origin_id().cmp(&other.id.origin_id()),
+                    other.id.origin_id(),
+                );
+                self.id.origin_id().cmp(&other.id.origin_id())
             }
             other_order => other_order,
         }
+    }
+}
+
+impl Display for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{},{}]", self.id, self.lamport)
     }
 }

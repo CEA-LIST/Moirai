@@ -75,14 +75,19 @@ where
         is_conc: bool,
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
+        tracing::info!(
+            "Checking redundancy: old_op = {:?}, new_op = {:?}",
+            old_op,
+            new_tagged_op.op()
+        );
+        tracing::info!("Is concurrent: {}", is_conc);
         !is_conc
-            && (matches!(new_tagged_op.op(), AWSet::Clear)
-                || match (&old_op, &new_tagged_op.op()) {
-                    (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => {
-                        v1 == v2
-                    }
-                    _ => false,
-                })
+            && match (old_op, new_tagged_op.op()) {
+                (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => v1 == v2,
+                (_, AWSet::Clear) => true,
+                (AWSet::Remove(_), _) => unreachable!(),
+                (AWSet::Clear, _) => unreachable!(),
+            }
     }
 
     fn redundant_by_when_not_redundant(
@@ -111,186 +116,193 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::collections::HashSet;
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
 
-//     use crate::{
-//         crdt::{set::aw_set::AWSet, test_util::twins},
-//         protocol::event_graph::EventGraph,
-//     };
+    use crate::{
+        crdt::{
+            set::aw_set::AWSet,
+            test_util::{triplet, twins},
+        },
+        protocol::{
+            replica::IsReplica,
+            state::{log::IsLogTest, stable_state::IsStableState},
+        },
+    };
 
-//     #[test_log::test]
-//     fn simple_aw_set() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
+    #[test]
+    fn simple_aw_set() {
+        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(AWSet::Add("a"));
+        replica_b.receive(event);
 
-//         assert_eq!(HashSet::from(["a"]), tcsb_a.eval());
-//         assert_eq!(HashSet::from(["a"]), tcsb_b.eval());
+        assert_eq!(HashSet::from(["a"]), replica_a.query());
+        assert_eq!(HashSet::from(["a"]), replica_b.query());
 
-//         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
-//         tcsb_a.try_deliver(event);
+        let event = replica_b.send(AWSet::Add("b"));
+        replica_a.receive(event);
 
-//         let event = tcsb_a.tc_bcast(AWSet::Remove("a"));
-//         tcsb_b.try_deliver(event);
+        let result = HashSet::from(["b", "a"]);
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_b.query(), result);
 
-//         let event = tcsb_b.tc_bcast(AWSet::Add("c"));
-//         tcsb_a.try_deliver(event);
+        let event = replica_a.send(AWSet::Remove("a"));
+        replica_b.receive(event);
 
-//         let result = HashSet::from(["b", "c"]);
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let event = replica_b.send(AWSet::Add("c"));
+        replica_a.receive(event);
 
-//     #[test_log::test]
-//     fn complex_aw_set() {
-//         let (mut tcsb_a, mut tcsb_b, _) =
-//             crate::crdt::test_util::triplet::<EventGraph<AWSet<&str>>>();
+        let result = HashSet::from(["b", "c"]);
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_b.query(), result);
+    }
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("b"));
-//         tcsb_b.try_deliver(event);
+    #[test]
+    fn complex_aw_set() {
+        let (mut replica_a, mut replica_b, _) = triplet::<AWSet<&str>>();
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(AWSet::Add("b"));
+        replica_b.receive(event);
 
-//         let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
-//         let event_b = tcsb_b.tc_bcast(AWSet::Add("c"));
+        let event = replica_a.send(AWSet::Add("a"));
+        replica_b.receive(event);
 
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+        let event_a = replica_a.send(AWSet::Remove("a"));
+        let event_b = replica_b.send(AWSet::Add("c"));
 
-//         let result = HashSet::from(["b", "c"]);
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-//     #[test_log::test]
-//     fn clear_aw_set() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
+        let result = HashSet::from(["b", "c"]);
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//         assert_eq!(tcsb_a.view_id(), tcsb_b.view_id());
+    #[test]
+    fn clear_aw_set() {
+        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
+        let event = replica_a.send(AWSet::Add("a"));
+        replica_b.receive(event);
 
-//         tcsb_b.try_deliver(event);
+        println!("replica_b state: {:#?}", replica_b.state().stable());
+        assert_eq!(replica_b.state().stable().len(), 1);
 
-//         assert_eq!(tcsb_b.state.stable.len(), 1);
+        let event = replica_b.send(AWSet::Add("b"));
+        replica_a.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
-//         tcsb_a.try_deliver(event);
+        assert_eq!(replica_a.state().stable().len(), 2);
 
-//         assert_eq!(tcsb_a.state.stable.len(), 2);
+        let event = replica_a.send(AWSet::Clear);
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(AWSet::Clear);
-//         tcsb_b.try_deliver(event);
+        let result = HashSet::new();
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//         let result = HashSet::new();
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+    #[test]
+    fn concurrent_aw_set() {
+        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//     #[test_log::test]
-//     fn concurrent_aw_set() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
+        let event = replica_a.send(AWSet::Add("a"));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("a"));
-//         tcsb_b.try_deliver(event);
+        assert_eq!(replica_b.state().stable().len(), 1);
 
-//         assert_eq!(tcsb_b.state.stable.len(), 1);
+        let event = replica_b.send(AWSet::Add("b"));
+        replica_a.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
-//         tcsb_a.try_deliver(event);
+        assert_eq!(replica_a.state().stable().len(), 2);
 
-//         assert_eq!(tcsb_a.state.stable.len(), 2);
+        let event_a = replica_a.send(AWSet::Add("a"));
+        let event_b = replica_b.send(AWSet::Remove("a"));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-//         let event_a = tcsb_a.tc_bcast(AWSet::Add("a"));
-//         let event_b = tcsb_b.tc_bcast(AWSet::Remove("a"));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+        let result = HashSet::from(["a", "b"]);
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//         let result = HashSet::from(["a", "b"]);
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+    #[test]
+    fn concurrent_add_aw_set() {
+        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//     #[test_log::test]
-//     fn concurrent_add_aw_set() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
+        let event = replica_a.send(AWSet::Add("c"));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(AWSet::Add("c"));
-//         tcsb_b.try_deliver(event);
+        assert_eq!(replica_b.state().stable().len(), 1);
 
-//         assert_eq!(tcsb_b.state.stable.len(), 1);
+        let event = replica_b.send(AWSet::Add("b"));
+        replica_a.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWSet::Add("b"));
-//         tcsb_a.try_deliver(event);
+        assert_eq!(replica_a.state().stable().len(), 2);
 
-//         assert_eq!(tcsb_a.state.stable.len(), 2);
+        let event_a = replica_a.send(AWSet::Add("a"));
+        let event_b = replica_b.send(AWSet::Add("a"));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-//         let event_a = tcsb_a.tc_bcast(AWSet::Add("a"));
-//         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+        let result = HashSet::from(["a", "c", "b"]);
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//         let result = HashSet::from(["a", "c", "b"]);
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+    #[test]
+    fn concurrent_add_aw_set_2() {
+        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//     #[test_log::test]
-//     fn concurrent_add_aw_set_2() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<AWSet<&str>>>();
+        let event_a = replica_a.send(AWSet::Remove("a"));
+        let event_b = replica_b.send(AWSet::Add("a"));
 
-//         let event_a = tcsb_a.tc_bcast(AWSet::Remove("a"));
-//         let event_b = tcsb_b.tc_bcast(AWSet::Add("a"));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+        assert_eq!(replica_a.query(), HashSet::from(["a"]));
+        assert_eq!(replica_b.query(), replica_a.query());
+    }
 
-//         assert_eq!(tcsb_a.eval(), HashSet::from(["a"]));
-//         assert_eq!(tcsb_b.eval(), tcsb_a.eval());
-//     }
+    //     #[cfg(feature = "utils")]
+    //     #[test]
+    //     fn convergence_checker() {
+    //         // TODO: Implement a convergence checker for AWSet
+    //     }
 
-//     #[cfg(feature = "utils")]
-//     #[test_log::test]
-//     fn convergence_checker() {
-//         // TODO: Implement a convergence checker for AWSet
-//     }
+    //     #[cfg(feature = "op_weaver")]
+    //     #[test]
+    //     fn op_weaver_aw_set() {
+    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_aw_set() {
-//         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    //         let mut ops = Vec::with_capacity(10_000);
 
-//         let mut ops = Vec::with_capacity(10_000);
+    //         // Add operations from 0 to 4999
+    //         for val in 0..5000 {
+    //             ops.push(AWSet::Add(val));
+    //         }
 
-//         // Add operations from 0 to 4999
-//         for val in 0..5000 {
-//             ops.push(AWSet::Add(val));
-//         }
+    //         // Remove operations from 0 to 4999
+    //         for val in 0..5000 {
+    //             ops.push(AWSet::Remove(val));
+    //         }
 
-//         // Remove operations from 0 to 4999
-//         for val in 0..5000 {
-//             ops.push(AWSet::Remove(val));
-//         }
+    //         let config = EventGraphConfig {
+    //             name: "aw_set",
+    //             num_replicas: 8,
+    //             num_operations: 100_000,
+    //             operations: &ops,
+    //             final_sync: true,
+    //             churn_rate: 0.8,
+    //             reachability: None,
+    //             compare: |a: &HashSet<i32>, b: &HashSet<i32>| a == b,
+    //             record_results: true,
+    //             seed: None,
+    //             witness_graph: false,
+    //             concurrency_score: false,
+    //         };
 
-//         let config = EventGraphConfig {
-//             name: "aw_set",
-//             num_replicas: 8,
-//             num_operations: 100_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.8,
-//             reachability: None,
-//             compare: |a: &HashSet<i32>, b: &HashSet<i32>| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
-
-//         op_weaver::<EventGraph<AWSet<i32>>>(config);
-//     }
-// }
+    //         op_weaver::<EventGraph<AWSet<i32>>>(config);
+    //     }
+}

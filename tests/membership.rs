@@ -6,7 +6,7 @@
 // // are aware of the current view.
 
 // use moirai::{
-//     crdt::{counter::resettable_counter::Counter, test_util::triplet_graph},
+//     crdt::{counter::resettable_counter::Counter, test_util::triplet},
 //     protocol::{event_graph::EventGraph, pulling::Since, tcsb::Tcsb},
 // };
 
@@ -19,208 +19,208 @@
 //     }
 // }
 
-// #[test_log::test]
+// #[test]
 // fn join_new_group() {
-//     let mut tcsb_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
-//     let mut tcsb_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
+//     let mut replica_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
+//     let mut replica_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
 
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(1));
-//     let _ = tcsb_a.tc_bcast(Counter::Dec(1));
+//     let _ = replica_a.send(Counter::Inc(1));
+//     let _ = replica_a.send(Counter::Inc(1));
+//     let _ = replica_a.send(Counter::Dec(1));
 
-//     let _ = tcsb_b.tc_bcast(Counter::Inc(7));
-//     let _ = tcsb_b.tc_bcast(Counter::Dec(11));
-//     let _ = tcsb_b.tc_bcast(Counter::Dec(9));
+//     let _ = replica_b.send(Counter::Inc(7));
+//     let _ = replica_b.send(Counter::Dec(11));
+//     let _ = replica_b.send(Counter::Dec(9));
 
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_a.start_installing_view();
-//     tcsb_a.mark_view_installed();
-//     tcsb_b.state_transfer(&mut tcsb_a);
+//     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_a.start_installing_view();
+//     replica_a.mark_view_installed();
+//     replica_b.state_transfer(&mut replica_a);
 
-//     assert_eq!(tcsb_a.group_members(), tcsb_a.group_members(),);
-//     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+//     assert_eq!(replica_a.group_members(), replica_a.group_members(),);
+//     assert_eq!(replica_a.query(), replica_b.query());
 // }
 
-// #[test_log::test]
+// #[test]
 // fn join_existing_group() {
-//     let mut tcsb_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
-//     let mut tcsb_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
-//     let mut tcsb_c = Tcsb::<EventGraph<Counter<i32>>>::new("c");
+//     let mut replica_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
+//     let mut replica_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
+//     let mut replica_c = Tcsb::<EventGraph<Counter<i32>>>::new("c");
 
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_a.start_installing_view();
-//     tcsb_a.mark_view_installed();
+//     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_a.start_installing_view();
+//     replica_a.mark_view_installed();
 
-//     tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_b.start_installing_view();
-//     tcsb_b.mark_view_installed();
+//     replica_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_b.start_installing_view();
+//     replica_b.mark_view_installed();
 
-//     let event_a_1 = tcsb_a.tc_bcast(Counter::Inc(1));
-//     let event_b_1 = tcsb_b.tc_bcast(Counter::Inc(7));
-//     tcsb_b.try_deliver(event_a_1);
-//     tcsb_a.try_deliver(event_b_1);
+//     let event_a_1 = replica_a.send(Counter::Inc(1));
+//     let event_b_1 = replica_b.send(Counter::Inc(7));
+//     replica_b.receive(event_a_1);
+//     replica_a.receive(event_b_1);
 
-//     let event_a_2 = tcsb_a.tc_bcast(Counter::Inc(1));
-//     tcsb_b.try_deliver(event_a_2);
+//     let event_a_2 = replica_a.send(Counter::Inc(1));
+//     replica_b.receive(event_a_2);
 
-//     let event_a_3 = tcsb_a.tc_bcast(Counter::Dec(1));
-//     tcsb_b.try_deliver(event_a_3);
+//     let event_a_3 = replica_a.send(Counter::Dec(1));
+//     replica_b.receive(event_a_3);
 
-//     let event_b_2 = tcsb_b.tc_bcast(Counter::Dec(11));
-//     let event_b_3 = tcsb_b.tc_bcast(Counter::Dec(9));
-//     tcsb_a.try_deliver(event_b_2);
-//     tcsb_a.try_deliver(event_b_3);
+//     let event_b_2 = replica_b.send(Counter::Dec(11));
+//     let event_b_3 = replica_b.send(Counter::Dec(9));
+//     replica_a.receive(event_b_2);
+//     replica_a.receive(event_b_3);
 
-//     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+//     assert_eq!(replica_a.query(), replica_b.query());
 
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-//     tcsb_a.start_installing_view();
+//     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+//     replica_a.start_installing_view();
 
-//     tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-//     tcsb_b.start_installing_view();
+//     replica_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+//     replica_b.start_installing_view();
 
-//     let batch_from_a = tcsb_a.events_since(&Since::new_from(&tcsb_b));
-//     tcsb_b.deliver_batch(batch_from_a);
+//     let batch_from_a = replica_a.events_since(&Since::new_from(&replica_b));
+//     replica_b.deliver_batch(batch_from_a);
 
-//     let batch_from_b = tcsb_b.events_since(&Since::new_from(&tcsb_a));
-//     tcsb_a.deliver_batch(batch_from_b);
+//     let batch_from_b = replica_b.events_since(&Since::new_from(&replica_a));
+//     replica_a.deliver_batch(batch_from_b);
 
-//     tcsb_a.mark_view_installed();
-//     tcsb_b.mark_view_installed();
+//     replica_a.mark_view_installed();
+//     replica_b.mark_view_installed();
 
-//     tcsb_c.state_transfer(&mut tcsb_a);
+//     replica_c.state_transfer(&mut replica_a);
 
-//     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
-//     assert_eq!(tcsb_a.group_members(), tcsb_c.group_members());
-//     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
+//     assert_eq!(replica_a.group_members(), replica_b.group_members());
+//     assert_eq!(replica_a.group_members(), replica_c.group_members());
+//     assert_eq!(replica_a.query(), replica_b.query());
+//     assert_eq!(replica_a.query(), replica_c.eval());
 // }
 
-// #[test_log::test]
+// #[test]
 // fn leave() {
-//     let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Counter<i32>>();
+//     let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<i32>>();
 
-//     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
-//     let event_b = tcsb_b.tc_bcast(Counter::Inc(7));
+//     let event_a = replica_a.send(Counter::Inc(1));
+//     let event_b = replica_b.send(Counter::Inc(7));
 
-//     tcsb_b.try_deliver(event_a.clone());
-//     tcsb_a.try_deliver(event_b.clone());
-//     tcsb_c.try_deliver(event_a);
-//     tcsb_c.try_deliver(event_b);
+//     replica_b.receive(event_a.clone());
+//     replica_a.receive(event_b.clone());
+//     replica_c.receive(event_a);
+//     replica_c.receive(event_b);
 
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_a.start_installing_view();
+//     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_a.start_installing_view();
 
-//     let event_c = tcsb_c.tc_bcast(Counter::Inc(3));
+//     let event_c = replica_c.send(Counter::Inc(3));
 
-//     tcsb_b.try_deliver(event_c.clone());
-//     tcsb_a.try_deliver(event_c);
+//     replica_b.receive(event_c.clone());
+//     replica_a.receive(event_c);
 
-//     tcsb_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_b.start_installing_view();
+//     replica_b.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_b.start_installing_view();
 
-//     tcsb_c.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-//     tcsb_c.start_installing_view();
+//     replica_c.add_pending_view(vec!["a".to_string(), "b".to_string()]);
+//     replica_c.start_installing_view();
 
-//     batch(vec![&tcsb_c, &tcsb_b], &mut tcsb_a);
-//     batch(vec![&tcsb_a, &tcsb_c], &mut tcsb_b);
-//     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
+//     batch(vec![&replica_c, &replica_b], &mut replica_a);
+//     batch(vec![&replica_a, &replica_c], &mut replica_b);
+//     batch(vec![&replica_a, &replica_b], &mut replica_c);
 
-//     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
+//     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
 //         tcsb.mark_view_installed();
 //     }
 
-//     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
-//     assert_eq!(&vec!["c".to_string()], tcsb_c.group_members());
-//     assert_eq!(tcsb_c.eval(), 11);
-//     assert_eq!(tcsb_a.eval(), 11);
-//     assert_eq!(tcsb_b.eval(), 11);
+//     assert_eq!(replica_a.group_members(), replica_b.group_members());
+//     assert_eq!(&vec!["c".to_string()], replica_c.group_members());
+//     assert_eq!(replica_c.eval(), 11);
+//     assert_eq!(replica_a.query(), 11);
+//     assert_eq!(replica_b.query(), 11);
 // }
 
-// #[test_log::test]
+// #[test]
 // fn rejoin() {
-//     let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet_graph::<Counter<i32>>();
+//     let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<i32>>();
 
-//     let event_a = tcsb_a.tc_bcast(Counter::Inc(1));
-//     tcsb_b.try_deliver(event_a.clone());
-//     tcsb_c.try_deliver(event_a);
+//     let event_a = replica_a.send(Counter::Inc(1));
+//     replica_b.receive(event_a.clone());
+//     replica_c.receive(event_a);
 
-//     let event_c = tcsb_c.tc_bcast(Counter::Inc(3));
-//     tcsb_a.try_deliver(event_c.clone());
-//     tcsb_b.try_deliver(event_c);
+//     let event_c = replica_c.send(Counter::Inc(3));
+//     replica_a.receive(event_c.clone());
+//     replica_b.receive(event_c);
 
-//     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
+//     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
 //         tcsb.add_pending_view(vec!["a".to_string(), "b".to_string()]);
 //         tcsb.start_installing_view();
 //     }
 
-//     batch(vec![&tcsb_b, &tcsb_c], &mut tcsb_a);
-//     batch(vec![&tcsb_a, &tcsb_c], &mut tcsb_b);
-//     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
+//     batch(vec![&replica_b, &replica_c], &mut replica_a);
+//     batch(vec![&replica_a, &replica_c], &mut replica_b);
+//     batch(vec![&replica_a, &replica_b], &mut replica_c);
 
-//     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
+//     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
 //         tcsb.mark_view_installed();
 //     }
 
-//     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
-//     assert_eq!(tcsb_c.group_members(), &vec!["c".to_string()]);
-//     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
+//     assert_eq!(replica_a.group_members(), replica_b.group_members());
+//     assert_eq!(replica_c.group_members(), &vec!["c".to_string()]);
+//     assert_eq!(replica_a.query(), replica_b.query());
+//     assert_eq!(replica_a.query(), replica_c.eval());
 
-//     let event_b = tcsb_b.tc_bcast(Counter::Inc(7));
-//     tcsb_a.try_deliver(event_b);
+//     let event_b = replica_b.send(Counter::Inc(7));
+//     replica_a.receive(event_b);
 
-//     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
+//     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
 //         tcsb.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
 //         tcsb.start_installing_view();
 //     }
 
-//     batch(vec![&tcsb_b, &tcsb_c], &mut tcsb_a);
-//     batch(vec![&tcsb_a, &tcsb_c], &mut tcsb_b);
-//     batch(vec![&tcsb_a, &tcsb_b], &mut tcsb_c);
+//     batch(vec![&replica_b, &replica_c], &mut replica_a);
+//     batch(vec![&replica_a, &replica_c], &mut replica_b);
+//     batch(vec![&replica_a, &replica_b], &mut replica_c);
 
-//     for tcsb in [&mut tcsb_a, &mut tcsb_c, &mut tcsb_b] {
+//     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
 //         tcsb.mark_view_installed();
 //     }
 
-//     tcsb_c.state_transfer(&mut tcsb_a);
+//     replica_c.state_transfer(&mut replica_a);
 
-//     assert_eq!(tcsb_a.group_members(), tcsb_b.group_members());
-//     assert_eq!(tcsb_c.group_members(), tcsb_b.group_members());
-//     assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     assert_eq!(tcsb_a.eval(), tcsb_c.eval());
+//     assert_eq!(replica_a.group_members(), replica_b.group_members());
+//     assert_eq!(replica_c.group_members(), replica_b.group_members());
+//     assert_eq!(replica_a.query(), replica_b.query());
+//     assert_eq!(replica_a.query(), replica_c.eval());
 // }
 
-// #[test_log::test]
+// #[test]
 // fn operations_while_installing() {
-//     let (mut tcsb_a, _, _) = triplet_graph::<Counter<i32>>();
+//     let (mut replica_a, _, _) = triplet::<Counter<i32>>();
 
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-//     tcsb_a.add_pending_view(vec![
+//     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+//     replica_a.add_pending_view(vec![
 //         "a".to_string(),
 //         "b".to_string(),
 //         "c".to_string(),
 //         "d".to_string(),
 //     ]);
-//     tcsb_a.add_pending_view(vec!["a".to_string(), "c".to_string(), "d".to_string()]);
+//     replica_a.add_pending_view(vec!["a".to_string(), "c".to_string(), "d".to_string()]);
 
-//     tcsb_a.group_membership.planning(tcsb_a.last_view_id());
-//     tcsb_a.start_installing_view();
+//     replica_a.group_membership.planning(replica_a.last_view_id());
+//     replica_a.start_installing_view();
 
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(-1));
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(2));
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(-3));
-//     let _ = tcsb_a.tc_bcast(Counter::Inc(11));
+//     let _ = replica_a.send(Counter::Inc(-1));
+//     let _ = replica_a.send(Counter::Inc(2));
+//     let _ = replica_a.send(Counter::Inc(-3));
+//     let _ = replica_a.send(Counter::Inc(11));
 
-//     while tcsb_a
+//     while replica_a
 //         .group_membership
 //         .last_planned_id()
-//         .is_some_and(|id| id > tcsb_a.view_id())
+//         .is_some_and(|id| id > replica_a.view_id())
 //     {
-//         tcsb_a.mark_view_installed();
-//         tcsb_a.start_installing_view();
+//         replica_a.mark_view_installed();
+//         replica_a.start_installing_view();
 //     }
 
-//     assert_eq!(tcsb_a.eval(), 9);
-//     assert_eq!(tcsb_a.view_id(), 5);
+//     assert_eq!(replica_a.query(), 9);
+//     assert_eq!(replica_a.view_id(), 5);
 // }

@@ -330,7 +330,7 @@ where
         for event in batch.events {
             if replicas[r_idx].id != event.origin() {
                 let start = Instant::now();
-                replicas[r_idx].try_deliver(event);
+                replicas[r_idx].receive(event);
                 let elapsed = start.elapsed();
                 // Update the cumulated time to deliver for the replica
                 *deliver_time += elapsed;
@@ -363,7 +363,7 @@ where
         ops_pb.inc(1);
         count += 1;
         // Create a new event with the operation
-        let event = replicas[r_idx].tc_bcast(op.clone());
+        let event = replicas[r_idx].send(op.clone());
 
         if let Some(wg) = &mut witness_graph {
             // Add the event to the witness graph for debugging
@@ -375,7 +375,7 @@ where
                 .filter(|&i| i != r_idx && online[i] && reachability[r_idx][i])
             {
                 let start = Instant::now();
-                replicas[i].try_deliver(event.clone());
+                replicas[i].receive(event.clone());
                 let elapsed = start.elapsed();
                 // Update the cumulated time to deliver for the replica
                 let r_idx_deliver_time = deliver_time.entry(replicas[i].id.clone()).or_default();
