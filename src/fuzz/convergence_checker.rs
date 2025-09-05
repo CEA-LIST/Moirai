@@ -59,7 +59,7 @@ pub fn convergence_checker<L: IsLog>(
     let mut to_deliver: Vec<Event<L::Op>> = Vec::new();
     // Each replica make one operation
     for (i, op) in ops.iter().enumerate() {
-        let event = tcsbs[i].tc_bcast(op.clone());
+        let event = tcsbs[i].send(op.clone());
         to_deliver.push(event);
     }
 
@@ -69,7 +69,7 @@ pub fn convergence_checker<L: IsLog>(
         for seq in perm {
             if i != *seq {
                 let event = to_deliver[*seq].clone();
-                tcsbs[i].try_deliver(event.clone());
+                tcsbs[i].receive(event.clone());
             }
         }
         assert_eq!(tcsbs[i].my_clock().sum(), ops.len());

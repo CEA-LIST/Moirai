@@ -19,26 +19,29 @@ pub enum DWFlag {
     Clear,
 }
 
-impl IsStableState<DWFlag> for bool {
+impl IsStableState<DWFlag> for Option<bool> {
     fn len(&self) -> usize {
-        // TODO: change to 'is_empty'
-        1
+        if let Some(_) = self {
+            1
+        } else {
+            0
+        }
     }
 
     fn is_empty(&self) -> bool {
-        !*self
+        <Option<bool> as IsStableState<DWFlag>>::len(self) == 0
     }
 
     fn apply(&mut self, value: DWFlag) {
         match value {
-            DWFlag::Enable => *self = true,
-            DWFlag::Disable => *self = false,
-            DWFlag::Clear => *self = false,
+            DWFlag::Enable => *self = Some(true),
+            DWFlag::Disable => *self = Some(false),
+            DWFlag::Clear => *self = None,
         }
     }
 
     fn clear(&mut self) {
-        *self = false;
+        *self = None;
     }
 
     fn prune_redundant_ops(
@@ -46,13 +49,13 @@ impl IsStableState<DWFlag> for bool {
         _rdnt: RedundancyRelation<DWFlag>,
         _tagged_op: &TaggedOp<DWFlag>,
     ) {
-        <bool as IsStableState<DWFlag>>::clear(self);
+        <Option<bool> as IsStableState<DWFlag>>::clear(self);
     }
 }
 
 impl PureCRDT for DWFlag {
     type Value = bool;
-    type StableState = bool;
+    type StableState = Option<bool>;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -87,7 +90,16 @@ impl PureCRDT for DWFlag {
         stable: &Self::StableState,
         unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
     ) -> Self::Value {
-        let mut flag = *stable;
+        let mut flag = false;
+
+        if let Some(v) = stable {
+            if !v {
+                return false;
+            } else {
+                flag = true;
+            }
+        }
+
         // In DWFlag, any concurrent Disable wins over Enable
         for op in unstable.map(|t| t.op()) {
             match op {
@@ -96,49 +108,56 @@ impl PureCRDT for DWFlag {
                     break;
                 }
                 DWFlag::Enable => flag = true,
-                _ => flag = false, // Clear does not affect the flag state
+                DWFlag::Clear => unreachable!(),
             }
         }
         flag
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{
-//         crdt::{dw_flag::DWFlag, test_util::twins},
-//         protocol::event_graph::EventGraph,
-//     };
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crdt::{flag::dw_flag::DWFlag, test_util::twins},
+        protocol::replica::IsReplica,
+    };
 
-// Test the Disable-Wins Flag CRDT using two replicas (twins)
-//     #[test_log::test]
-//     fn disable_wins_flag() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<DWFlag>>();
+    // Test the Disable-Wins Flag CRDT using two replicas (twins)
+    #[test]
+    fn disable_wins_flag() {
+        let (mut replica_a, mut replica_b) = twins::<DWFlag>();
 
-//         // Replica A enables the flag
-//         let event = tcsb_a.tc_bcast(DWFlag::Enable);
-//         tcsb_b.try_deliver(event);
-//         assert_eq!(tcsb_a.eval(), true);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Replica A enables the flag
+        let event = replica_a.send(DWFlag::Enable);
+        replica_b.receive(event);
+        assert_eq!(replica_a.query(), true);
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         // Replica B disables the flag
-//         let event = tcsb_b.tc_bcast(DWFlag::Disable);
-//         tcsb_a.try_deliver(event);
-//         assert_eq!(tcsb_b.eval(), false);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Replica B disables the flag
+        let event = replica_b.send(DWFlag::Disable);
+        replica_a.receive(event);
+        assert_eq!(replica_b.query(), false);
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         // Replica A enables again
-//         let event = tcsb_a.tc_bcast(DWFlag::Enable);
-//         tcsb_b.try_deliver(event);
-//         assert_eq!(tcsb_a.eval(), true);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Replica A enables again
+        let event = replica_a.send(DWFlag::Enable);
+        replica_b.receive(event);
+        assert_eq!(replica_a.query(), true);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//         // Concurrent Enable and Disable: Disable wins
-//         let event_a = tcsb_a.tc_bcast(DWFlag::Enable);
-//         let event_b = tcsb_b.tc_bcast(DWFlag::Disable);
-//         tcsb_a.try_deliver(event_b.clone());
-//         tcsb_b.try_deliver(event_a.clone());
-//         assert_eq!(tcsb_a.eval(), false);
-//         assert_eq!(tcsb_b.eval(), false);
-//     }
-// }
+    #[test]
+    fn disable_wins_concurrent() {
+        let (mut replica_a, mut replica_b) = twins::<DWFlag>();
+
+        // Concurrent Enable and Disable: Disable wins
+        let event_a = replica_a.send(DWFlag::Enable);
+        assert_eq!(replica_a.query(), true);
+        let event_b = replica_b.send(DWFlag::Disable);
+        assert_eq!(replica_b.query(), false);
+        replica_a.receive(event_b.clone());
+        replica_b.receive(event_a.clone());
+        assert_eq!(replica_a.query(), false);
+        assert_eq!(replica_b.query(), false);
+    }
+}

@@ -22,7 +22,7 @@ impl<T> Reader<T> {
 }
 
 /// Unique owner with mutable access
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MutOwner<T> {
     inner: Rc<RefCell<T>>,
 }

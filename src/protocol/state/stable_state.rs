@@ -32,6 +32,19 @@ where
     }
 
     fn prune_redundant_ops(&mut self, rdnt: RedundancyRelation<O>, new_tagged_op: &TaggedOp<O>) {
-        self.retain(|o| !rdnt(o, None, false, new_tagged_op));
+        self.retain(|o| {
+            let is_rdnt = rdnt(o, None, false, new_tagged_op);
+            tracing::info!(
+                "The op {:?} is {} by {}",
+                o,
+                if is_rdnt {
+                    "not redundant"
+                } else {
+                    "redundant"
+                },
+                new_tagged_op
+            );
+            !is_rdnt
+        });
     }
 }

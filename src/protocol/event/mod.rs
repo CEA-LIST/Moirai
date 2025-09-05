@@ -7,6 +7,7 @@ use crate::protocol::{
     clock::version_vector::Version,
     event::{id::EventId, lamport::Lamport},
 };
+use std::fmt::{Debug, Display};
 
 #[derive(Clone, Debug)]
 pub struct Event<O> {
@@ -44,5 +45,14 @@ impl<O> Event<O> {
 
     pub fn version(&self) -> &Version {
         &self.version
+    }
+}
+
+impl<O> Display for Event<O>
+where
+    O: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{:?}, {}]", self.op, self.version)
     }
 }

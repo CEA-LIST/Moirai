@@ -19,25 +19,29 @@ pub enum EWFlag {
     Clear,
 }
 
-impl IsStableState<EWFlag> for bool {
+impl IsStableState<EWFlag> for Option<bool> {
     fn len(&self) -> usize {
-        // TODO: change to 'is_empty'
-        1
+        if let Some(_) = self {
+            1
+        } else {
+            0
+        }
     }
 
     fn is_empty(&self) -> bool {
-        !*self
+        <Option<bool> as IsStableState<EWFlag>>::len(self) == 0
     }
 
     fn apply(&mut self, value: EWFlag) {
         match value {
-            EWFlag::Enable => *self = true,
-            EWFlag::Disable | EWFlag::Clear => *self = false,
+            EWFlag::Enable => *self = Some(true),
+            EWFlag::Disable => *self = Some(false),
+            EWFlag::Clear => *self = None,
         }
     }
 
     fn clear(&mut self) {
-        *self = false;
+        *self = None;
     }
 
     fn prune_redundant_ops(
@@ -45,13 +49,13 @@ impl IsStableState<EWFlag> for bool {
         _rdnt: RedundancyRelation<EWFlag>,
         _tagged_op: &TaggedOp<EWFlag>,
     ) {
-        <bool as IsStableState<EWFlag>>::clear(self);
+        <Option<bool> as IsStableState<EWFlag>>::clear(self);
     }
 }
 
 impl PureCRDT for EWFlag {
     type Value = bool;
-    type StableState = bool;
+    type StableState = Option<bool>;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -86,76 +90,80 @@ impl PureCRDT for EWFlag {
         stable: &Self::StableState,
         unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
     ) -> Self::Value {
-        let mut flag = *stable;
+        let mut flag = match stable {
+            Some(v) => *v,
+            None => false,
+        };
         for op in unstable.map(|t| t.op()) {
             if let EWFlag::Enable = op {
                 flag = true;
+                break;
             }
         }
         flag
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{
-//         crdt::{flag::ew_flag::EWFlag, test_util::twins},
-//         protocol::event_graph::EventGraph,
-//     };
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crdt::{flag::ew_flag::EWFlag, test_util::twins},
+        protocol::replica::IsReplica,
+    };
 
-//     // Test the Enable-Wins Flag CRDT using two replicas (twins)
-//     #[test_log::test]
-//     fn enable_wins_flag() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<EWFlag>>();
+    // Test the Enable-Wins Flag CRDT using two replicas (twins)
+    #[test]
+    fn enable_wins_flag() {
+        let (mut replica_a, mut replica_b) = twins::<EWFlag>();
 
-//         // Replica A enables the flag
-//         let event = tcsb_a.tc_bcast(EWFlag::Enable);
-//         tcsb_b.try_deliver(event);
-//         assert_eq!(tcsb_a.eval(), true);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Replica A enables the flag
+        let event = replica_a.send(EWFlag::Enable);
+        replica_b.receive(event);
+        assert_eq!(replica_a.query(), true);
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         // Replica B disables the flag
-//         let event = tcsb_b.tc_bcast(EWFlag::Disable);
-//         tcsb_a.try_deliver(event);
-//         assert_eq!(tcsb_b.eval(), false);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        // Replica B disables the flag
+        let event = replica_b.send(EWFlag::Disable);
+        replica_a.receive(event);
+        assert_eq!(replica_b.query(), false);
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         // Replica A enables again
-//         let event = tcsb_a.tc_bcast(EWFlag::Enable);
-//         tcsb_b.try_deliver(event);
-//         assert_eq!(tcsb_a.eval(), true);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//         // Concurrent Enable and Disable: Disable wins
-//         let event_a = tcsb_a.tc_bcast(EWFlag::Enable);
-//         let event_b = tcsb_b.tc_bcast(EWFlag::Disable);
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
-//         assert_eq!(tcsb_a.eval(), true);
-//         assert_eq!(tcsb_b.eval(), true);
-//     }
+        // Replica A enables again
+        let event = replica_a.send(EWFlag::Enable);
+        replica_b.receive(event);
+        assert_eq!(replica_a.query(), true);
+        assert_eq!(replica_a.query(), replica_b.query());
+        // Concurrent Enable and Disable: Disable wins
+        let event_a = replica_a.send(EWFlag::Enable);
+        let event_b = replica_b.send(EWFlag::Disable);
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+        assert_eq!(replica_a.query(), true);
+        assert_eq!(replica_b.query(), true);
+    }
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_ew_flag() {
-//         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    // #[cfg(feature = "op_weaver")]
+    // #[test]
+    // fn op_weaver_ew_flag() {
+    //     use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
 
-//         let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
+    //     let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
 
-//         let config = EventGraphConfig {
-//             name: "ewflag",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &bool, b: &bool| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
+    //     let config = EventGraphConfig {
+    //         name: "ewflag",
+    //         num_replicas: 8,
+    //         num_operations: 10_000,
+    //         operations: &ops,
+    //         final_sync: true,
+    //         churn_rate: 0.3,
+    //         reachability: None,
+    //         compare: |a: &bool, b: &bool| a == b,
+    //         record_results: true,
+    //         seed: None,
+    //         witness_graph: false,
+    //         concurrency_score: false,
+    //     };
 
-//         op_weaver::<EventGraph<EWFlag>>(config);
-//     }
-// }
+    //     op_weaver::<EventGraph<EWFlag>>(config);
+    // }
+}

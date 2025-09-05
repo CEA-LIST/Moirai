@@ -48,9 +48,11 @@ where
         _rdnt: RedundancyRelation<RWSet<V>>,
         tagged_op: &TaggedOp<RWSet<V>>,
     ) {
+        // TODO: reuse the rdnt
         match tagged_op.op() {
             RWSet::Add(v) => {
                 self.0.remove(v);
+                self.1.retain(|o| matches!(o, RWSet::Remove(v2) if v != v2));
             }
             RWSet::Remove(v) => {
                 self.0.remove(v);
@@ -88,14 +90,14 @@ where
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
         !is_conc
-            && (matches!(new_tagged_op.op(), RWSet::Clear)
-                || match (&old_op, &new_tagged_op.op()) {
-                    (RWSet::Add(v1), RWSet::Add(v2))
-                    | (RWSet::Remove(v1), RWSet::Remove(v2))
-                    | (RWSet::Add(v1), RWSet::Remove(v2))
-                    | (RWSet::Remove(v1), RWSet::Add(v2)) => v1 == v2,
-                    _ => false,
-                })
+            && match (old_op, new_tagged_op.op()) {
+                (RWSet::Add(v1), RWSet::Add(v2))
+                | (RWSet::Add(v1), RWSet::Remove(v2))
+                | (RWSet::Remove(v1), RWSet::Add(v2))
+                | (RWSet::Remove(v1), RWSet::Remove(v2)) => v1 == v2,
+                (_, RWSet::Clear) => true,
+                (RWSet::Clear, _) => unreachable!(),
+            }
     }
 
     fn redundant_by_when_not_redundant(
@@ -176,176 +178,183 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::collections::HashSet;
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
 
-//     use crate::crdt::{set::rw_set::RWSet, test_util::twins_graph};
+    use crate::{
+        crdt::{set::rw_set::RWSet, test_util::twins},
+        protocol::{
+            replica::IsReplica,
+            state::{log::IsLogTest, unstable_state::IsUnstableState},
+        },
+    };
 
-//     #[test_log::test]
-//     fn clear_rw_set() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
+    #[test]
+    fn clear_rw_set() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-//         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(RWSet::Add("b"));
-//         tcsb_a.try_deliver(event);
+        let event = replica_b.send(RWSet::Add("b"));
+        replica_a.receive(event);
 
-//         let event = tcsb_a.tc_bcast(RWSet::Clear);
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(RWSet::Clear);
+        replica_b.receive(event);
 
-//         let result = HashSet::new();
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::new();
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     // Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
+    // Note: Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
 
-//     #[test_log::test]
-//     fn case_one() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
-//         let event = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event);
+    #[test]
+    fn case_one() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+        let event = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event);
 
-//         let result = HashSet::from(["a"]);
-//         assert_eq!(tcsb_b.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::from(["a"]);
+        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn case_two() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
+    #[test]
+    fn case_two() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         let event_b = tcsb_b.tc_bcast(RWSet::Add("a"));
+        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_b = replica_b.send(RWSet::Add("a"));
 
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
 
-//         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-//         assert_eq!(tcsb_b.state.unstable.node_count(), 1);
+        assert_eq!(replica_a.state().unstable().len(), 1);
+        assert_eq!(replica_b.state().unstable().len(), 1);
 
-//         let result = HashSet::from(["a"]);
-//         assert_eq!(tcsb_b.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::from(["a"]);
+        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn case_three() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
+    #[test]
+    fn case_three() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
-//         let event_a_2 = tcsb_a.tc_bcast(RWSet::Remove("a"));
+        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_b = replica_b.send(RWSet::Remove("a"));
+        let event_a_2 = replica_a.send(RWSet::Remove("a"));
 
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a_2);
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+        replica_b.receive(event_a_2);
 
-//         let result = HashSet::from([]);
-//         assert_eq!(tcsb_b.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::from([]);
+        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn case_five() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
-//         let event = tcsb_a.tc_bcast(RWSet::Remove("a"));
-//         tcsb_b.try_deliver(event);
+    #[test]
+    fn case_five() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+        let event = replica_a.send(RWSet::Remove("a"));
+        replica_b.receive(event);
 
-//         assert_eq!(tcsb_a.state.unstable.node_count(), 1);
-//         assert_eq!(tcsb_b.state.unstable.node_count(), 0);
+        assert_eq!(replica_a.state().unstable().len(), 1);
+        assert_eq!(replica_b.state().unstable().len(), 0);
 
-//         let result = HashSet::from([]);
-//         assert_eq!(tcsb_b.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::from([]);
+        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn concurrent_add_remove() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
+    #[test]
+    fn concurrent_add_remove() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-//         let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
+        let event_b = replica_b.send(RWSet::Remove("a"));
+        let event_a = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
 
-//         let result = HashSet::from([]);
-//         assert_eq!(tcsb_b.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = HashSet::from([]);
+        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn concurrent_add_remove_add() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<RWSet<&str>>();
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event_a);
+    #[test]
+    fn concurrent_add_remove_add() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+        let event_a = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event_a);
 
-//         assert_eq!(tcsb_b.eval(), HashSet::from(["a"]));
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(replica_b.query(), HashSet::from(["a"]));
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         let event_b = tcsb_b.tc_bcast(RWSet::Remove("a"));
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
+        let event_b = replica_b.send(RWSet::Remove("a"));
+        let event_a = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
 
-//         assert_eq!(tcsb_b.eval(), HashSet::from([]));
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
+        assert_eq!(replica_b.query(), HashSet::from([]));
+        assert_eq!(replica_a.query(), replica_b.query());
 
-//         let event_a = tcsb_a.tc_bcast(RWSet::Add("a"));
-//         tcsb_b.try_deliver(event_a);
+        let event_a = replica_a.send(RWSet::Add("a"));
+        replica_b.receive(event_a);
 
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        assert_eq!(replica_b.query(), HashSet::from(["a"]));
+        assert_eq!(replica_a.query(), HashSet::from(["a"]));
+    }
 
-//     #[cfg(feature = "utils")]
-//     #[test_log::test]
-//     fn convergence_check() {
-//         use crate::{
-//             protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
-//         };
+    //     #[cfg(feature = "utils")]
+    //     #[test]
+    //     fn convergence_check() {
+    //         use crate::{
+    //             protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+    //         };
 
-//         convergence_checker::<EventGraph<RWSet<&str>>>(
-//             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
-//             HashSet::new(),
-//             HashSet::eq,
-//         );
-//     }
+    //         convergence_checker::<EventGraph<RWSet<&str>>>(
+    //             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
+    //             HashSet::new(),
+    //             HashSet::eq,
+    //         );
+    //     }
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_rw_set() {
-//         use crate::{
-//             protocol::event_graph::EventGraph,
-//             utils::op_weaver::{op_weaver, EventGraphConfig},
-//         };
+    //     #[cfg(feature = "op_weaver")]
+    //     #[test]
+    //     fn op_weaver_rw_set() {
+    //         use crate::{
+    //             protocol::event_graph::EventGraph,
+    //             utils::op_weaver::{op_weaver, EventGraphConfig},
+    //         };
 
-//         let ops = vec![
-//             RWSet::Add("a"),
-//             RWSet::Add("b"),
-//             RWSet::Add("c"),
-//             RWSet::Remove("a"),
-//             RWSet::Remove("b"),
-//             RWSet::Remove("c"),
-//             RWSet::Clear,
-//         ];
+    //         let ops = vec![
+    //             RWSet::Add("a"),
+    //             RWSet::Add("b"),
+    //             RWSet::Add("c"),
+    //             RWSet::Remove("a"),
+    //             RWSet::Remove("b"),
+    //             RWSet::Remove("c"),
+    //             RWSet::Clear,
+    //         ];
 
-//         let config = EventGraphConfig {
-//             name: "rw_set",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &HashSet<&str>, b: &HashSet<&str>| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
+    //         let config = EventGraphConfig {
+    //             name: "rw_set",
+    //             num_replicas: 8,
+    //             num_operations: 10_000,
+    //             operations: &ops,
+    //             final_sync: true,
+    //             churn_rate: 0.3,
+    //             reachability: None,
+    //             compare: |a: &HashSet<&str>, b: &HashSet<&str>| a == b,
+    //             record_results: true,
+    //             seed: None,
+    //             witness_graph: false,
+    //             concurrency_score: false,
+    //         };
 
-//         op_weaver::<EventGraph<RWSet<&str>>>(config);
-//     }
-// }
+    //         op_weaver::<EventGraph<RWSet<&str>>>(config);
+    //     }
+}

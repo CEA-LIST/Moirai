@@ -32,7 +32,16 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     where
         Self: 'a,
     {
-        unstable.any(|old_tagged_op| new_tagged_op.tag() < old_tagged_op.tag())
+        unstable.any(|old_tagged_op| {
+            let cmp = new_tagged_op.tag() < old_tagged_op.tag();
+            tracing::info!(
+                "compare {} < {}: result {}. if true, then new is redundant.",
+                new_tagged_op,
+                old_tagged_op,
+                cmp
+            );
+            cmp
+        })
     }
 
     /// (t, o) R (t', o') = t < t' || (t == t' && t.id < t'.id)
@@ -66,102 +75,102 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{
-//         crdt::{
-//             register::lww_register::LWWRegister,
-//             test_util::{triplet, twins},
-//         },
-//         protocol::event_graph::EventGraph,
-//     };
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crdt::{
+            register::lww_register::LWWRegister,
+            test_util::{triplet, twins},
+        },
+        protocol::replica::IsReplica,
+    };
 
-//     #[test_log::test]
-//     pub fn lww_register_with_write() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<LWWRegister<String>>>();
+    #[test]
+    pub fn lww_register_with_write() {
+        let (mut replica_a, mut replica_b) = twins::<LWWRegister<String>>();
 
-//         let event = tcsb_a.tc_bcast(LWWRegister::Write("Hello".to_string()));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(LWWRegister::Write("Hello".to_string()));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(LWWRegister::Write("World".to_string()));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(LWWRegister::Write("World".to_string()));
+        replica_b.receive(event);
 
-//         let result = "World".to_string();
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = "World".to_string();
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     pub fn lww_register_concurrent_writes() {
-//         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<EventGraph<LWWRegister<String>>>();
+    #[test]
+    pub fn lww_register_concurrent_writes() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<LWWRegister<String>>();
 
-//         let event_a = tcsb_a.tc_bcast(LWWRegister::Write("Hello".to_string()));
-//         assert!(tcsb_a.eval() == "Hello");
-//         let event_b = tcsb_b.tc_bcast(LWWRegister::Write("World".to_string()));
-//         assert!(tcsb_b.eval() == "World");
+        let event_a = replica_a.send(LWWRegister::Write("Hello".to_string()));
+        assert!(replica_a.query() == "Hello");
+        let event_b = replica_b.send(LWWRegister::Write("World".to_string()));
+        assert!(replica_b.query() == "World");
 
-//         tcsb_a.try_deliver(event_b.clone());
-//         tcsb_b.try_deliver(event_a.clone());
-//         tcsb_c.try_deliver(event_a);
-//         tcsb_c.try_deliver(event_b);
+        replica_a.receive(event_b.clone());
+        assert_eq!(replica_a.query(), "World");
+        replica_b.receive(event_a.clone());
+        assert_eq!(replica_b.query(), "World");
+        replica_c.receive(event_a);
+        assert_eq!(replica_c.query(), "Hello");
+        replica_c.receive(event_b);
+        assert_eq!(replica_c.query(), "World");
+    }
 
-//         assert!(tcsb_a.eval() == "World");
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//         assert_eq!(tcsb_a.eval(), tcsb_c.eval());
-//     }
+    #[test]
+    pub fn lww_register_more_concurrent() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<LWWRegister<String>>();
 
-//     #[test_log::test]
-//     pub fn lww_register_more_concurrent() {
-//         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<EventGraph<LWWRegister<String>>>();
+        let event_c_1 = replica_c.send(LWWRegister::Write("x".to_string()));
+        replica_a.receive(event_c_1.clone());
 
-//         let event_c_1 = tcsb_c.tc_bcast(LWWRegister::Write("x".to_string()));
-//         tcsb_a.try_deliver(event_c_1.clone());
+        let event_a_1 = replica_a.send(LWWRegister::Write("y".to_string()));
 
-//         let event_a_1 = tcsb_a.tc_bcast(LWWRegister::Write("y".to_string()));
+        let event_b_1 = replica_b.send(LWWRegister::Write("z".to_string()));
+        replica_c.receive(event_b_1.clone());
 
-//         let event_b_1 = tcsb_b.tc_bcast(LWWRegister::Write("z".to_string()));
-//         tcsb_c.try_deliver(event_b_1.clone());
+        replica_b.receive(event_c_1.clone());
+        replica_b.receive(event_a_1.clone());
 
-//         tcsb_b.try_deliver(event_c_1.clone());
-//         tcsb_b.try_deliver(event_a_1.clone());
+        replica_c.receive(event_a_1.clone());
+        replica_a.receive(event_b_1);
 
-//         tcsb_c.try_deliver(event_a_1.clone());
-//         tcsb_a.try_deliver(event_b_1);
+        assert_eq!(replica_a.query(), "y".to_string());
+        assert_eq!(replica_b.query(), "y".to_string());
+        assert_eq!(replica_c.query(), "y".to_string());
+    }
 
-//         assert_eq!(tcsb_a.eval(), "y".to_string());
-//         assert_eq!(tcsb_b.eval(), "y".to_string());
-//         assert_eq!(tcsb_c.eval(), "y".to_string());
-//     }
+    //     #[cfg(feature = "op_weaver")]
+    //     #[test]
+    //     fn generate_lww_register_convergence() {
+    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn generate_lww_register_convergence() {
-//         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    //         let ops = vec![
+    //             LWWRegister::Write("w".to_string()),
+    //             LWWRegister::Write("x".to_string()),
+    //             LWWRegister::Write("y".to_string()),
+    //             LWWRegister::Write("z".to_string()),
+    //             LWWRegister::Write("u".to_string()),
+    //             LWWRegister::Write("v".to_string()),
+    //         ];
 
-//         let ops = vec![
-//             LWWRegister::Write("w".to_string()),
-//             LWWRegister::Write("x".to_string()),
-//             LWWRegister::Write("y".to_string()),
-//             LWWRegister::Write("z".to_string()),
-//             LWWRegister::Write("u".to_string()),
-//             LWWRegister::Write("v".to_string()),
-//         ];
+    //         let config = EventGraphConfig {
+    //             name: "lww_register",
+    //             num_replicas: 8,
+    //             num_operations: 10_000,
+    //             operations: &ops,
+    //             final_sync: true,
+    //             churn_rate: 0.3,
+    //             reachability: None,
+    //             compare: |a: &String, b: &String| a == b,
+    //             record_results: true,
+    //             seed: None,
+    //             witness_graph: false,
+    //             concurrency_score: false,
+    //         };
 
-//         let config = EventGraphConfig {
-//             name: "lww_register",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &String, b: &String| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
-
-//         op_weaver::<EventGraph<LWWRegister<String>>>(config);
-//     }
-// }
+    //         op_weaver::<EventGraph<LWWRegister<String>>>(config);
+    //     }
+}

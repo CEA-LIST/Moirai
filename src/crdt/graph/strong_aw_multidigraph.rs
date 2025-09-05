@@ -146,127 +146,127 @@
 
 //     use crate::crdt::{aw_multidigraph::AWGraph, test_util::twins_graph};
 
-//     #[test_log::test]
+//     #[test]
 //     fn simple_graph() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event);
+//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWGraph::AddVertex("B"));
-//         tcsb_a.try_deliver(event);
+//         let event = replica_b.send(AWGraph::AddVertex("B"));
+//         replica_a.receive(event);
 
-//         let event = tcsb_a.tc_bcast(AWGraph::AddArc("B", "A", "arc1"));
-//         tcsb_b.try_deliver(event);
+//         let event = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWGraph::RemoveVertex("B"));
-//         tcsb_a.try_deliver(event);
+//         let event = replica_b.send(AWGraph::RemoveVertex("B"));
+//         replica_a.receive(event);
 
-//         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn concurrent_graph_arc() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event);
+//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWGraph::AddVertex("B"));
-//         tcsb_a.try_deliver(event);
+//         let event = replica_b.send(AWGraph::AddVertex("B"));
+//         replica_a.receive(event);
 
-//         let event_b = tcsb_b.tc_bcast(AWGraph::RemoveVertex("B"));
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddArc("B", "A", "arc1"));
-//         tcsb_b.try_deliver(event_a);
-//         tcsb_a.try_deliver(event_b);
+//         let event_b = replica_b.send(AWGraph::RemoveVertex("B"));
+//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         replica_b.receive(event_a);
+//         replica_a.receive(event_b);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
-//         assert_eq!(tcsb_a.eval().node_count(), 2);
-//         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
+//         assert_eq!(replica_a.query().node_count(), 2);
+//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn graph_remove_vertex() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event);
+//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(AWGraph::RemoveVertex("A"));
-//         tcsb_a.try_deliver(event);
+//         let event = replica_b.send(AWGraph::RemoveVertex("A"));
+//         replica_a.receive(event);
 
-//         // let event_b = tcsb_b.tc_bcast(AWGraph::RemoveVertex("B"));
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddArc("B", "A", "arc1"));
-//         tcsb_b.try_deliver(event_a);
-//         // tcsb_a.try_deliver(event_b);
+//         // let event_b = replica_b.send(AWGraph::RemoveVertex("B"));
+//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         replica_b.receive(event_a);
+//         // replica_a.receive(event_b);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
-//         assert_eq!(tcsb_a.eval().node_count(), 0);
-//         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
+//         assert_eq!(replica_a.query().node_count(), 0);
+//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn concurrent_graph_vertex() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, &str>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         let event_b = tcsb_b.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         let event_b = replica_b.send(AWGraph::AddVertex("A"));
+//         replica_a.receive(event_b);
+//         replica_b.receive(event_a);
 
-//         assert_eq!(tcsb_a.eval().node_count(), 1);
-//         assert!(is_isomorphic(&tcsb_a.eval(), &tcsb_b.eval()));
+//         assert_eq!(replica_a.query().node_count(), 1);
+//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn graph_arc_no_vertex() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, u8>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event = tcsb_a.tc_bcast(AWGraph::AddArc("A", "B", 1));
-//         tcsb_b.try_deliver(event);
+//         let event = replica_a.send(AWGraph::AddArc("A", "B", 1));
+//         replica_b.receive(event);
 
-//         assert!(is_isomorphic(&tcsb_a.eval(), &DiGraph::<&str, ()>::new()));
+//         assert!(is_isomorphic(&replica_a.query(), &DiGraph::<&str, ()>::new()));
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn graph_multiple_vertex_same_id() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, u8>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event_a);
-//         let event_b = tcsb_b.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_a.try_deliver(event_b);
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event_a);
+//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event_a);
+//         let event_b = replica_b.send(AWGraph::AddVertex("A"));
+//         replica_a.receive(event_b);
+//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event_a);
 
-//         assert_eq!(tcsb_a.eval().node_count(), 1);
+//         assert_eq!(replica_a.query().node_count(), 1);
 //     }
 
-//     #[test_log::test]
+//     #[test]
 //     fn multigraph() {
-//         let (mut tcsb_a, mut tcsb_b) = twins_graph::<AWGraph<&str, u8>>();
+//         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddVertex("A"));
-//         tcsb_b.try_deliver(event_a);
-//         let event_b = tcsb_b.tc_bcast(AWGraph::AddVertex("B"));
-//         tcsb_a.try_deliver(event_b);
+//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         replica_b.receive(event_a);
+//         let event_b = replica_b.send(AWGraph::AddVertex("B"));
+//         replica_a.receive(event_b);
 
-//         let event_a = tcsb_a.tc_bcast(AWGraph::AddArc("A", "B", 1));
-//         let event_b = tcsb_b.tc_bcast(AWGraph::AddArc("A", "B", 2));
+//         let event_a = replica_a.send(AWGraph::AddArc("A", "B", 1));
+//         let event_b = replica_b.send(AWGraph::AddArc("A", "B", 2));
 
-//         tcsb_a.try_deliver(event_b);
-//         tcsb_b.try_deliver(event_a);
+//         replica_a.receive(event_b);
+//         replica_b.receive(event_a);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_a.eval(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&tcsb_b.eval(), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
 
-//         assert_eq!(tcsb_a.eval().edge_count(), 2);
-//         assert_eq!(tcsb_a.eval().node_count(), 2);
+//         assert_eq!(replica_a.query().edge_count(), 2);
+//         assert_eq!(replica_a.query().node_count(), 2);
 //         assert!(petgraph::algo::is_isomorphic(
-//             &tcsb_a.eval(),
-//             &tcsb_b.eval()
+//             &replica_a.query(),
+//             &replica_b.query()
 //         ));
 //     }
 // }

@@ -118,126 +118,126 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{
-//         crdt::{
-//             counter::resettable_counter::Counter,
-//             test_util::{triplet, twins},
-//         },
-//         protocol::event_graph::EventGraph,
-//     };
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crdt::{
+            counter::resettable_counter::Counter,
+            test_util::{triplet, twins},
+        },
+        protocol::replica::IsReplica,
+    };
 
-//     #[test_log::test]
-//     pub fn simple_counter() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
+    #[test]
+    pub fn simple_counter() {
+        let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-//         let event = tcsb_a.tc_bcast(Counter::Dec(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Dec(5));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(5));
+        replica_b.receive(event);
 
-//         let result = 0;
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = 0;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     pub fn stable_counter() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
+    #[test]
+    pub fn stable_counter() {
+        let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-//         let event = tcsb_a.tc_bcast(Counter::Dec(1));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Dec(1));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(2));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(2));
+        replica_b.receive(event);
 
-//         let event = tcsb_b.tc_bcast(Counter::Inc(3));
-//         tcsb_a.try_deliver(event);
+        let event = replica_b.send(Counter::Inc(3));
+        replica_a.receive(event);
 
-//         let event = tcsb_b.tc_bcast(Counter::Inc(4));
-//         tcsb_a.try_deliver(event);
+        let event = replica_b.send(Counter::Inc(4));
+        replica_a.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(5));
+        replica_b.receive(event);
 
-//         let result = 13;
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = 13;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     pub fn concurrent_counter() {
-//         let (mut tcsb_a, mut tcsb_b, mut tcsb_c) = triplet::<EventGraph<Counter<isize>>>();
+    #[test]
+    pub fn concurrent_counter() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<isize>>();
 
-//         let event_a_1 = tcsb_a.tc_bcast(Counter::Dec(1));
-//         tcsb_b.try_deliver(event_a_1.clone());
+        let event_a_1 = replica_a.send(Counter::Dec(1));
+        replica_b.receive(event_a_1.clone());
 
-//         let event_b_1 = tcsb_b.tc_bcast(Counter::Reset);
-//         let event_c_1 = tcsb_c.tc_bcast(Counter::Inc(18));
+        let event_b_1 = replica_b.send(Counter::Reset);
+        let event_c_1 = replica_c.send(Counter::Inc(18));
 
-//         tcsb_a.try_deliver(event_b_1.clone());
-//         tcsb_a.try_deliver(event_c_1.clone());
+        replica_a.receive(event_b_1.clone());
+        replica_a.receive(event_c_1.clone());
 
-//         tcsb_b.try_deliver(event_c_1);
+        replica_b.receive(event_c_1);
 
-//         tcsb_c.try_deliver(event_b_1);
-//         tcsb_c.try_deliver(event_a_1);
+        replica_c.receive(event_b_1);
+        replica_c.receive(event_a_1);
 
-//         let result = 18;
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//         assert_eq!(tcsb_a.eval(), tcsb_c.eval());
-//     }
+        let result = 18;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(), replica_c.query());
+    }
 
-//     #[cfg(feature = "utils")]
-//     #[test_log::test]
-//     fn convergence_check() {
-//         use crate::{
-//             protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
-//         };
+    // #[cfg(feature = "utils")]
+    // #[test]
+    // fn convergence_check() {
+    //     use crate::{
+    //         protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
+    //     };
 
-//         convergence_checker::<EventGraph<Counter<isize>>>(
-//             &[Counter::Inc(7), Counter::Dec(15), Counter::Reset],
-//             -8,
-//             |a, b| a == b,
-//         );
-//     }
+    //     convergence_checker::<EventGraph<Counter<isize>>>(
+    //         &[Counter::Inc(7), Counter::Dec(15), Counter::Reset],
+    //         -8,
+    //         |a, b| a == b,
+    //     );
+    // }
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_resettable_counter() {
-//         use crate::{
-//             protocol::event_graph::EventGraph,
-//             utils::op_weaver::{op_weaver, EventGraphConfig},
-//         };
+    // #[cfg(feature = "op_weaver")]
+    // #[test]
+    // fn op_weaver_resettable_counter() {
+    //     use crate::{
+    //         protocol::event_graph::EventGraph,
+    //         utils::op_weaver::{op_weaver, EventGraphConfig},
+    //     };
 
-//         let ops: Vec<Counter<isize>> = vec![
-//             Counter::Inc(1),
-//             Counter::Dec(1),
-//             Counter::Inc(2),
-//             Counter::Dec(2),
-//             Counter::Inc(3),
-//             Counter::Dec(3),
-//             Counter::Reset,
-//         ];
+    //     let ops: Vec<Counter<isize>> = vec![
+    //         Counter::Inc(1),
+    //         Counter::Dec(1),
+    //         Counter::Inc(2),
+    //         Counter::Dec(2),
+    //         Counter::Inc(3),
+    //         Counter::Dec(3),
+    //         Counter::Reset,
+    //     ];
 
-//         let config = EventGraphConfig {
-//             name: "resettable_counter",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &isize, b: &isize| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
+    //     let config = EventGraphConfig {
+    //         name: "resettable_counter",
+    //         num_replicas: 8,
+    //         num_operations: 10_000,
+    //         operations: &ops,
+    //         final_sync: true,
+    //         churn_rate: 0.3,
+    //         reachability: None,
+    //         compare: |a: &isize, b: &isize| a == b,
+    //         record_results: true,
+    //         seed: None,
+    //         witness_graph: false,
+    //         concurrency_score: false,
+    //     };
 
-//         op_weaver::<EventGraph<Counter<isize>>>(config);
-//     }
-// }
+    //     op_weaver::<EventGraph<Counter<isize>>>(config);
+    // }
+}

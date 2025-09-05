@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use tracing::info;
+
 use crate::protocol::{
     clock::version_vector::Version,
     event::{id::EventId, tagged_op::TaggedOp},
@@ -24,7 +26,15 @@ where
     O: Debug + Clone,
 {
     fn append(&mut self, tagged_op: TaggedOp<O>) {
+        info!("Appending event: {}", tagged_op.id());
         self.push(tagged_op);
+        info!(
+            "state: [{}]",
+            self.iter()
+                .map(|to| format!("{}: {:?}", to.id(), to.op()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     // TODO: O(n)
@@ -34,6 +44,7 @@ where
 
     // TODO: very very slow
     fn remove(&mut self, event_id: &EventId) {
+        info!("Removing event: {}", event_id);
         let maybe_pos = self.iter().position(|to| to.id() == event_id);
         if let Some(pos) = maybe_pos {
             self.remove(pos);
@@ -48,6 +59,7 @@ where
     }
 
     fn retain<'a, T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
+        info!("Retaining events");
         self.retain(predicate);
     }
 
@@ -65,7 +77,10 @@ where
 
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.iter()
-            .filter(|to| to.id().is_predecessor_of(version))
+            .filter(|to| {
+                println!("Checking if {} is predecessor of {}", to.id(), version);
+                to.id().is_predecessor_of(version)
+            })
             .cloned()
             .collect()
     }

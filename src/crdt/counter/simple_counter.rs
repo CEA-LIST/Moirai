@@ -92,73 +92,73 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{
-//         crdt::{counter::simple_counter::Counter, test_util::twins},
-//         protocol::event_graph::EventGraph,
-//     };
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crdt::{counter::simple_counter::Counter, test_util::twins},
+        protocol::replica::IsReplica,
+    };
 
-//     #[test_log::test]
-//     pub fn simple_counter() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
+    #[test]
+    pub fn simple_counter() {
+        let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-//         let event = tcsb_a.tc_bcast(Counter::Dec(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Dec(5));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(5));
+        replica_b.receive(event);
 
-//         let result = 0;
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = 0;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     pub fn simple_counter_2() {
-//         let (mut tcsb_a, mut tcsb_b) = twins::<EventGraph<Counter<isize>>>();
+    #[test]
+    pub fn simple_counter_2() {
+        let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-//         let event = tcsb_a.tc_bcast(Counter::Dec(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Dec(5));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(5));
+        replica_b.receive(event);
 
-//         let event = tcsb_a.tc_bcast(Counter::Inc(5));
-//         tcsb_b.try_deliver(event);
+        let event = replica_a.send(Counter::Inc(5));
+        replica_b.receive(event);
 
-//         let result = 5;
-//         assert_eq!(tcsb_a.eval(), result);
-//         assert_eq!(tcsb_a.eval(), tcsb_b.eval());
-//     }
+        let result = 5;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
 
-//     #[test_log::test]
-//     fn convergence_checker() {
-//         // TODO: Implement a convergence checker for Counter
-//     }
+    //     #[test]
+    //     fn convergence_checker() {
+    //         // TODO: Implement a convergence checker for Counter
+    //     }
 
-//     #[cfg(feature = "op_weaver")]
-//     #[test_log::test]
-//     fn op_weaver_counter() {
-//         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    //     #[cfg(feature = "op_weaver")]
+    //     #[test]
+    //     fn op_weaver_counter() {
+    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
 
-//         let ops = vec![Counter::Inc(1), Counter::Dec(1)];
+    //         let ops = vec![Counter::Inc(1), Counter::Dec(1)];
 
-//         let config = EventGraphConfig {
-//             name: "counter",
-//             num_replicas: 8,
-//             num_operations: 10_000,
-//             operations: &ops,
-//             final_sync: true,
-//             churn_rate: 0.3,
-//             reachability: None,
-//             compare: |a: &isize, b: &isize| a == b,
-//             record_results: true,
-//             seed: None,
-//             witness_graph: false,
-//             concurrency_score: false,
-//         };
+    //         let config = EventGraphConfig {
+    //             name: "counter",
+    //             num_replicas: 8,
+    //             num_operations: 10_000,
+    //             operations: &ops,
+    //             final_sync: true,
+    //             churn_rate: 0.3,
+    //             reachability: None,
+    //             compare: |a: &isize, b: &isize| a == b,
+    //             record_results: true,
+    //             seed: None,
+    //             witness_graph: false,
+    //             concurrency_score: false,
+    //         };
 
-//         op_weaver::<EventGraph<Counter<isize>>>(config);
-//     }
-// }
+    //         op_weaver::<EventGraph<Counter<isize>>>(config);
+    //     }
+}
