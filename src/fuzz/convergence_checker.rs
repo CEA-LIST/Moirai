@@ -74,7 +74,7 @@ pub fn convergence_checker<L: IsLog>(
         }
         assert_eq!(tcsbs[i].my_clock().sum(), ops.len());
         assert!(
-            cmp(&tcsbs[i].eval(), &value),
+            cmp(&tcsbs[i].query(), &value),
             "Convergence check failed for sequence {:?}",
             permutations[i]
                 .iter()

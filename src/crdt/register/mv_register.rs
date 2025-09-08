@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn multiple_concurrent_mv_register() {
-        let (mut replica_a, mut replica_b, _tcsb_c) = triplet::<MVRegister<&str>>();
+        let (mut replica_a, mut replica_b, _replica_c) = triplet::<MVRegister<&str>>();
 
         let event = replica_a.send(MVRegister::Write("c"));
         replica_b.receive(event);

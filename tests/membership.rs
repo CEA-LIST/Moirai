@@ -93,7 +93,7 @@
 //     assert_eq!(replica_a.group_members(), replica_b.group_members());
 //     assert_eq!(replica_a.group_members(), replica_c.group_members());
 //     assert_eq!(replica_a.query(), replica_b.query());
-//     assert_eq!(replica_a.query(), replica_c.eval());
+//     assert_eq!(replica_a.query(), replica_c.query());
 // }
 
 // #[test]
@@ -132,7 +132,7 @@
 
 //     assert_eq!(replica_a.group_members(), replica_b.group_members());
 //     assert_eq!(&vec!["c".to_string()], replica_c.group_members());
-//     assert_eq!(replica_c.eval(), 11);
+//     assert_eq!(replica_c.query(), 11);
 //     assert_eq!(replica_a.query(), 11);
 //     assert_eq!(replica_b.query(), 11);
 // }
@@ -165,7 +165,7 @@
 //     assert_eq!(replica_a.group_members(), replica_b.group_members());
 //     assert_eq!(replica_c.group_members(), &vec!["c".to_string()]);
 //     assert_eq!(replica_a.query(), replica_b.query());
-//     assert_eq!(replica_a.query(), replica_c.eval());
+//     assert_eq!(replica_a.query(), replica_c.query());
 
 //     let event_b = replica_b.send(Counter::Inc(7));
 //     replica_a.receive(event_b);
@@ -188,7 +188,7 @@
 //     assert_eq!(replica_a.group_members(), replica_b.group_members());
 //     assert_eq!(replica_c.group_members(), replica_b.group_members());
 //     assert_eq!(replica_a.query(), replica_b.query());
-//     assert_eq!(replica_a.query(), replica_c.eval());
+//     assert_eq!(replica_a.query(), replica_c.query());
 // }
 
 // #[test]

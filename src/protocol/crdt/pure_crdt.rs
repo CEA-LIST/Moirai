@@ -18,6 +18,7 @@ pub trait PureCRDT: Debug + Sized {
 
     const DISABLE_R_WHEN_R: bool = false;
     const DISABLE_R_WHEN_NOT_R: bool = false;
+    const DISABLE_STABILIZE: bool = false;
 
     fn redundant_itself<'a>(
         _new_tagged_op: &TaggedOp<Self>,

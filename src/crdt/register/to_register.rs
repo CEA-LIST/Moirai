@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn multiple_concurrent_to_register() {
-        let (mut replica_a, mut replica_b, _tcsb_c) = triplet::<TORegister<&str>>();
+        let (mut replica_a, mut replica_b, _replica_c) = triplet::<TORegister<&str>>();
 
         let event = replica_a.send(TORegister::Write("c"));
         replica_b.receive(event);
