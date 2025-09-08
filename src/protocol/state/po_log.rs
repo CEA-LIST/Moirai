@@ -72,7 +72,7 @@ where
         // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
 
         let candidates = self.unstable.predecessors(version);
-        info!("Candidates: {:?}", candidates);
+        info!("Candidates (stabilize): {:?}", candidates);
 
         for tagged_op in candidates {
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
@@ -84,8 +84,9 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        info!("stable: {:?}", self.stable);
-        info!("unstable stable: {:?}", self.unstable);
+        info!("<<< REDUNDANT BY PARENT>>>");
+        info!("BEFORE stable: {:?}", self.stable);
+        info!("BEFORE unstable: {:?}", self.unstable);
 
         self.stable.clear();
         if conservative {
@@ -94,6 +95,17 @@ where
         } else {
             self.unstable.clear();
         }
+
+        info!("AFTER stable: {:?}", self.stable);
+        info!("AFTER unstable: {:?}", self.unstable);
+    }
+
+    fn len(&self) -> usize {
+        self.stable.len() + self.unstable.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stable.is_empty() && self.unstable.is_empty()
     }
 }
 

@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt::Debug};
 // use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -162,13 +162,13 @@ impl MatrixClock {
         let dominate = self.dominate();
 
         if !is_square {
-            println!("Matrix clock is not square");
+            error!("Matrix clock is not square");
         }
         if !diagonal {
-            println!("Matrix clock is not diagonal");
+            error!("Matrix clock is not diagonal");
         }
         if !dominate {
-            println!("Matrix clock does not dominate");
+            error!("Matrix clock does not dominate");
         }
 
         is_square && diagonal && dominate

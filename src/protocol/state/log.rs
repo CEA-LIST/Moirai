@@ -18,6 +18,8 @@ pub trait IsLog: Default + Debug {
     fn eval(&self) -> Self::Value;
     fn stabilize(&mut self, version: &Version);
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
 }
 
 #[cfg(test)]

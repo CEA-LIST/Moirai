@@ -1,4 +1,4 @@
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     protocol::{
@@ -115,17 +115,17 @@ where
         // The event should not come from the local replica
         // TODO: improve the code
         if &event.id().origin_id() == self.view.borrow().get_id(self.replica_idx).unwrap() {
-            println!("Event from local replica");
+            error!("Event from local replica");
             return false;
         }
         // The event should not come from an unknown replica
         if !self.view.borrow().is_known(&event.id().origin_id()) {
-            println!("Event from unknown replica");
+            error!("Event from unknown replica");
             return false;
         }
         // The event should not be a duplicate, i.e. an event already received
         if self.is_duplicate(event) {
-            println!("Event is a duplicate {event}");
+            error!("Event is a duplicate {event}");
             return false;
         }
 

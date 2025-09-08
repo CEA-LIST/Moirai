@@ -68,6 +68,14 @@ macro_rules! record {
                         self.$field.redundant_by_parent(version, conservative);
                     )*
                 }
+
+                fn len(&self) -> usize {
+                    0 $(+ self.$field.len())*
+                }
+
+                fn is_empty(&self) -> bool {
+                    true $(&& self.$field.is_empty())*
+                }
             }
         }
     };
