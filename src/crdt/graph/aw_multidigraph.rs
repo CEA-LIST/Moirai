@@ -110,8 +110,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use petgraph::graph::DiGraph;
-
     use crate::{
         crdt::{
             graph::aw_multidigraph::Graph,
@@ -183,11 +181,8 @@ mod tests {
         let event = replica_a.send(Graph::AddArc("A", "B", 1));
         replica_b.receive(event);
 
-        assert!(
-            vf2::isomorphisms(&replica_a.query(), &DiGraph::<&str, u8>::new(),)
-                .first()
-                .is_some()
-        );
+        assert_eq!(replica_a.query().node_count(), 0);
+        assert_eq!(replica_a.query().edge_count(), 0);
     }
 
     #[test]
@@ -227,15 +222,6 @@ mod tests {
 
         let event_a = replica_a.send(Graph::AddVertex("B"));
         replica_b.receive(event_a);
-
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
-        );
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
-        );
 
         assert_eq!(replica_a.query().node_count(), 2);
         assert_eq!(replica_a.query().edge_count(), 1);
@@ -300,15 +286,6 @@ mod tests {
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
-
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
-        );
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
-        );
 
         assert_eq!(replica_a.query().edge_count(), 2);
         assert_eq!(replica_a.query().node_count(), 2);

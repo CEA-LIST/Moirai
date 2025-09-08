@@ -35,12 +35,6 @@ impl Ord for Tag {
         match self.lamport.cmp(&other.lamport) {
             Ordering::Equal => {
                 // Tie-break using origin id
-                println!(
-                    "{} is {:?} than {}",
-                    self.id.origin_id(),
-                    self.id.origin_id().cmp(&other.id.origin_id()),
-                    other.id.origin_id(),
-                );
                 self.id.origin_id().cmp(&other.id.origin_id())
             }
             other_order => other_order,

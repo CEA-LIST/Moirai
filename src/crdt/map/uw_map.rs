@@ -88,6 +88,14 @@ where
             child.redundant_by_parent(version, conservative);
         }
     }
+
+    fn len(&self) -> usize {
+        self.children.values().map(|c| c.len()).sum()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(test)]

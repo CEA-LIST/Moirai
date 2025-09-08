@@ -59,7 +59,6 @@ where
     }
 
     fn retain<'a, T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-        info!("Retaining events");
         self.retain(predicate);
     }
 
@@ -77,10 +76,7 @@ where
 
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.iter()
-            .filter(|to| {
-                println!("Checking if {} is predecessor of {}", to.id(), version);
-                to.id().is_predecessor_of(version)
-            })
+            .filter(|to| to.id().is_predecessor_of(version))
             .cloned()
             .collect()
     }

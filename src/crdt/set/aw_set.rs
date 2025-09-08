@@ -187,7 +187,6 @@ mod tests {
         let event = replica_a.send(AWSet::Add("a"));
         replica_b.receive(event);
 
-        println!("replica_b state: {:#?}", replica_b.state().stable());
         assert_eq!(replica_b.state().stable().len(), 1);
 
         let event = replica_b.send(AWSet::Add("b"));

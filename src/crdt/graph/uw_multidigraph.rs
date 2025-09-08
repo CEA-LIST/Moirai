@@ -24,8 +24,6 @@ where
 {
     arc_content: HashMap<(V, V, E), El>,
     vertex_content: HashMap<V, Nl>,
-    // For fast lookup of arcs by vertex
-    // vertex_index: HashMap<V, HashSet<(V, V, E)>>,
 }
 
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
@@ -37,7 +35,6 @@ where
         Self {
             arc_content: HashMap::new(),
             vertex_content: HashMap::new(),
-            // vertex_index: HashMap::new(),
         }
     }
 }
@@ -87,6 +84,17 @@ where
                 if let Some(child) = self.vertex_content.get_mut(&v) {
                     child.redundant_by_parent(event.version(), true);
                 }
+                let arcs_to_remove: Vec<(V, V, E)> = self
+                    .arc_content
+                    .keys()
+                    .filter(|(v1, v2, _)| v1 == &v || v2 == &v)
+                    .cloned()
+                    .collect();
+                for arc in arcs_to_remove {
+                    if let Some(child) = self.arc_content.get_mut(&arc) {
+                        child.redundant_by_parent(event.version(), true);
+                    }
+                }
             }
             UWGraph::UpdateArc(v1, v2, e, op) => {
                 let child_op = Event::unfold(event, op);
@@ -101,33 +109,6 @@ where
                 }
             }
         }
-    }
-
-    fn eval(&self) -> Self::Value {
-        let mut graph = Self::Value::new();
-        let mut node_idx = HashMap::new();
-        for (v, child) in self.vertex_content.iter() {
-            // TODO: skip empty nodes
-            let idx = graph.add_node(Content::new(v.clone(), child.eval()));
-            node_idx.insert(v.clone(), idx);
-        }
-        for ((v1, v2, e), child) in self.arc_content.iter() {
-            let idx1 = node_idx.get(v1);
-            let idx2 = node_idx.get(v2);
-            match (idx1, idx2) {
-                (Some(i1), Some(i2)) => {
-                    graph.add_edge(
-                        *i1,
-                        *i2,
-                        Content::new((v1.clone(), v2.clone(), e.clone()), child.eval()),
-                    );
-                }
-                _ => {
-                    continue;
-                }
-            }
-        }
-        graph
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -148,6 +129,48 @@ where
         for v in self.vertex_content.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
+    }
+
+    fn len(&self) -> usize {
+        self.vertex_content.values().map(|v| v.len()).sum::<usize>()
+            + self.arc_content.values().map(|e| e.len()).sum::<usize>()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn eval(&self) -> Self::Value {
+        let mut graph = Self::Value::new();
+        let mut node_idx = HashMap::new();
+        for (v, child) in self.vertex_content.iter() {
+            // TODO: skip empty nodes
+            if child.is_empty() {
+                continue;
+            }
+            let idx = graph.add_node(Content::new(v.clone(), child.eval()));
+            node_idx.insert(v.clone(), idx);
+        }
+        for ((v1, v2, e), child) in self.arc_content.iter() {
+            if child.is_empty() {
+                continue;
+            }
+            let idx1 = node_idx.get(v1);
+            let idx2 = node_idx.get(v2);
+            match (idx1, idx2) {
+                (Some(i1), Some(i2)) => {
+                    graph.add_edge(
+                        *i1,
+                        *i2,
+                        Content::new((v1.clone(), v2.clone(), e.clone()), child.eval()),
+                    );
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+        graph
     }
 }
 
@@ -206,15 +229,6 @@ mod tests {
         let event = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(3)));
         replica_b.receive(event);
 
-        println!(
-            "Eval A: {:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
-        );
-        println!(
-            "Eval B: {:?}",
-            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
-        );
-
         assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
             .first()
             .is_some());
@@ -249,10 +263,7 @@ mod tests {
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query().node_count(), 0);
-        assert_eq!(
-            &replica_a.query().node_count(),
-            &replica_b.query().node_count()
-        );
+        assert_eq!(replica_b.query().node_count(), 0);
     }
 
     #[test]
@@ -281,15 +292,6 @@ mod tests {
 
         assert_eq!(replica_a.query().node_count(), 2);
         assert_eq!(replica_a.query().edge_count(), 1);
-
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
-        );
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_b.query(), &[])
-        );
 
         assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
             .first()
@@ -328,11 +330,6 @@ mod tests {
         assert_eq!(replica_a.query().node_count(), 2);
         assert_eq!(replica_a.query().edge_count(), 1);
 
-        println!(
-            "{:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(), &[])
-        );
-
         assert!(petgraph::algo::is_isomorphic(
             &replica_a.query(),
             &replica_b.query()
@@ -356,7 +353,7 @@ mod tests {
         let event_b = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(7)));
         replica_b.receive(event_a);
 
         let event_a = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)));

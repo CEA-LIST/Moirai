@@ -21,7 +21,7 @@ pub enum DWFlag {
 
 impl IsStableState<DWFlag> for Option<bool> {
     fn len(&self) -> usize {
-        if let Some(_) = self {
+        if self.is_some() {
             1
         } else {
             0

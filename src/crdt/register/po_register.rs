@@ -1,5 +1,5 @@
 use crate::protocol::{crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp};
-use std::{collections::HashSet, fmt::Debug, hash::Hash};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 #[derive(Clone, Debug)]
 pub enum PORegister<V> {
@@ -50,6 +50,9 @@ where
     where
         Self: 'a,
     {
+        // println!("stable: {:?}", stable);
+        // let unstable_vec: Vec<_> = unstable.collect();
+        // println!("unstable: {:?}", unstable_vec);
         // The set can contain only incomparable values
         let mut set = Self::Value::default();
         for o in stable.iter().chain(unstable.map(|to| to.op())) {
@@ -57,7 +60,7 @@ where
                 // We add the value if there is no v' in the set that is superior to v
                 // We remove any v' in the set that is inferior to v
                 if !set.iter().any(|v2| v2 > v) {
-                    set.retain(|v2| v2 >= v);
+                    set.retain(|v2| !matches!(v2.partial_cmp(v), Some(Ordering::Less)));
                     set.insert(v.clone());
                 }
             }
