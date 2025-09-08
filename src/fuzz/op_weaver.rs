@@ -410,12 +410,12 @@ where
     let mut event_sum = 0;
     for (i, tcsb) in replicas.iter().enumerate() {
         if i == 0 {
-            reference = tcsb.eval();
+            reference = tcsb.query();
             event_sum = tcsb.my_clock().sum();
         }
         assert_eq!(tcsb.my_clock().sum(), event_sum);
 
-        let eval = tcsb.eval();
+        let eval = tcsb.query();
 
         if !(config.compare)(&eval, &reference) {
             error!(

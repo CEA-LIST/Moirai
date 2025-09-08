@@ -1,6 +1,7 @@
 pub mod counter;
 pub mod flag;
 pub mod graph;
+pub mod list;
 pub mod map;
 pub mod model;
 pub mod register;
@@ -261,7 +262,7 @@ pub mod test_util {
     //     pub fn quadruplet<L: Log + Clone>() -> Quadruplet<L> {
     //         let (mut replica_a, mut replica_b, mut replica_c) = triplet::<L>();
 
-    //         let mut tcsb_d = Tcsb::<L>::new("d");
+    //         let mut replica_d = Tcsb::<L>::new("d");
 
     //         replica_a.add_pending_view(vec![
     //             "a".to_string(),
@@ -294,9 +295,9 @@ pub mod test_util {
     //         assert_eq!(replica_b.ltm.members(), &vec!["a", "b", "c", "d"]);
     //         assert_eq!(replica_c.ltm.members(), &vec!["a", "b", "c", "d"]);
 
-    //         tcsb_d.state_transfer(&mut replica_a);
+    //         replica_d.state_transfer(&mut replica_a);
 
-    //         assert_eq!(tcsb_d.ltm.members(), &vec!["a", "b", "c", "d"]);
+    //         assert_eq!(replica_d.ltm.members(), &vec!["a", "b", "c", "d"]);
 
     //         let left = "<<<".bold().yellow();
     //         let right = ">>>".bold().yellow();
@@ -305,9 +306,9 @@ pub mod test_util {
     //             replica_a.id.blue(),
     //             replica_b.id.blue(),
     //             replica_c.id.blue(),
-    //             tcsb_d.id.blue()
+    //             replica_d.id.blue()
     //         );
 
-    //         (replica_a, replica_b, replica_c, tcsb_d)
+    //         (replica_a, replica_b, replica_c, replica_d)
     //     }
 }

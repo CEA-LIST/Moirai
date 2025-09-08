@@ -66,6 +66,9 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
+        if O::DISABLE_STABILIZE {
+            return;
+        }
         info!("Stabilizing with version: {}", version);
         // 1. select all ops in unstable that are predecessors of a version
         // 2. for each of them, call stabilize, which may modify stable and/or unstable

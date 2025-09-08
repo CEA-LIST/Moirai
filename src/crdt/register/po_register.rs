@@ -50,9 +50,6 @@ where
     where
         Self: 'a,
     {
-        // println!("stable: {:?}", stable);
-        // let unstable_vec: Vec<_> = unstable.collect();
-        // println!("unstable: {:?}", unstable_vec);
         // The set can contain only incomparable values
         let mut set = Self::Value::default();
         for o in stable.iter().chain(unstable.map(|to| to.op())) {
