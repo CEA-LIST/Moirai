@@ -56,10 +56,5 @@ pub trait PureCRDT: Debug + Sized {
     ) {
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        Self: 'a;
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value;
 }

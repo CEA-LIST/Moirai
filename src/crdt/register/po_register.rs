@@ -1,4 +1,6 @@
-use crate::protocol::{crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp};
+use crate::protocol::{
+    crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
+};
 use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 #[derive(Clone, Debug)]
@@ -43,16 +45,10 @@ where
         !is_conc
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        Self: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         // The set can contain only incomparable values
         let mut set = Self::Value::default();
-        for o in stable.iter().chain(unstable.map(|to| to.op())) {
+        for o in stable.iter().chain(unstable.iter().map(|to| to.op())) {
             if let PORegister::Write(v) = o {
                 // We add the value if there is no v' in the set that is superior to v
                 // We remove any v' in the set that is inferior to v

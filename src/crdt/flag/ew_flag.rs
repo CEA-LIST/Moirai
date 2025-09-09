@@ -8,7 +8,7 @@ use tsify::Tsify;
 use crate::protocol::{
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::stable_state::IsStableState,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -86,15 +86,12 @@ impl PureCRDT for EWFlag {
         !is_conc
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut flag = match stable {
             Some(v) => *v,
             None => false,
         };
-        for op in unstable.map(|t| t.op()) {
+        for op in unstable.iter().map(|t| t.op()) {
             if let EWFlag::Enable = op {
                 flag = true;
                 break;

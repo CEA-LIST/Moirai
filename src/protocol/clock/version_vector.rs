@@ -116,8 +116,10 @@ impl Version {
         self.seq_by_idx(self.origin_idx).unwrap()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&ReplicaIdx, &Seq)> {
-        self.entries.iter()
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = EventId> + 'a {
+        self.entries
+            .iter()
+            .map(|(idx, seq)| EventId::new(*idx, *seq, self.view.clone()))
     }
 
     #[cfg(test)]

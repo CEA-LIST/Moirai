@@ -1,3 +1,4 @@
+pub mod event_graph;
 pub mod log;
 pub mod po_log;
 pub mod stable_state;

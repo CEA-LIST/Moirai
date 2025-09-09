@@ -6,7 +6,7 @@ use std::{
 use crate::protocol::{
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::stable_state::IsStableState,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 
 #[cfg(feature = "serde")]
@@ -86,15 +86,9 @@ where
         !is_conc && matches!(new_tagged_op.op(), Counter::Reset)
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        V: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut counter = *stable;
-        for op in unstable.map(|t| t.op()) {
+        for op in unstable.iter().map(|t| t.op()) {
             match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,

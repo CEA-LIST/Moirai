@@ -1,6 +1,5 @@
 use crate::protocol::{
-    crdt::pure_crdt::PureCRDT,
-    event::{id::EventId, tagged_op::TaggedOp},
+    crdt::pure_crdt::PureCRDT, event::id::EventId, state::unstable_state::IsUnstableState,
 };
 use std::fmt::Debug;
 
@@ -175,18 +174,12 @@ impl PureCRDT for FugueTextOp {
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_STABILIZE: bool = true;
 
-    fn eval<'a>(
-        _stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        Self: 'a,
-    {
+    fn eval(_stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         // Create a working copy of the stable document
         // let mut doc = stable.clone();
         let mut doc = FugueDocument::new();
         // Loop through all events in the event graph (causally ordered)
-        for tagged_op in unstable {
+        for tagged_op in unstable.iter() {
             match tagged_op.op().clone() {
                 FugueTextOp::Insert {
                     content,
@@ -355,6 +348,6 @@ mod tests {
         replica_b.receive(event4a);
         //let result = replica_a.query();
         assert!(replica_a.query() == replica_b.query());
-        //assert_eq!(result, "He i");
+        assert_eq!("He hi", replica_a.query());
     }
 }

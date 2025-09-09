@@ -1,4 +1,6 @@
-use crate::protocol::{crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp};
+use crate::protocol::{
+    crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
+};
 use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
@@ -43,15 +45,9 @@ where
         !is_conc
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        Self: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut val = Self::Value::default();
-        for o in stable.iter().chain(unstable.map(|to| to.op())) {
+        for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let TORegister::Write(v) = o {
                 if v > &val {
                     val = v.clone();

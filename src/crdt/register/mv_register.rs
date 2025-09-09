@@ -3,6 +3,7 @@ use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
     event::{tag::Tag, tagged_op::TaggedOp},
+    state::unstable_state::IsUnstableState,
 };
 
 #[derive(Clone, Debug)]
@@ -47,15 +48,9 @@ where
         !is_conc
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        V: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut set = Self::Value::default();
-        for o in stable.iter().chain(unstable.map(|t| t.op())) {
+        for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let MVRegister::Write(v) = o {
                 set.insert(v.clone());
             }
