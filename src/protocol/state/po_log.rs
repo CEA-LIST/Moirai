@@ -57,12 +57,12 @@ where
                     event.version(),
                 );
             }
-            self.unstable.append(new_tagged_op);
+            self.unstable.append(event);
         }
     }
 
     fn eval(&self) -> Self::Value {
-        O::eval(&self.stable, self.unstable.iter())
+        O::eval(&self.stable, &self.unstable)
     }
 
     fn stabilize(&mut self, version: &Version) {

@@ -3,6 +3,7 @@ use petgraph::graph::DiGraph;
 use crate::protocol::crdt::pure_crdt::PureCRDT;
 use crate::protocol::event::tag::Tag;
 use crate::protocol::event::tagged_op::TaggedOp;
+use crate::protocol::state::unstable_state::IsUnstableState;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -67,14 +68,11 @@ where
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        Self: 'a,
-    {
-        let mut ops: Vec<&Self> = stable.iter().chain(unstable.map(|to| to.op())).collect();
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+        let mut ops: Vec<&Self> = stable
+            .iter()
+            .chain(unstable.iter().map(|t| t.op()))
+            .collect();
         ops.sort_by(|a, b| match (a, b) {
             (Graph::AddVertex(_), Graph::AddArc(_, _, _)) => Ordering::Less,
             (Graph::AddArc(_, _, _), Graph::AddVertex(_)) => Ordering::Greater,

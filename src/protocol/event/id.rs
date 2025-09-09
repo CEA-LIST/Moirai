@@ -1,4 +1,8 @@
-use std::fmt::Display;
+use std::{
+    cmp::Ordering,
+    fmt::Display,
+    hash::{Hash, Hasher},
+};
 
 use crate::{
     protocol::{
@@ -9,7 +13,7 @@ use crate::{
 };
 
 /// Represents the unique identifier for an operation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct EventId {
     idx: ReplicaIdx,
     seq: Seq,
@@ -18,7 +22,6 @@ pub struct EventId {
 
 impl EventId {
     pub fn new(idx: ReplicaIdx, seq: Seq, view: Reader<View>) -> Self {
-        assert!(seq > 0);
         Self { idx, seq, view }
     }
 
@@ -61,3 +64,33 @@ impl Display for EventId {
         )
     }
 }
+
+impl Hash for EventId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.origin_id().hash(state);
+        self.seq.hash(state);
+    }
+}
+
+impl PartialOrd for EventId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EventId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.origin_id().cmp(&other.origin_id()) {
+            Ordering::Equal => self.seq.cmp(&other.seq),
+            ord => ord,
+        }
+    }
+}
+
+impl PartialEq for EventId {
+    fn eq(&self, other: &Self) -> bool {
+        self.origin_id() == other.origin_id() && self.seq == other.seq
+    }
+}
+
+impl Eq for EventId {}

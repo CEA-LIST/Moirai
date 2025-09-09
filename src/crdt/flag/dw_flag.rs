@@ -8,7 +8,7 @@ use tsify::Tsify;
 use crate::protocol::{
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::stable_state::IsStableState,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -86,10 +86,7 @@ impl PureCRDT for DWFlag {
         !is_conc
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut flag = false;
 
         if let Some(v) = stable {
@@ -101,7 +98,7 @@ impl PureCRDT for DWFlag {
         }
 
         // In DWFlag, any concurrent Disable wins over Enable
-        for op in unstable.map(|t| t.op()) {
+        for op in unstable.iter().map(|t| t.op()) {
             match op {
                 DWFlag::Disable => {
                     flag = false;

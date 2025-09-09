@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
     event::{tag::Tag, tagged_op::TaggedOp},
+    state::unstable_state::IsUnstableState,
 };
 
 #[derive(Clone, Debug)]
@@ -58,15 +59,9 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
         }
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        V: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut value = V::default();
-        for op in stable.iter().chain(unstable.map(|t| t.op())) {
+        for op in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             match op {
                 LWWRegister::Write(v) => value = v.clone(),
             }

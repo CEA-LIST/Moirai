@@ -124,8 +124,10 @@ impl MatrixClock {
     /// `O(n^2)`
     fn diagonal(&self) -> bool {
         for (i, version) in self.entries.iter() {
-            for (j, seq) in version.iter() {
-                if j != i && *seq > self.entries[j].origin_seq() {
+            for event_id in version.iter() {
+                if event_id.origin_idx() != *i
+                    && event_id.seq() > self.entries[&event_id.origin_idx()].origin_seq()
+                {
                     return false;
                 }
             }
@@ -139,8 +141,8 @@ impl MatrixClock {
     fn dominate(&self) -> bool {
         let origin_ver = self.origin_version();
         for ver in self.entries.values() {
-            for (idx, seq) in ver.iter() {
-                if origin_ver.seq_by_idx(*idx).unwrap_or(0) < *seq {
+            for event_id in ver.iter() {
+                if origin_ver.seq_by_idx(event_id.origin_idx()).unwrap_or(0) < event_id.seq() {
                     return false;
                 }
             }

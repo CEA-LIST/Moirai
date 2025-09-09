@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use crate::protocol::{
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::stable_state::IsStableState,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 
 #[derive(Clone, Debug)]
@@ -99,15 +99,9 @@ where
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        V: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut set = stable.clone();
-        for o in unstable {
+        for o in unstable.iter() {
             if let AWSet::Add(v) = o.op() {
                 set.insert(v.clone());
             }

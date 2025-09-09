@@ -4,11 +4,11 @@ use tracing::info;
 
 use crate::protocol::{
     clock::version_vector::Version,
-    event::{id::EventId, tagged_op::TaggedOp},
+    event::{id::EventId, tagged_op::TaggedOp, Event},
 };
 
 pub trait IsUnstableState<O> {
-    fn append(&mut self, tagged_op: TaggedOp<O>);
+    fn append(&mut self, event: Event<O>);
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
     fn remove(&mut self, event_id: &EventId);
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -19,14 +19,17 @@ pub trait IsUnstableState<O> {
     fn is_empty(&self) -> bool;
     fn clear(&mut self);
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>;
+    fn parents(&self, event_id: &EventId) -> Vec<EventId>;
+    fn delivery_order(&self, event_id: &EventId) -> usize;
 }
 
 impl<O> IsUnstableState<O> for Vec<TaggedOp<O>>
 where
     O: Debug + Clone,
 {
-    fn append(&mut self, tagged_op: TaggedOp<O>) {
-        info!("Appending event: {}", tagged_op.id());
+    fn append(&mut self, event: Event<O>) {
+        info!("Appending event: {}", event.id());
+        let tagged_op = TaggedOp::from(&event);
         self.push(tagged_op);
         info!(
             "state: [{}]",
@@ -79,5 +82,13 @@ where
             .filter(|to| to.id().is_predecessor_of(version))
             .cloned()
             .collect()
+    }
+
+    fn parents(&self, _event_id: &EventId) -> Vec<EventId> {
+        unimplemented!()
+    }
+
+    fn delivery_order(&self, event_id: &EventId) -> usize {
+        self.iter().position(|to| to.id() == event_id).unwrap()
     }
 }

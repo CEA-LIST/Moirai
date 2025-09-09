@@ -144,17 +144,11 @@ where
         }
     }
 
-    fn eval<'a>(
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> Self::Value
-    where
-        V: 'a,
-    {
+    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut set = stable.0.clone();
         let mut removed = HashSet::new();
 
-        for o in unstable.map(|t| t.op()) {
+        for o in unstable.iter().map(|t| t.op()) {
             match o {
                 RWSet::Add(v) => {
                     if !stable
