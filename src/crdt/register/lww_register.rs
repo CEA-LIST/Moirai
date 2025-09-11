@@ -33,16 +33,7 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     where
         Self: 'a,
     {
-        unstable.any(|old_tagged_op| {
-            let cmp = new_tagged_op.tag() < old_tagged_op.tag();
-            tracing::info!(
-                "compare {} < {}: result {}. if true, then new is redundant.",
-                new_tagged_op,
-                old_tagged_op,
-                cmp
-            );
-            cmp
-        })
+        unstable.any(|old_tagged_op| new_tagged_op.tag() < old_tagged_op.tag())
     }
 
     /// (t, o) R (t', o') = t < t' || (t == t' && t.id < t'.id)

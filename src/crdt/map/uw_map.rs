@@ -43,27 +43,22 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>) {
-        tracing::info!("before unstable {:?}", self.children);
         match event.op().clone() {
             UWMap::Update(k, v) => {
-                tracing::info!("UPDATE");
                 let child_op = Event::unfold(event, v);
                 self.children.entry(k.clone()).or_default().effect(child_op);
             }
             UWMap::Remove(k) => {
-                tracing::info!("REMOVE");
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
                 }
             }
             UWMap::Clear => {
-                tracing::info!("CLEAR");
                 for child in self.children.values_mut() {
                     child.redundant_by_parent(event.version(), true);
                 }
             }
         }
-        tracing::info!("after unstable {:?}", self.children);
     }
 
     fn eval(&self) -> Self::Value {

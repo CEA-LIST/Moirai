@@ -28,16 +28,8 @@ where
     O: Debug + Clone,
 {
     fn append(&mut self, event: Event<O>) {
-        info!("Appending event: {}", event.id());
         let tagged_op = TaggedOp::from(&event);
         self.push(tagged_op);
-        info!(
-            "state: [{}]",
-            self.iter()
-                .map(|to| format!("{}: {:?}", to.id(), to.op()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
     }
 
     // TODO: O(n)
