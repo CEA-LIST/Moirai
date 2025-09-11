@@ -1,6 +1,7 @@
 pub mod counter;
 pub mod flag;
 pub mod graph;
+pub mod json;
 pub mod list;
 pub mod map;
 pub mod model;

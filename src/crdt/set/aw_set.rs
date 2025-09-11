@@ -75,12 +75,6 @@ where
         is_conc: bool,
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
-        tracing::info!(
-            "Checking redundancy: old_op = {:?}, new_op = {:?}",
-            old_op,
-            new_tagged_op.op()
-        );
-        tracing::info!("Is concurrent: {}", is_conc);
         !is_conc
             && match (old_op, new_tagged_op.op()) {
                 (AWSet::Add(v1), AWSet::Add(v2)) | (AWSet::Add(v1), AWSet::Remove(v2)) => v1 == v2,

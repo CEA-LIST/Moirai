@@ -44,12 +44,6 @@ impl EventId {
     /// Returns `true` if sequence number of the version for the replica id is greater OR equal.
     pub fn is_predecessor_of(&self, version: &Version) -> bool {
         let ver_seq = version.seq_by_id(&self.origin_id()).unwrap_or(0);
-        tracing::info!(
-            "Checking if {} is a predecessor of {}: {}",
-            self,
-            version,
-            ver_seq >= self.seq
-        );
         ver_seq >= self.seq
     }
 }
