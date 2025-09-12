@@ -26,40 +26,6 @@ where
     vertex_content: HashMap<V, Nl>,
 }
 
-impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
-where
-    V: Clone + Debug + Eq + PartialEq + Hash,
-    E: Clone + Debug + Eq + PartialEq + Hash,
-{
-    fn default() -> Self {
-        Self {
-            arc_content: HashMap::new(),
-            vertex_content: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Content<Id, Val> {
-    pub id: Id,
-    pub val: Val,
-}
-
-impl<Id, Val> Content<Id, Val> {
-    pub fn new(id: Id, val: Val) -> Self {
-        Self { id, val }
-    }
-}
-
-impl<Id, Val> Display for Content<Id, Val>
-where
-    Val: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.val)
-    }
-}
-
 impl<V, E, Nl, El> IsLog for UWGraphLog<V, E, Nl, El>
 where
     Nl: IsLog,
@@ -174,6 +140,40 @@ where
     }
 }
 
+impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
+where
+    V: Clone + Debug + Eq + PartialEq + Hash,
+    E: Clone + Debug + Eq + PartialEq + Hash,
+{
+    fn default() -> Self {
+        Self {
+            arc_content: HashMap::new(),
+            vertex_content: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Content<Id, Val> {
+    pub id: Id,
+    pub val: Val,
+}
+
+impl<Id, Val> Content<Id, Val> {
+    pub fn new(id: Id, val: Val) -> Self {
+        Self { id, val }
+    }
+}
+
+impl<Id, Val> Display for Content<Id, Val>
+where
+    Val: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.val)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use petgraph::graph::DiGraph;
@@ -185,11 +185,11 @@ mod tests {
             register::lww_register::LWWRegister,
             test_util::{triplet_log, twins_log},
         },
-        protocol::{event::tagged_op::TaggedOp, replica::IsReplica, state::po_log::POLog},
+        protocol::{replica::IsReplica, state::po_log::VecLog},
     };
 
-    type Lww = POLog<LWWRegister<i32>, Vec<TaggedOp<LWWRegister<i32>>>>;
-    type Cntr = POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>;
+    type Lww = VecLog<LWWRegister<i32>>;
+    type Cntr = VecLog<Counter<i32>>;
 
     #[test]
     fn nested_graph() {

@@ -106,7 +106,10 @@ mod tests {
         protocol::{
             event::tagged_op::TaggedOp,
             replica::IsReplica,
-            state::{log::IsLog, po_log::POLog},
+            state::{
+                log::IsLog,
+                po_log::{POLog, VecLog},
+            },
         },
         record,
     };
@@ -118,8 +121,7 @@ mod tests {
 
     #[test]
     fn simple_uw_map() {
-        let (mut replica_a, mut replica_b) =
-            twins_log::<UWMapLog<String, POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
         let event = replica_a.send(UWMap::Update("a".to_string(), Counter::Dec(5)));
         replica_b.receive(event);
@@ -139,8 +141,7 @@ mod tests {
 
     #[test]
     fn concurrent_uw_map() {
-        let (mut replica_a, mut replica_b) =
-            twins_log::<UWMapLog<String, POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
         let event_a = replica_a.send(UWMap::Remove("a".to_string()));
         let event_b = replica_b.send(UWMap::Update("a".to_string(), Counter::Inc(10)));
@@ -279,10 +280,7 @@ mod tests {
     #[test]
     fn uw_map_deeply_nested() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<
-            UWMapLog<
-                String,
-                UWMapLog<i32, UWMapLog<String, POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>>>,
-            >,
+            UWMapLog<String, UWMapLog<i32, UWMapLog<String, VecLog<Counter<i32>>>>>,
         >();
 
         let event_a_1 = replica_a.send(UWMap::Update(

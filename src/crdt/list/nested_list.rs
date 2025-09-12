@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::crdt::list::list::List as SimpleList;
+use crate::crdt::list::eg_walker::List as SimpleList;
 use crate::protocol::clock::version_vector::Version;
 use crate::protocol::event::id::EventId;
 use crate::protocol::event::Event;
@@ -141,13 +141,12 @@ mod tests {
             list::nested_list::{List, ListLog},
             test_util::twins_log,
         },
-        protocol::{event::tagged_op::TaggedOp, replica::IsReplica, state::po_log::POLog},
+        protocol::{replica::IsReplica, state::po_log::VecLog},
     };
 
     #[test]
     fn simple_nested_list() {
-        let (mut replica_a, mut replica_b) =
-            twins_log::<ListLog<POLog<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
 
         let event = replica_a.send(List::insert(0, Counter::Inc(10)));
         replica_b.receive(event);
@@ -187,5 +186,18 @@ mod tests {
 
         assert_eq!(replica_a.query(), vec![21]);
         assert_eq!(replica_b.query(), vec![21]);
+    }
+
+    #[test]
+    fn concurrent_insert() {
+        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a.send(List::insert(0, Counter::Inc(10)));
+        let event_b = replica_b.send(List::insert(0, Counter::Inc(20)));
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert_eq!(replica_a.query(), vec![10, 20]);
+        assert_eq!(replica_b.query(), vec![10, 20]);
     }
 }

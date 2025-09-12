@@ -246,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_insertion_crdt() {
+    fn simple_insertion_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Create insert operation
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_insertions_crdt() {
+    fn concurrent_insertions_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         let event1 = replica_a.send(FugueTextOp::insert('H', None, None));
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_operation_crdt() {
+    fn delete_operation_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Insert 'A'
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conc_delete_ins_crdt() {
+    fn conc_delete_ins_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Insert 'A'
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sequential_conc_operations_crdt() {
+    fn sequential_conc_operations_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         let event1 = replica_a.send(FugueTextOp::insert('H', None, None));

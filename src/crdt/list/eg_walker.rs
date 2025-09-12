@@ -287,8 +287,9 @@ where
         let mut queue: BinaryHeap<(usize, EventId)> = BinaryHeap::new();
         let mut num_shared = 0usize;
 
+        #[allow(clippy::mutable_key_type)]
         fn enq(
-            #[allow(clippy::mutable_key_type)] flags: &mut HashMap<EventId, DiffFlag>,
+            flags: &mut HashMap<EventId, DiffFlag>,
             queue: &mut BinaryHeap<(usize, EventId)>,
             num_shared: &mut usize,
             event_id: EventId,
@@ -417,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_insertion_egwalker() {
+    fn simple_insertion_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0));
@@ -428,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_insertions_egwalker() {
+    fn concurrent_insertions_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         let e1 = replica_a.send(List::insert('H', 0));
@@ -450,7 +451,25 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_operation_egwalker() {
+    fn concurrent_insert() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+
+        let e1 = replica_a.send(List::insert('H', 0));
+        let e2 = replica_b.send(List::insert('i', 0));
+        replica_a.receive(e2);
+        replica_b.receive(e1);
+
+        let res_a = to_string(&replica_a.query());
+        assert!(
+            res_a == "Hi" || res_a == "iH",
+            "Unexpected order: {}",
+            res_a
+        );
+        assert_eq!(replica_a.query(), replica_b.query());
+    }
+
+    #[test]
+    fn delete_operation_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0));
@@ -464,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conc_delete_ins_egwalker() {
+    fn conc_delete_ins_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0));
@@ -480,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sequential_conc_operations_egwalker() {
+    fn sequential_conc_operations_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         let e1 = replica_a.send(List::insert('H', 0));
@@ -502,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn test_in_paper() {
+    fn in_paper() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         // e1: Insert(0, 'h')
