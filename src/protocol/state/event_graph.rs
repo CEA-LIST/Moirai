@@ -78,37 +78,20 @@ where
         let child_idx = self.graph.add_node(new_tagged_op);
         self.map.insert(child_idx, event.id().clone());
         let immediate_parents = self.find_immediate_predecessors(event.version());
-        println!(
-            "Event {} with version {} has: immediate parents: {}",
-            event.id(),
-            event.version(),
-            immediate_parents
-                .iter()
-                .map(|idx| self.map.get_by_left(idx).unwrap().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
         for parent_idx in immediate_parents {
             self.graph.add_edge(child_idx, parent_idx, ());
             let parent_id = self.map.get_by_left(&parent_idx).unwrap();
-            if self.heads.contains(&parent_id) {
-                self.heads.remove(&parent_id);
+            if self.heads.contains(parent_id) {
+                self.heads.remove(parent_id);
             }
         }
         self.heads.insert(event.id().clone());
 
+        #[allow(clippy::mutable_key_type)] // false positive
         fn max_one_per_id(set: &HashSet<EventId>) -> bool {
             let mut seen = HashSet::new();
             for p in set {
                 if !seen.insert(p.origin_id()) {
-                    println!("Duplicate origin id found: {}", p.origin_id());
-                    println!(
-                        "Set contents: {}",
-                        set.iter()
-                            .map(|e| e.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
                     return false; // duplicate name found
                 }
             }
@@ -220,7 +203,7 @@ impl<O> EventGraph<O> {
         let start_nodes: Vec<NodeIndex> = self
             .heads
             .iter()
-            .map(|id| *self.map.get_by_right(&id).unwrap())
+            .map(|id| *self.map.get_by_right(id).unwrap())
             .collect();
 
         // TODO: does it visit in the right direction?
@@ -251,23 +234,23 @@ impl<O> EventGraph<O> {
     /// 1. DFS from the heads of the graph.
     /// 2. For each node N, check if it is an predecessor of any node in the given version.
     /// 3. If it is, check that there is no other predecessor in the list with the same origin id and a higher sequence number.
-    /// 3.1 And there exist a node N' in the list that has N as an ancestor, remove N from the list.
-    /// 3.2 If not, add it to the list of immediate predecessors.
-    /// 3.3 If there exist a node N' in the list with the same origin id and a lower sequence number, remove N' from the list.
+    ///    3.1 If there exist a node N' in the list that has N as an ancestor, remove N from the list.
+    ///    3.2 If not, add it to the list of immediate predecessors.
+    ///    3.3 If there exist a node N' in the list with the same origin id and a lower sequence number, remove N' from the list.
     fn find_immediate_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
         let start_nodes: Vec<NodeIndex> = self
             .heads
             .iter()
-            .map(|id| *self.map.get_by_right(&id).unwrap())
+            .map(|id| *self.map.get_by_right(id).unwrap())
             .collect();
 
+        #[allow(clippy::mutable_key_type)]
         let mut collected = HashMap::<EventId, NodeIndex>::new();
         let discovered = self.graph.visit_map();
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
 
         while let Some(node_idx) = dfs.next(&self.graph) {
             let event_id = self.map.get_by_left(&node_idx).unwrap();
-            println!("Candidate: {}", event_id);
             // The event is a predecessor of the version
             if event_id.is_predecessor_of(version) {
                 // There is no event_id in the list with the same origin id and a higher sequence number
@@ -276,7 +259,6 @@ impl<O> EventGraph<O> {
                     (event_id.origin_id() == id.origin_id() && id.seq() > event_id.seq())
                         || has_path_connecting(&self.graph, *nx, node_idx, None)
                 }) {
-                    println!("  -> Immediate predecessor");
                     let to_remove: Vec<EventId> = collected
                         .iter()
                         .filter(|(_, nx)| has_path_connecting(&self.graph, node_idx, **nx, None))
