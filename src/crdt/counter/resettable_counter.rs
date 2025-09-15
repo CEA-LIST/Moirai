@@ -39,7 +39,7 @@ where
         match value {
             Counter::Inc(v) => *self += v,
             Counter::Dec(v) => *self -= v,
-            _ => {}
+            Counter::Reset => unreachable!(),
         }
     }
 
@@ -92,7 +92,7 @@ where
             match op {
                 Counter::Inc(v) => counter += *v,
                 Counter::Dec(v) => counter -= *v,
-                _ => {}
+                Counter::Reset => unreachable!(),
             }
         }
         counter
