@@ -34,7 +34,7 @@ where
             RWSet::Remove(_) => {
                 self.1.push(value);
             }
-            _ => {}
+            RWSet::Clear => unreachable!(),
         }
     }
 

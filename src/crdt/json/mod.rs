@@ -2,57 +2,61 @@ use std::collections::HashMap;
 
 use crate::{
     crdt::{
-        counter::resettable_counter::Counter, flag::ew_flag::EWFlag, map::uw_map::UWMapLog,
-        register::mv_register::MVRegister,
+        counter::resettable_counter::Counter,
+        flag::ew_flag::EWFlag,
+        list::{
+            eg_walker::List,
+            nested_list::{List as NestedList, ListLog as NestedListLog},
+        },
+        map::uw_map::{UWMap, UWMapLog},
     },
     protocol::{
         clock::version_vector::Version,
         event::Event,
-        state::{log::IsLog, po_log::VecLog},
+        state::{event_graph::EventGraph, log::IsLog, po_log::VecLog},
     },
-    record,
 };
 
-#[derive(Debug, Clone)]
-pub enum Json {
+#[derive(Debug, Clone, Default)]
+pub enum JsonOps {
+    #[default]
     Null,
     Bool(EWFlag),
     Number(Counter<f64>),
+    Object(UWMap<String, Box<JsonOps>>),
+    String(List<char>),
+    Array(NestedList<Box<JsonOps>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub enum JsonLog {
+    #[default]
     Null,
     Bool(VecLog<EWFlag>),
     Number(VecLog<Counter<f64>>),
+    Object(UWMapLog<String, JsonLogContainer>),
+    String(EventGraph<List<char>>),
+    Array(NestedListLog<JsonLogContainer>),
 }
 
-impl Default for JsonLog {
-    fn default() -> Self {
-        JsonLog::Null
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum JsonValue {
+    #[default]
     Null,
     Bool(bool),
     Number(f64),
+    String(String),
+    Object(HashMap<String, JsonValue>),
+    Array(Vec<JsonValue>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct JsonLogContainer {
     value: JsonLog,
 }
 
-impl Default for Json {
-    fn default() -> Self {
-        Json::Null
-    }
-}
-
 impl IsLog for JsonLogContainer {
-    type Op = Json;
+    type Op = JsonOps;
     type Value = JsonValue;
 
     fn new() -> Self {
@@ -61,7 +65,7 @@ impl IsLog for JsonLogContainer {
 
     fn effect(&mut self, event: Event<Self::Op>) {
         match event.op().clone() {
-            Json::Bool(op) => {
+            JsonOps::Bool(op) => {
                 if let JsonLog::Bool(log) = &mut self.value {
                     let child_op = Event::unfold(event, op);
                     log.effect(child_op);
@@ -72,7 +76,7 @@ impl IsLog for JsonLogContainer {
                     self.value = JsonLog::Bool(log);
                 }
             }
-            Json::Number(op) => {
+            JsonOps::Number(op) => {
                 if let JsonLog::Number(log) = &mut self.value {
                     let child_op = Event::unfold(event, op);
                     log.effect(child_op);
@@ -83,7 +87,52 @@ impl IsLog for JsonLogContainer {
                     self.value = JsonLog::Number(log);
                 }
             }
-            _ => {}
+            JsonOps::Object(uwmap) => {
+                let op: UWMap<String, JsonOps> = match uwmap {
+                    UWMap::Update(k, v) => UWMap::Update(k, *v),
+                    UWMap::Remove(k) => UWMap::Remove(k),
+                    UWMap::Clear => UWMap::Clear,
+                };
+                if let JsonLog::Object(log) = &mut self.value {
+                    let child_op = Event::unfold(event, op);
+                    log.effect(child_op);
+                } else {
+                    let mut log = UWMapLog::<String, JsonLogContainer>::new();
+                    let child_op = Event::unfold(event, op);
+                    log.effect(child_op);
+                    self.value = JsonLog::Object(log);
+                }
+            }
+            JsonOps::Null => {
+                self.value = JsonLog::Null;
+            }
+            JsonOps::String(list) => {
+                if let JsonLog::String(log) = &mut self.value {
+                    let child_op = Event::unfold(event, list);
+                    log.effect(child_op);
+                } else {
+                    let mut log = EventGraph::<List<char>>::new();
+                    let child_op = Event::unfold(event, list);
+                    log.effect(child_op);
+                    self.value = JsonLog::String(log);
+                }
+            }
+            JsonOps::Array(list) => {
+                let op = match list {
+                    NestedList::Insert { pos, value } => NestedList::Insert { pos, value: *value },
+                    NestedList::Set { pos, value } => NestedList::Set { pos, value: *value },
+                    NestedList::Delete { pos } => NestedList::Delete { pos },
+                };
+                if let JsonLog::Array(log) = &mut self.value {
+                    let child_op = Event::unfold(event, op);
+                    log.effect(child_op);
+                } else {
+                    let mut log = NestedListLog::<JsonLogContainer>::new();
+                    let child_op = Event::unfold(event, op);
+                    log.effect(child_op);
+                    self.value = JsonLog::Array(log);
+                }
+            }
         }
     }
 
@@ -91,7 +140,13 @@ impl IsLog for JsonLogContainer {
         match &self.value {
             JsonLog::Bool(log) => JsonValue::Bool(log.eval()),
             JsonLog::Number(log) => JsonValue::Number(log.eval()),
-            _ => JsonValue::Null,
+            JsonLog::Null => JsonValue::Null,
+            JsonLog::Object(log) => JsonValue::Object(log.eval()),
+            JsonLog::String(log) => {
+                let chars: String = log.eval().into_iter().collect();
+                JsonValue::String(chars)
+            }
+            JsonLog::Array(log) => JsonValue::Array(log.eval()),
         }
     }
 
@@ -101,7 +156,10 @@ impl IsLog for JsonLogContainer {
         match &mut self.value {
             JsonLog::Bool(log) => log.redundant_by_parent(version, conservative),
             JsonLog::Number(log) => log.redundant_by_parent(version, conservative),
-            _ => {}
+            JsonLog::Object(log) => log.redundant_by_parent(version, conservative),
+            JsonLog::String(log) => log.redundant_by_parent(version, conservative),
+            JsonLog::Null => {}
+            JsonLog::Array(log) => log.redundant_by_parent(version, conservative),
         }
     }
 
@@ -114,112 +172,42 @@ impl IsLog for JsonLogContainer {
     }
 }
 
-// pub mod json {
-//     use crate::{
-//         crdt::{map::uw_map::UWMapLog, register::mv_register::MVRegister},
-//         protocol::state::log::IsLog,
-//         record,
-//     };
-//     use std::collections::HashMap;
-
-//     #[derive(Debug, Clone)]
-//     pub enum Json {
-//         Array(<UWMapLog<usize, JsonLog> as crate::protocol::state::log::IsLog>::Op),
-//     }
-
-//     #[derive(Debug, Clone, Default)]
-//     pub struct JsonLog {
-//         pub array: UWMapLog<usize, JsonLog>,
-//     }
-
-//     #[derive(Debug, Clone, Default, PartialEq)]
-//     pub struct JsonValue {
-//         pub array: <UWMapLog<usize, JsonLog> as crate::protocol::state::log::IsLog>::Value,
-//     }
-
-//     impl crate::protocol::state::log::IsLog for JsonLog {
-//         type Op = Json;
-//         type Value = JsonValue;
-//         fn new() -> Self {
-//             Self {
-//                 array: <UWMapLog<usize, JsonLog> as crate::protocol::state::log::IsLog>::new(),
-//             }
-//         }
-//         fn effect(&mut self, event: crate::protocol::event::Event<Self::Op>) {
-//             match event.op().clone() {
-//                 Json::Array(op) => {
-//                     let child_op = crate::protocol::event::Event::unfold(event, op);
-//                     self.array.effect(child_op);
-//                 }
-//                 _ => {}
-//             }
-//         }
-//         fn eval(&self) -> Self::Value {
-//             JsonValue {
-//                 array: self.array.eval(),
-//             }
-//         }
-//         fn stabilize(&mut self, version: &crate::protocol::clock::version_vector::Version) {
-//             self.array.stabilize(version);
-//         }
-//         fn redundant_by_parent(
-//             &mut self,
-//             version: &crate::protocol::clock::version_vector::Version,
-//             conservative: bool,
-//         ) {
-//             self.array.redundant_by_parent(version, conservative);
-//         }
-//         fn len(&self) -> usize {
-//             0 + self.array.len()
-//         }
-//         fn is_empty(&self) -> bool {
-//             true && self.array.is_empty()
-//         }
-//     }
-// }
-
-// record!(Json {
-//     null: MVRegister<()>,
-//     bool: MVRegister<bool>,
-//     number: MVRegister<f64>,
-//     string: MVRegister<String>,
-//     array: UWMapLog<usize, JsonLog>,
-//     object: UWMapLog<String, JsonLog>,
-// });
-
-// enum JsonValue {
-//     Null,
-//     Bool(bool),
-//     Number(f64),
-//     String(String),
-//     Array(Vec<JsonValue>),
-//     Object(HashMap<String, JsonValue>),
-// }
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::{
-            counter::resettable_counter::Counter,
-            list::nested_list::{List, ListLog},
-            test_util::twins_log,
-        },
-        protocol::{
-            event::tagged_op::TaggedOp,
-            replica::IsReplica,
-            state::po_log::{POLog, VecLog},
-        },
+        crdt::{counter::resettable_counter::Counter, test_util::twins_log},
+        protocol::replica::IsReplica,
     };
 
     use super::*;
 
     #[test]
     fn json_crdt() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<JsonLogContainer>>();
-        let test = replica_a.send(List::insert(0, Json::Number(Counter::Inc(10.0))));
-        let test_2 = replica_b.send(List::insert(0, Json::Bool(EWFlag::Enable)));
-        replica_b.receive(test);
-        replica_a.receive(test_2);
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<JsonLogContainer>>();
+        let event_a = replica_a.send(NestedList::Insert {
+            pos: 0,
+            value: JsonOps::Bool(EWFlag::Enable),
+        });
+        let event_b = replica_b.send(NestedList::Insert {
+            pos: 0,
+            value: JsonOps::Object(UWMap::Update(
+                "obj".to_string(),
+                Box::new(JsonOps::Number(Counter::Inc(5.0))),
+            )),
+        });
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+
+        // let event_a = replica_a.send(List::set(1, JsonOps::Bool(EWFlag::Disable)));
+        // let event_b = replica_b.send(List::insert(
+        //     2,
+        //     JsonOps::Object(UWMap::Update(
+        //         "obj".to_string(),
+        //         Box::new(JsonOps::Number(Counter::Inc(5.0))),
+        //     )),
+        // ));
+        // replica_b.receive(event_a);
+        // replica_a.receive(event_b);
 
         println!("{:?}", replica_a.query());
         println!("{:?}", replica_b.query());

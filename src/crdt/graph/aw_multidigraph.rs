@@ -99,7 +99,8 @@ where
                         edge_index.insert((v1, v2, e));
                     }
                 }
-                _ => {}
+                Graph::RemoveVertex(_) => unreachable!(),
+                Graph::RemoveArc(_, _, _) => unreachable!(),
             }
         }
         graph
