@@ -1,5 +1,7 @@
-use std::fmt::{Display, Formatter};
-use std::{collections::HashMap, fmt::Debug};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display, Formatter},
+};
 
 // #[cfg(feature = "utils")]
 // use deepsize::DeepSizeOf;
@@ -9,8 +11,13 @@ use tracing::{error, info};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
-use crate::protocol::membership::{view::View, ReplicaId, ReplicaIdx};
-use crate::{protocol::clock::version_vector::Version, utils::mut_owner::Reader};
+use crate::{
+    protocol::{
+        clock::version_vector::Version,
+        membership::{view::View, ReplicaId, ReplicaIdx},
+    },
+    utils::mut_owner::Reader,
+};
 
 /// A matrix clock is a generalization of a vector clock. It is a square matrix of positive integers.
 /// Each row represents the last vector clock known by the local replica from each member of the view.

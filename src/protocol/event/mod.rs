@@ -3,11 +3,12 @@ pub mod lamport;
 pub mod tag;
 pub mod tagged_op;
 
+use std::fmt::{Debug, Display};
+
 use crate::protocol::{
     clock::version_vector::Version,
     event::{id::EventId, lamport::Lamport},
 };
-use std::fmt::{Debug, Display};
 
 #[derive(Clone, Debug)]
 pub struct Event<O> {

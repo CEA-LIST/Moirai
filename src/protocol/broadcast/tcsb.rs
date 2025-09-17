@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use tracing::{error, info};
 
 use crate::{
@@ -8,7 +10,6 @@ use crate::{
     },
     utils::mut_owner::Reader,
 };
-use std::fmt::Debug;
 
 pub trait IsTcsb<O> {
     fn new(view: &Reader<View>, replica_idx: ReplicaIdx) -> Self;

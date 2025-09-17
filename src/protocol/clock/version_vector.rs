@@ -211,9 +211,8 @@ impl PartialOrd for Version {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::mut_owner::MutOwner;
-
     use super::*;
+    use crate::utils::mut_owner::MutOwner;
 
     fn view() -> MutOwner<View> {
         let mut view = View::new(&"a".to_string());

@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 use petgraph::graph::DiGraph;
 
-use crate::protocol::clock::version_vector::Version;
-use crate::protocol::event::Event;
-use crate::protocol::state::log::IsLog;
+use crate::protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
 
 #[derive(Clone, Debug)]
 pub enum UWGraph<V, E, No, Lo> {

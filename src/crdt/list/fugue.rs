@@ -1,7 +1,8 @@
+use std::fmt::Debug;
+
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT, event::id::EventId, state::unstable_state::IsUnstableState,
 };
-use std::fmt::Debug;
 
 /// A character item in the document
 #[derive(Clone, Debug)]
@@ -228,12 +229,11 @@ impl FugueTextOp {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         crdt::test_util::twins,
         protocol::{event::Event, replica::IsReplica},
     };
-
-    use super::*;
 
     fn extract_item_id_from_event(event: &Event<FugueTextOp>) -> Option<EventId> {
         match &event.op() {

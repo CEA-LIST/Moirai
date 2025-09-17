@@ -2,15 +2,14 @@ use std::fmt::Debug;
 
 use tracing::info;
 
+#[cfg(test)]
+use crate::protocol::state::log::IsLogTest;
 use crate::protocol::{
     clock::version_vector::Version,
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tagged_op::TaggedOp, Event},
     state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
 };
-
-#[cfg(test)]
-use crate::protocol::state::log::IsLogTest;
 
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 
