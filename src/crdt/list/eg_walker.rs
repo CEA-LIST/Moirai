@@ -1,10 +1,13 @@
+use std::{
+    collections::{BinaryHeap, HashMap},
+    fmt::Debug,
+};
+
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
     event::{id::EventId, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableState,
 };
-use std::collections::{BinaryHeap, HashMap};
-use std::fmt::Debug;
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -406,12 +409,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         crdt::test_util::twins_log,
         protocol::{replica::IsReplica, state::event_graph::EventGraph},
     };
-
-    use super::*;
 
     fn to_string(vec: &[char]) -> String {
         vec.iter().collect()

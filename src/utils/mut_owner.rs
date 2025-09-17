@@ -1,5 +1,7 @@
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
 
 /// Read-only shared handle
 #[derive(Debug, PartialEq, Eq)]

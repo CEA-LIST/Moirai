@@ -1,13 +1,17 @@
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
+};
+
 use petgraph::graph::DiGraph;
 
-use crate::protocol::crdt::pure_crdt::PureCRDT;
-use crate::protocol::event::tag::Tag;
-use crate::protocol::event::tagged_op::TaggedOp;
-use crate::protocol::state::unstable_state::IsUnstableState;
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
-use std::hash::Hash;
+use crate::protocol::{
+    crdt::pure_crdt::PureCRDT,
+    event::{tag::Tag, tagged_op::TaggedOp},
+    state::unstable_state::IsUnstableState,
+};
 
 #[derive(Clone, Debug)]
 pub enum Graph<V, E> {

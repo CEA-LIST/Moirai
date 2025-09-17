@@ -3,16 +3,16 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use tsify::Tsify;
+
 use crate::protocol::{
     crdt::pure_crdt::{PureCRDT, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]

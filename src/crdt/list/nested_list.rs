@@ -1,12 +1,13 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
-use crate::crdt::list::eg_walker::List as SimpleList;
-use crate::protocol::clock::version_vector::Version;
-use crate::protocol::event::id::EventId;
-use crate::protocol::event::Event;
-use crate::protocol::state::event_graph::EventGraph;
-use crate::protocol::state::log::IsLog;
+use crate::{
+    crdt::list::eg_walker::List as SimpleList,
+    protocol::{
+        clock::version_vector::Version,
+        event::{id::EventId, Event},
+        state::{event_graph::EventGraph, log::IsLog},
+    },
+};
 
 #[derive(Clone, Debug)]
 pub enum List<O> {
@@ -29,10 +30,28 @@ impl<O> List<O> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ListLog<L> {
     position: EventGraph<SimpleList<EventId>>,
     children: HashMap<EventId, L>,
+}
+
+impl<L> ListLog<L>
+where
+    L: IsLog,
+{
+    pub(crate) fn incorporate(&mut self, event: Event<L::Op>, log: L) {
+        let id = event.id().clone();
+        let e = Event::unfold(
+            event,
+            SimpleList::Insert {
+                content: id.clone(),
+                pos: 0,
+            },
+        );
+        self.position.effect(e);
+        self.children.insert(id, log);
+    }
 }
 
 impl<L> Default for ListLog<L> {
@@ -91,12 +110,7 @@ where
                     .effect(child_event);
             }
             List::Delete { pos } => {
-                let list_event = Event::new(
-                    event.id().clone(),
-                    event.lamport().clone(),
-                    SimpleList::Delete { pos },
-                    event.version().clone(),
-                );
+                let list_event = Event::unfold(event, SimpleList::Delete { pos });
                 self.position.effect(list_event);
             }
         }

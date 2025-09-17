@@ -1,7 +1,8 @@
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
 };
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 #[derive(Clone, Debug)]
 pub enum PORegister<V> {

@@ -1,7 +1,8 @@
+use std::fmt::Debug;
+
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
 };
-use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
 pub enum TORegister<V> {

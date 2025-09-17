@@ -19,7 +19,7 @@ use crate::protocol::{
     state::{log::IsLog, unstable_state::IsUnstableState},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EventGraph<O> {
     // TODO: stable or not?
     graph: StableDiGraph<TaggedOp<O>, ()>,
