@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    hash::Hash,
-};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use crate::protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
 
@@ -32,7 +28,7 @@ impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
 impl<K, L> IsLog for UWMapLog<K, L>
 where
     L: IsLog,
-    K: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    K: Clone + Debug + Hash + Eq,
     <L as IsLog>::Value: Default + PartialEq,
 {
     type Op = UWMap<K, L::Op>;

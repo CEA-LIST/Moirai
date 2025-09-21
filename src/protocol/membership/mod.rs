@@ -1,9 +1,9 @@
+use std::{collections::HashMap, fmt::Display};
+
 use crate::{
     protocol::membership::view::View,
     utils::mut_owner::{MutOwner, Reader},
 };
-use std::collections::HashMap;
-use std::fmt::Display;
 
 pub mod view;
 

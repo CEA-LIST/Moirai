@@ -1,10 +1,11 @@
+use std::path::Path;
+
 use rand::{
     distr::{weighted::WeightedIndex, Distribution},
     seq::IteratorRandom,
 };
 
 use crate::protocol::state::log::IsLog;
-use std::path::Path;
 
 pub struct FuzzerConfig<'a, L>
 where

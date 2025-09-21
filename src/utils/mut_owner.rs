@@ -1,6 +1,6 @@
-use std::fmt::Display;
 use std::{
     cell::{Ref, RefCell, RefMut},
+    fmt::Display,
     rc::Rc,
 };
 

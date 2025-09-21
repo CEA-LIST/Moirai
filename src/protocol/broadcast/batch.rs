@@ -1,10 +1,10 @@
+use std::fmt::{Debug, Display};
+
 use crate::protocol::{
     clock::version_vector::Version,
     event::{id::EventId, Event},
     membership::ReplicaId,
 };
-use std::fmt::Debug;
-use std::fmt::Display;
 
 #[derive(Debug)]
 pub struct Batch<O> {

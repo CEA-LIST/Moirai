@@ -1,6 +1,8 @@
-use crate::protocol::membership::{ReplicaId, ReplicaIdx};
-use bimap::BiMap;
 use std::fmt::Display;
+
+use bimap::BiMap;
+
+use crate::protocol::membership::{ReplicaId, ReplicaIdx};
 
 // TODO: partialeq impl is origin_idx == other_idx && members.len() == other_members.len() (because of monotonicity)
 #[derive(Debug, Clone, PartialEq, Eq)]
