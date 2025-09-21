@@ -8,7 +8,6 @@ This document provides instructions for benchmarking, profiling, and analyzing t
 
 ```sh
 cargo instruments -t time --release --open
-
 cargo instruments -t Allocations --example <name> --release --open
 ```
 
