@@ -316,39 +316,43 @@ mod tests {
     //         );
     //     }
 
-    //     #[cfg(feature = "op_weaver")]
-    //     #[test]
-    //     fn op_weaver_rw_set() {
-    //         use crate::{
-    //             protocol::event_graph::EventGraph,
-    //             utils::op_weaver::{op_weaver, EventGraphConfig},
-    //         };
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_rw_set() {
+        // init_tracing();
 
-    //         let ops = vec![
-    //             RWSet::Add("a"),
-    //             RWSet::Add("b"),
-    //             RWSet::Add("c"),
-    //             RWSet::Remove("a"),
-    //             RWSet::Remove("b"),
-    //             RWSet::Remove("c"),
-    //             RWSet::Clear,
-    //         ];
+        use crate::{
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
 
-    //         let config = EventGraphConfig {
-    //             name: "rw_set",
-    //             num_replicas: 8,
-    //             num_operations: 10_000,
-    //             operations: &ops,
-    //             final_sync: true,
-    //             churn_rate: 0.3,
-    //             reachability: None,
-    //             compare: |a: &HashSet<&str>, b: &HashSet<&str>| a == b,
-    //             record_results: true,
-    //             seed: None,
-    //             witness_graph: false,
-    //             concurrency_score: false,
-    //         };
+        let ops = OpConfig::Uniform(&[
+            RWSet::Add("a"),
+            RWSet::Add("b"),
+            RWSet::Add("c"),
+            RWSet::Add("d"),
+            RWSet::Remove("a"),
+            RWSet::Remove("b"),
+            RWSet::Remove("c"),
+            RWSet::Remove("d"),
+            RWSet::Clear,
+        ]);
 
-    //         op_weaver::<EventGraph<RWSet<&str>>>(config);
-    //     }
+        let run = RunConfig::new(0.4, 8, 10_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<VecLog<RWSet<&str>>>::new(
+            "rw_set",
+            runs,
+            ops,
+            true,
+            |a, b| a == b,
+            None,
+        );
+
+        fuzzer::<VecLog<RWSet<&str>>>(config);
+    }
 }

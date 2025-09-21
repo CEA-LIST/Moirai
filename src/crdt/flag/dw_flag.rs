@@ -157,4 +157,29 @@ mod tests {
         assert_eq!(replica_a.query(), false);
         assert_eq!(replica_b.query(), false);
     }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_ew_flag() {
+        use crate::{
+            // crdt::test_util::init_tracing,
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
+
+        // init_tracing();
+
+        let ops = OpConfig::Uniform(&[DWFlag::Enable, DWFlag::Disable, DWFlag::Clear]);
+
+        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config =
+            FuzzerConfig::<VecLog<DWFlag>>::new("dw_flag", runs, ops, true, |a, b| a == b, None);
+
+        fuzzer::<VecLog<DWFlag>>(config);
+    }
 }

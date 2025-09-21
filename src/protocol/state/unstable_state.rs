@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 use tracing::info;
 
@@ -82,5 +82,61 @@ where
 
     fn delivery_order(&self, event_id: &EventId) -> usize {
         self.iter().position(|to| to.id() == event_id).unwrap()
+    }
+}
+
+impl<O> IsUnstableState<O> for HashMap<EventId, TaggedOp<O>>
+where
+    O: Debug + Clone,
+{
+    fn append(&mut self, event: Event<O>) {
+        let tagged_op = TaggedOp::from(&event);
+        self.insert(tagged_op.id().clone(), tagged_op);
+    }
+
+    fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
+        self.get(event_id)
+    }
+
+    fn remove(&mut self, event_id: &EventId) {
+        self.remove(event_id);
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.values()
+    }
+
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
+        self.retain(|_, to| predicate(to));
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
+
+    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
+        self.values()
+            .filter(|to| to.id().is_predecessor_of(version))
+            .cloned()
+            .collect()
+    }
+
+    fn parents(&self, _event_id: &EventId) -> Vec<EventId> {
+        unimplemented!()
+    }
+
+    fn delivery_order(&self, _event_id: &EventId) -> usize {
+        unimplemented!()
     }
 }

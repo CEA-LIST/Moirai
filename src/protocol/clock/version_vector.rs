@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Display};
 
+use log::error;
 // #[cfg(feature = "utils")]
 // use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
@@ -59,6 +60,7 @@ impl Version {
     /// # Complexity
     /// Checks that the views are identical.
     /// Then runs in `O(n)` time complexity with `n` being the number of members in the view
+    // TODO: using lamport timestamp: if other_old.lamport = other_new.lamport + 1, then just incr the other origin value
     pub fn merge(&mut self, other: &Self) {
         // if `self` dominate `other`, then no need to merge.
         if EventId::from(other).is_predecessor_of(self) {
@@ -112,6 +114,10 @@ impl Version {
         self.origin_idx
     }
 
+    pub fn origin_id(&self) -> ReplicaId {
+        self.view.borrow().get_id(self.origin_idx).cloned().unwrap()
+    }
+
     pub fn origin_seq(&self) -> Seq {
         self.seq_by_idx(self.origin_idx).unwrap()
     }
@@ -138,7 +144,9 @@ impl Version {
 
 impl From<&Version> for EventId {
     fn from(version: &Version) -> Self {
-        assert!(version.origin_seq() > 0);
+        if version.origin_seq() == 0 {
+            error!("Version {} has an origin sequence number of 0", version);
+        }
         EventId::new(
             version.origin_idx(),
             version.origin_seq(),

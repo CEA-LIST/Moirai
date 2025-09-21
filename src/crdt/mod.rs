@@ -9,13 +9,13 @@ pub mod register;
 pub mod set;
 
 pub mod test_util {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Debug};
 
     use tracing_subscriber::fmt;
 
     use crate::{
         protocol::{
-            broadcast::tcsb::Tcsb,
+            broadcast::tcsb::{IsTcsb, Tcsb},
             crdt::pure_crdt::PureCRDT,
             membership::{view::View, Membership},
             replica::{IsReplica, Replica},
@@ -37,12 +37,7 @@ pub mod test_util {
         Replica<L, Tcsb<O>>,
     );
 
-    pub fn twins<O>() -> Twins<O, VecLog<O>>
-    where
-        O: PureCRDT + Clone,
-    {
-        init_tracing();
-
+    pub fn membership_2() -> Membership {
         let mut mapping = HashMap::new();
         let mut view_a = View::new(&"a".to_string());
         view_a.add(&"b".to_string());
@@ -50,37 +45,10 @@ pub mod test_util {
         view_b.add(&"a".to_string());
         mapping.insert("a".to_string(), MutOwner::new(view_a));
         mapping.insert("b".to_string(), MutOwner::new(view_b));
-        let membership = Membership::build(mapping);
-
-        let replica_a =
-            Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), membership.clone());
-        let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), membership);
-        (replica_a, replica_b)
+        Membership::build(mapping)
     }
 
-    pub fn twins_log<L>() -> Twins<L::Op, L>
-    where
-        L: IsLog,
-    {
-        init_tracing();
-
-        let mut mapping = HashMap::new();
-        let mut view_a = View::new(&"a".to_string());
-        view_a.add(&"b".to_string());
-        let mut view_b = View::new(&"b".to_string());
-        view_b.add(&"a".to_string());
-        mapping.insert("a".to_string(), MutOwner::new(view_a));
-        mapping.insert("b".to_string(), MutOwner::new(view_b));
-        let membership = Membership::build(mapping);
-
-        let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), membership.clone());
-        let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), membership);
-        (replica_a, replica_b)
-    }
-
-    pub fn triplet<O: PureCRDT + Clone>() -> Triplet<O, VecLog<O>> {
-        init_tracing();
-
+    pub fn membership_3() -> Membership {
         let mut mapping = HashMap::new();
         let mut view_a = View::new(&"a".to_string());
         view_a.add(&"b".to_string());
@@ -94,7 +62,72 @@ pub mod test_util {
         mapping.insert("a".to_string(), MutOwner::new(view_a));
         mapping.insert("b".to_string(), MutOwner::new(view_b));
         mapping.insert("c".to_string(), MutOwner::new(view_c));
-        let membership = Membership::build(mapping);
+        Membership::build(mapping)
+    }
+
+    fn membership_n(n: u8) -> Membership {
+        assert!(n > 1 && n <= 26, "n must be between 2 and 26");
+        let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
+        let mut mapping = HashMap::new();
+        for i in 0..n {
+            let id = alphabet[i as usize].to_string();
+            let mut view = View::new(&id);
+            for j in 0..n {
+                if i != j {
+                    view.add(&alphabet[j as usize].to_string());
+                }
+            }
+            mapping.insert(id, MutOwner::new(view));
+        }
+        Membership::build(mapping)
+    }
+
+    pub fn bootstrap_n<L, T>(n: u8) -> Vec<Replica<L, T>>
+    where
+        L: IsLog,
+        T: IsTcsb<L::Op> + Debug,
+    {
+        let membership = membership_n(n);
+        let mut replicas = Vec::new();
+        for i in 0..n {
+            let id = (b'a' + i) as char;
+            let replica = Replica::<L, T>::bootstrap(id.to_string(), membership.clone());
+            replicas.push(replica);
+        }
+        replicas
+    }
+
+    pub fn twins<O>() -> Twins<O, VecLog<O>>
+    where
+        O: PureCRDT + Clone,
+    {
+        init_tracing();
+
+        let membership = membership_2();
+
+        let replica_a =
+            Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), membership.clone());
+        let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), membership);
+        (replica_a, replica_b)
+    }
+
+    pub fn twins_log<L>() -> Twins<L::Op, L>
+    where
+        L: IsLog,
+    {
+        init_tracing();
+
+        let membership = membership_2();
+
+        let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), membership.clone());
+        let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), membership);
+        (replica_a, replica_b)
+    }
+
+    pub fn triplet<O: PureCRDT + Clone>() -> Triplet<O, VecLog<O>> {
+        init_tracing();
+
+        let membership = membership_3();
 
         let replica_a =
             Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), membership.clone());
@@ -110,20 +143,7 @@ pub mod test_util {
     {
         init_tracing();
 
-        let mut mapping = HashMap::new();
-        let mut view_a = View::new(&"a".to_string());
-        view_a.add(&"b".to_string());
-        view_a.add(&"c".to_string());
-        let mut view_b = View::new(&"b".to_string());
-        view_b.add(&"a".to_string());
-        view_b.add(&"c".to_string());
-        let mut view_c = View::new(&"c".to_string());
-        view_c.add(&"a".to_string());
-        view_c.add(&"b".to_string());
-        mapping.insert("a".to_string(), MutOwner::new(view_a));
-        mapping.insert("b".to_string(), MutOwner::new(view_b));
-        mapping.insert("c".to_string(), MutOwner::new(view_c));
-        let membership = Membership::build(mapping);
+        let membership = membership_3();
 
         let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), membership.clone());
         let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), membership.clone());
@@ -131,7 +151,7 @@ pub mod test_util {
         (replica_a, replica_b, replica_c)
     }
 
-    fn init_tracing() {
+    pub fn init_tracing() {
         let _ = fmt()
             .with_writer(std::io::stderr)
             .event_format(
@@ -202,114 +222,5 @@ pub mod test_util {
     //             assert_eq!(tcsbs[i].ltm.clock(), tcsbs[i + 1].ltm.clock());
     //         }
     //         tcsbs
-    //     }
-
-    //     pub fn twins<L: Log + Clone>() -> Twins<L> {
-    //         let mut replica_a = Tcsb::<L>::new("a");
-    //         let mut replica_b = Tcsb::new("b");
-
-    //         replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
-    //         replica_a.start_installing_view();
-    //         replica_a.mark_view_installed();
-    //         assert_eq!(replica_a.ltm.members(), &vec!["a", "b"]);
-
-    //         // --> Causal stability <--
-    //         replica_b.state_transfer(&mut replica_a);
-
-    //         assert_eq!(replica_a.ltm.members(), &vec!["a", "b"]);
-    //         assert_eq!(replica_a.view_id(), replica_b.view_id());
-    //         assert_eq!(replica_b.ltm.members(), &vec!["a", "b"]);
-
-    //         let left = "<<<".bold().yellow();
-    //         let right = ">>>".bold().yellow();
-    //         debug!(
-    //             "{left} {} and {} are in the same group! {right}",
-    //             replica_a.id.blue(),
-    //             replica_b.id.blue()
-    //         );
-    //         (replica_a, replica_b)
-    //     }
-
-    //     pub fn triplet<L: Log + Clone>() -> Triplet<L> {
-    //         let (mut replica_a, mut replica_b) = twins::<L>();
-    //         let mut replica_c = Tcsb::<L>::new("c");
-
-    //         replica_a.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-    //         replica_a.start_installing_view();
-    //         replica_a.mark_view_installed();
-
-    //         replica_b.add_pending_view(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-    //         replica_b.start_installing_view();
-    //         replica_b.mark_view_installed();
-
-    //         // --> Causal stability <--
-    //         replica_c.state_transfer(&mut replica_a);
-
-    //         assert_eq!(replica_a.ltm.members(), &vec!["a", "b", "c"]);
-    //         assert_eq!(replica_b.ltm.members(), &vec!["a", "b", "c"]);
-    //         assert_eq!(replica_c.ltm.members(), &vec!["a", "b", "c"]);
-
-    //         let left = "<<<".bold().yellow();
-    //         let right = ">>>".bold().yellow();
-    //         debug!(
-    //             "{left} {}, {}, and {} are in the same group! {right}",
-    //             replica_a.id.blue(),
-    //             replica_b.id.blue(),
-    //             replica_c.id.blue()
-    //         );
-    //         (replica_a, replica_b, replica_c)
-    //     }
-
-    //     pub fn quadruplet<L: Log + Clone>() -> Quadruplet<L> {
-    //         let (mut replica_a, mut replica_b, mut replica_c) = triplet::<L>();
-
-    //         let mut replica_d = Tcsb::<L>::new("d");
-
-    //         replica_a.add_pending_view(vec![
-    //             "a".to_string(),
-    //             "b".to_string(),
-    //             "c".to_string(),
-    //             "d".to_string(),
-    //         ]);
-    //         replica_a.start_installing_view();
-    //         replica_a.mark_view_installed();
-
-    //         replica_b.add_pending_view(vec![
-    //             "a".to_string(),
-    //             "b".to_string(),
-    //             "c".to_string(),
-    //             "d".to_string(),
-    //         ]);
-    //         replica_b.start_installing_view();
-    //         replica_b.mark_view_installed();
-
-    //         replica_c.add_pending_view(vec![
-    //             "a".to_string(),
-    //             "b".to_string(),
-    //             "c".to_string(),
-    //             "d".to_string(),
-    //         ]);
-    //         replica_c.start_installing_view();
-    //         replica_c.mark_view_installed();
-
-    //         assert_eq!(replica_a.ltm.members(), &vec!["a", "b", "c", "d"]);
-    //         assert_eq!(replica_b.ltm.members(), &vec!["a", "b", "c", "d"]);
-    //         assert_eq!(replica_c.ltm.members(), &vec!["a", "b", "c", "d"]);
-
-    //         replica_d.state_transfer(&mut replica_a);
-
-    //         assert_eq!(replica_d.ltm.members(), &vec!["a", "b", "c", "d"]);
-
-    //         let left = "<<<".bold().yellow();
-    //         let right = ">>>".bold().yellow();
-    //         debug!(
-    //             "{left} {}, {}, {}, and {} are in the same group! {right}",
-    //             replica_a.id.blue(),
-    //             replica_b.id.blue(),
-    //             replica_c.id.blue(),
-    //             replica_d.id.blue()
-    //         );
-
-    //         (replica_a, replica_b, replica_c, replica_d)
     //     }
 }

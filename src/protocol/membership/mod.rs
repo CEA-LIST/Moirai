@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-
 use crate::{
     protocol::membership::view::View,
     utils::mut_owner::{MutOwner, Reader},
 };
+use std::collections::HashMap;
+use std::fmt::Display;
 
 pub mod view;
 
@@ -32,5 +32,14 @@ impl Membership {
 
     pub fn get_reader(&self, id: &ReplicaId) -> Option<Reader<View>> {
         self.mapping.get(id).map(|v| v.as_reader())
+    }
+}
+
+impl Display for Membership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (id, view) in &self.mapping {
+            writeln!(f, "{} => {}", id, view.as_reader())?;
+        }
+        Ok(())
     }
 }

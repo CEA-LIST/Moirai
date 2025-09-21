@@ -163,4 +163,29 @@ mod tests {
 
     //     op_weaver::<EventGraph<EWFlag>>(config);
     // }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_ew_flag() {
+        use crate::{
+            // crdt::test_util::init_tracing,
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
+
+        // init_tracing();
+
+        let ops = OpConfig::Uniform(&[EWFlag::Enable, EWFlag::Disable, EWFlag::Clear]);
+
+        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config =
+            FuzzerConfig::<VecLog<EWFlag>>::new("ew_flag", runs, ops, true, |a, b| a == b, None);
+
+        fuzzer::<VecLog<EWFlag>>(config);
+    }
 }
