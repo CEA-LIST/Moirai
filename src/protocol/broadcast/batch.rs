@@ -1,5 +1,12 @@
-use crate::protocol::{clock::version_vector::Version, event::Event};
+use crate::protocol::{
+    clock::version_vector::Version,
+    event::{id::EventId, Event},
+    membership::ReplicaId,
+};
+use std::fmt::Debug;
+use std::fmt::Display;
 
+#[derive(Debug)]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
     pub version: Version,
@@ -8,5 +15,36 @@ pub struct Batch<O> {
 impl<O> Batch<O> {
     pub fn new(events: Vec<Event<O>>, version: Version) -> Self {
         Self { events, version }
+    }
+
+    pub fn events(&self) -> &Vec<Event<O>> {
+        &self.events
+    }
+
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    pub fn origin_id(&self) -> ReplicaId {
+        let event_id = EventId::from(&self.version);
+        event_id.origin_id()
+    }
+}
+
+impl<O> Display for Batch<O>
+where
+    O: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Batch {{ events: [")?;
+        let mut first = true;
+        for event in &self.events {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", event.id())?;
+            first = false;
+        }
+        write!(f, "], version: {} }}", self.version)
     }
 }

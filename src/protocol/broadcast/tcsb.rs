@@ -1,9 +1,10 @@
-use std::fmt::Debug;
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug};
 
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
 use crate::{
     protocol::{
+        broadcast::{batch::Batch, since::Since},
         clock::{matrix_clock::MatrixClock, version_vector::Version},
         event::{id::EventId, lamport::Lamport, Event},
         membership::{view::View, ReplicaIdx},
@@ -15,9 +16,14 @@ pub trait IsTcsb<O> {
     fn new(view: &Reader<View>, replica_idx: ReplicaIdx) -> Self;
     fn receive(&mut self, event: Event<O>);
     fn send(&mut self, op: O) -> Event<O>;
+    fn since(&self) -> Since;
+    fn pull(&self, since: Since) -> Batch<O>;
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
     fn is_stable(&mut self) -> Option<&Version>;
     fn change_view(&mut self, new_view: &Reader<View>);
+    fn update_version(&mut self, version: &Version);
+    #[cfg(feature = "fuzz")]
+    fn matrix_clock(&self) -> &MatrixClock;
 }
 
 #[derive(Debug)]
@@ -61,17 +67,12 @@ where
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.view.clone());
-        Event::new(event_id, lamport, op, version.clone())
+        let event = Event::new(event_id, lamport, op, version.clone());
+        self.outbox.push(event.clone());
+        event
     }
 
     fn next_causally_ready(&mut self) -> Option<Event<O>> {
-        info!(
-            "Checking for next causally ready event. Inbox: {:?}",
-            self.inbox
-                .iter()
-                .map(|e| format!("{e}"))
-                .collect::<Vec<_>>()
-        );
         let idx = self
             .inbox
             .iter()
@@ -106,6 +107,69 @@ where
         self.view = Reader::clone(new_view);
         self.matrix_clock.change_view(new_view);
     }
+
+    fn update_version(&mut self, version: &Version) {
+        self.matrix_clock.origin_version_mut().merge(version);
+        self.matrix_clock.set_by_id(&version.origin_id(), version);
+    }
+
+    #[instrument(skip(self, since))]
+    fn pull(&self, since: Since) -> Batch<O> {
+        let events: Vec<Event<O>> = self
+            .outbox
+            .iter()
+            .filter(|e| {
+                !since.except().contains(e.id())
+                    && *e.id().origin_id() != since.version().origin_id()
+                    && match e.version().partial_cmp(since.version()) {
+                        Some(Ordering::Greater) | Some(Ordering::Equal) | None => true,
+                        Some(Ordering::Less) => false,
+                    }
+            })
+            .cloned()
+            .collect();
+        info!(
+            "Pulling events: version: {}, except: {}",
+            since.version(),
+            since
+                .except()
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
+        info!(
+            "Collected events: {}",
+            events
+                .iter()
+                .map(|e| e.id().to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
+        info!(
+            "Outbox: {}",
+            self.outbox
+                .iter()
+                .map(|e| e.id().to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
+        info!("Current version: {}", self.matrix_clock.origin_version());
+        info!("---------------------------------------");
+        Batch::new(events, self.matrix_clock.origin_version().clone())
+    }
+
+    fn since(&self) -> Since {
+        #[allow(clippy::mutable_key_type)]
+        let except: HashSet<EventId> = self.inbox.iter().map(|e| e.id().clone()).collect();
+        let version = self.matrix_clock.origin_version().clone();
+        Since::new(version, except)
+    }
+
+    #[cfg(feature = "fuzz")]
+    fn matrix_clock(&self) -> &MatrixClock {
+        &self.matrix_clock
+    }
 }
 
 impl<O> Tcsb<O>
@@ -126,7 +190,7 @@ where
         }
         // The event should not be a duplicate, i.e. an event already received
         if self.is_duplicate(event) {
-            error!("Event is a duplicate {event}");
+            error!("Event is a duplicate {}", event);
             return false;
         }
 
@@ -139,23 +203,15 @@ where
     /// `O(n)`
     fn is_causally_ready(&self, event: &Event<O>) -> bool {
         let version = self.matrix_clock.origin_version();
-        info!(
-            "Checking if event {} is causally ready. Current version: {}, event version: {}",
-            event,
-            version,
-            event.version()
-        );
 
         for (_, id) in self.view.borrow().members() {
             let local_seq = version.seq_by_id(id).unwrap_or(0);
             let event_seq = event.version().seq_by_id(id).unwrap_or(0);
             if id == &event.id().origin_id() {
                 if local_seq + 1 != event_seq {
-                    info!("Event {} is not causally ready", event);
                     return false;
                 }
             } else if local_seq < event_seq {
-                info!("Event {} is not causally ready", event);
                 return false;
             }
         }

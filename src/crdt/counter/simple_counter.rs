@@ -26,7 +26,6 @@ where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
     fn len(&self) -> usize {
-        // TODO: maybe len is not necessary. Is empty would be better
         1
     }
 
@@ -131,28 +130,34 @@ mod tests {
     //         // TODO: Implement a convergence checker for Counter
     //     }
 
-    //     #[cfg(feature = "op_weaver")]
-    //     #[test]
-    //     fn op_weaver_counter() {
-    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_resettable_counter() {
+        use crate::{
+            // crdt::test_util::init_tracing,
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
 
-    //         let ops = vec![Counter::Inc(1), Counter::Dec(1)];
+        // init_tracing();
 
-    //         let config = EventGraphConfig {
-    //             name: "counter",
-    //             num_replicas: 8,
-    //             num_operations: 10_000,
-    //             operations: &ops,
-    //             final_sync: true,
-    //             churn_rate: 0.3,
-    //             reachability: None,
-    //             compare: |a: &isize, b: &isize| a == b,
-    //             record_results: true,
-    //             seed: None,
-    //             witness_graph: false,
-    //             concurrency_score: false,
-    //         };
+        let ops = OpConfig::Uniform(&[Counter::Inc(1), Counter::Dec(1)]);
 
-    //         op_weaver::<EventGraph<Counter<isize>>>(config);
-    //     }
+        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
+            "counter",
+            runs,
+            ops,
+            true,
+            |a, b| a == b,
+            None,
+        );
+
+        fuzzer::<VecLog<Counter<i32>>>(config);
+    }
 }

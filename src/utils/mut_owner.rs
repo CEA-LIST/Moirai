@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
@@ -23,6 +24,15 @@ impl<T> Reader<T> {
     }
 }
 
+impl<T> Display for Reader<T>
+where
+    T: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.borrow())
+    }
+}
+
 /// Unique owner with mutable access
 #[derive(Debug, Clone)]
 pub struct MutOwner<T> {
@@ -45,5 +55,14 @@ impl<T> MutOwner<T> {
         Reader {
             inner: self.inner.clone(),
         }
+    }
+}
+
+impl<T> Display for MutOwner<T>
+where
+    T: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.borrow_mut())
     }
 }

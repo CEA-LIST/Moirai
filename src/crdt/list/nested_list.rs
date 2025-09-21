@@ -42,14 +42,14 @@ where
 {
     pub(crate) fn incorporate(&mut self, event: Event<L::Op>, log: L) {
         let id = event.id().clone();
-        let e = Event::unfold(
+        let event = Event::unfold(
             event,
             SimpleList::Insert {
                 content: id.clone(),
                 pos: 0,
             },
         );
-        self.position.effect(e);
+        self.position.effect(event);
         self.children.insert(id, log);
     }
 }

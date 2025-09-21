@@ -109,19 +109,20 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        crdt::{
-            set::aw_set::AWSet,
-            test_util::{triplet, twins},
-        },
+        crdt::{set::aw_set::AWSet, test_util::bootstrap_n},
         protocol::{
+            broadcast::tcsb::Tcsb,
             replica::IsReplica,
-            state::{log::IsLogTest, stable_state::IsStableState},
+            state::{log::IsLogTest, po_log::VecLog, stable_state::IsStableState},
         },
     };
 
     #[test]
     fn simple_aw_set() {
-        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event = replica_a.send(AWSet::Add("a"));
         replica_b.receive(event);
@@ -149,7 +150,10 @@ mod tests {
 
     #[test]
     fn complex_aw_set() {
-        let (mut replica_a, mut replica_b, _) = triplet::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event = replica_a.send(AWSet::Add("b"));
         replica_b.receive(event);
@@ -170,7 +174,10 @@ mod tests {
 
     #[test]
     fn clear_aw_set() {
-        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event = replica_a.send(AWSet::Add("a"));
         replica_b.receive(event);
@@ -192,7 +199,10 @@ mod tests {
 
     #[test]
     fn concurrent_aw_set() {
-        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event = replica_a.send(AWSet::Add("a"));
         replica_b.receive(event);
@@ -216,7 +226,10 @@ mod tests {
 
     #[test]
     fn concurrent_add_aw_set() {
-        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event = replica_a.send(AWSet::Add("c"));
         replica_b.receive(event);
@@ -240,7 +253,10 @@ mod tests {
 
     #[test]
     fn concurrent_add_aw_set_2() {
-        let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
 
         let event_a = replica_a.send(AWSet::Remove("a"));
         let event_b = replica_b.send(AWSet::Add("a"));
@@ -252,44 +268,38 @@ mod tests {
         assert_eq!(replica_b.query(), replica_a.query());
     }
 
-    //     #[cfg(feature = "utils")]
-    //     #[test]
-    //     fn convergence_checker() {
-    //         // TODO: Implement a convergence checker for AWSet
-    //     }
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_aw_set() {
+        use crate::{
+            // crdt::test_util::init_tracing,
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
 
-    //     #[cfg(feature = "op_weaver")]
-    //     #[test]
-    //     fn op_weaver_aw_set() {
-    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+        // init_tracing();
 
-    //         let mut ops = Vec::with_capacity(10_000);
+        let ops = OpConfig::Uniform(&[
+            AWSet::Add(1),
+            AWSet::Add(2),
+            AWSet::Add(3),
+            AWSet::Add(4),
+            AWSet::Remove(1),
+            AWSet::Remove(2),
+            AWSet::Remove(3),
+            AWSet::Remove(4),
+            AWSet::Clear,
+        ]);
 
-    //         // Add operations from 0 to 4999
-    //         for val in 0..5000 {
-    //             ops.push(AWSet::Add(val));
-    //         }
+        let run = RunConfig::new(0.4, 8, 1_000, None, None);
+        let runs = vec![run.clone(); 1];
 
-    //         // Remove operations from 0 to 4999
-    //         for val in 0..5000 {
-    //             ops.push(AWSet::Remove(val));
-    //         }
+        let config =
+            FuzzerConfig::<VecLog<AWSet<i32>>>::new("aw_set", runs, ops, true, |a, b| a == b, None);
 
-    //         let config = EventGraphConfig {
-    //             name: "aw_set",
-    //             num_replicas: 8,
-    //             num_operations: 100_000,
-    //             operations: &ops,
-    //             final_sync: true,
-    //             churn_rate: 0.8,
-    //             reachability: None,
-    //             compare: |a: &HashSet<i32>, b: &HashSet<i32>| a == b,
-    //             record_results: true,
-    //             seed: None,
-    //             witness_graph: false,
-    //             concurrency_score: false,
-    //         };
-
-    //         op_weaver::<EventGraph<AWSet<i32>>>(config);
-    //     }
+        fuzzer::<VecLog<AWSet<i32>>>(config);
+    }
 }

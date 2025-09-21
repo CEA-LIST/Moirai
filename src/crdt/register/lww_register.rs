@@ -2,7 +2,10 @@ use std::fmt::Debug;
 
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
-    event::{tag::Tag, tagged_op::TaggedOp},
+    event::{
+        tag::{Lww, Tag},
+        tagged_op::TaggedOp,
+    },
     state::unstable_state::IsUnstableState,
 };
 
@@ -20,11 +23,12 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     type StableState = Vec<Self>;
     const DISABLE_R_WHEN_R: bool = true;
 
+    /// # Last-Writer-Wins (LWW) Register
     /// a -> b => Lamport(a) < Lamport(b)
     /// Lamport(a) < Lamport(b) => a -> b || a conc b
     /// Because of the causal broadcast, new_op can only be concurrent or causally after old_op.
     /// The new op is redundant if there is an old op that is concurrent to it and has a higher origin identifier.
-    /// i.e. (t, o) R s = \exists (t', o') \in s : t ≮ t' \land t.id < t'.id
+    /// i.e. (t, o) R s = \exists (t', o') \in s : t ≮ t' \land t.id < t'.id    
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
         _stable: &Self::StableState,
@@ -33,9 +37,10 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
     where
         Self: 'a,
     {
-        unstable.any(|old_tagged_op| new_tagged_op.tag() < old_tagged_op.tag())
+        unstable.any(|old_tagged_op| Lww(new_tagged_op.tag()) < Lww(old_tagged_op.tag()))
     }
 
+    /// # Last-Writer-Wins (LWW) Register
     /// (t, o) R (t', o') = t < t' || (t == t' && t.id < t'.id)
     fn redundant_by_when_not_redundant(
         _old_op: &Self,
@@ -44,7 +49,7 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
         if let Some(old_tag) = old_tag {
-            new_tagged_op.tag() > old_tag
+            Lww(new_tagged_op.tag()) > Lww(old_tag)
         } else {
             true
         }
@@ -128,35 +133,40 @@ mod tests {
         assert_eq!(replica_c.query(), "y".to_string());
     }
 
-    //     #[cfg(feature = "op_weaver")]
-    //     #[test]
-    //     fn generate_lww_register_convergence() {
-    //         use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_lww_register() {
+        // init_tracing();
 
-    //         let ops = vec![
-    //             LWWRegister::Write("w".to_string()),
-    //             LWWRegister::Write("x".to_string()),
-    //             LWWRegister::Write("y".to_string()),
-    //             LWWRegister::Write("z".to_string()),
-    //             LWWRegister::Write("u".to_string()),
-    //             LWWRegister::Write("v".to_string()),
-    //         ];
+        use crate::{
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
 
-    //         let config = EventGraphConfig {
-    //             name: "lww_register",
-    //             num_replicas: 8,
-    //             num_operations: 10_000,
-    //             operations: &ops,
-    //             final_sync: true,
-    //             churn_rate: 0.3,
-    //             reachability: None,
-    //             compare: |a: &String, b: &String| a == b,
-    //             record_results: true,
-    //             seed: None,
-    //             witness_graph: false,
-    //             concurrency_score: false,
-    //         };
+        let ops = OpConfig::Uniform(&[
+            LWWRegister::Write("w"),
+            LWWRegister::Write("x"),
+            LWWRegister::Write("y"),
+            LWWRegister::Write("z"),
+            LWWRegister::Write("u"),
+            LWWRegister::Write("v"),
+        ]);
 
-    //         op_weaver::<EventGraph<LWWRegister<String>>>(config);
-    //     }
+        let run = RunConfig::new(0.4, 8, 10_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<VecLog<LWWRegister<&str>>>::new(
+            "lww_register",
+            runs,
+            ops,
+            true,
+            |a, b| a == b,
+            None,
+        );
+
+        fuzzer::<VecLog<LWWRegister<&str>>>(config);
+    }
 }

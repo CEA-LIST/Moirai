@@ -12,7 +12,7 @@ use crate::{
     },
     protocol::{
         clock::version_vector::Version,
-        event::{id::EventId, tag::Tag, Event},
+        event::Event,
         state::{event_graph::EventGraph, log::IsLog, po_log::VecLog},
     },
 };
@@ -47,6 +47,7 @@ pub enum JsonLog {
     Array(NestedListLog<JsonLogContainer>),
 }
 
+// TODO: idea -> add a last_event and do a last-writers-wins on
 #[derive(Debug, Default, Clone)]
 pub struct JsonLogContainer {
     value: Option<JsonLog>,
@@ -88,7 +89,6 @@ impl IsLog for JsonLogContainer {
                         },
                     );
                     self.value = Some(JsonLog::Array(list_log));
-                    self.first_event = None;
                 }
                 None => {
                     let mut log = VecLog::<EWFlag>::new();
@@ -123,7 +123,6 @@ impl IsLog for JsonLogContainer {
                         },
                     );
                     self.value = Some(JsonLog::Array(list_log));
-                    self.first_event = None;
                 }
                 None => {
                     let mut log = VecLog::<Counter<f64>>::new();
@@ -144,8 +143,7 @@ impl IsLog for JsonLogContainer {
                         let child_op = Event::unfold(event.clone(), op);
                         log.effect(child_op);
                     }
-                    Some(test) => {
-                        println!("{:?}", test);
+                    Some(_) => {
                         let mut list_log = NestedListLog::<JsonLogContainer>::new();
                         let child_op = Event::unfold(event.clone(), op);
                         let mut map_log = UWMapLog::<String, JsonLogContainer>::new();
@@ -165,7 +163,6 @@ impl IsLog for JsonLogContainer {
                             },
                         );
                         self.value = Some(JsonLog::Array(list_log));
-                        self.first_event = None;
                     }
                     None => {
                         let mut log = UWMapLog::<String, JsonLogContainer>::new();
@@ -207,7 +204,6 @@ impl IsLog for JsonLogContainer {
                             },
                         );
                         self.value = Some(JsonLog::Array(list_log));
-                        self.first_event = None;
                     }
                     None => {
                         let mut log = NestedListLog::<JsonLogContainer>::new();
@@ -243,7 +239,6 @@ impl IsLog for JsonLogContainer {
                         },
                     );
                     self.value = Some(JsonLog::Array(list_log));
-                    self.first_event = None;
                 }
                 None => {
                     let mut log = EventGraph::<List<char>>::new();
@@ -271,7 +266,6 @@ impl IsLog for JsonLogContainer {
                         },
                     );
                     self.value = Some(JsonLog::Array(list_log));
-                    self.first_event = None;
                 }
                 None => {
                     self.value = Some(JsonLog::Null);
@@ -379,19 +373,48 @@ mod tests {
             Box::new(Json::Number(Counter::Inc(5.0))),
         )));
         replica_b.receive(event_a);
+        println!("A: {}", replica_a.query());
+        println!("B: {}", replica_b.query());
         let event_b = replica_b.send(Json::Object(UWMap::Update(
-            "obj".to_string(),
+            "test".to_string(),
             Box::new(Json::String(List::Insert {
                 content: 'o',
                 pos: 0,
             })),
         )));
+        println!("-----");
+        println!("B: {}", replica_b.query());
         let event_a = replica_a.send(Json::Bool(EWFlag::Enable));
+        println!("A: {}", replica_a.query());
         replica_a.receive(event_b);
         replica_b.receive(event_a);
+        println!("-----");
+        println!("A: {}", replica_a.query());
+        println!("B: {}", replica_b.query());
+    }
 
-        println!("{}", replica_a.query());
-        println!("{}", replica_b.query());
+    #[test]
+    fn nested_conflict_2() {
+        let (mut replica_a, mut replica_b) = twins_log::<JsonLogContainer>();
+        let event_a = replica_a.send(Json::Object(UWMap::Update(
+            "obj".to_string(),
+            Box::new(Json::Object(UWMap::Update(
+                "nested".to_string(),
+                Box::new(Json::Number(Counter::Inc(5.0))),
+            ))),
+        )));
+        let event_b = replica_b.send(Json::Object(UWMap::Update(
+            "obj".to_string(),
+            Box::new(Json::Array(NestedList::Insert {
+                pos: 0,
+                value: Box::new(Json::Number(Counter::Inc(3.0))),
+            })),
+        )));
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+
+        println!("A: {}", replica_a.query());
+        println!("B: {}", replica_b.query());
     }
 
     #[test]

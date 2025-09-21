@@ -322,84 +322,80 @@ mod tests {
     //         );
     //     }
 
-    //     #[cfg(feature = "op_weaver")]
-    //     #[test]
-    //     fn op_weaver_multidigraph() {
-    //         use crate::{
-    //             protocol::event_graph::EventGraph,
-    //             utils::op_weaver::{op_weaver, EventGraphConfig},
-    //         };
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_aw_multidigraph() {
+        use crate::{
+            // crdt::test_util::init_tracing,
+            fuzz::{
+                config::{FuzzerConfig, OpConfig, RunConfig},
+                fuzzer,
+            },
+            protocol::state::po_log::VecLog,
+        };
 
-    //         let alphabet = ['a', 'b', 'c', 'd', 'e', 'f'];
-    //         let mut names = Vec::new();
+        // init_tracing();
 
-    //         // Generate combinations like "aa", "ab", ..., "ff" (36 total), then "aaa", ...
-    //         for &c1 in &alphabet {
-    //             for &c2 in &alphabet {
-    //                 names.push(format!("{}{}", c1, c2));
-    //             }
-    //         }
-    //         for &c1 in &alphabet {
-    //             for &c2 in &alphabet {
-    //                 for &c3 in &alphabet {
-    //                     names.push(format!("{}{}{}", c1, c2, c3));
-    //                 }
-    //             }
-    //         }
+        let alphabet = ['a', 'b', 'c', 'd', 'e', 'f'];
+        let mut names = Vec::new();
 
-    //         let mut ops: Vec<Graph<String, usize>> = Vec::new();
-    //         let mut index = 0;
+        // Generate combinations like "aa", "ab", ..., "ff" (36 total), then "aaa", ...
+        for &c1 in &alphabet {
+            for &c2 in &alphabet {
+                names.push(format!("{}{}", c1, c2));
+            }
+        }
+        for &c1 in &alphabet {
+            for &c2 in &alphabet {
+                for &c3 in &alphabet {
+                    names.push(format!("{}{}{}", c1, c2, c3));
+                }
+            }
+        }
 
-    //         // AddVertex and RemoveVertex: 15,000 of each
-    //         while ops.len() < 15000 {
-    //             let name = &names[index % names.len()];
-    //             ops.push(Graph::AddVertex(name.clone()));
-    //             // ops.push(Graph::RemoveVertex(name.clone()));
-    //             index += 1;
-    //         }
+        let mut ops: Vec<Graph<String, usize>> = Vec::new();
+        let mut index = 0;
 
-    //         // AddArc and RemoveArc: 7,500 of each
-    //         index = 0;
-    //         while ops.len() < 30000 {
-    //             let from = &names[index % names.len()];
-    //             let to = &names[(index + 1) % names.len()];
-    //             let weight1 = (index % 10) + 1;
-    //             let weight2 = ((index + 5) % 10) + 1;
+        // AddVertex and RemoveVertex: 15,000 of each
+        while ops.len() < 15000 {
+            let name = &names[index % names.len()];
+            ops.push(Graph::AddVertex(name.clone()));
+            ops.push(Graph::RemoveVertex(name.clone()));
+            index += 1;
+        }
 
-    //             ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
-    //             // ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
-    //             ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
-    //             // ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
+        // AddArc and RemoveArc: 7,500 of each
+        index = 0;
+        while ops.len() < 30000 {
+            let from = &names[index % names.len()];
+            let to = &names[(index + 1) % names.len()];
+            let weight1 = (index % 10) + 1;
+            let weight2 = ((index + 5) % 10) + 1;
 
-    //             index += 1;
-    //         }
+            ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
+            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
+            ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
+            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
 
-    //         let config = EventGraphConfig {
-    //             name: "aw_multidigraph",
-    //             num_replicas: 4,
-    //             num_operations: 100_000,
-    //             operations: &ops,
-    //             final_sync: true,
-    //             churn_rate: 0.4,
-    //             reachability: None,
-    //             compare: |a: &DiGraph<String, usize>, b: &DiGraph<String, usize>| {
-    //                 // vf2::isomorphisms(a, b).first().is_some()
-    //                 println!(
-    //                     "graph size: nodes -> {}, edges -> {}",
-    //                     a.node_count(),
-    //                     a.edge_count()
-    //                 );
-    //                 a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
-    //             },
-    //             record_results: true,
-    //             seed: None,
-    //             witness_graph: false,
-    //             concurrency_score: false,
-    //         };
+            index += 1;
+        }
 
-    //         op_weaver::<EventGraph<Graph<String, usize>>>(config);
-    //     }
-    // }
+        let ops = OpConfig::Uniform(ops.as_slice());
+
+        let run = RunConfig::new(0.4, 8, 10_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<VecLog<Graph<String, usize>>>::new(
+            "aw_multidigraph",
+            runs,
+            ops,
+            true,
+            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            None,
+        );
+
+        fuzzer::<VecLog<Graph<String, usize>>>(config);
+    }
 
     // impl<V, E> Graph<V, E>
     // where

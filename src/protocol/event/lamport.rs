@@ -2,8 +2,14 @@ use std::fmt::Display;
 
 use crate::protocol::clock::version_vector::Version;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Lamport(usize);
+
+impl Lamport {
+    pub(super) fn val(&self) -> usize {
+        self.0
+    }
+}
 
 impl From<&Version> for Lamport {
     fn from(version: &Version) -> Self {

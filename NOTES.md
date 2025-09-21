@@ -4,6 +4,13 @@ A collection of thoughts, ideas, and notes on the design and implementation of t
 Moirai CRDT framework. Some of these notes may be outdated or no longer relevant,
 but they are preserved for reference and historical context.
 
+## Issues
+
+- Cloning the `origin_id` is expensive.
+- Computing the column-wise minimum of a matrix clock is expensive.
+- Merging two vector clocks is expensive.
+- Logging
+
 ## The Event Graph
 
 Currently, in the Rust framework, CRDT operations are stored in an event graph—a

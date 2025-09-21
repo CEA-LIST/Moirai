@@ -7,7 +7,7 @@ use std::{
 // use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::error;
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
@@ -111,9 +111,6 @@ impl MatrixClock {
             }
             min_clock.set_by_id(col_id, min);
         }
-
-        info!("Column-wise minimum: {}", min_clock);
-        info!("Matrix is: {}", self);
 
         min_clock
     }

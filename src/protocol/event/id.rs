@@ -39,6 +39,10 @@ impl EventId {
         self.idx
     }
 
+    pub(super) fn view(&self) -> &Reader<View> {
+        &self.view
+    }
+
     /// Check if this event id is a predecessor of the given version.
     /// # Note
     /// Returns `true` if sequence number of the version for the replica id is greater OR equal.
