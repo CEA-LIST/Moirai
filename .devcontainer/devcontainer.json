@@ -1,0 +1,15 @@
+{
+  "name": "Rust Dev",
+  "dockerFile": "Dockerfile",
+  "context": "..",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "ms-vscode.cpptools",
+        "vadimcn.vscode-lldb"
+      ]
+    }
+  }
+}
