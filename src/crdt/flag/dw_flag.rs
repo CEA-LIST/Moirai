@@ -125,19 +125,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<DWFlag>();
 
         // Replica A enables the flag
-        let event = replica_a.send(DWFlag::Enable);
+        let event = replica_a.send(DWFlag::Enable).unwrap();
         replica_b.receive(event);
         assert_eq!(replica_a.query(), true);
         assert_eq!(replica_a.query(), replica_b.query());
 
         // Replica B disables the flag
-        let event = replica_b.send(DWFlag::Disable);
+        let event = replica_b.send(DWFlag::Disable).unwrap();
         replica_a.receive(event);
         assert_eq!(replica_b.query(), false);
         assert_eq!(replica_a.query(), replica_b.query());
 
         // Replica A enables again
-        let event = replica_a.send(DWFlag::Enable);
+        let event = replica_a.send(DWFlag::Enable).unwrap();
         replica_b.receive(event);
         assert_eq!(replica_a.query(), true);
         assert_eq!(replica_a.query(), replica_b.query());
@@ -148,9 +148,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<DWFlag>();
 
         // Concurrent Enable and Disable: Disable wins
-        let event_a = replica_a.send(DWFlag::Enable);
+        let event_a = replica_a.send(DWFlag::Enable).unwrap();
         assert_eq!(replica_a.query(), true);
-        let event_b = replica_b.send(DWFlag::Disable);
+        let event_b = replica_b.send(DWFlag::Disable).unwrap();
         assert_eq!(replica_b.query(), false);
         replica_a.receive(event_b.clone());
         replica_b.receive(event_a.clone());

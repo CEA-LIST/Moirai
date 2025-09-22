@@ -67,6 +67,10 @@ where
     fn is_empty(&self) -> bool {
         IsUnstableState::is_empty(self)
     }
+
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        O::is_enabled(op, || O::eval(&O::StableState::default(), self))
+    }
 }
 
 impl<O> IsUnstableState<O> for EventGraph<O>

@@ -76,6 +76,14 @@ macro_rules! record {
                 fn is_empty(&self) -> bool {
                     true $(&& self.$field.is_empty())*
                 }
+
+                fn is_enabled(&self, op: &Self::Op) -> bool {
+                    match op {
+                        $(
+                            $name::[<$field:camel>](o) => self.$field.is_enabled(o),
+                        )*
+                    }
+                }
             }
         }
     };

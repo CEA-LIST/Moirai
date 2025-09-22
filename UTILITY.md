@@ -28,6 +28,12 @@ cargo flamegraph --root --release --example <name>
 cargo flamegraph --root --release --unit-test -- crdt::graph::aw_multidigraph::tests::op_weaver_multidigraph
 ```
 
+### Expand Macros
+
+```sh
+cargo expand
+```
+
 ### Memory used
 
 ```sh

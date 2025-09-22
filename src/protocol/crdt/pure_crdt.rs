@@ -57,4 +57,9 @@ pub trait PureCRDT: Debug + Sized {
     }
 
     fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value;
+
+    /// `is_enabled` can inspect the state to determine if the operation violates any precondition.
+    fn is_enabled(_op: &Self, _state: impl Fn() -> Self::Value) -> bool {
+        true
+    }
 }

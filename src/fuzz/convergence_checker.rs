@@ -59,7 +59,7 @@
 //     let mut to_deliver: Vec<Event<L::Op>> = Vec::new();
 //     // Each replica make one operation
 //     for (i, op) in ops.iter().enumerate() {
-//         let event = tcsbs[i].send(op.clone());
+//         let event = tcsbs[i].send(op.clone()).unwrap();
 //         to_deliver.push(event);
 //     }
 

@@ -114,25 +114,25 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<EWFlag>();
 
         // Replica A enables the flag
-        let event = replica_a.send(EWFlag::Enable);
+        let event = replica_a.send(EWFlag::Enable).unwrap();
         replica_b.receive(event);
         assert_eq!(replica_a.query(), true);
         assert_eq!(replica_a.query(), replica_b.query());
 
         // Replica B disables the flag
-        let event = replica_b.send(EWFlag::Disable);
+        let event = replica_b.send(EWFlag::Disable).unwrap();
         replica_a.receive(event);
         assert_eq!(replica_b.query(), false);
         assert_eq!(replica_a.query(), replica_b.query());
 
         // Replica A enables again
-        let event = replica_a.send(EWFlag::Enable);
+        let event = replica_a.send(EWFlag::Enable).unwrap();
         replica_b.receive(event);
         assert_eq!(replica_a.query(), true);
         assert_eq!(replica_a.query(), replica_b.query());
         // Concurrent Enable and Disable: Disable wins
-        let event_a = replica_a.send(EWFlag::Enable);
-        let event_b = replica_b.send(EWFlag::Disable);
+        let event_a = replica_a.send(EWFlag::Enable).unwrap();
+        let event_b = replica_b.send(EWFlag::Disable).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
         assert_eq!(replica_a.query(), true);

@@ -124,23 +124,23 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event = replica_a.send(AWSet::Add("a"));
+        let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(HashSet::from(["a"]), replica_a.query());
         assert_eq!(HashSet::from(["a"]), replica_b.query());
 
-        let event = replica_b.send(AWSet::Add("b"));
+        let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
         let result = HashSet::from(["b", "a"]);
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_b.query(), result);
 
-        let event = replica_a.send(AWSet::Remove("a"));
+        let event = replica_a.send(AWSet::Remove("a")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(AWSet::Add("c"));
+        let event = replica_b.send(AWSet::Add("c")).unwrap();
         replica_a.receive(event);
 
         let result = HashSet::from(["b", "c"]);
@@ -155,14 +155,14 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event = replica_a.send(AWSet::Add("b"));
+        let event = replica_a.send(AWSet::Add("b")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(AWSet::Add("a"));
+        let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        let event_a = replica_a.send(AWSet::Remove("a"));
-        let event_b = replica_b.send(AWSet::Add("c"));
+        let event_a = replica_a.send(AWSet::Remove("a")).unwrap();
+        let event_b = replica_b.send(AWSet::Add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -179,17 +179,17 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event = replica_a.send(AWSet::Add("a"));
+        let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_b.state().stable().len(), 1);
 
-        let event = replica_b.send(AWSet::Add("b"));
+        let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.state().stable().len(), 2);
 
-        let event = replica_a.send(AWSet::Clear);
+        let event = replica_a.send(AWSet::Clear).unwrap();
         replica_b.receive(event);
 
         let result = HashSet::new();
@@ -204,18 +204,18 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event = replica_a.send(AWSet::Add("a"));
+        let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_b.state().stable().len(), 1);
 
-        let event = replica_b.send(AWSet::Add("b"));
+        let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.state().stable().len(), 2);
 
-        let event_a = replica_a.send(AWSet::Add("a"));
-        let event_b = replica_b.send(AWSet::Remove("a"));
+        let event_a = replica_a.send(AWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(AWSet::Remove("a")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -231,18 +231,18 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event = replica_a.send(AWSet::Add("c"));
+        let event = replica_a.send(AWSet::Add("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_b.state().stable().len(), 1);
 
-        let event = replica_b.send(AWSet::Add("b"));
+        let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.state().stable().len(), 2);
 
-        let event_a = replica_a.send(AWSet::Add("a"));
-        let event_b = replica_b.send(AWSet::Add("a"));
+        let event_a = replica_a.send(AWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(AWSet::Add("a")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -258,8 +258,8 @@ mod tests {
         let replica_a = &mut replica_a[0];
         let replica_b = &mut replica_b[0];
 
-        let event_a = replica_a.send(AWSet::Remove("a"));
-        let event_b = replica_b.send(AWSet::Add("a"));
+        let event_a = replica_a.send(AWSet::Remove("a")).unwrap();
+        let event_b = replica_b.send(AWSet::Add("a")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);

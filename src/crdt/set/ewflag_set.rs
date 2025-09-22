@@ -50,14 +50,14 @@ mod tests {
     #[test]
     fn test_ewflag_set() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
-        let event_a = replica_a.send(Map::<&str>::add("a"));
-        let event_b = replica_b.send(Map::<&str>::add("b"));
+        let event_a = replica_a.send(Map::<&str>::add("a")).unwrap();
+        let event_b = replica_b.send(Map::<&str>::add("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(Map::<&str>::remove("a"));
-        let event_b = replica_b.send(Map::<&str>::add("c"));
+        let event_a = replica_a.send(Map::<&str>::remove("a")).unwrap();
+        let event_b = replica_b.send(Map::<&str>::add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);

@@ -73,13 +73,13 @@ mod tests {
     fn simple_to_register() {
         let (mut replica_a, mut replica_b) = twins::<TORegister<&str>>();
 
-        let event = replica_a.send(TORegister::Write("a"));
+        let event = replica_a.send(TORegister::Write("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), "a");
         assert_eq!(replica_b.query(), "a");
 
-        let event = replica_b.send(TORegister::Write("b"));
+        let event = replica_b.send(TORegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = "b";
@@ -91,20 +91,20 @@ mod tests {
     fn concurrent_to_register() {
         let (mut replica_a, mut replica_b) = twins::<TORegister<&str>>();
 
-        let event = replica_a.send(TORegister::Write("c"));
+        let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), "c");
         assert_eq!(replica_b.query(), "c");
 
-        let event = replica_b.send(TORegister::Write("d"));
+        let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(), "d");
         assert_eq!(replica_b.query(), "d");
 
-        let event_a = replica_a.send(TORegister::Write("a"));
-        let event_b = replica_b.send(TORegister::Write("b"));
+        let event_a = replica_a.send(TORegister::Write("a")).unwrap();
+        let event_b = replica_b.send(TORegister::Write("b")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -119,22 +119,22 @@ mod tests {
     fn multiple_concurrent_to_register() {
         let (mut replica_a, mut replica_b, _replica_c) = triplet::<TORegister<&str>>();
 
-        let event = replica_a.send(TORegister::Write("c"));
+        let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), "c");
         assert_eq!(replica_b.query(), "c");
 
-        let event = replica_b.send(TORegister::Write("d"));
+        let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(), "d");
         assert_eq!(replica_b.query(), "d");
 
-        let event_a = replica_a.send(TORegister::Write("a"));
-        let event_aa = replica_a.send(TORegister::Write("aa"));
+        let event_a = replica_a.send(TORegister::Write("a")).unwrap();
+        let event_aa = replica_a.send(TORegister::Write("aa")).unwrap();
 
-        let event_b = replica_b.send(TORegister::Write("b"));
+        let event_b = replica_b.send(TORegister::Write("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -151,14 +151,14 @@ mod tests {
     fn to_register_instability() {
         let (mut replica_a, mut replica_b) = twins::<TORegister<u32>>();
 
-        let event_a_1 = replica_a.send(TORegister::Write(4));
+        let event_a_1 = replica_a.send(TORegister::Write(4)).unwrap();
         assert_eq!(replica_a.query(), 4);
-        let event_b_1 = replica_b.send(TORegister::Write(5));
+        let event_b_1 = replica_b.send(TORegister::Write(5)).unwrap();
         assert_eq!(replica_b.query(), 5);
         replica_a.receive(event_b_1);
         assert_eq!(replica_a.query(), 5);
 
-        let event_b_2 = replica_b.send(TORegister::Write(2));
+        let event_b_2 = replica_b.send(TORegister::Write(2)).unwrap();
         assert_eq!(replica_b.query(), 2);
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);

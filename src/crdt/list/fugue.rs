@@ -250,7 +250,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Create insert operation
-        let event = replica_a.send(FugueTextOp::insert('A', None, None));
+        let event = replica_a
+            .send(FugueTextOp::insert('A', None, None))
+            .unwrap();
         replica_b.receive(event);
 
         // Evaluate
@@ -262,14 +264,20 @@ mod tests {
     fn concurrent_insertions_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
-        let event1 = replica_a.send(FugueTextOp::insert('H', None, None));
+        let event1 = replica_a
+            .send(FugueTextOp::insert('H', None, None))
+            .unwrap();
         let id1 = extract_item_id_from_event(&event1).unwrap();
 
         replica_b.receive(event1);
         let result = replica_a.query();
         assert_eq!(result, "H");
-        let event2a = replica_a.send(FugueTextOp::insert('e', Some(id1.clone()), None));
-        let event2b = replica_b.send(FugueTextOp::insert('i', Some(id1.clone()), None));
+        let event2a = replica_a
+            .send(FugueTextOp::insert('e', Some(id1.clone()), None))
+            .unwrap();
+        let event2b = replica_b
+            .send(FugueTextOp::insert('i', Some(id1.clone()), None))
+            .unwrap();
         replica_b.receive(event2a);
         replica_a.receive(event2b);
         let result2b = replica_b.query();
@@ -282,13 +290,15 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Insert 'A'
-        let event1 = replica_a.send(FugueTextOp::insert('A', None, None));
+        let event1 = replica_a
+            .send(FugueTextOp::insert('A', None, None))
+            .unwrap();
         let id1 = extract_item_id_from_event(&event1).unwrap();
         replica_b.receive(event1);
 
         // Delete 'A'
 
-        let event2a = replica_a.send(FugueTextOp::delete(id1));
+        let event2a = replica_a.send(FugueTextOp::delete(id1)).unwrap();
 
         replica_b.receive(event2a);
 
@@ -303,14 +313,18 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
         // Insert 'A'
-        let event1 = replica_a.send(FugueTextOp::insert('A', None, None));
+        let event1 = replica_a
+            .send(FugueTextOp::insert('A', None, None))
+            .unwrap();
         let id1 = extract_item_id_from_event(&event1).unwrap();
         replica_b.receive(event1);
 
         // Delete 'A'
 
-        let event2a = replica_a.send(FugueTextOp::delete(id1.clone()));
-        let event2b = replica_b.send(FugueTextOp::insert('B', None, Some(id1.clone())));
+        let event2a = replica_a.send(FugueTextOp::delete(id1.clone())).unwrap();
+        let event2b = replica_b
+            .send(FugueTextOp::insert('B', None, Some(id1.clone())))
+            .unwrap();
         replica_a.receive(event2b);
         replica_b.receive(event2a);
 
@@ -324,25 +338,35 @@ mod tests {
     fn sequential_conc_operations_crdt() {
         let (mut replica_a, mut replica_b) = twins::<FugueTextOp>();
 
-        let event1 = replica_a.send(FugueTextOp::insert('H', None, None));
+        let event1 = replica_a
+            .send(FugueTextOp::insert('H', None, None))
+            .unwrap();
         let id1 = extract_item_id_from_event(&event1).unwrap();
 
         replica_b.receive(event1);
         let result = replica_a.query();
         assert_eq!(result, "H");
         // let id1 = EventId::new("a".to_string(), 0);
-        let event2a = replica_a.send(FugueTextOp::insert('e', Some(id1.clone()), None));
+        let event2a = replica_a
+            .send(FugueTextOp::insert('e', Some(id1.clone()), None))
+            .unwrap();
         let id2a = extract_item_id_from_event(&event2a);
-        let event2b = replica_b.send(FugueTextOp::insert('i', Some(id1.clone()), None));
+        let event2b = replica_b
+            .send(FugueTextOp::insert('i', Some(id1.clone()), None))
+            .unwrap();
         let id2b = extract_item_id_from_event(&event2b);
         replica_b.receive(event2a);
         replica_a.receive(event2b);
         let result2b = replica_b.query();
         assert_eq!(result2b, "Hei");
 
-        let event3a = replica_a.send(FugueTextOp::insert(' ', id2a, id2b.clone()));
+        let event3a = replica_a
+            .send(FugueTextOp::insert(' ', id2a, id2b.clone()))
+            .unwrap();
         let id3a = extract_item_id_from_event(&event3a).unwrap();
-        let event4a = replica_a.send(FugueTextOp::insert('h', Some(id3a.clone()), id2b.clone()));
+        let event4a = replica_a
+            .send(FugueTextOp::insert('h', Some(id3a.clone()), id2b.clone()))
+            .unwrap();
 
         replica_b.receive(event3a);
         replica_b.receive(event4a);

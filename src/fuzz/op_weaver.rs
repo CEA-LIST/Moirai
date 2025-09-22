@@ -363,7 +363,7 @@ where
         ops_pb.inc(1);
         count += 1;
         // Create a new event with the operation
-        let event = replicas[r_idx].send(op.clone());
+        let event = replicas[r_idx].send(op.clone()).unwrap();
 
         if let Some(wg) = &mut witness_graph {
             // Add the event to the witness graph for debugging

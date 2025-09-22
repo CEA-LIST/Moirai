@@ -774,7 +774,7 @@ mod tests {
     //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
     //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveVertex("wt"));
+    //     let event_a = replica_a.send(UWGraph::RemoveVertex("wt")).unwrap();
 
     //     println!(
     //         "Class Diagram A: {}",
@@ -810,7 +810,7 @@ mod tests {
     //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
     //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveArc("eg", "energy_grid", "feedsInto"));
+    //     let event_a = replica_a.send(UWGraph::RemoveArc("eg", "energy_grid", "feedsInto")).unwrap();
 
     //     println!(
     //         "Class Diagram A: {}",
@@ -850,7 +850,7 @@ mod tests {
     //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
     //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveVertex("energy_grid"));
+    //     let event_a = replica_a.send(UWGraph::RemoveVertex("energy_grid")).unwrap();
 
     //     let event_b_1 = replica_b.send(UWGraph::UpdateArc(
     //         "manufacturer",

@@ -126,10 +126,10 @@ mod tests {
     pub fn simple_counter() {
         let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-        let event = replica_a.send(Counter::Dec(5));
+        let event = replica_a.send(Counter::Dec(5)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Counter::Inc(5));
+        let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 0;
@@ -141,19 +141,19 @@ mod tests {
     pub fn stable_counter() {
         let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-        let event = replica_a.send(Counter::Dec(1));
+        let event = replica_a.send(Counter::Dec(1)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Counter::Inc(2));
+        let event = replica_a.send(Counter::Inc(2)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Counter::Inc(3));
+        let event = replica_b.send(Counter::Inc(3)).unwrap();
         replica_a.receive(event);
 
-        let event = replica_b.send(Counter::Inc(4));
+        let event = replica_b.send(Counter::Inc(4)).unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(Counter::Inc(5));
+        let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 13;
@@ -165,11 +165,11 @@ mod tests {
     pub fn concurrent_counter() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<isize>>();
 
-        let event_a_1 = replica_a.send(Counter::Dec(1));
+        let event_a_1 = replica_a.send(Counter::Dec(1)).unwrap();
         replica_b.receive(event_a_1.clone());
 
-        let event_b_1 = replica_b.send(Counter::Reset);
-        let event_c_1 = replica_c.send(Counter::Inc(18));
+        let event_b_1 = replica_b.send(Counter::Reset).unwrap();
+        let event_c_1 = replica_c.send(Counter::Inc(18)).unwrap();
 
         replica_a.receive(event_b_1.clone());
         replica_a.receive(event_c_1.clone());

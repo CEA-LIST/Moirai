@@ -405,6 +405,14 @@ where
 
         snapshot.into_iter().collect()
     }
+
+    fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
+        let eval = state();
+        match op {
+            List::Insert { pos, .. } => *pos <= eval.len(),
+            List::Delete { pos } => *pos < eval.len(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -423,7 +431,7 @@ mod tests {
     fn simple_insertion_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('A', 0));
+        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
 
         assert_eq!(to_string(&replica_a.query()), "A");
@@ -434,12 +442,12 @@ mod tests {
     fn concurrent_insertions_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('H', 0));
+        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
         assert_eq!(to_string(&replica_a.query()), "H");
 
-        let e2a = replica_a.send(List::insert('e', 1));
-        let e2b = replica_b.send(List::insert('i', 1));
+        let e2a = replica_a.send(List::insert('e', 1)).unwrap();
+        let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
 
@@ -456,8 +464,8 @@ mod tests {
     fn concurrent_insert() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('H', 0));
-        let e2 = replica_b.send(List::insert('i', 0));
+        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
+        let e2 = replica_b.send(List::insert('i', 0)).unwrap();
         replica_a.receive(e2);
         replica_b.receive(e1);
 
@@ -474,10 +482,10 @@ mod tests {
     fn delete_operation_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('A', 0));
+        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
 
-        let e2 = replica_a.send(List::delete(0));
+        let e2 = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(e2);
 
         assert_eq!(to_string(&replica_a.query()), "");
@@ -488,11 +496,11 @@ mod tests {
     fn conc_delete_ins_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('A', 0));
+        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
 
-        let edel = replica_a.send(List::delete(0));
-        let eins = replica_b.send(List::insert('B', 1)); // Insert to the right of 'A' in B's view
+        let edel = replica_a.send(List::delete(0)).unwrap();
+        let eins = replica_b.send(List::insert('B', 1)).unwrap(); // Insert to the right of 'A' in B's view
         replica_a.receive(eins);
         replica_b.receive(edel);
 
@@ -504,18 +512,18 @@ mod tests {
     fn sequential_conc_operations_egwalker() {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-        let e1 = replica_a.send(List::insert('H', 0));
+        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
         assert_eq!(to_string(&replica_a.query()), "H");
 
-        let e2a = replica_a.send(List::insert('e', 1));
-        let e2b = replica_b.send(List::insert('i', 1));
+        let e2a = replica_a.send(List::insert('e', 1)).unwrap();
+        let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
         assert!(to_string(&replica_b.query()) == "Hei" || to_string(&replica_b.query()) == "Hie");
 
         // Insert a space between e and i from A's perspective (which will be position 2 if e<i)
-        let e3 = replica_a.send(List::insert(' ', 2));
+        let e3 = replica_a.send(List::insert(' ', 2)).unwrap();
         replica_b.receive(e3);
         let res = to_string(&replica_a.query());
         // Depending on tie-breaker, expected is either "He i" or "Hi e". We accept either space between letters.
@@ -527,32 +535,32 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
         // e1: Insert(0, 'h')
-        let e1 = replica_a.send(List::insert('h', 0));
+        let e1 = replica_a.send(List::insert('h', 0)).unwrap();
         replica_b.receive(e1.clone());
 
         // e2: Insert(1, 'i')
-        let e2 = replica_a.send(List::insert('i', 1));
+        let e2 = replica_a.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2.clone());
 
         // Branch: Replica A will capitalize 'H', Replica B will change to 'hey'
         // e3: Insert(0, 'H') depends on e1,e2
-        let e3 = replica_a.send(List::insert('H', 0));
+        let e3 = replica_a.send(List::insert('H', 0)).unwrap();
         // replica_b.receive(e3.clone());
 
         // e4: Delete(1) (remove lowercase 'h') depends on e3
-        let e4 = replica_a.send(List::delete(1));
+        let e4 = replica_a.send(List::delete(1)).unwrap();
         // replica_b.receive(e4.clone());
 
         // e5: Delete(1) (remove 'i') on other branch
-        let e5 = replica_b.send(List::delete(1));
+        let e5 = replica_b.send(List::delete(1)).unwrap();
         // replica_a.receive(e5.clone());
 
         // e6: Insert(1, 'e')
-        let e6 = replica_b.send(List::insert('e', 1));
+        let e6 = replica_b.send(List::insert('e', 1)).unwrap();
         // replica_a.receive(e6.clone());
 
         // e7: Insert(2, 'y')
-        let e7 = replica_b.send(List::insert('y', 2));
+        let e7 = replica_b.send(List::insert('y', 2)).unwrap();
 
         replica_b.receive(e3.clone());
         replica_b.receive(e4.clone());
@@ -565,7 +573,7 @@ mod tests {
         // assert_eq!(replica_a.query(), replica_b.query());
 
         // e8: Insert(3, '!')
-        let e8 = replica_b.send(List::insert('!', 3));
+        let e8 = replica_b.send(List::insert('!', 3)).unwrap();
         replica_a.receive(e8.clone());
 
         // Final result should be "Hey!"

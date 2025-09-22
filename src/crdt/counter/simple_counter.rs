@@ -96,10 +96,10 @@ mod tests {
     pub fn simple_counter() {
         let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-        let event = replica_a.send(Counter::Dec(5));
+        let event = replica_a.send(Counter::Dec(5)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Counter::Inc(5));
+        let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 0;
@@ -111,13 +111,13 @@ mod tests {
     pub fn simple_counter_2() {
         let (mut replica_a, mut replica_b) = twins::<Counter<isize>>();
 
-        let event = replica_a.send(Counter::Dec(5));
+        let event = replica_a.send(Counter::Dec(5)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Counter::Inc(5));
+        let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Counter::Inc(5));
+        let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 5;
