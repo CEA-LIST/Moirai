@@ -188,13 +188,13 @@ mod tests {
     fn clear_rw_set() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event = replica_a.send(RWSet::Add("a"));
+        let event = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(RWSet::Add("b"));
+        let event = replica_b.send(RWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(RWSet::Clear);
+        let event = replica_a.send(RWSet::Clear).unwrap();
         replica_b.receive(event);
 
         let result = HashSet::new();
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn case_one() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event = replica_a.send(RWSet::Add("a"));
+        let event = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
         let result = HashSet::from(["a"]);
@@ -219,8 +219,8 @@ mod tests {
     fn case_two() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_a = replica_a.send(RWSet::Add("a"));
-        let event_b = replica_b.send(RWSet::Add("a"));
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(RWSet::Add("a")).unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -237,9 +237,9 @@ mod tests {
     fn case_three() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_a = replica_a.send(RWSet::Add("a"));
-        let event_b = replica_b.send(RWSet::Remove("a"));
-        let event_a_2 = replica_a.send(RWSet::Remove("a"));
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
+        let event_a_2 = replica_a.send(RWSet::Remove("a")).unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn case_five() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event = replica_a.send(RWSet::Remove("a"));
+        let event = replica_a.send(RWSet::Remove("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.state().unstable().len(), 1);
@@ -268,8 +268,8 @@ mod tests {
     fn concurrent_add_remove() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_b = replica_b.send(RWSet::Remove("a"));
-        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -281,21 +281,21 @@ mod tests {
     #[test]
     fn concurrent_add_remove_add() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_b.query(), HashSet::from(["a"]));
         assert_eq!(replica_a.query(), replica_b.query());
 
-        let event_b = replica_b.send(RWSet::Remove("a"));
-        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
         assert_eq!(replica_b.query(), HashSet::from([]));
         assert_eq!(replica_a.query(), replica_b.query());
 
-        let event_a = replica_a.send(RWSet::Add("a"));
+        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_b.query(), HashSet::from(["a"]));

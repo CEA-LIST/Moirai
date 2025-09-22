@@ -9,6 +9,24 @@ pub enum UWMap<K, O> {
     Clear,
 }
 
+impl<K, O> UWMap<K, Box<O>> {
+    pub fn boxed(op: UWMap<K, O>) -> UWMap<K, Box<O>> {
+        match op {
+            UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
+            UWMap::Remove(k) => UWMap::Remove(k),
+            UWMap::Clear => UWMap::Clear,
+        }
+    }
+
+    pub fn unboxed(self) -> UWMap<K, O> {
+        match self {
+            UWMap::Update(k, v) => UWMap::Update(k, *v),
+            UWMap::Remove(k) => UWMap::Remove(k),
+            UWMap::Clear => UWMap::Clear,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UWMapLog<K, L>
 where
@@ -119,13 +137,19 @@ mod tests {
     fn simple_uw_map() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
-        let event = replica_a.send(UWMap::Update("a".to_string(), Counter::Dec(5)));
+        let event = replica_a
+            .send(UWMap::Update("a".to_string(), Counter::Dec(5)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update("b".to_string(), Counter::Inc(5)));
+        let event = replica_a
+            .send(UWMap::Update("b".to_string(), Counter::Inc(5)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update("a".to_string(), Counter::Inc(15)));
+        let event = replica_a
+            .send(UWMap::Update("a".to_string(), Counter::Inc(15)))
+            .unwrap();
         replica_b.receive(event);
 
         let mut map = HashMap::new();
@@ -139,8 +163,10 @@ mod tests {
     fn concurrent_uw_map() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(UWMap::Remove("a".to_string()));
-        let event_b = replica_b.send(UWMap::Update("a".to_string(), Counter::Inc(10)));
+        let event_a = replica_a.send(UWMap::Remove("a".to_string())).unwrap();
+        let event_b = replica_b
+            .send(UWMap::Update("a".to_string(), Counter::Inc(10)))
+            .unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -155,25 +181,33 @@ mod tests {
     fn uw_map_duet_counter() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, DuetLog>>();
 
-        let event = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            Duet::First(Counter::Inc(15)),
-        ));
+        let event = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                Duet::First(Counter::Inc(15)),
+            ))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        let event = replica_a
+            .send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            Duet::First(Counter::Inc(10)),
-        ));
+        let event = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                Duet::First(Counter::Inc(10)),
+            ))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update(
-            "b".to_string(),
-            Duet::Second(Counter::Dec(7)),
-        ));
+        let event = replica_a
+            .send(UWMap::Update(
+                "b".to_string(),
+                Duet::Second(Counter::Dec(7)),
+            ))
+            .unwrap();
         replica_b.receive(event);
 
         let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
@@ -199,13 +233,17 @@ mod tests {
     fn uw_map_concurrent_duet_counter() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, DuetLog>>();
 
-        let event = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            Duet::First(Counter::Inc(15)),
-        ));
+        let event = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                Duet::First(Counter::Inc(15)),
+            ))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))));
+        let event = replica_a
+            .send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))))
+            .unwrap();
         replica_b.receive(event);
 
         let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
@@ -226,11 +264,13 @@ mod tests {
         assert_eq!(map, replica_a.query());
         assert_eq!(map, replica_b.query());
 
-        let event_a = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            Duet::First(Counter::Inc(10)),
-        ));
-        let event_b = replica_b.send(UWMap::Remove("a".to_string()));
+        let event_a = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                Duet::First(Counter::Inc(10)),
+            ))
+            .unwrap();
+        let event_b = replica_b.send(UWMap::Remove("a".to_string())).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -252,13 +292,15 @@ mod tests {
         assert_eq!(map, replica_a.query());
         assert_eq!(map, replica_b.query());
 
-        let event = replica_a.send(UWMap::Update(
-            "b".to_string(),
-            Duet::Second(Counter::Dec(7)),
-        ));
+        let event = replica_a
+            .send(UWMap::Update(
+                "b".to_string(),
+                Duet::Second(Counter::Dec(7)),
+            ))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Remove("b".to_string()));
+        let event = replica_a.send(UWMap::Remove("b".to_string())).unwrap();
         replica_b.receive(event);
 
         let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
@@ -279,35 +321,47 @@ mod tests {
             UWMapLog<String, UWMapLog<i32, UWMapLog<String, VecLog<Counter<i32>>>>>,
         >();
 
-        let event_a_1 = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(2))),
-        ));
+        let event_a_1 = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(2))),
+            ))
+            .unwrap();
 
-        let event_a_2 = replica_a.send(UWMap::Update(
-            "b".to_string(),
-            UWMap::Update(2, UWMap::Update("f".to_string(), Counter::Dec(20))),
-        ));
+        let event_a_2 = replica_a
+            .send(UWMap::Update(
+                "b".to_string(),
+                UWMap::Update(2, UWMap::Update("f".to_string(), Counter::Dec(20))),
+            ))
+            .unwrap();
 
-        let event_a_3 = replica_a.send(UWMap::Update(
-            "a".to_string(),
-            UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
-        ));
+        let event_a_3 = replica_a
+            .send(UWMap::Update(
+                "a".to_string(),
+                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
+            ))
+            .unwrap();
 
-        let event_b_1 = replica_b.send(UWMap::Update(
-            "a".to_string(),
-            UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
-        ));
+        let event_b_1 = replica_b
+            .send(UWMap::Update(
+                "a".to_string(),
+                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
+            ))
+            .unwrap();
 
-        let event_b_2 = replica_b.send(UWMap::Update(
-            "a".to_string(),
-            UWMap::Update(2, UWMap::Remove("f".to_string())),
-        ));
+        let event_b_2 = replica_b
+            .send(UWMap::Update(
+                "a".to_string(),
+                UWMap::Update(2, UWMap::Remove("f".to_string())),
+            ))
+            .unwrap();
 
-        let event_c_1 = replica_c.send(UWMap::Update(
-            "a".to_string(),
-            UWMap::Update(1, UWMap::Remove("z".to_string())),
-        ));
+        let event_c_1 = replica_c
+            .send(UWMap::Update(
+                "a".to_string(),
+                UWMap::Update(1, UWMap::Remove("z".to_string())),
+            ))
+            .unwrap();
 
         replica_a.receive(event_b_1.clone());
         replica_a.receive(event_b_2.clone());

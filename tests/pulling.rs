@@ -13,21 +13,21 @@
 // fn events_since_concurrent_counter() {
 //     let (mut replica_a, mut replica_b) = twins::<Counter<i32>>();
 
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
 //     assert_eq!(6, replica_a.query());
 //     assert_eq!(6, replica_a.state.unstable.node_count());
 
-//     let _ = replica_b.send(Counter::Dec(1));
-//     let _ = replica_b.send(Counter::Dec(1));
-//     let _ = replica_b.send(Counter::Dec(1));
-//     let _ = replica_b.send(Counter::Dec(1));
-//     let _ = replica_b.send(Counter::Dec(1));
-//     let _ = replica_b.send(Counter::Dec(1));
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(1)).unwrap();
 //     assert_eq!(-6, replica_b.query());
 //     assert_eq!(6, replica_b.state.unstable.node_count());
 
@@ -51,15 +51,15 @@
 // fn event_since_concurrent_aw_set() {
 //     let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//     let _ = replica_a.send(AWSet::Add("a"));
-//     let _ = replica_a.send(AWSet::Add("b"));
-//     let _ = replica_a.send(AWSet::Add("c"));
-//     let _ = replica_a.send(AWSet::Remove("a"));
+//     let _ = replica_a.send(AWSet::Add("a")).unwrap();
+//     let _ = replica_a.send(AWSet::Add("b")).unwrap();
+//     let _ = replica_a.send(AWSet::Add("c")).unwrap();
+//     let _ = replica_a.send(AWSet::Remove("a")).unwrap();
 
-//     let _ = replica_b.send(AWSet::Add("a"));
-//     let _ = replica_b.send(AWSet::Add("e"));
-//     let _ = replica_b.send(AWSet::Add("p"));
-//     let _ = replica_b.send(AWSet::Remove("e"));
+//     let _ = replica_b.send(AWSet::Add("a")).unwrap();
+//     let _ = replica_b.send(AWSet::Add("e")).unwrap();
+//     let _ = replica_b.send(AWSet::Add("p")).unwrap();
+//     let _ = replica_b.send(AWSet::Remove("e")).unwrap();
 
 //     let batch = replica_a.events_since(&Since::new_from(&replica_b));
 //     replica_b.deliver_batch(batch);
@@ -77,16 +77,16 @@
 // fn event_since_concurrent_complex_aw_set() {
 //     let (mut replica_a, mut replica_b) = twins::<AWSet<&str>>();
 
-//     let event = replica_a.send(AWSet::Add("a"));
+//     let event = replica_a.send(AWSet::Add("a")).unwrap();
 //     replica_b.receive(event);
 
-//     let _ = replica_a.send(AWSet::Add("b"));
-//     let _ = replica_a.send(AWSet::Add("c"));
-//     let _ = replica_a.send(AWSet::Remove("a"));
+//     let _ = replica_a.send(AWSet::Add("b")).unwrap();
+//     let _ = replica_a.send(AWSet::Add("c")).unwrap();
+//     let _ = replica_a.send(AWSet::Remove("a")).unwrap();
 
-//     let _ = replica_b.send(AWSet::Add("e"));
-//     let _ = replica_b.send(AWSet::Add("p"));
-//     let _ = replica_b.send(AWSet::Remove("e"));
+//     let _ = replica_b.send(AWSet::Add("e")).unwrap();
+//     let _ = replica_b.send(AWSet::Add("p")).unwrap();
+//     let _ = replica_b.send(AWSet::Remove("e")).unwrap();
 
 //     let since = Since::new_from(&replica_b);
 //     let batch = replica_a.events_since(&since);

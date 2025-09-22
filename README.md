@@ -13,15 +13,3 @@ _This project is currently under active development. The API and features are su
 ## Architecture
 
 ![Moirai Architecture Diagram](figures/architecture.png "Moirai Architecture Diagram")
-
-## Project Structure
-
-The project is organized into several key components:
-
-- **src**: Contains the core library code.
-  - **clocks**: Logical clocks implementations.
-  - **crdt**: CRDT implementations.
-  - **protocol**: Replication protocol implementations.
-  - **utils**: Utility modules for benchmarking and testing.
-- **tests**: Contains integration tests for the framework.
-- **logs**: Contains benchmark logs for performance evaluation.

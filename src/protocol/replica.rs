@@ -19,7 +19,8 @@ where
     fn receive(&mut self, event: Event<L::Op>);
     fn receive_batch(&mut self, batch: Batch<L::Op>);
     fn since(&self) -> Since;
-    fn send(&mut self, op: L::Op) -> Event<L::Op>;
+    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>>;
+    // fn send(&mut self, op: L::Op) -> Event<L::Op>;
     fn pull(&mut self, since: Since) -> Batch<L::Op>;
     // TODO: Add support for custom queries
     fn query(&self) -> L::Value;
@@ -61,11 +62,15 @@ where
     }
 
     #[instrument(skip(self, op), fields(id = self.id))]
-    fn send(&mut self, op: L::Op) -> Event<L::Op> {
+    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>> {
+        if !self.state.is_enabled(&op) {
+            info!("Operation is not enabled: {op:?}");
+            return None;
+        }
         let op = L::prepare(op);
         let event = self.tcsb.send(op);
         self.deliver(event.clone());
-        event
+        Some(event)
     }
 
     fn pull(&mut self, since: Since) -> Batch<L::Op> {
@@ -78,7 +83,7 @@ where
     }
 
     fn update(&mut self, op: L::Op) {
-        self.send(op);
+        self.send(op).unwrap();
     }
 
     fn bootstrap(id: ReplicaId, membership: Membership) -> Self {

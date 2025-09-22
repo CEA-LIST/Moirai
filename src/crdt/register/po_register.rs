@@ -100,13 +100,13 @@ mod tests {
     fn simple_po_register() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event = replica_a.send(PORegister::Write(Family::Child));
+        let event = replica_a.send(PORegister::Write(Family::Child)).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from([Family::Child]));
         assert_eq!(replica_b.query(), HashSet::from([Family::Child]));
 
-        let event = replica_b.send(PORegister::Write(Family::Parent(20)));
+        let event = replica_b.send(PORegister::Write(Family::Parent(20))).unwrap();
         replica_a.receive(event);
 
         let result = HashSet::from([Family::Parent(20)]);
@@ -118,13 +118,13 @@ mod tests {
     fn simple_po_register_2() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event = replica_a.send(PORegister::Write(Family::Parent(20)));
+        let event = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from([Family::Parent(20)]));
         assert_eq!(replica_b.query(), HashSet::from([Family::Parent(20)]));
 
-        let event = replica_b.send(PORegister::Write(Family::Child));
+        let event = replica_b.send(PORegister::Write(Family::Child)).unwrap();
         replica_a.receive(event);
 
         let result = HashSet::from([Family::Child]);
@@ -136,8 +136,8 @@ mod tests {
     fn concurrent_po_register() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a = replica_a.send(PORegister::Write(Family::Parent(20)));
-        let event_b = replica_b.send(PORegister::Write(Family::Parent(21)));
+        let event_a = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
+        let event_b = replica_b.send(PORegister::Write(Family::Parent(21))).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -150,14 +150,14 @@ mod tests {
     fn po_register_instability() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a_1 = replica_a.send(PORegister::Write(Family::Child));
+        let event_a_1 = replica_a.send(PORegister::Write(Family::Child)).unwrap();
         assert_eq!(replica_a.query(), HashSet::from([Family::Child]));
-        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42)));
+        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42))).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([Family::Parent(42)]));
         replica_a.receive(event_b_1);
         assert_eq!(replica_a.query(), HashSet::from([Family::Parent(42)]));
 
-        let event_b_2 = replica_b.send(PORegister::Write(Family::Parent(21)));
+        let event_b_2 = replica_b.send(PORegister::Write(Family::Parent(21))).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([Family::Parent(21)]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
@@ -170,9 +170,9 @@ mod tests {
     fn po_register_instability_2() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a_1 = replica_a.send(PORegister::Write(Family::Parent(20)));
+        let event_a_1 = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
         assert_eq!(replica_a.query(), HashSet::from([Family::Parent(20)]));
-        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42)));
+        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42))).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([Family::Parent(42)]));
         replica_a.receive(event_b_1);
         assert_eq!(
@@ -180,7 +180,7 @@ mod tests {
             HashSet::from([Family::Parent(42), Family::Parent(20)])
         );
 
-        let event_b_2 = replica_b.send(PORegister::Write(Family::Child));
+        let event_b_2 = replica_b.send(PORegister::Write(Family::Child)).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([Family::Child]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);

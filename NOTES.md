@@ -10,6 +10,7 @@ but they are preserved for reference and historical context.
 - Computing the column-wise minimum of a matrix clock is expensive.
 - Merging two vector clocks is expensive.
 - Logging
+- `is_enabled`?
 
 ## The Event Graph
 

@@ -138,6 +138,10 @@ where
         }
         graph
     }
+
+    fn is_enabled(&self, _op: &Self::Op) -> bool {
+        todo!()
+    }
 }
 
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
@@ -195,38 +199,60 @@ mod tests {
     fn nested_graph() {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        let event = replica_b
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)))
+            .unwrap();
         replica_a.receive(event);
 
-        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-        let event_b = replica_b.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)));
-        let event_b_2 = replica_b.send(UWGraph::UpdateArc("A", "B", 2, Counter::Dec(9)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)))
+            .unwrap();
+        let event_b = replica_b
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(5)))
+            .unwrap();
+        let event_b_2 = replica_b
+            .send(UWGraph::UpdateArc("A", "B", 2, Counter::Dec(9)))
+            .unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
         replica_a.receive(event_b_2);
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(5)));
-        let event_b = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(10)));
-        let event_b_2 = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(8)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(5)))
+            .unwrap();
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(10)))
+            .unwrap();
+        let event_b_2 = replica_b
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(8)))
+            .unwrap();
 
         replica_b.receive(event_a);
 
-        let event_b_3 = replica_b.send(UWGraph::RemoveArc("A", "B", 1));
+        let event_b_3 = replica_b.send(UWGraph::RemoveArc("A", "B", 1)).unwrap();
         replica_a.receive(event_b);
         replica_a.receive(event_b_2);
         replica_a.receive(event_b_3);
 
-        let event = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(3)));
+        let event = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(3)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(4)));
+        let event = replica_b
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(4)))
+            .unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(3)));
+        let event = replica_a
+            .send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(3)))
+            .unwrap();
         replica_b.receive(event);
 
         assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
@@ -238,8 +264,12 @@ mod tests {
     fn simple_graph() {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
-        let event_b = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(2)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(2)))
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -257,9 +287,11 @@ mod tests {
     fn remove_vertex() {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(UWGraph::RemoveVertex("A"));
+        let event_b = replica_b.send(UWGraph::RemoveVertex("A")).unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query().node_count(), 0);
@@ -270,13 +302,19 @@ mod tests {
     fn revive_arc() {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)))
+            .unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
-        let event_b = replica_b.send(UWGraph::RemoveVertex("B"));
+        let event_a = replica_a
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)))
+            .unwrap();
+        let event_b = replica_b.send(UWGraph::RemoveVertex("B")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -287,7 +325,9 @@ mod tests {
         assert_eq!(replica_a.query().node_count(), 1);
         assert_eq!(replica_a.query().edge_count(), 0);
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)))
+            .unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query().node_count(), 2);
@@ -303,10 +343,16 @@ mod tests {
         let (mut replica_a, mut replica_b, mut replica_c) =
             triplet_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event_b_1 = replica_b.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_b_1 = replica_b
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
         replica_c.receive(event_b_1.clone());
-        let event_c_1 = replica_c.send(UWGraph::UpdateVertex("B", LWWRegister::Write(1)));
-        let event_c_2 = replica_c.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)));
+        let event_c_1 = replica_c
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(1)))
+            .unwrap();
+        let event_c_2 = replica_c
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(2)))
+            .unwrap();
         replica_b.receive(event_c_1.clone());
         replica_b.receive(event_c_2.clone());
 
@@ -315,8 +361,8 @@ mod tests {
             &replica_c.query()
         ));
 
-        let event_a_1 = replica_a.send(UWGraph::RemoveVertex("B"));
-        let event_a_2 = replica_a.send(UWGraph::RemoveArc("A", "B", 1));
+        let event_a_1 = replica_a.send(UWGraph::RemoveVertex("B")).unwrap();
+        let event_a_2 = replica_a.send(UWGraph::RemoveArc("A", "B", 1)).unwrap();
         replica_b.receive(event_a_1.clone());
         replica_b.receive(event_a_2.clone());
 
@@ -348,16 +394,24 @@ mod tests {
     fn revive_arc_3() {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
+            .unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)));
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(2)))
+            .unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(7)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(7)))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)));
-        let event_b = replica_b.send(UWGraph::RemoveVertex("B"));
+        let event_a = replica_a
+            .send(UWGraph::UpdateArc("B", "A", 1, Counter::Inc(8)))
+            .unwrap();
+        let event_b = replica_b.send(UWGraph::RemoveVertex("B")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -368,7 +422,9 @@ mod tests {
         assert_eq!(replica_a.query().node_count(), 1);
         assert_eq!(replica_a.query().edge_count(), 0);
 
-        let event_a = replica_a.send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)));
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)))
+            .unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query().node_count(), 2);

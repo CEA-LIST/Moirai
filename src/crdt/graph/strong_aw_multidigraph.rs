@@ -150,16 +150,16 @@
 //     fn simple_graph() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         let event = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event);
 
-//         let event = replica_b.send(AWGraph::AddVertex("B"));
+//         let event = replica_b.send(AWGraph::AddVertex("B")).unwrap();
 //         replica_a.receive(event);
 
-//         let event = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         let event = replica_a.send(AWGraph::AddArc("B", "A", "arc1")).unwrap();
 //         replica_b.receive(event);
 
-//         let event = replica_b.send(AWGraph::RemoveVertex("B"));
+//         let event = replica_b.send(AWGraph::RemoveVertex("B")).unwrap();
 //         replica_a.receive(event);
 
 //         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
@@ -169,14 +169,14 @@
 //     fn concurrent_graph_arc() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         let event = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event);
 
-//         let event = replica_b.send(AWGraph::AddVertex("B"));
+//         let event = replica_b.send(AWGraph::AddVertex("B")).unwrap();
 //         replica_a.receive(event);
 
-//         let event_b = replica_b.send(AWGraph::RemoveVertex("B"));
-//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         let event_b = replica_b.send(AWGraph::RemoveVertex("B")).unwrap();
+//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1")).unwrap();
 //         replica_b.receive(event_a);
 //         replica_a.receive(event_b);
 
@@ -190,14 +190,14 @@
 //     fn graph_remove_vertex() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event = replica_a.send(AWGraph::AddVertex("A"));
+//         let event = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event);
 
-//         let event = replica_b.send(AWGraph::RemoveVertex("A"));
+//         let event = replica_b.send(AWGraph::RemoveVertex("A")).unwrap();
 //         replica_a.receive(event);
 
-//         // let event_b = replica_b.send(AWGraph::RemoveVertex("B"));
-//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1"));
+//         // let event_b = replica_b.send(AWGraph::RemoveVertex("B")).unwrap();
+//         let event_a = replica_a.send(AWGraph::AddArc("B", "A", "arc1")).unwrap();
 //         replica_b.receive(event_a);
 //         // replica_a.receive(event_b);
 
@@ -211,8 +211,8 @@
 //     fn concurrent_graph_vertex() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, &str>>();
 
-//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
-//         let event_b = replica_b.send(AWGraph::AddVertex("A"));
+//         let event_a = replica_a.send(AWGraph::AddVertex("A")).unwrap();
+//         let event_b = replica_b.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_a.receive(event_b);
 //         replica_b.receive(event_a);
 
@@ -224,7 +224,7 @@
 //     fn graph_arc_no_vertex() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event = replica_a.send(AWGraph::AddArc("A", "B", 1));
+//         let event = replica_a.send(AWGraph::AddArc("A", "B", 1)).unwrap();
 //         replica_b.receive(event);
 
 //         assert!(is_isomorphic(&replica_a.query(), &DiGraph::<&str, ()>::new()));
@@ -234,11 +234,11 @@
 //     fn graph_multiple_vertex_same_id() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         let event_a = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event_a);
-//         let event_b = replica_b.send(AWGraph::AddVertex("A"));
+//         let event_b = replica_b.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_a.receive(event_b);
-//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         let event_a = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event_a);
 
 //         assert_eq!(replica_a.query().node_count(), 1);
@@ -248,13 +248,13 @@
 //     fn multigraph() {
 //         let (mut replica_a, mut replica_b) = twins::<AWGraph<&str, u8>>();
 
-//         let event_a = replica_a.send(AWGraph::AddVertex("A"));
+//         let event_a = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event_a);
-//         let event_b = replica_b.send(AWGraph::AddVertex("B"));
+//         let event_b = replica_b.send(AWGraph::AddVertex("B")).unwrap();
 //         replica_a.receive(event_b);
 
-//         let event_a = replica_a.send(AWGraph::AddArc("A", "B", 1));
-//         let event_b = replica_b.send(AWGraph::AddArc("A", "B", 2));
+//         let event_a = replica_a.send(AWGraph::AddArc("A", "B", 1)).unwrap();
+//         let event_b = replica_b.send(AWGraph::AddArc("A", "B", 2)).unwrap();
 
 //         replica_a.receive(event_b);
 //         replica_b.receive(event_a);

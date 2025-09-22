@@ -16,6 +16,30 @@ pub enum List<O> {
     Delete { pos: usize },
 }
 
+impl<O> List<Box<O>> {
+    pub fn boxed(op: List<O>) -> List<Box<O>> {
+        match op {
+            List::Insert { pos, value } => List::Insert {
+                pos,
+                value: Box::new(value),
+            },
+            List::Set { pos, value } => List::Set {
+                pos,
+                value: Box::new(value),
+            },
+            List::Delete { pos } => List::Delete { pos },
+        }
+    }
+
+    pub fn unboxed(self) -> List<O> {
+        match self {
+            List::Insert { pos, value } => List::Insert { pos, value: *value },
+            List::Set { pos, value } => List::Set { pos, value: *value },
+            List::Delete { pos } => List::Delete { pos },
+        }
+    }
+}
+
 impl<O> List<O> {
     pub fn insert(pos: usize, value: O) -> Self {
         Self::Insert { pos, value }
@@ -162,38 +186,38 @@ mod tests {
     fn simple_nested_list() {
         let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
 
-        let event = replica_a.send(List::insert(0, Counter::Inc(10)));
+        let event = replica_a.send(List::insert(0, Counter::Inc(10))).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), vec![10]);
         assert_eq!(replica_b.query(), vec![10]);
 
-        let event = replica_b.send(List::set(0, Counter::Dec(5)));
+        let event = replica_b.send(List::set(0, Counter::Dec(5))).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(), vec![5]);
         assert_eq!(replica_b.query(), vec![5]);
 
-        let event = replica_a.send(List::insert(1, Counter::Inc(10)));
+        let event = replica_a.send(List::insert(1, Counter::Inc(10))).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), vec![5, 10]);
         assert_eq!(replica_b.query(), vec![5, 10]);
 
-        let event = replica_a.send(List::set(0, Counter::Inc(1)));
+        let event = replica_a.send(List::set(0, Counter::Inc(1))).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), vec![6, 10]);
         assert_eq!(replica_b.query(), vec![6, 10]);
 
-        let event = replica_a.send(List::delete(0));
+        let event = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), vec![10]);
         assert_eq!(replica_b.query(), vec![10]);
 
-        let event_a = replica_a.send(List::insert(1, Counter::Inc(21)));
-        let event_b = replica_b.send(List::delete(0));
+        let event_a = replica_a.send(List::insert(1, Counter::Inc(21))).unwrap();
+        let event_b = replica_b.send(List::delete(0)).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -206,8 +230,8 @@ mod tests {
     fn concurrent_insert() {
         let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(List::insert(0, Counter::Inc(10)));
-        let event_b = replica_b.send(List::insert(0, Counter::Inc(20)));
+        let event_a = replica_a.send(List::insert(0, Counter::Inc(10))).unwrap();
+        let event_b = replica_b.send(List::insert(0, Counter::Inc(20))).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 

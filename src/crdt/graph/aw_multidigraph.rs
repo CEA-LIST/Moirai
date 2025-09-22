@@ -15,9 +15,13 @@ use crate::protocol::{
 
 #[derive(Clone, Debug)]
 pub enum Graph<V, E> {
+    /// Add a vertex with identifier `V`. `V` must be unique.
     AddVertex(V),
+    /// Remove a vertex with identifier `V`. All arcs connected to this vertex are also removed.
     RemoveVertex(V),
+    /// Add an arc from vertex `V` to vertex `V'` with edge identifier `E`. Both vertices must already exist. The triple `(V, V', E)` must be unique.
     AddArc(V, V, E),
+    /// Remove an arc from vertex `V` to vertex `V'` with edge identifier `E`. The triple `(V, V', E)` must already exist.
     RemoveArc(V, V, E),
 }
 
@@ -77,6 +81,7 @@ where
             .iter()
             .chain(unstable.iter().map(|t| t.op()))
             .collect();
+        // TODO: Not needed if we are using a sorted unstable! e.g., VecLog
         ops.sort_by(|a, b| match (a, b) {
             (Graph::AddVertex(_), Graph::AddArc(_, _, _)) => Ordering::Less,
             (Graph::AddArc(_, _, _), Graph::AddVertex(_)) => Ordering::Greater,
@@ -109,15 +114,40 @@ where
         }
         graph
     }
+
+    fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
+        match op {
+            Graph::AddVertex(_) => true,
+            // The vertex must exist to be removed.
+            Graph::RemoveVertex(v) => state().node_weights().any(|node| node == v),
+            // Both vertices must exist to add an arc.
+            Graph::AddArc(v1, v2, _) => {
+                state().node_weights().any(|node| node == v1)
+                    && state().node_weights().any(|node| node == v2)
+            }
+            Graph::RemoveArc(v1, v2, e) => {
+                let idx_1 = state()
+                    .node_indices()
+                    .find(|&idx| state().node_weight(idx) == Some(v1));
+                let idx_2 = state()
+                    .node_indices()
+                    .find(|&idx| state().node_weight(idx) == Some(v2));
+                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
+                    state()
+                        .edges_connecting(i1, i2)
+                        .any(|edge| edge.weight() == e)
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::{
-            graph::aw_multidigraph::Graph,
-            test_util::{triplet, twins},
-        },
+        crdt::{graph::aw_multidigraph::Graph, test_util::twins},
         protocol::replica::IsReplica,
     };
 
@@ -125,16 +155,16 @@ mod tests {
     fn simple_graph() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
 
-        let event = replica_a.send(Graph::AddVertex("A"));
+        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::AddVertex("B"));
+        let event = replica_b.send(Graph::AddVertex("B")).unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(Graph::AddArc("B", "A", "arc1"));
+        let event = replica_a.send(Graph::AddArc("B", "A", "arc1")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::RemoveVertex("B"));
+        let event = replica_b.send(Graph::RemoveVertex("B")).unwrap();
         replica_a.receive(event);
 
         assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
@@ -146,14 +176,14 @@ mod tests {
     fn concurrent_graph_arc() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
 
-        let event = replica_a.send(Graph::AddVertex("A"));
+        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::AddVertex("B"));
+        let event = replica_b.send(Graph::AddVertex("B")).unwrap();
         replica_a.receive(event);
 
-        let event_b = replica_b.send(Graph::RemoveVertex("B"));
-        let event_a = replica_a.send(Graph::AddArc("B", "A", "arc1"));
+        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        let event_a = replica_a.send(Graph::AddArc("B", "A", "arc1")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -166,8 +196,8 @@ mod tests {
     fn concurrent_graph_vertex() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A"));
-        let event_b = replica_b.send(Graph::AddVertex("A"));
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_b = replica_b.send(Graph::AddVertex("A")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -178,25 +208,14 @@ mod tests {
     }
 
     #[test]
-    fn graph_arc_no_vertex() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
-
-        let event = replica_a.send(Graph::AddArc("A", "B", 1));
-        replica_b.receive(event);
-
-        assert_eq!(replica_a.query().node_count(), 0);
-        assert_eq!(replica_a.query().edge_count(), 0);
-    }
-
-    #[test]
     fn graph_multiple_vertex_same_id() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A"));
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("A"));
+        let event_b = replica_b.send(Graph::AddVertex("A")).unwrap();
         replica_a.receive(event_b);
-        let event_a = replica_a.send(Graph::AddVertex("A"));
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query().node_count(), 1);
@@ -206,71 +225,30 @@ mod tests {
     fn revive_arc() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A"));
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("B"));
+        let event_b = replica_b.send(Graph::AddVertex("B")).unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(Graph::AddArc("A", "B", 1));
-        let event_b = replica_b.send(Graph::RemoveVertex("B"));
+        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
+        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
+        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
             .first()
             .is_some());
 
         assert_eq!(replica_a.query().node_count(), 1);
         assert_eq!(replica_a.query().edge_count(), 0);
 
-        let event_a = replica_a.send(Graph::AddVertex("B"));
+        let event_a = replica_a.send(Graph::AddVertex("B")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query().node_count(), 2);
         assert_eq!(replica_a.query().edge_count(), 1);
 
         assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
-            .first()
-            .is_some());
-    }
-
-    #[test]
-    fn revive_arc_2() {
-        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Graph<&str, u8>>();
-
-        let event_b_1 = replica_b.send(Graph::AddVertex("A"));
-        replica_c.receive(event_b_1.clone());
-        let event_c_1 = replica_c.send(Graph::AddVertex("B"));
-        let event_c_2 = replica_c.send(Graph::AddArc("A", "B", 1));
-        replica_b.receive(event_c_1.clone());
-        replica_b.receive(event_c_2.clone());
-
-        assert!(vf2::isomorphisms(&replica_b.query(), &replica_c.query(),)
-            .first()
-            .is_some());
-
-        let event_a_1 = replica_a.send(Graph::RemoveVertex("B"));
-        let event_a_2 = replica_a.send(Graph::RemoveArc("A", "B", 1));
-        replica_b.receive(event_a_1.clone());
-        replica_b.receive(event_a_2.clone());
-
-        replica_c.receive(event_a_1);
-        replica_c.receive(event_a_2);
-
-        replica_a.receive(event_b_1);
-        replica_a.receive(event_c_1);
-        replica_a.receive(event_c_2);
-
-        assert_eq!(replica_a.query().node_count(), 2);
-        assert_eq!(replica_a.query().edge_count(), 1);
-
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
-            .first()
-            .is_some());
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_c.query())
-            .first()
-            .is_some());
-        assert!(vf2::isomorphisms(&replica_b.query(), &replica_c.query())
             .first()
             .is_some());
     }
@@ -279,13 +257,13 @@ mod tests {
     fn multigraph() {
         let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A"));
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("B"));
+        let event_b = replica_b.send(Graph::AddVertex("B")).unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(Graph::AddArc("A", "B", 1));
-        let event_b = replica_b.send(Graph::AddArc("A", "B", 2));
+        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
+        let event_b = replica_b.send(Graph::AddArc("A", "B", 2)).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);

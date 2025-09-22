@@ -24,13 +24,13 @@
 //     let mut replica_a = Tcsb::<EventGraph<Counter<i32>>>::new("a");
 //     let mut replica_b = Tcsb::<EventGraph<Counter<i32>>>::new("b");
 
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Inc(1));
-//     let _ = replica_a.send(Counter::Dec(1));
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(1)).unwrap();
+//     let _ = replica_a.send(Counter::Dec(1)).unwrap();
 
-//     let _ = replica_b.send(Counter::Inc(7));
-//     let _ = replica_b.send(Counter::Dec(11));
-//     let _ = replica_b.send(Counter::Dec(9));
+//     let _ = replica_b.send(Counter::Inc(7)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(11)).unwrap();
+//     let _ = replica_b.send(Counter::Dec(9)).unwrap();
 
 //     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
 //     replica_a.start_installing_view();
@@ -55,19 +55,19 @@
 //     replica_b.start_installing_view();
 //     replica_b.mark_view_installed();
 
-//     let event_a_1 = replica_a.send(Counter::Inc(1));
-//     let event_b_1 = replica_b.send(Counter::Inc(7));
+//     let event_a_1 = replica_a.send(Counter::Inc(1)).unwrap();
+//     let event_b_1 = replica_b.send(Counter::Inc(7)).unwrap();
 //     replica_b.receive(event_a_1);
 //     replica_a.receive(event_b_1);
 
-//     let event_a_2 = replica_a.send(Counter::Inc(1));
+//     let event_a_2 = replica_a.send(Counter::Inc(1)).unwrap();
 //     replica_b.receive(event_a_2);
 
-//     let event_a_3 = replica_a.send(Counter::Dec(1));
+//     let event_a_3 = replica_a.send(Counter::Dec(1)).unwrap();
 //     replica_b.receive(event_a_3);
 
-//     let event_b_2 = replica_b.send(Counter::Dec(11));
-//     let event_b_3 = replica_b.send(Counter::Dec(9));
+//     let event_b_2 = replica_b.send(Counter::Dec(11)).unwrap();
+//     let event_b_3 = replica_b.send(Counter::Dec(9)).unwrap();
 //     replica_a.receive(event_b_2);
 //     replica_a.receive(event_b_3);
 
@@ -100,8 +100,8 @@
 // fn leave() {
 //     let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<i32>>();
 
-//     let event_a = replica_a.send(Counter::Inc(1));
-//     let event_b = replica_b.send(Counter::Inc(7));
+//     let event_a = replica_a.send(Counter::Inc(1)).unwrap();
+//     let event_b = replica_b.send(Counter::Inc(7)).unwrap();
 
 //     replica_b.receive(event_a.clone());
 //     replica_a.receive(event_b.clone());
@@ -111,7 +111,7 @@
 //     replica_a.add_pending_view(vec!["a".to_string(), "b".to_string()]);
 //     replica_a.start_installing_view();
 
-//     let event_c = replica_c.send(Counter::Inc(3));
+//     let event_c = replica_c.send(Counter::Inc(3)).unwrap();
 
 //     replica_b.receive(event_c.clone());
 //     replica_a.receive(event_c);
@@ -141,11 +141,11 @@
 // fn rejoin() {
 //     let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<i32>>();
 
-//     let event_a = replica_a.send(Counter::Inc(1));
+//     let event_a = replica_a.send(Counter::Inc(1)).unwrap();
 //     replica_b.receive(event_a.clone());
 //     replica_c.receive(event_a);
 
-//     let event_c = replica_c.send(Counter::Inc(3));
+//     let event_c = replica_c.send(Counter::Inc(3)).unwrap();
 //     replica_a.receive(event_c.clone());
 //     replica_b.receive(event_c);
 
@@ -167,7 +167,7 @@
 //     assert_eq!(replica_a.query(), replica_b.query());
 //     assert_eq!(replica_a.query(), replica_c.query());
 
-//     let event_b = replica_b.send(Counter::Inc(7));
+//     let event_b = replica_b.send(Counter::Inc(7)).unwrap();
 //     replica_a.receive(event_b);
 
 //     for tcsb in [&mut replica_a, &mut replica_c, &mut replica_b] {
@@ -207,10 +207,10 @@
 //     replica_a.group_membership.planning(replica_a.last_view_id());
 //     replica_a.start_installing_view();
 
-//     let _ = replica_a.send(Counter::Inc(-1));
-//     let _ = replica_a.send(Counter::Inc(2));
-//     let _ = replica_a.send(Counter::Inc(-3));
-//     let _ = replica_a.send(Counter::Inc(11));
+//     let _ = replica_a.send(Counter::Inc(-1)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(2)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(-3)).unwrap();
+//     let _ = replica_a.send(Counter::Inc(11)).unwrap();
 
 //     while replica_a
 //         .group_membership

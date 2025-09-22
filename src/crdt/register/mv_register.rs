@@ -75,13 +75,13 @@ mod tests {
     fn simple_mv_register() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("a"));
+        let event = replica_a.send(MVRegister::Write("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from(["a"]));
         assert_eq!(replica_b.query(), HashSet::from(["a"]));
 
-        let event = replica_b.send(MVRegister::Write("b"));
+        let event = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = HashSet::from(["b"]);
@@ -93,20 +93,20 @@ mod tests {
     fn concurrent_mv_register() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("c"));
+        let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from(["c"]));
         assert_eq!(replica_b.query(), HashSet::from(["c"]));
 
-        let event = replica_b.send(MVRegister::Write("d"));
+        let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from(["d"]));
         assert_eq!(replica_b.query(), HashSet::from(["d"]));
 
-        let event_a = replica_a.send(MVRegister::Write("a"));
-        let event_b = replica_b.send(MVRegister::Write("b"));
+        let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
+        let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -121,22 +121,22 @@ mod tests {
     fn multiple_concurrent_mv_register() {
         let (mut replica_a, mut replica_b, _replica_c) = triplet::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("c"));
+        let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from(["c"]));
         assert_eq!(replica_b.query(), HashSet::from(["c"]));
 
-        let event = replica_b.send(MVRegister::Write("d"));
+        let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(), HashSet::from(["d"]));
         assert_eq!(replica_b.query(), HashSet::from(["d"]));
 
-        let event_a = replica_a.send(MVRegister::Write("a"));
-        let event_aa = replica_a.send(MVRegister::Write("aa"));
+        let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
+        let event_aa = replica_a.send(MVRegister::Write("aa")).unwrap();
 
-        let event_b = replica_b.send(MVRegister::Write("b"));
+        let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -153,14 +153,14 @@ mod tests {
     fn mv_register_instability() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<u32>>();
 
-        let event_a_1 = replica_a.send(MVRegister::Write(4));
+        let event_a_1 = replica_a.send(MVRegister::Write(4)).unwrap();
         assert_eq!(replica_a.query(), HashSet::from([4]));
-        let event_b_1 = replica_b.send(MVRegister::Write(5));
+        let event_b_1 = replica_b.send(MVRegister::Write(5)).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([5]));
         replica_a.receive(event_b_1);
         assert_eq!(replica_a.query(), HashSet::from([4, 5]));
 
-        let event_b_2 = replica_b.send(MVRegister::Write(2));
+        let event_b_2 = replica_b.send(MVRegister::Write(2)).unwrap();
         assert_eq!(replica_b.query(), HashSet::from([2]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);

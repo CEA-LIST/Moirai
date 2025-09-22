@@ -42,7 +42,6 @@ where
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             if !O::DISABLE_R_WHEN_R {
-                info!("Pruning redundant ops");
                 self.prune_redundant_ops(
                     O::redundant_by_when_redundant,
                     &new_tagged_op,
@@ -69,13 +68,11 @@ where
         if O::DISABLE_STABILIZE {
             return;
         }
-        info!("Stabilizing with version: {}", version);
         // 1. select all ops in unstable that are predecessors of a version
         // 2. for each of them, call stabilize, which may modify stable and/or unstable
         // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
 
         let candidates = self.unstable.predecessors(version);
-        info!("Candidates (stabilize): {:?}", candidates);
 
         for tagged_op in candidates {
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
@@ -87,10 +84,6 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        info!("<<< REDUNDANT BY PARENT>>>");
-        info!("BEFORE stable: {:?}", self.stable);
-        info!("BEFORE unstable: {:?}", self.unstable);
-
         self.stable.clear();
         if conservative {
             self.unstable
@@ -98,9 +91,6 @@ where
         } else {
             self.unstable.clear();
         }
-
-        info!("AFTER stable: {:?}", self.stable);
-        info!("AFTER unstable: {:?}", self.unstable);
     }
 
     fn len(&self) -> usize {
@@ -109,6 +99,10 @@ where
 
     fn is_empty(&self) -> bool {
         self.stable.is_empty() && self.unstable.is_empty()
+    }
+
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        O::is_enabled(op, || O::eval(&self.stable, &self.unstable))
     }
 }
 
