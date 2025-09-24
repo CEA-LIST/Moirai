@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::protocol::{crdt::pure_crdt::RedundancyRelation, event::tagged_op::TaggedOp};
 
 pub trait IsStableState<O>: Default + Debug {
+    // TODO: is_default
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
     fn apply(&mut self, value: O);

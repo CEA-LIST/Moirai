@@ -25,7 +25,7 @@ cargo install flamegraph
 cargo flamegraph --root --dev --unit-test po-crdt -- test_graph
 cargo flamegraph --test eval_nested
 cargo flamegraph --root --release --example <name>
-cargo flamegraph --root --release --unit-test -- crdt::graph::aw_multidigraph::tests::op_weaver_multidigraph
+cargo flamegraph --root --release --unit-test -- crdt::graph::aw_multidigraph::tests::fuzz_aw_multidigraph
 ```
 
 ### Expand Macros
