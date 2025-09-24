@@ -20,7 +20,6 @@ where
     fn receive_batch(&mut self, batch: Batch<L::Op>);
     fn since(&self) -> Since;
     fn send(&mut self, op: L::Op) -> Option<Event<L::Op>>;
-    // fn send(&mut self, op: L::Op) -> Event<L::Op>;
     fn pull(&mut self, since: Since) -> Batch<L::Op>;
     // TODO: Add support for custom queries
     fn query(&self) -> L::Value;

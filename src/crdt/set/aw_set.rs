@@ -287,14 +287,26 @@ mod tests {
             AWSet::Add(2),
             AWSet::Add(3),
             AWSet::Add(4),
+            AWSet::Add(5),
+            AWSet::Add(6),
+            AWSet::Add(7),
+            AWSet::Add(8),
+            AWSet::Add(9),
+            AWSet::Add(10),
             AWSet::Remove(1),
             AWSet::Remove(2),
             AWSet::Remove(3),
             AWSet::Remove(4),
+            AWSet::Remove(5),
+            AWSet::Remove(6),
+            AWSet::Remove(7),
+            AWSet::Remove(8),
+            AWSet::Remove(9),
+            AWSet::Remove(10),
             AWSet::Clear,
         ]);
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None);
+        let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config =

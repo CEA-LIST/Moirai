@@ -128,6 +128,12 @@ impl Version {
             .map(|(idx, seq)| EventId::new(*idx, *seq, self.view.clone()))
     }
 
+    pub(in crate::protocol::clock) fn iter_with_keys<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&ReplicaIdx, &Seq)> + 'a {
+        self.entries.iter()
+    }
+
     #[cfg(test)]
     pub(in crate::protocol::clock) fn build(
         view: &Reader<View>,
