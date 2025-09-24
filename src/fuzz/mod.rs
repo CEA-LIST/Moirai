@@ -10,8 +10,7 @@ use crate::{
     crdt::test_util::bootstrap_n,
     fuzz::config::{FuzzerConfig, OpConfig, RunConfig},
     protocol::{
-        broadcast::tcsb::Tcsb, event::Event, membership::ReplicaIdx, replica::IsReplica,
-        state::log::IsLog,
+        broadcast::tcsb::Tcsb, membership::ReplicaIdx, replica::IsReplica, state::log::IsLog,
     },
 };
 
@@ -75,32 +74,31 @@ pub fn runner<L: IsLog>(
         }
 
         // Send the operation
-        // TODO: measure the time to deliver locally.
-        // let start: Instant;
-
-        let mut event: Option<Event<L::Op>> = None;
-        let mut iter = 0;
-        while event.is_none() && iter < 500 {
-            let op = operations.choose(&mut rng);
-            event = replicas[replica_idx].send(op.clone());
-            if event.is_some() {
-                break;
-            }
-            iter += 1;
-        }
-
-        if iter == 500 {
-            panic!("Could not generate an operation after 500 tries. Consider changing the operation distribution or the churn rate.");
-        }
-
-        let event = event.unwrap();
+        let op = operations.choose(&mut rng);
         count_ops += 1;
 
-        // let duration = start.elapsed();
-        // time_to_deliver
-        //     .entry(replica_idx)
-        //     .and_modify(|d| *d += duration)
-        //     .or_insert(duration);
+        // let mut event: Option<Event<L::Op>> = None;
+        // let mut iter = 0;
+        // while event.is_none() && iter < 500 {
+        //     let op = operations.choose(&mut rng);
+        //     event = replicas[replica_idx].send(op.clone());
+        //     if event.is_some() {
+        //         break;
+        //     }
+        //     iter += 1;
+        // }
+
+        // if iter == 500 {
+        //     panic!("Could not generate an operation after 500 tries. Consider changing the operation distribution or the churn rate.");
+        // }
+
+        let start = Instant::now();
+        let event = replicas[replica_idx].send(op.clone()).unwrap();
+        let duration = start.elapsed();
+        time_to_deliver
+            .entry(replica_idx)
+            .and_modify(|d| *d += duration)
+            .or_insert(duration);
 
         if online[replica_idx] {
             for other_idx in 0..config.num_replicas.into() {

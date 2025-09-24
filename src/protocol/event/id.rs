@@ -7,9 +7,9 @@ use std::{
 use crate::{
     protocol::{
         clock::version_vector::{Seq, Version},
-        membership::{view::View, ReplicaId, ReplicaIdx},
+        membership::ReplicaId,
     },
-    utils::mut_owner::Reader,
+    utils::intern_str::{ReplicaIdx, Resolver},
 };
 
 /// Represents the unique identifier for an operation.
@@ -17,49 +17,42 @@ use crate::{
 pub struct EventId {
     idx: ReplicaIdx,
     seq: Seq,
-    view: Reader<View>,
+    resolver: Resolver,
 }
 
 impl EventId {
-    pub fn new(idx: ReplicaIdx, seq: Seq, view: Reader<View>) -> Self {
-        Self { idx, seq, view }
+    pub fn new(idx: ReplicaIdx, seq: Seq, resolver: Resolver) -> Self {
+        Self { idx, seq, resolver }
     }
 
-    // TODO: should not clone
-    pub fn origin_id(&self) -> ReplicaId {
-        let view = self.view.borrow();
-        view.get_id(self.idx).unwrap().clone()
+    pub fn origin_id(&self) -> &ReplicaId {
+        self.resolver.resolve(self.idx).unwrap()
     }
 
     pub fn seq(&self) -> Seq {
         self.seq
     }
 
-    pub fn origin_idx(&self) -> ReplicaIdx {
+    pub fn idx(&self) -> ReplicaIdx {
         self.idx
-    }
-
-    pub(super) fn view(&self) -> &Reader<View> {
-        &self.view
     }
 
     /// Check if this event id is a predecessor of the given version.
     /// # Note
     /// Returns `true` if sequence number of the version for the replica id is greater OR equal.
     pub fn is_predecessor_of(&self, version: &Version) -> bool {
-        let ver_seq = version.seq_by_id(&self.origin_id()).unwrap_or(0);
+        let ver_seq = version.seq_by_idx(self.idx);
         ver_seq >= self.seq
+    }
+
+    pub(super) fn resolver(&self) -> &Resolver {
+        &self.resolver
     }
 }
 
 impl Display for EventId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "({}{})",
-            self.view.borrow().get_id(self.idx).unwrap(),
-            self.seq,
-        )
+        write!(f, "({}{})", self.origin_id(), self.seq,)
     }
 }
 
