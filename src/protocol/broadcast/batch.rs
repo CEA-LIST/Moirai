@@ -15,8 +15,8 @@ impl<O> Batch<O> {
         Self { events, version }
     }
 
-    pub fn events(&self) -> &Vec<WireEvent<O>> {
-        &self.events
+    pub fn events(self) -> Vec<WireEvent<O>> {
+        self.events
     }
 
     pub fn version(&self) -> &Version {

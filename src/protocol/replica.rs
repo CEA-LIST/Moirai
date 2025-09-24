@@ -99,7 +99,7 @@ where
     fn receive_batch(&mut self, batch: Batch<<L as IsLog>::Op>) {
         info!("Receiving batch with {} events", batch.events.len());
         for event in batch.events() {
-            self.receive(event.clone());
+            self.receive(event);
         }
         // TODO: is it correct?
         // self.tcsb.update_version(batch.version());
