@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, fmt::Display};
+use std::{cmp::Ordering, fmt::Display};
 
 use log::error;
 // #[cfg(feature = "utils")]
@@ -9,36 +9,81 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::{
-    protocol::{
-        event::id::EventId,
-        membership::{view::View, ReplicaId, ReplicaIdx},
-    },
-    utils::mut_owner::Reader,
+    protocol::{event::id::EventId, membership::ReplicaId},
+    utils::intern_str::{ReplicaIdx, Resolver},
 };
 
 /// Sequence number
 pub type Seq = usize;
 
+#[derive(Debug, Clone, PartialEq)]
+struct VersionEntries(Vec<Seq>);
+
+impl VersionEntries {
+    fn get(&self, idx: ReplicaIdx) -> Seq {
+        *self.0.get(idx.0).unwrap_or(&0)
+    }
+
+    fn get_mut(&mut self, idx: ReplicaIdx) -> &mut Seq {
+        self.fill_to(idx.0 + 1);
+        self.0.get_mut(idx.0).unwrap()
+    }
+
+    fn fill_to(&mut self, len: usize) {
+        if len > self.0.len() {
+            self.0.resize(len, 0);
+        }
+    }
+
+    fn join(&mut self, other: &Self) {
+        self.fill_to(other.0.len());
+        self.0
+            .iter_mut()
+            .zip(other.0.iter().chain(std::iter::repeat(&0)))
+            .for_each(|(a, b)| {
+                if *a < *b {
+                    *a = *b;
+                }
+            });
+    }
+
+    fn meet(&mut self, other: &Self) {
+        self.fill_to(other.0.len());
+        self.0
+            .iter_mut()
+            .zip(other.0.iter().chain(std::iter::repeat(&0)))
+            .for_each(|(a, b)| {
+                if *a > *b {
+                    *a = *b;
+                }
+            });
+    }
+
+    fn values(&self) -> impl Iterator<Item = &Seq> {
+        self.0.iter()
+    }
+}
+
 // #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 pub struct Version {
-    entries: HashMap<ReplicaIdx, Seq>,
+    entries: VersionEntries,
     origin_idx: ReplicaIdx,
-    view: Reader<View>,
+    resolver: Resolver,
 }
 
 impl Version {
-    pub fn new(view: &Reader<View>, origin_idx: ReplicaIdx) -> Self {
-        let entries = view.borrow().members().map(|(idx, _)| (*idx, 0)).collect();
+    pub fn new(origin_idx: ReplicaIdx, resolver: Resolver) -> Self {
+        let entries = vec![0; resolver.len()];
         Self {
-            entries,
-            view: Reader::clone(view),
+            entries: VersionEntries(entries),
             origin_idx,
+            resolver,
         }
     }
 
@@ -47,12 +92,10 @@ impl Version {
     /// # Complexity
     /// Runs in `O(1)` time complexity
     pub fn increment(&mut self) -> usize {
-        let seq = self
-            .entries
-            .entry(self.origin_idx())
-            .and_modify(|v| *v += 1)
-            .or_insert(1);
-        *seq
+        let seq = self.entries.get_mut(self.origin_idx);
+        *seq += 1;
+        let res = *seq;
+        res
     }
 
     /// Merge two clocks that share the same view.
@@ -61,88 +104,68 @@ impl Version {
     /// Checks that the views are identical.
     /// Then runs in `O(n)` time complexity with `n` being the number of members in the view
     // TODO: using lamport timestamp: if other_old.lamport = other_new.lamport + 1, then just incr the other origin value
-    pub fn merge(&mut self, other: &Self) {
+    pub fn join(&mut self, other: &Self) {
         // if `self` dominate `other`, then no need to merge.
-        if EventId::from(other).is_predecessor_of(self) {
-            return;
-        }
-        // `other` view because we merge its values in ours
-        for (_, id) in other.view.borrow().members() {
-            let self_seq = self.seq_by_id(id).unwrap_or(0);
-            let other_seq = other.seq_by_id(id).unwrap_or(0);
-            if self_seq < other_seq {
-                self.set_by_id(id, other_seq);
-            }
-        }
+        // TODO: lsv has an origin_id
+        // if EventId::from(other).is_predecessor_of(self) {
+        //     return;
+        // }
+        self.entries.join(&other.entries);
     }
 
-    pub(in crate::protocol::clock) fn seq_by_idx(&self, idx: ReplicaIdx) -> Option<Seq> {
-        self.entries.get(&idx).cloned()
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (ReplicaIdx, Seq)> + 'a {
+        self.entries
+            .0
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (ReplicaIdx(i), *v))
     }
 
-    pub fn seq_by_id(&self, id: &ReplicaId) -> Option<Seq> {
-        self.view
-            .borrow()
-            .get_idx(id)
-            .and_then(|idx| self.entries.get(&idx).cloned())
+    pub fn meet(&mut self, other: &Self) {
+        self.entries.meet(&other.entries);
+    }
+
+    pub fn seq_by_idx(&self, idx: ReplicaIdx) -> Seq {
+        self.entries.get(idx)
     }
 
     pub fn sum(&self) -> usize {
         self.entries.values().sum()
     }
 
-    #[cfg(test)]
-    fn set_by_idx(&mut self, idx: ReplicaIdx, value: Seq) {
-        self.entries.insert(idx, value);
-    }
-
-    pub fn set_by_id(&mut self, id: &ReplicaId, value: Seq) {
-        if let Some(idx) = self.view.borrow().get_idx(id) {
-            self.entries.insert(idx, value);
-        }
+    pub fn set_by_idx(&mut self, idx: ReplicaIdx, value: Seq) {
+        *self.entries.get_mut(idx) = value;
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.resolver.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.resolver.is_empty()
     }
 
-    fn origin_idx(&self) -> ReplicaIdx {
+    pub fn origin_idx(&self) -> ReplicaIdx {
         self.origin_idx
     }
 
-    pub fn origin_id(&self) -> ReplicaId {
-        self.view.borrow().get_id(self.origin_idx).cloned().unwrap()
+    pub fn origin_id(&self) -> &ReplicaId {
+        self.resolver.resolve(self.origin_idx).unwrap()
     }
 
     pub fn origin_seq(&self) -> Seq {
-        self.seq_by_idx(self.origin_idx).unwrap()
-    }
-
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = EventId> + 'a {
-        self.entries
-            .iter()
-            .map(|(idx, seq)| EventId::new(*idx, *seq, self.view.clone()))
-    }
-
-    pub(in crate::protocol::clock) fn iter_with_keys<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (&ReplicaIdx, &Seq)> + 'a {
-        self.entries.iter()
+        self.seq_by_idx(self.origin_idx)
     }
 
     #[cfg(test)]
     pub(in crate::protocol::clock) fn build(
-        view: &Reader<View>,
+        resolver: Resolver,
         origin_idx: ReplicaIdx,
         values: &[usize],
     ) -> Self {
-        let mut v = Version::new(view, origin_idx);
+        let mut v = Version::new(origin_idx, resolver);
         for (idx, val) in values.iter().enumerate() {
-            v.set_by_idx(idx, *val);
+            v.set_by_idx(ReplicaIdx(idx), *val);
         }
         v
     }
@@ -156,104 +179,83 @@ impl From<&Version> for EventId {
         EventId::new(
             version.origin_idx(),
             version.origin_seq(),
-            Reader::clone(&version.view),
+            version.resolver.clone(),
         )
     }
 }
 
 impl Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{{ ")?;
-        let mut first = true;
-        let view = self.view.borrow();
-        let mut sorted_members: Vec<_> = view.members().collect();
-        sorted_members.sort_by(|(_, id1), (_, id2)| id1.cmp(id2));
-        for (idx, m) in sorted_members {
-            if let Some(val) = self.entries.get(idx) {
-                if first {
-                    write!(f, "{m}: {val}")?;
-                    first = false;
-                } else {
-                    write!(f, ", {m}: {val}")?;
-                }
-            }
+    fn fmt(&self, _f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(_f, "V[")?;
+        for (idx, seq) in self.iter() {
+            let id = self.resolver.resolve(idx).unwrap();
+            write!(_f, "{}: {}, ", id, seq)?;
         }
-        write!(f, " }}")?;
-        write!(
-            f,
-            "@{}",
-            self.view
-                .borrow()
-                .get_id(self.origin_idx)
-                .unwrap_or(&"<unknown>".to_string())
-        )?;
-        Ok(())
+        write!(_f, "]")
     }
 }
 
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolver == other.resolver
+            && self.origin_idx == other.origin_idx
+            && self.entries == other.entries
+    }
+}
+
+impl Eq for Version {}
+
 impl PartialOrd for Version {
-    // TODO: add shortcut
+    // TODO: add shortcut + check correctness
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let mut less = false;
-        let mut greater = false;
+        if self.resolver != other.resolver {
+            error!("Comparing versions with different views");
+            return None;
+        }
+        let mut self_greater = false;
+        let mut other_greater = false;
 
-        for (_, id) in self.view.borrow().members() {
-            let self_val = self.seq_by_id(id).unwrap_or(0);
-            let other_val = other.seq_by_id(id).unwrap_or(0);
+        let l = self.entries.0.len().max(other.entries.0.len());
 
-            match self_val.cmp(&other_val) {
-                Ordering::Less => less = true,
-                Ordering::Greater => greater = true,
-                _ => (),
+        for (a, b) in self
+            .entries
+            .values()
+            .chain(std::iter::repeat(&0))
+            .zip(other.entries.values().chain(std::iter::repeat(&0)))
+            .take(l)
+        {
+            match a.cmp(b) {
+                Ordering::Greater => self_greater = true,
+                Ordering::Less => other_greater = true,
+                Ordering::Equal => {}
             }
-
-            // If both less and greater are true, the clocks are concurrent
-            if less && greater {
+            if self_greater && other_greater {
                 return None;
             }
         }
-
-        if less {
-            Some(Ordering::Less)
-        } else if greater {
-            Some(Ordering::Greater)
-        } else {
-            Some(Ordering::Equal)
+        match (self_greater, other_greater) {
+            (true, false) => Some(Ordering::Greater),
+            (false, true) => Some(Ordering::Less),
+            (false, false) => Some(Ordering::Equal),
+            (true, true) => unreachable!(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::intern_str::Interner;
+
     use super::*;
-    use crate::utils::mut_owner::MutOwner;
-
-    fn view() -> MutOwner<View> {
-        let mut view = View::new(&"a".to_string());
-        view.add(&"b".to_string());
-        view.add(&"c".to_string());
-        MutOwner::new(view)
-    }
-
-    fn different_views() -> (MutOwner<View>, MutOwner<View>) {
-        let mut view_1 = View::new(&"a".to_string());
-        view_1.add(&"b".to_string());
-        view_1.add(&"c".to_string());
-        let v1 = MutOwner::new(view_1);
-
-        let mut view_2 = View::new(&"b".to_string());
-        view_2.add(&"c".to_string());
-        view_2.add(&"a".to_string());
-        let v2 = MutOwner::new(view_2);
-
-        (v1, v2)
-    }
 
     #[test]
     fn concurrent_clock() {
-        let view = view().as_reader();
-        let mut v1 = Version::new(&view, 0);
-        let mut v2 = Version::new(&view, 1);
+        let mut interner = Interner::new();
+        let a_idx = interner.intern("a");
+        let b_idx = interner.intern("b");
+
+        let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
+        let mut v2 = Version::new(b_idx.0, interner.resolver().clone());
 
         v1.increment();
         v2.increment();
@@ -263,14 +265,17 @@ mod tests {
 
     #[test]
     fn shortcut_clock() {
-        let view = view().as_reader();
-        let mut v1 = Version::new(&view, 0);
-        let mut v2 = Version::new(&view, 1);
+        let mut interner = Interner::new();
+        let a_idx = interner.intern("a");
+        let b_idx = interner.intern("b");
+
+        let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
+        let mut v2 = Version::new(b_idx.0, interner.resolver().clone());
 
         v1.increment();
         v1.increment();
 
-        v2.merge(&v1);
+        v2.join(&v1);
 
         assert_eq!(v1.entries, v2.entries);
 
@@ -280,47 +285,15 @@ mod tests {
 
     #[test]
     fn same_clock() {
-        let view = view().as_reader();
-        let mut v1 = Version::new(&view, 0);
-        let mut v2 = Version::new(&view, 0);
+        let mut interner = Interner::new();
+        let a_idx = interner.intern("a");
+
+        let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
+        let mut v2 = Version::new(a_idx.0, interner.resolver().clone());
 
         v1.increment();
         v2.increment();
 
         assert_eq!(v1.partial_cmp(&v2), Some(Ordering::Equal));
-    }
-
-    #[test]
-    fn clocks() {
-        let (view_1, view_2) = different_views();
-        let view_1 = view_1.as_reader();
-        let view_2 = view_2.as_reader();
-
-        let mut v1 = Version::new(&view_1, 0);
-        let mut v2 = Version::new(&view_2, 0);
-
-        v1.increment();
-        v1.increment();
-        v2.increment();
-        v2.increment();
-        v2.increment();
-
-        assert_eq!(v1.seq_by_id(&"a".to_string()).unwrap(), 2);
-        assert_eq!(v1.seq_by_id(&"b".to_string()).unwrap(), 0);
-        assert_eq!(v1.seq_by_id(&"c".to_string()).unwrap(), 0);
-
-        assert_eq!(v2.seq_by_id(&"a".to_string()).unwrap(), 0);
-        assert_eq!(v2.seq_by_id(&"b".to_string()).unwrap(), 3);
-        assert_eq!(v2.seq_by_id(&"c".to_string()).unwrap(), 0);
-
-        v1.merge(&v2);
-        assert_eq!(v1.seq_by_id(&"a".to_string()).unwrap(), 2);
-        assert_eq!(v1.seq_by_id(&"b".to_string()).unwrap(), 3);
-        assert_eq!(v1.seq_by_id(&"c".to_string()).unwrap(), 0);
-
-        v2.merge(&v1);
-        assert_eq!(v2.seq_by_id(&"a".to_string()).unwrap(), 2);
-        assert_eq!(v2.seq_by_id(&"b".to_string()).unwrap(), 3);
-        assert_eq!(v2.seq_by_id(&"c".to_string()).unwrap(), 0);
     }
 }

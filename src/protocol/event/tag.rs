@@ -86,18 +86,17 @@ impl<'a> Ord for Fair<'a> {
         let result = match self.0.lamport.cmp(&other.0.lamport) {
             Ordering::Equal => {
                 let val = self.0.lamport().val();
-                let view = self.0.id().view().borrow();
-                let mut members = view.members().map(|(_, id)| id).collect::<Vec<_>>();
-                members.sort();
+                let mut members = self.0.id().resolver().into_vec();
+                members.sort_unstable();
                 let n = members.len();
                 let round_leader = val % n;
                 let self_idx = members
                     .iter()
-                    .position(|&r| *r == self.0.id().origin_id())
+                    .position(|r| *r == *self.0.id().origin_id())
                     .unwrap();
                 let other_idx = members
                     .iter()
-                    .position(|&r| *r == other.0.id().origin_id())
+                    .position(|r| *r == *other.0.id().origin_id())
                     .unwrap();
 
                 if other_idx < self_idx && other_idx < round_leader && round_leader <= self_idx {

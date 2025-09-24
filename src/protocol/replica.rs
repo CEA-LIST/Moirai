@@ -2,37 +2,38 @@ use std::fmt::Debug;
 
 use tracing::{info, instrument};
 
-use crate::protocol::{
-    broadcast::{batch::Batch, since::Since, tcsb::IsTcsb},
-    event::Event,
-    membership::{Membership, ReplicaId},
-    state::log::IsLog,
+use crate::{
+    protocol::{
+        broadcast::{batch::Batch, since::Since, tcsb::IsTcsb},
+        event::{wire_event::WireEvent, Event},
+        membership::{ReplicaId, ReplicaIdOwned},
+        state::log::IsLog,
+    },
+    utils::intern_str::Interner,
 };
 
 pub trait IsReplica<L>
 where
     L: IsLog,
 {
-    fn new(id: ReplicaId) -> Self;
+    fn new(id: ReplicaIdOwned) -> Self;
     fn id(&self) -> &ReplicaId;
-    fn bootstrap(id: ReplicaId, membership: Membership) -> Self;
-    fn receive(&mut self, event: Event<L::Op>);
+    fn receive(&mut self, event: WireEvent<L::Op>);
     fn receive_batch(&mut self, batch: Batch<L::Op>);
     fn since(&self) -> Since;
-    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>>;
+    fn send(&mut self, op: L::Op) -> Option<WireEvent<L::Op>>;
     fn pull(&mut self, since: Since) -> Batch<L::Op>;
     // TODO: Add support for custom queries
     fn query(&self) -> L::Value;
     fn update(&mut self, op: L::Op);
+    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
 }
 
 #[derive(Debug)]
 pub struct Replica<L, T> {
-    id: ReplicaId,
-    tcsb: T,
+    id: ReplicaIdOwned,
+    pub tcsb: T,
     state: L,
-    #[allow(dead_code)]
-    membership: Membership,
 }
 
 impl<L, T> IsReplica<L> for Replica<L, T>
@@ -40,20 +41,25 @@ where
     L: IsLog,
     T: IsTcsb<L::Op> + Debug,
 {
-    fn new(id: ReplicaId) -> Self {
-        let membership = Membership::new(&id);
-        let view = membership.get_reader(&id).unwrap();
-        let replica_idx = view.borrow().get_idx(&id).unwrap();
+    fn new(id: ReplicaIdOwned) -> Self {
+        let mut interner = Interner::new();
+        let idx = interner.intern(&id);
         Self {
-            id: id.to_string(),
-            tcsb: T::new(&view, replica_idx),
+            id,
+            tcsb: T::new(idx.0, interner),
             state: L::new(),
-            membership,
         }
     }
 
     #[instrument(skip(self, event), fields(id = self.id))]
-    fn receive(&mut self, event: Event<L::Op>) {
+    fn receive(&mut self, event: WireEvent<L::Op>) {
+        // TODO: check if the event comes from a known replica
+        // The event should not come from an unknown replica
+        // if self.resolver.get(event.id().origin_id()).is_none() {
+        //     error!("Event from unknown replica");
+        //     return false;
+        // }
+
         self.tcsb.receive(event);
         while let Some(event) = self.tcsb.next_causally_ready() {
             self.deliver(event);
@@ -61,15 +67,15 @@ where
     }
 
     #[instrument(skip(self, op), fields(id = self.id))]
-    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>> {
+    fn send(&mut self, op: L::Op) -> Option<WireEvent<L::Op>> {
         if !self.state.is_enabled(&op) {
             info!("Operation is not enabled: {op:?}");
             return None;
         }
         let op = L::prepare(op);
-        let event = self.tcsb.send(op);
-        self.deliver(event.clone());
-        Some(event)
+        let (event, wire_event) = self.tcsb.send(op);
+        self.deliver(event);
+        Some(wire_event)
     }
 
     fn pull(&mut self, since: Since) -> Batch<L::Op> {
@@ -83,17 +89,6 @@ where
 
     fn update(&mut self, op: L::Op) {
         self.send(op).unwrap();
-    }
-
-    fn bootstrap(id: ReplicaId, membership: Membership) -> Self {
-        let view = membership.get_reader(&id).unwrap();
-        let replica_idx = view.borrow().get_idx(&id).unwrap();
-        Self {
-            id: id.to_string(),
-            tcsb: T::new(&view, replica_idx),
-            state: L::new(),
-            membership,
-        }
     }
 
     fn since(&self) -> Since {
@@ -112,6 +107,19 @@ where
 
     fn id(&self) -> &ReplicaId {
         &self.id
+    }
+
+    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(&id);
+        for member in members {
+            interner.intern(member);
+        }
+        Self {
+            id,
+            tcsb: T::new(idx, interner),
+            state: L::new(),
+        }
     }
 }
 

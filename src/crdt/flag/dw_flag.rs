@@ -150,10 +150,13 @@ mod tests {
         // Concurrent Enable and Disable: Disable wins
         let event_a = replica_a.send(DWFlag::Enable).unwrap();
         assert_eq!(replica_a.query(), true);
+
         let event_b = replica_b.send(DWFlag::Disable).unwrap();
         assert_eq!(replica_b.query(), false);
+
         replica_a.receive(event_b.clone());
         replica_b.receive(event_a.clone());
+
         assert_eq!(replica_a.query(), false);
         assert_eq!(replica_b.query(), false);
     }

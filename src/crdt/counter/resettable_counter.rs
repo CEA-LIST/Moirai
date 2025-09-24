@@ -119,7 +119,10 @@ mod tests {
             counter::resettable_counter::Counter,
             test_util::{triplet, twins},
         },
-        protocol::replica::IsReplica,
+        protocol::{
+            replica::IsReplica,
+            state::{log::IsLogTest, unstable_state::IsUnstableState},
+        },
     };
 
     #[test]
@@ -153,12 +156,17 @@ mod tests {
         let event = replica_b.send(Counter::Inc(4)).unwrap();
         replica_a.receive(event);
 
+        let result = 8;
+        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.state().unstable().len(), 0);
+        assert_eq!(replica_a.query(), replica_b.query());
+
         let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 13;
         assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_b.query(), result);
     }
 
     #[test]

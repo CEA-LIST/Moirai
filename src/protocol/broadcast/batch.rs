@@ -1,23 +1,21 @@
 use std::fmt::{Debug, Display};
 
 use crate::protocol::{
-    clock::version_vector::Version,
-    event::{id::EventId, Event},
-    membership::ReplicaId,
+    clock::version_vector::Version, event::wire_event::WireEvent, membership::ReplicaId,
 };
 
 #[derive(Debug)]
 pub struct Batch<O> {
-    pub events: Vec<Event<O>>,
+    pub events: Vec<WireEvent<O>>,
     pub version: Version,
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<Event<O>>, version: Version) -> Self {
+    pub fn new(events: Vec<WireEvent<O>>, version: Version) -> Self {
         Self { events, version }
     }
 
-    pub fn events(&self) -> &Vec<Event<O>> {
+    pub fn events(&self) -> &Vec<WireEvent<O>> {
         &self.events
     }
 
@@ -25,9 +23,8 @@ impl<O> Batch<O> {
         &self.version
     }
 
-    pub fn origin_id(&self) -> ReplicaId {
-        let event_id = EventId::from(&self.version);
-        event_id.origin_id()
+    pub fn origin_id(&self) -> &ReplicaId {
+        self.version.origin_id()
     }
 }
 
@@ -42,7 +39,7 @@ where
             if !first {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", event.id())?;
+            write!(f, "{}", event.id.0)?;
             first = false;
         }
         write!(f, "], version: {} }}", self.version)

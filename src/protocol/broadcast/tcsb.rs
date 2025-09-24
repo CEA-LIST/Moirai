@@ -6,21 +6,21 @@ use crate::{
     protocol::{
         broadcast::{batch::Batch, since::Since},
         clock::{matrix_clock::MatrixClock, version_vector::Version},
-        event::{id::EventId, lamport::Lamport, Event},
-        membership::{view::View, ReplicaIdx},
+        event::{id::EventId, lamport::Lamport, wire_event::WireEvent, Event},
     },
-    utils::mut_owner::Reader,
+    utils::intern_str::{Interner, ReplicaIdx},
+    HashMap,
 };
 
 pub trait IsTcsb<O> {
-    fn new(view: &Reader<View>, replica_idx: ReplicaIdx) -> Self;
-    fn receive(&mut self, event: Event<O>);
-    fn send(&mut self, op: O) -> Event<O>;
+    fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
+    fn receive(&mut self, event: WireEvent<O>);
+    fn send(&mut self, op: O) -> (Event<O>, WireEvent<O>);
     fn since(&self) -> Since;
     fn pull(&self, since: Since) -> Batch<O>;
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
     fn is_stable(&mut self) -> Option<&Version>;
-    fn change_view(&mut self, new_view: &Reader<View>);
+    // fn change_view(&mut self, new_view: &Reader<View>);
     fn update_version(&mut self, version: &Version);
     #[cfg(feature = "fuzz")]
     fn matrix_clock(&self) -> &MatrixClock;
@@ -34,42 +34,45 @@ pub struct Tcsb<O> {
     /// Events waiting to be broadcast.
     /// It contains events from all replicas, including the local one.
     outbox: Vec<Event<O>>,
-    matrix_clock: MatrixClock,
+    pub matrix_clock: MatrixClock,
     last_stable_version: Version,
-    view: Reader<View>,
     replica_idx: ReplicaIdx,
+    interner: Interner,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
     O: Clone + Debug,
 {
-    fn new(view: &Reader<View>, replica_idx: ReplicaIdx) -> Self {
+    fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
+        let resolver = interner.resolver();
         Self {
             inbox: Vec::new(),
             outbox: Vec::new(),
-            matrix_clock: MatrixClock::new(view, replica_idx),
-            last_stable_version: Version::new(view, replica_idx),
-            view: Reader::clone(view),
+            matrix_clock: MatrixClock::new(replica_idx, resolver.clone()),
+            last_stable_version: Version::new(replica_idx, resolver.clone()),
+            interner,
             replica_idx,
         }
     }
 
-    fn receive(&mut self, event: Event<O>) {
+    fn receive(&mut self, event: WireEvent<O>) {
+        let event = self.internalize(event);
         if self.is_valid(&event) {
             self.inbox.push(event.clone());
             self.outbox.push(event);
         }
     }
 
-    fn send(&mut self, op: O) -> Event<O> {
+    fn send(&mut self, op: O) -> (Event<O>, WireEvent<O>) {
         let seq = self.matrix_clock.origin_version_mut().increment();
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
-        let event_id = EventId::new(self.replica_idx, seq, self.view.clone());
+        let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox.push(event.clone());
-        event
+        let wire_event = self.externalize(event.clone());
+        (event, wire_event)
     }
 
     fn next_causally_ready(&mut self) -> Option<Event<O>> {
@@ -79,11 +82,9 @@ where
             .position(|event| self.is_causally_ready(event));
         if let Some(idx) = idx {
             let event = self.inbox.remove(idx);
+            self.matrix_clock.origin_version_mut().join(event.version());
             self.matrix_clock
-                .origin_version_mut()
-                .merge(event.version());
-            self.matrix_clock
-                .set_by_id(&event.id().origin_id(), event.version());
+                .set_by_idx(event.id().idx(), event.version().clone());
             return Some(event);
         }
         None
@@ -103,30 +104,31 @@ where
     /// Change the view of the TCSB.
     /// # Invariant
     /// The previous indices must be preserved.
-    fn change_view(&mut self, new_view: &Reader<View>) {
-        self.view = Reader::clone(new_view);
-        self.matrix_clock.change_view(new_view);
-    }
+    // fn change_view(&mut self, new_view: &Reader<View>) {
+    //     self.view = Reader::clone(new_view);
+    //     self.matrix_clock.change_view(new_view);
+    // }
 
     fn update_version(&mut self, version: &Version) {
-        self.matrix_clock.origin_version_mut().merge(version);
-        self.matrix_clock.set_by_id(&version.origin_id(), version);
+        self.matrix_clock.origin_version_mut().join(version);
+        self.matrix_clock
+            .set_by_idx(version.origin_idx(), version.clone());
     }
 
     #[instrument(skip(self, since))]
     fn pull(&self, since: Since) -> Batch<O> {
-        let events: Vec<Event<O>> = self
+        let events: Vec<WireEvent<O>> = self
             .outbox
             .iter()
             .filter(|e| {
                 !since.except().contains(e.id())
-                    && *e.id().origin_id() != since.version().origin_id()
+                    && *e.id().origin_id() != *since.version().origin_id()
                     && match e.version().partial_cmp(since.version()) {
                         Some(Ordering::Greater) | Some(Ordering::Equal) | None => true,
                         Some(Ordering::Less) => false,
                     }
             })
-            .cloned()
+            .map(|e| self.externalize(e.clone()))
             .collect();
         info!(
             "Pulling events: version: {}, except: {}",
@@ -142,7 +144,7 @@ where
             "Collected events: {}",
             events
                 .iter()
-                .map(|e| e.id().to_string())
+                .map(|e| e.id.0.clone())
                 .collect::<Vec<String>>()
                 .join(", ")
         );
@@ -177,15 +179,12 @@ where
     O: Debug,
 {
     fn is_valid(&self, event: &Event<O>) -> bool {
+        // TODO: reject events from unknown replicas
+
         // The event should not come from the local replica
         // TODO: improve the code
-        if &event.id().origin_id() == self.view.borrow().get_id(self.replica_idx).unwrap() {
+        if event.id().idx() == self.replica_idx {
             error!("Event from local replica");
-            return false;
-        }
-        // The event should not come from an unknown replica
-        if !self.view.borrow().is_known(&event.id().origin_id()) {
-            error!("Event from unknown replica");
             return false;
         }
         // The event should not be a duplicate, i.e. an event already received
@@ -203,11 +202,11 @@ where
     /// `O(n)`
     fn is_causally_ready(&self, event: &Event<O>) -> bool {
         let version = self.matrix_clock.origin_version();
+        let event_version = event.version();
 
-        for (_, id) in self.view.borrow().members() {
-            let local_seq = version.seq_by_id(id).unwrap_or(0);
-            let event_seq = event.version().seq_by_id(id).unwrap_or(0);
-            if id == &event.id().origin_id() {
+        for (idx, event_seq) in event_version.iter() {
+            let local_seq = version.seq_by_idx(idx);
+            if idx == event.id().idx() {
                 if local_seq + 1 != event_seq {
                     return false;
                 }
@@ -220,10 +219,7 @@ where
     }
 
     fn is_duplicate(&self, event: &Event<O>) -> bool {
-        let version = self
-            .matrix_clock
-            .version_by_id(&event.id().origin_id())
-            .unwrap();
+        let version = self.matrix_clock.version_by_idx(event.id().idx()).unwrap();
         version.origin_seq() >= event.id().seq()
     }
 
@@ -232,5 +228,45 @@ where
         // Retain only the events that are not predecessors (including equal) to the last stable version
         self.outbox
             .retain(|event| !event.id().is_predecessor_of(lsv));
+    }
+
+    fn internalize(&mut self, wire_event: WireEvent<O>) -> Event<O> {
+        let (idx, is_new) = self.interner.intern(&wire_event.id.0);
+        if is_new {
+            self.matrix_clock.add_replica(idx);
+        }
+        let event_id = EventId::new(idx, wire_event.id.1, self.interner.resolver().clone());
+        let mut version = Version::new(idx, self.interner.resolver().clone());
+        for (replica_id, seq) in wire_event.version {
+            let (idx, is_new) = self.interner.intern(&replica_id);
+            if is_new {
+                self.matrix_clock.add_replica(idx);
+            }
+            version.set_by_idx(idx, seq);
+        }
+        Event::new(event_id, wire_event.lamport, wire_event.op, version)
+    }
+
+    fn externalize(&self, event: Event<O>) -> WireEvent<O>
+    where
+        O: Clone,
+    {
+        let replica_id = self
+            .interner
+            .resolve(event.id().idx())
+            .to_owned()
+            .unwrap()
+            .to_string();
+        let mut version = HashMap::default();
+        for (idx, seq) in event.version().iter() {
+            let replica_id = self.interner.resolve(idx).unwrap().to_owned();
+            version.insert(replica_id, seq);
+        }
+        WireEvent::new(
+            (replica_id, event.id().seq()),
+            event.lamport().clone(),
+            event.op().clone(),
+            version,
+        )
     }
 }
