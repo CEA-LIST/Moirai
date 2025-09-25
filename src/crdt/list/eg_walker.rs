@@ -116,7 +116,7 @@ where
         while scan_idx < right {
             let other = &doc.items[scan_idx];
 
-            if matches!(other.cur_state, State::NotYetInserted) {
+            if !matches!(other.cur_state, State::NotYetInserted) {
                 break;
             }
 
@@ -594,7 +594,7 @@ mod tests {
 
         // init_tracing();
 
-        let ops: OpConfig<List<char>> = OpConfig::Uniform(&[
+        let binding = [
             List::insert('A', 0),
             List::insert('B', 0),
             List::insert('C', 0),
@@ -611,9 +611,10 @@ mod tests {
             List::insert('K', 3),
             List::insert('L', 3),
             List::delete(3),
-        ]);
+        ];
+        let ops: OpConfig<List<char>> = OpConfig::Uniform(&binding);
 
-        let run = RunConfig::new(0.4, 2, 10, None, None);
+        let run = RunConfig::new(0.4, 8, 100, None, None);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<EventGraph<List<char>>>::new(
