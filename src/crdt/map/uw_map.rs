@@ -417,7 +417,7 @@ mod tests {
 
         type UWMapNested = UWMapLog<String, UWMapLog<i32, VecLog<Counter<i32>>>>;
 
-        let ops = OpConfig::Uniform(&[
+        let binding = [
             UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Inc(2))),
             UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Dec(3))),
             UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Reset)),
@@ -442,7 +442,8 @@ mod tests {
             UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Dec(2))),
             UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Reset)),
             UWMap::Update("a".to_string(), UWMap::Remove(6)),
-        ]);
+        ];
+        let ops = OpConfig::Uniform(&binding);
 
         let run = RunConfig::new(0.4, 8, 10_000, None, None);
         let runs = vec![run.clone(); 1];

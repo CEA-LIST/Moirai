@@ -451,7 +451,7 @@ mod tests {
             fuzzer,
         };
 
-        let ops: OpConfig<Json> = OpConfig::Uniform(&[
+        let binding = [
             Json::Null,
             Json::Bool(EWFlag::Enable),
             Json::Bool(EWFlag::Disable),
@@ -497,7 +497,8 @@ mod tests {
                 pos: 0,
                 value: Box::new(Json::Bool(EWFlag::Disable)),
             }),
-        ]);
+        ];
+        let ops: OpConfig<Json> = OpConfig::Uniform(&binding);
 
         let run = RunConfig::new(0.4, 8, 100, None, None);
         let runs = vec![run.clone(); 1];
