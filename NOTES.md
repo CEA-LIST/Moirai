@@ -12,6 +12,18 @@ but they are preserved for reference and historical context.
 - Logging
 - `is_enabled`?
 
+## Batch Structure
+
+batch = vec event, chaque event a un diff de resolver
+
+Batch de alice = vec<event tel que vu depuis alice> + id + diff de resolver (pairs de string - id)
+Bob cache un cache qui fait correspondre les indices de alice à ses indices
+
+contenu du vec que bob a dans son cache pour alice = indices de bob, et les indices du vec c'est les indices d'alice
+-> replica idx d'alice vers replicaidx de bob
+
+on iter sur la version de l'event et pour chaque replica idx, on le remplace par la valeur à cette indice là dans le tableau.
+
 ## The Event Graph
 
 Currently, in the Rust framework, CRDT operations are stored in an event graph—a

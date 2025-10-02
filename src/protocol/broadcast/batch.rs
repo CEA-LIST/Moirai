@@ -1,21 +1,27 @@
 use std::fmt::{Debug, Display};
 
-use crate::protocol::{
-    clock::version_vector::Version, event::wire_event::WireEvent, membership::ReplicaId,
+use crate::{
+    protocol::{clock::version_vector::Version, event::Event, membership::ReplicaId},
+    utils::intern_str::Resolver,
 };
 
 #[derive(Debug)]
 pub struct Batch<O> {
-    pub events: Vec<WireEvent<O>>,
+    pub events: Vec<Event<O>>,
     pub version: Version,
+    pub resolver: Resolver,
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<WireEvent<O>>, version: Version) -> Self {
-        Self { events, version }
+    pub fn new(events: Vec<Event<O>>, version: Version, resolver: Resolver) -> Self {
+        Self {
+            events,
+            version,
+            resolver,
+        }
     }
 
-    pub fn events(self) -> Vec<WireEvent<O>> {
+    pub fn events(self) -> Vec<Event<O>> {
         self.events
     }
 
@@ -39,7 +45,7 @@ where
             if !first {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", event.id.0)?;
+            write!(f, "{}", event.id())?;
             first = false;
         }
         write!(f, "], version: {} }}", self.version)
