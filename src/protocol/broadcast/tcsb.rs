@@ -6,16 +6,16 @@ use crate::{
     protocol::{
         broadcast::{batch::Batch, since::Since},
         clock::{matrix_clock::MatrixClock, version_vector::Version},
-        event::{id::EventId, lamport::Lamport, wire_event::WireEvent, Event},
+        event::{id::EventId, lamport::Lamport, Event},
     },
-    utils::intern_str::{Interner, ReplicaIdx},
+    utils::intern_str::{Interner, ReplicaIdx, Resolver},
     HashMap,
 };
 
 pub trait IsTcsb<O> {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
-    fn receive(&mut self, event: WireEvent<O>);
-    fn send(&mut self, op: O) -> (Event<O>, WireEvent<O>);
+    fn receive(&mut self, event: Event<O>);
+    fn send(&mut self, op: O) -> Event<O>;
     fn since(&self) -> Since;
     fn pull(&self, since: Since) -> Batch<O>;
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
@@ -56,7 +56,7 @@ where
         }
     }
 
-    fn receive(&mut self, event: WireEvent<O>) {
+    fn receive(&mut self, event: Event<O>) {
         let event = self.internalize(event);
         if self.is_valid(&event) {
             self.inbox.push(event.clone());
@@ -64,15 +64,15 @@ where
         }
     }
 
-    fn send(&mut self, op: O) -> (Event<O>, WireEvent<O>) {
+    fn send(&mut self, op: O) -> Event<O> {
         let seq = self.matrix_clock.origin_version_mut().increment();
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox.push(event.clone());
-        let wire_event = self.externalize(event.clone());
-        (event, wire_event)
+        // let wire_event = self.externalize(event.clone());
+        event
     }
 
     fn next_causally_ready(&mut self) -> Option<Event<O>> {
@@ -117,7 +117,7 @@ where
 
     #[instrument(skip(self, since))]
     fn pull(&self, since: Since) -> Batch<O> {
-        let events: Vec<WireEvent<O>> = self
+        let events: Vec<Event<O>> = self
             .outbox
             .iter()
             .filter(|e| {
@@ -230,7 +230,7 @@ where
             .retain(|event| !event.id().is_predecessor_of(lsv));
     }
 
-    fn internalize(&mut self, wire_event: WireEvent<O>) -> Event<O> {
+    fn internalize(&mut self, event: Event<O>, incoming_resolver: Resolver) -> Event<O> {
         let (idx, is_new) = self.interner.intern(&wire_event.id.0);
         if is_new {
             self.matrix_clock.add_replica(idx);
@@ -247,7 +247,7 @@ where
         Event::new(event_id, wire_event.lamport, wire_event.op, version)
     }
 
-    fn externalize(&self, event: Event<O>) -> WireEvent<O>
+    fn externalize(&self, event: Event<O>) -> Event<O>
     where
         O: Clone,
     {
@@ -262,7 +262,7 @@ where
             let replica_id = self.interner.resolve(idx).unwrap().to_owned();
             version.insert(replica_id, seq);
         }
-        WireEvent::new(
+        Event::new(
             (replica_id, event.id().seq()),
             event.lamport().clone(),
             event.op().clone(),

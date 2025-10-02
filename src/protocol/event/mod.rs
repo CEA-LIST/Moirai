@@ -2,7 +2,6 @@ pub mod id;
 pub mod lamport;
 pub mod tag;
 pub mod tagged_op;
-pub mod wire_event;
 
 use std::fmt::{Debug, Display};
 
