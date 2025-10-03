@@ -1,16 +1,14 @@
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
 
 use petgraph::graph::DiGraph;
 
-use crate::protocol::{
-    crdt::pure_crdt::PureCRDT,
-    event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+use crate::{
+    protocol::{
+        crdt::pure_crdt::PureCRDT,
+        event::{tag::Tag, tagged_op::TaggedOp},
+        state::unstable_state::IsUnstableState,
+    },
+    HashMap,
 };
 
 #[derive(Clone, Debug)]
@@ -88,7 +86,7 @@ where
             _ => Ordering::Equal,
         });
         let mut graph = DiGraph::new();
-        let mut node_index = HashMap::new();
+        let mut node_index = HashMap::default();
         let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::new();
         for o in ops {
             match o {

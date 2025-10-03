@@ -1,0 +1,64 @@
+diff a/src/protocol/broadcast/tcsb.rs b/src/protocol/broadcast/tcsb.rs	(rejected hunks)
+@@ -1,12 +1,14 @@
+-use std::{cmp::Ordering, collections::HashSet, fmt::Debug};
++use std::{cmp::Ordering, collections::HashSet, fmt::Debug, str::FromStr};
+ 
++use smallvec::SmallVec;
++use tinystr::TinyAsciiStr;
+ use tracing::{error, info, instrument};
+ 
+ use crate::{
+     protocol::{
+         broadcast::{batch::Batch, since::Since},
+-        clock::{matrix_clock::MatrixClock, version_vector::Version},
+-        event::{id::EventId, lamport::Lamport, wire_event::WireEvent, Event},
++        clock::{matrix_clock::MatrixClock, version_vector::{Seq, Version}},
++        event::{id::EventId, lamport::Lamport, wire_event::WireEvent, Event}, membership::ReplicaIdOwned,
+     },
+     utils::intern_str::{Interner, ReplicaIdx},
+     HashMap,
+@@ -237,30 +239,34 @@ where
+         }
+         let event_id = EventId::new(idx, wire_event.id.1, self.interner.resolver().clone());
+         let mut version = Version::new(idx, self.interner.resolver().clone());
+-        for (replica_id, seq) in wire_event.version {
++        for (replica_id, seq) in &wire_event.version {
+             let (idx, is_new) = self.interner.intern(&replica_id);
+             if is_new {
+                 self.matrix_clock.add_replica(idx);
+             }
+-            version.set_by_idx(idx, seq);
++            version.set_by_idx(idx, *seq);
++            // std::mem::forget(replica_id);
++
+         }
+-        Event::new(event_id, wire_event.lamport, wire_event.op, version)
++        let res = Event::new(event_id, wire_event.lamport, wire_event.op, version);
++        // std::mem::forget((wire_event.id,wire_event.version));
++        res
+     }
+ 
+     fn externalize(&self, event: Event<O>) -> WireEvent<O>
+     where
+         O: Clone,
+     {
+-        let replica_id = self
++        let replica_id = TinyAsciiStr::from_str(self
+             .interner
+             .resolve(event.id().idx())
+-            .to_owned()
+-            .unwrap()
+-            .to_string();
+-        let mut version = HashMap::default();
++            .unwrap()).unwrap();
++            
++        let mut version : SmallVec<[(ReplicaIdOwned, Seq); 64]> = Default::default();
+         for (idx, seq) in event.version().iter() {
+-            let replica_id = self.interner.resolve(idx).unwrap().to_owned();
+-            version.insert(replica_id, seq);
++            let replica_id = self.interner.resolve(idx).unwrap();
++            let replica_id = TinyAsciiStr::from_str(replica_id).unwrap();
++            version.push((replica_id, seq));
+         }
+         WireEvent::new(
+             (replica_id, event.id().seq()),

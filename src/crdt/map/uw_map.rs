@@ -1,6 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
-use crate::protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
+use crate::{
+    protocol::{clock::version_vector::Version, event::Event, state::log::IsLog},
+    HashMap,
+};
 
 #[derive(Clone, Debug)]
 pub enum UWMap<K, O> {
@@ -109,8 +112,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::{
         crdt::{
             counter::resettable_counter::Counter,
@@ -125,7 +126,7 @@ mod tests {
                 po_log::{POLog, VecLog},
             },
         },
-        record,
+        record, HashMap,
     };
 
     record!(Duet {
@@ -152,7 +153,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::new();
+        let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
         assert_eq!(map, replica_a.query());
@@ -171,7 +172,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let mut map = HashMap::new();
+        let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
         assert_eq!(map, replica_a.query());
         assert_eq!(map, replica_b.query());
@@ -210,7 +211,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
+        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -246,7 +247,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
+        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -274,7 +275,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
+        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -303,7 +304,7 @@ mod tests {
         let event = replica_a.send(UWMap::Remove("b".to_string())).unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::new();
+        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {

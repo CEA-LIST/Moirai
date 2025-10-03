@@ -9,8 +9,9 @@ pub mod register;
 pub mod set;
 
 pub mod test_util {
-    use std::fmt::Debug;
+    use std::{fmt::Debug, str::FromStr};
 
+    use tinystr::TinyAsciiStr;
     use tracing_subscriber::fmt;
 
     use crate::protocol::{
@@ -85,8 +86,8 @@ pub mod test_util {
     {
         let mut replicas = Vec::new();
         for i in 0..n {
-            let id = (b'a' + i) as char;
-            let replica = Replica::<L, T>::new(id.to_string());
+            let id = TinyAsciiStr::from_str(&i.to_string()).unwrap();
+            let replica = Replica::<L, T>::new(id);
             replicas.push(replica);
         }
         replicas
@@ -129,9 +130,9 @@ pub mod test_util {
     {
         init_tracing();
 
-        let replica_a = Replica::<L, Tcsb<L::Op>>::new("a".to_string());
-        let replica_b = Replica::<L, Tcsb<L::Op>>::new("b".to_string());
-        let replica_c = Replica::<L, Tcsb<L::Op>>::new("c".to_string());
+        let replica_a = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("a").unwrap());
+        let replica_b = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("b").unwrap());
+        let replica_c = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("c").unwrap());
         (replica_a, replica_b, replica_c)
     }
 

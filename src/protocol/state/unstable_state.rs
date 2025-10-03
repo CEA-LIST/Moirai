@@ -1,10 +1,13 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 use tracing::info;
 
-use crate::protocol::{
-    clock::version_vector::Version,
-    event::{id::EventId, tagged_op::TaggedOp, Event},
+use crate::{
+    protocol::{
+        clock::version_vector::Version,
+        event::{id::EventId, tagged_op::TaggedOp, Event},
+    },
+    HashMap,
 };
 
 pub trait IsUnstableState<O> {

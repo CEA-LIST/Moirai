@@ -1,5 +1,6 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, str::FromStr};
 
+use tinystr::TinyAsciiStr;
 use tracing::{info, instrument};
 
 use crate::{
@@ -26,13 +27,13 @@ where
     // TODO: Add support for custom queries
     fn query(&self) -> L::Value;
     fn update(&mut self, op: L::Op);
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
+    fn bootstrap(id: String, members: &[&ReplicaId]) -> Self;
 }
 
 #[derive(Debug)]
 pub struct Replica<L, T> {
     id: ReplicaIdOwned,
-    pub tcsb: T,
+    tcsb: T,
     state: L,
 }
 
@@ -51,7 +52,6 @@ where
         }
     }
 
-    #[instrument(skip(self, event), fields(id = self.id))]
     fn receive(&mut self, event: Event<L::Op>) {
         // TODO: check if the event comes from a known replica
         // The event should not come from an unknown replica
@@ -66,7 +66,6 @@ where
         }
     }
 
-    #[instrument(skip(self, op), fields(id = self.id))]
     fn send(&mut self, op: L::Op) -> Option<Event<L::Op>> {
         if !self.state.is_enabled(&op) {
             info!("Operation is not enabled: {op:?}");
@@ -79,7 +78,7 @@ where
     }
 
     fn pull(&mut self, since: Since) -> Batch<L::Op> {
-        assert_ne!(since.version().origin_id(), self.id);
+        // assert_ne!(since.version().origin_id(), self.id);
         self.tcsb.pull(since)
     }
 
@@ -95,7 +94,7 @@ where
         self.tcsb.since()
     }
 
-    #[instrument(skip(self, batch), fields(id = self.id))]
+    // #[instrument(skip(self, batch), fields(id = self.id))]
     fn receive_batch(&mut self, batch: Batch<<L as IsLog>::Op>) {
         info!("Receiving batch with {} events", batch.events.len());
         for event in batch.events() {
@@ -109,14 +108,14 @@ where
         &self.id
     }
 
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+    fn bootstrap(id: String, members: &[&ReplicaId]) -> Self {
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(&id);
         for member in members {
             interner.intern(member);
         }
         Self {
-            id,
+            id: TinyAsciiStr::from_str(&id).unwrap(),
             tcsb: T::new(idx, interner),
             state: L::new(),
         }

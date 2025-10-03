@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
 use crate::{
     crdt::{
@@ -10,6 +6,7 @@ use crate::{
         map::uw_map::{UWMap, UWMapLog},
     },
     protocol::state::po_log::VecLog,
+    HashMap,
 };
 
 pub type EWFlagSet<T> = UWMapLog<T, VecLog<EWFlag>>;
