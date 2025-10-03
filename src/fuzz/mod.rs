@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use rand::{seq::IteratorRandom, Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -12,6 +9,7 @@ use crate::{
     protocol::{
         broadcast::tcsb::Tcsb, membership::ReplicaIdx, replica::IsReplica, state::log::IsLog,
     },
+    HashMap,
 };
 
 pub mod config;
@@ -46,8 +44,8 @@ pub fn runner<L: IsLog>(
     let mut online = vec![true; config.num_replicas.into()];
     let mut count_ops = 0;
 
-    let mut time_to_deliver: HashMap<ReplicaIdx, Duration> = HashMap::new();
-    let mut _time_to_eval: HashMap<ReplicaIdx, Duration> = HashMap::new();
+    let mut time_to_deliver: HashMap<ReplicaIdx, Duration> = HashMap::default();
+    let mut _time_to_eval: HashMap<ReplicaIdx, Duration> = HashMap::default();
 
     // Main loop
     while count_ops < config.num_operations {

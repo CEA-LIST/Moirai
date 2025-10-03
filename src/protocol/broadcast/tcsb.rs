@@ -140,14 +140,14 @@ where
                 .collect::<Vec<String>>()
                 .join(", ")
         );
-        info!(
-            "Collected events: {}",
-            events
-                .iter()
-                .map(|e| e.id.0.clone())
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
+        // info!(
+        //     "Collected events: {}",
+        //     events
+        //         .iter()
+        //         .map(|e| e.id.0.clone())
+        //         .collect::<Vec<String>>()
+        //         .join(", ")
+        // );
         info!(
             "Outbox: {}",
             self.outbox

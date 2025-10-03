@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::{collections::HashSet, fmt::Debug};
 
 use bimap::BiMap;
 use petgraph::{
@@ -12,11 +9,14 @@ use petgraph::{
     Direction,
 };
 
-use crate::protocol::{
-    clock::version_vector::Version,
-    crdt::pure_crdt::PureCRDT,
-    event::{id::EventId, tagged_op::TaggedOp, Event},
-    state::{log::IsLog, unstable_state::IsUnstableState},
+use crate::{
+    protocol::{
+        clock::version_vector::Version,
+        crdt::pure_crdt::PureCRDT,
+        event::{id::EventId, tagged_op::TaggedOp, Event},
+        state::{log::IsLog, unstable_state::IsUnstableState},
+    },
+    HashMap,
 };
 
 #[derive(Debug, Clone)]
@@ -249,7 +249,7 @@ impl<O> EventGraph<O> {
             .collect();
 
         #[allow(clippy::mutable_key_type)]
-        let mut collected = HashMap::<EventId, NodeIndex>::new();
+        let mut collected = HashMap::<EventId, NodeIndex>::default();
         let discovered = self.graph.visit_map();
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
 

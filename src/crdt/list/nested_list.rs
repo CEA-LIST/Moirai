@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 use crate::{
     crdt::list::eg_walker::List as SimpleList,
@@ -7,6 +7,7 @@ use crate::{
         event::{id::EventId, Event},
         state::{event_graph::EventGraph, log::IsLog},
     },
+    HashMap,
 };
 
 #[derive(Clone, Debug)]

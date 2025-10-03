@@ -1,12 +1,14 @@
 use std::{
-    collections::HashMap,
     fmt::{Debug, Display},
     hash::Hash,
 };
 
 use petgraph::graph::DiGraph;
 
-use crate::protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
+use crate::{
+    protocol::{clock::version_vector::Version, event::Event, state::log::IsLog},
+    HashMap,
+};
 
 #[derive(Clone, Debug)]
 pub enum UWGraph<V, E, No, Lo> {
@@ -108,7 +110,7 @@ where
 
     fn eval(&self) -> Self::Value {
         let mut graph = Self::Value::new();
-        let mut node_idx = HashMap::new();
+        let mut node_idx = HashMap::default();
         for (v, child) in self.vertex_content.iter() {
             // TODO: skip empty nodes
             if child.is_empty() {
@@ -151,8 +153,8 @@ where
 {
     fn default() -> Self {
         Self {
-            arc_content: HashMap::new(),
-            vertex_content: HashMap::new(),
+            arc_content: HashMap::default(),
+            vertex_content: HashMap::default(),
         }
     }
 }
