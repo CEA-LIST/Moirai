@@ -1,8 +1,8 @@
 # Notes
 
-A collection of thoughts, ideas, and notes on the design and implementation of the
-Moirai CRDT framework. Some of these notes may be outdated or no longer relevant,
-but they are preserved for reference and historical context.
+A collection of thoughts, ideas, and notes on the design and implementation of
+the Moirai CRDT framework. Some of these notes may be outdated or no longer
+relevant, but they are preserved for reference and historical context.
 
 ## Issues
 
@@ -14,15 +14,33 @@ but they are preserved for reference and historical context.
 
 ## Batch Structure
 
+Batch { id: <proc_id>, events: Vec<Event>, }
+
+Event { ... resolver: Resolver (diff), }
+
+Each process keep a translation of its indices to the one of the other (matrix).
+Indices of the Vec = other process mapping Content of the Vec = local process
+mapping
+
+Delivery procedure:
+
+- iter over event version vector:
+  - for each replicaidx, replace it with the value at this index in the matrix
+
+### Draft
+
 batch = vec event, chaque event a un diff de resolver
 
-Batch de alice = vec<event tel que vu depuis alice> + id + diff de resolver (pairs de string - id)
-Bob cache un cache qui fait correspondre les indices de alice à ses indices
+Batch de alice = vec<event tel que vu depuis alice> + id + diff de resolver
+(pairs de string - id) Bob cache un cache qui fait correspondre les indices de
+alice à ses indices
 
-contenu du vec que bob a dans son cache pour alice = indices de bob, et les indices du vec c'est les indices d'alice
--> replica idx d'alice vers replicaidx de bob
+contenu du vec que bob a dans son cache pour alice = indices de bob, et les
+indices du vec c'est les indices d'alice -> replica idx d'alice vers replicaidx
+de bob
 
-on iter sur la version de l'event et pour chaque replica idx, on le remplace par la valeur à cette indice là dans le tableau.
+on iter sur la version de l'event et pour chaque replica idx, on le remplace par
+la valeur à cette indice là dans le tableau.
 
 ## The Event Graph
 
@@ -37,10 +55,10 @@ In the "add-wins" policy, this means that a "remove" operation only affects its
 causal predecessors, not its concurrent operations. Consequently, an "add"
 operation is never impacted by a concurrent "remove".
 
-The framework supports the composition and combination of CRDTs to create complex
-data types. These nested data types naturally form a tree structure. Thus, the
-framework can be viewed as a tree of event graphs, where operations at upper nodes
-can affect lower nodes.
+The framework supports the composition and combination of CRDTs to create
+complex data types. These nested data types naturally form a tree structure.
+Thus, the framework can be viewed as a tree of event graphs, where operations at
+upper nodes can affect lower nodes.
 
 Consider an "Update-Wins Map" (UWMap) where adding a key-value pair takes
 precedence over the concurrent removal of the key. For example, we might define
@@ -81,7 +99,8 @@ A matrix clock is valid if it:
 
 - is square;
 - no clock $i$ has an entry $j$ greater than the entry $j$ of clock $j$;
-- every entry $i$ of the origin clock is equal or greater to the entry $i$ of the clock $i$.
+- every entry $i$ of the origin clock is equal or greater to the entry $i$ of
+  the clock $i$.
 
 The row of the replica where the matrix clock is stored is equal to the
 column-wise maximum of the matrix. the column-wise minimum of the matrix is the
@@ -93,7 +112,12 @@ values.
 
 ## The Membership system
 
-- The membership system is based on a view abstraction. Multiple other components rely on a pointer to the current view to retrieve the membership information. It is clear that the current implementation will produce issues in the future as the serialization/deserialization will have to convert the index of the "local replica" of the sender's view to its index in the receiver view.
+- The membership system is based on a view abstraction. Multiple other
+  components rely on a pointer to the current view to retrieve the membership
+  information. It is clear that the current implementation will produce issues
+  in the future as the serialization/deserialization will have to convert the
+  index of the "local replica" of the sender's view to its index in the receiver
+  view.
 
 ## Feature Comparison of CRDT Frameworks
 
@@ -119,9 +143,42 @@ values.
 
 ## Notes
 
-- **<sup>1</sup>** Moirai draws inspiration from the concept of pure operation-based CRDTs, which rely on a generic log of operations and use causal stability as a first-class mechanism for garbage collection. However, for practical and performance reasons, not all Moirai CRDT operations are "pure": the `prepare` phase may inspect the state to decide how to emit an operation, rather than always producing a predefined, context-independent operation. Moirai assumes a permissioned environment where group members are always known and authorized, even though the group itself may be dynamic.
-- **<sup>2</sup>** Flec, Moirai, and Collabs support the definition of new CRDT types by implementing an interface.
-- **<sup>3</sup>** Moirai relies on a central authority to ensure eventual causal stability, i.e., every operation eventually becomes stable. This is currently achieved by removing replicas from the group if they remain unreachable for a specified period. In contrast, Flec adopts the classical approach to eventual stability, which is not fault-tolerant: the crash of a single replica can indefinitely block garbage collection. Yjs appears to retain tombstones for deleted operations indefinitely<sup>[1](https://github.com/yjs/yjs/blob/main/INTERNALS.md#deletions),[2](https://discuss.yjs.dev/t/should-size-of-binary-ydoc-be-monotonically-increasing/2325/3),[3](https://discuss.yjs.dev/t/clear-document-history-and-reject-old-updates/945),[4](https://github.com/yjs/yjs?tab=readme-ov-file#yjs-crdt-algorithm),[5](https://blog.kevinjahns.de/are-crdts-suitable-for-shared-editing)</sup>, but their memory footprint is highly optimized, making the overhead negligible in practice. Collabs claims to use a similar approach to that of Yjs. Automerge<sup>[6](https://automerge.org/docs/cookbook/modeling-data/)</sup> and Loro maintain the entire causal history of operations.
-- **<sup>4</sup>** Yjs, Loro, and Automerge support the composition of already defined CRDTs, such as Map and List. Collabs allows to statically generate a new CRDT type that is the composition of existing CRDTs thanks to semi-direct product of CRDTs<sup>[1](https://arxiv.org/pdf/2212.02618)</sup>. Flec<sup>[2](https://drops.dagstuhl.de/storage/00lipics/lipics-vol263-ecoop2023/LIPIcs.ECOOP.2023.2/LIPIcs.ECOOP.2023.2.pdf)</sup> and Moirai support generic CRDT containers that can hold any CRDT type.
-- **<sup>5</sup>** Partial replication and querying refer to the capability to replicate or access only a subset of a CRDT’s state<sup>[1](https://arxiv.org/pdf/1806.10254),[2](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=7396168)</sup>. Moirai lays the groundwork for this by maintaining a separate log for each CRDT at every level of the hierarchy, enabling selective replication and querying within the CRDT tree.
-- **<sup>6</sup>** Automerge claims to support BFT<sup>[1](https://liangrunda.com/posts/automerge-internal-2/)</sup>. A recent article<sup>[2](https://doi.org/10.1016/j.parco.2025.103136)</sup>, shows that using recursive hash histories is not sufficient to guarantee Byzantine Fault Tolerance (BFT).
+- **<sup>1</sup>** Moirai draws inspiration from the concept of pure
+  operation-based CRDTs, which rely on a generic log of operations and use
+  causal stability as a first-class mechanism for garbage collection. However,
+  for practical and performance reasons, not all Moirai CRDT operations are
+  "pure": the `prepare` phase may inspect the state to decide how to emit an
+  operation, rather than always producing a predefined, context-independent
+  operation. Moirai assumes a permissioned environment where group members are
+  always known and authorized, even though the group itself may be dynamic.
+- **<sup>2</sup>** Flec, Moirai, and Collabs support the definition of new CRDT
+  types by implementing an interface.
+- **<sup>3</sup>** Moirai relies on a central authority to ensure eventual
+  causal stability, i.e., every operation eventually becomes stable. This is
+  currently achieved by removing replicas from the group if they remain
+  unreachable for a specified period. In contrast, Flec adopts the classical
+  approach to eventual stability, which is not fault-tolerant: the crash of a
+  single replica can indefinitely block garbage collection. Yjs appears to
+  retain tombstones for deleted operations
+  indefinitely<sup>[1](https://github.com/yjs/yjs/blob/main/INTERNALS.md#deletions),[2](https://discuss.yjs.dev/t/should-size-of-binary-ydoc-be-monotonically-increasing/2325/3),[3](https://discuss.yjs.dev/t/clear-document-history-and-reject-old-updates/945),[4](https://github.com/yjs/yjs?tab=readme-ov-file#yjs-crdt-algorithm),[5](https://blog.kevinjahns.de/are-crdts-suitable-for-shared-editing)</sup>,
+  but their memory footprint is highly optimized, making the overhead negligible
+  in practice. Collabs claims to use a similar approach to that of Yjs.
+  Automerge<sup>[6](https://automerge.org/docs/cookbook/modeling-data/)</sup>
+  and Loro maintain the entire causal history of operations.
+- **<sup>4</sup>** Yjs, Loro, and Automerge support the composition of already
+  defined CRDTs, such as Map and List. Collabs allows to statically generate a
+  new CRDT type that is the composition of existing CRDTs thanks to semi-direct
+  product of CRDTs<sup>[1](https://arxiv.org/pdf/2212.02618)</sup>.
+  Flec<sup>[2](https://drops.dagstuhl.de/storage/00lipics/lipics-vol263-ecoop2023/LIPIcs.ECOOP.2023.2/LIPIcs.ECOOP.2023.2.pdf)</sup>
+  and Moirai support generic CRDT containers that can hold any CRDT type.
+- **<sup>5</sup>** Partial replication and querying refer to the capability to
+  replicate or access only a subset of a CRDT’s
+  state<sup>[1](https://arxiv.org/pdf/1806.10254),[2](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=7396168)</sup>.
+  Moirai lays the groundwork for this by maintaining a separate log for each
+  CRDT at every level of the hierarchy, enabling selective replication and
+  querying within the CRDT tree.
+- **<sup>6</sup>** Automerge claims to support
+  BFT<sup>[1](https://liangrunda.com/posts/automerge-internal-2/)</sup>. A
+  recent article<sup>[2](https://doi.org/10.1016/j.parco.2025.103136)</sup>,
+  shows that using recursive hash histories is not sufficient to guarantee
+  Byzantine Fault Tolerance (BFT).

@@ -1,24 +1,16 @@
 use std::fmt::{Debug, Display};
 
-use crate::{
-    protocol::{clock::version_vector::Version, event::Event, membership::ReplicaId},
-    utils::intern_str::Resolver,
-};
+use crate::protocol::{clock::version_vector::Version, event::Event, membership::ReplicaId};
 
 #[derive(Debug)]
 pub struct Batch<O> {
     pub events: Vec<Event<O>>,
     pub version: Version,
-    pub resolver: Resolver,
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<Event<O>>, version: Version, resolver: Resolver) -> Self {
-        Self {
-            events,
-            version,
-            resolver,
-        }
+    pub fn new(events: Vec<Event<O>>, version: Version) -> Self {
+        Self { events, version }
     }
 
     pub fn events(self) -> Vec<Event<O>> {
