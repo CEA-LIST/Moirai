@@ -96,7 +96,6 @@ where
 
     // #[instrument(skip(self, batch), fields(id = self.id))]
     fn receive_batch(&mut self, batch: Batch<<L as IsLog>::Op>) {
-        info!("Receiving batch with {} events", batch.events.len());
         for event in batch.events() {
             self.receive(event);
         }

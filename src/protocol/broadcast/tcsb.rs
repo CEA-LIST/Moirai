@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashSet, fmt::Debug};
 
-use tracing::{error, info, instrument};
+use tracing::{error, instrument};
 
 use crate::{
     protocol::{
@@ -8,7 +8,7 @@ use crate::{
         clock::{matrix_clock::MatrixClock, version_vector::Version},
         event::{id::EventId, lamport::Lamport, Event},
     },
-    utils::intern_str::{Interner, ReplicaIdx, Resolver},
+    utils::intern_str::{Interner, ReplicaIdx},
     HashMap,
 };
 
@@ -69,9 +69,14 @@ where
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
-        let event = Event::new(event_id, lamport, op, version.clone());
+        let event = Event::new(
+            event_id,
+            lamport,
+            op,
+            version.clone(),
+            self.interner.resolver().clone(),
+        );
         self.outbox.push(event.clone());
-        // let wire_event = self.externalize(event.clone());
         event
     }
 
@@ -128,36 +133,8 @@ where
                         Some(Ordering::Less) => false,
                     }
             })
-            .map(|e| self.externalize(e.clone()))
+            .cloned()
             .collect();
-        info!(
-            "Pulling events: version: {}, except: {}",
-            since.version(),
-            since
-                .except()
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
-        // info!(
-        //     "Collected events: {}",
-        //     events
-        //         .iter()
-        //         .map(|e| e.id.0.clone())
-        //         .collect::<Vec<String>>()
-        //         .join(", ")
-        // );
-        info!(
-            "Outbox: {}",
-            self.outbox
-                .iter()
-                .map(|e| e.id().to_string())
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
-        info!("Current version: {}", self.matrix_clock.origin_version());
-        info!("---------------------------------------");
         Batch::new(events, self.matrix_clock.origin_version().clone())
     }
 
@@ -230,43 +207,19 @@ where
             .retain(|event| !event.id().is_predecessor_of(lsv));
     }
 
-    fn internalize(&mut self, event: Event<O>, incoming_resolver: Resolver) -> Event<O> {
-        let (idx, is_new) = self.interner.intern(&wire_event.id.0);
+    fn internalize(&mut self, event: &Event<O>) {
+        let (idx, is_new) = self.interner.intern(&event.id().origin_id());
         if is_new {
             self.matrix_clock.add_replica(idx);
         }
-        let event_id = EventId::new(idx, wire_event.id.1, self.interner.resolver().clone());
+        let event_id = EventId::new(idx, event.id().seq(), self.interner.resolver().clone());
         let mut version = Version::new(idx, self.interner.resolver().clone());
-        for (replica_id, seq) in wire_event.version {
+        for (replica_ixd, seq) in event.version().iter() {
             let (idx, is_new) = self.interner.intern(&replica_id);
             if is_new {
                 self.matrix_clock.add_replica(idx);
             }
             version.set_by_idx(idx, seq);
         }
-        Event::new(event_id, wire_event.lamport, wire_event.op, version)
-    }
-
-    fn externalize(&self, event: Event<O>) -> Event<O>
-    where
-        O: Clone,
-    {
-        let replica_id = self
-            .interner
-            .resolve(event.id().idx())
-            .to_owned()
-            .unwrap()
-            .to_string();
-        let mut version = HashMap::default();
-        for (idx, seq) in event.version().iter() {
-            let replica_id = self.interner.resolve(idx).unwrap().to_owned();
-            version.insert(replica_id, seq);
-        }
-        Event::new(
-            (replica_id, event.id().seq()),
-            event.lamport().clone(),
-            event.op().clone(),
-            version,
-        )
     }
 }
