@@ -110,8 +110,8 @@
 //         });
 //         let mut graph = DiGraph::new();
 //         let mut node_index = HashMap::new();
-//         let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::new();
-//         let mut rmv_set = HashSet::new();
+//         let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::default();
+//         let mut rmv_set = HashSet::default();
 //         for o in ops {
 //             match o {
 //                 AWGraph::RemoveVertex(v) => {

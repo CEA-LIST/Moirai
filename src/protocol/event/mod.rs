@@ -5,12 +5,9 @@ pub mod tagged_op;
 
 use std::fmt::{Debug, Display};
 
-use crate::{
-    protocol::{
-        clock::version_vector::Version,
-        event::{id::EventId, lamport::Lamport},
-    },
-    utils::intern_str::Resolver,
+use crate::protocol::{
+    clock::version_vector::Version,
+    event::{id::EventId, lamport::Lamport},
 };
 
 #[derive(Clone, Debug)]
@@ -19,22 +16,20 @@ pub struct Event<O> {
     lamport: Lamport,
     op: O,
     version: Version,
-    resolver: Resolver,
 }
 
 impl<O> Event<O> {
-    pub fn new(id: EventId, lamport: Lamport, op: O, version: Version, resolver: Resolver) -> Self {
+    pub fn new(id: EventId, lamport: Lamport, op: O, version: Version) -> Self {
         Self {
             id,
             lamport,
             op,
             version,
-            resolver,
         }
     }
 
     pub fn unfold<N>(self, op: N) -> Event<N> {
-        Event::new(self.id, self.lamport, op, self.version, self.resolver)
+        Event::new(self.id, self.lamport, op, self.version)
     }
 
     pub fn id(&self) -> &EventId {

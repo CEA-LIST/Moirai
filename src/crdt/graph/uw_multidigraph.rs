@@ -141,8 +141,36 @@ where
         graph
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        todo!()
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        match op {
+            UWGraph::UpdateVertex(_, _) => true,
+            UWGraph::RemoveVertex(v) => {
+                if let Some(child) = self.vertex_content.get(v) {
+                    !child.is_empty()
+                } else {
+                    false
+                }
+            }
+            UWGraph::UpdateArc(v1, v2, _, _) => {
+                if let (Some(child1), Some(child2)) =
+                    (self.vertex_content.get(v1), self.vertex_content.get(v2))
+                {
+                    if child1.is_empty() || child2.is_empty() {
+                        return false;
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            UWGraph::RemoveArc(v1, v2, e) => {
+                if let Some(child) = self.arc_content.get(&(v1.clone(), v2.clone(), e.clone())) {
+                    !child.is_empty()
+                } else {
+                    false
+                }
+            }
+        }
     }
 }
 
@@ -345,6 +373,23 @@ mod tests {
         let (mut replica_a, mut replica_b, mut replica_c) =
             triplet_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
+        let event_a_1 = replica_a
+            .send(UWGraph::UpdateVertex("A", LWWRegister::Write(4)))
+            .unwrap();
+        let event_a_2 = replica_a
+            .send(UWGraph::UpdateVertex("B", LWWRegister::Write(3)))
+            .unwrap();
+        let event_a_3 = replica_a
+            .send(UWGraph::UpdateArc("A", "B", 1, Counter::Inc(51)))
+            .unwrap();
+
+        replica_b.receive(event_a_1.clone());
+        replica_b.receive(event_a_2.clone());
+        replica_b.receive(event_a_3.clone());
+        replica_c.receive(event_a_1);
+        replica_c.receive(event_a_2);
+        replica_c.receive(event_a_3);
+
         let event_b_1 = replica_b
             .send(UWGraph::UpdateVertex("A", LWWRegister::Write(1)))
             .unwrap();
@@ -363,8 +408,8 @@ mod tests {
             &replica_c.query()
         ));
 
-        let event_a_1 = replica_a.send(UWGraph::RemoveVertex("B")).unwrap();
-        let event_a_2 = replica_a.send(UWGraph::RemoveArc("A", "B", 1)).unwrap();
+        let event_a_1 = replica_a.send(UWGraph::RemoveArc("A", "B", 1)).unwrap();
+        let event_a_2 = replica_a.send(UWGraph::RemoveVertex("B")).unwrap();
         replica_b.receive(event_a_1.clone());
         replica_b.receive(event_a_2.clone());
 

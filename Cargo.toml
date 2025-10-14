@@ -14,17 +14,14 @@ repository = "https://github.com/CEA-LIST/Moirai.git"
 bimap = { version = "0.6.3", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11.2"
-test-log = "0.2.15"
 colored = "2.1.0"
 paste = "1.0.15"
 petgraph = { version = "0.6.4", features = ["serde-1"] }
 rand = { version = "0.9.1", optional = true }
 serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 serde_json = { version = "1.0.128", optional = true }
-anyhow = { version = "1.0.89", optional = true }
 tsify = { version = "0.5.5", optional = true }
 wasm-bindgen = { version = "0.2.100", optional = true }
-deepsize = { version = "0.2.0", optional = true }
 vf2 = { version = "1.0.1", optional = true }
 rand_chacha = { version = "0.9.0", optional = true }
 chrono = { version = "0.4.41", optional = true }
@@ -38,8 +35,7 @@ tinystr = "0.8.1"
 smallvec = "1.15.1"
 
 [features]
-default = ["crdt", "utils", "fuzz"]
-utils = ["dep:anyhow", "dep:deepsize"]
+default = ["crdt", "fuzz", "test_utils"]
 fuzz = [
     "dep:chrono",
     "dep:rand",
@@ -50,6 +46,7 @@ fuzz = [
 ]
 crdt = ["dep:vf2"]
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
+test_utils = []
 
 [profile.release]
 debug = 1

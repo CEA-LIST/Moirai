@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
 use petgraph::graph::DiGraph;
 
@@ -8,7 +8,7 @@ use crate::{
         event::{tag::Tag, tagged_op::TaggedOp},
         state::unstable_state::IsUnstableState,
     },
-    HashMap,
+    HashMap, HashSet,
 };
 
 #[derive(Clone, Debug)]
@@ -87,7 +87,7 @@ where
         });
         let mut graph = DiGraph::new();
         let mut node_index = HashMap::default();
-        let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::new();
+        let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::default();
         for o in ops {
             match o {
                 Graph::AddVertex(v) => {

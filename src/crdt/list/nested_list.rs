@@ -65,6 +65,7 @@ impl<L> ListLog<L>
 where
     L: IsLog,
 {
+    #[allow(dead_code)]
     pub(crate) fn incorporate(&mut self, event: Event<L::Op>, log: L) {
         let id = event.id().clone();
         let event = Event::unfold(

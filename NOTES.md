@@ -19,28 +19,13 @@ Batch { id: <proc_id>, events: Vec<Event>, }
 Event { ... resolver: Resolver (diff), }
 
 Each process keep a translation of its indices to the one of the other (matrix).
-Indices of the Vec = other process mapping Content of the Vec = local process
-mapping
+Indices of the Vec = other process mapping
+Content of the Vec = local process mapping
 
 Delivery procedure:
 
 - iter over event version vector:
-  - for each replicaidx, replace it with the value at this index in the matrix
-
-### Draft
-
-batch = vec event, chaque event a un diff de resolver
-
-Batch de alice = vec<event tel que vu depuis alice> + id + diff de resolver
-(pairs de string - id) Bob cache un cache qui fait correspondre les indices de
-alice à ses indices
-
-contenu du vec que bob a dans son cache pour alice = indices de bob, et les
-indices du vec c'est les indices d'alice -> replica idx d'alice vers replicaidx
-de bob
-
-on iter sur la version de l'event et pour chaque replica idx, on le remplace par
-la valeur à cette indice là dans le tableau.
+  - for each replica_idx, replace it with the value at this index in the matrix
 
 ## The Event Graph
 

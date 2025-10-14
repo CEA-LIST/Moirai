@@ -1,8 +1,6 @@
 use std::fmt::Debug;
 
-use tracing::info;
-
-#[cfg(test)]
+#[cfg(feature = "test_utils")]
 use crate::protocol::state::log::IsLogTest;
 use crate::{
     protocol::{
@@ -42,7 +40,6 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>) {
-        // println!("Applying event: {}", event);
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             if !O::DISABLE_R_WHEN_R {
@@ -134,11 +131,7 @@ where
         new_tagged_op: &TaggedOp<O>,
         version: &Version,
     ) {
-        // info!("<<<<< Pruning STABLE redundant ops >>>>");
-        // info!("Content stable: {:?}", self.stable);
         self.stable.prune_redundant_ops(rdnt, new_tagged_op);
-        // println!("Content stable after pruning: {:?}", self.stable);
-        // info!("<<<<< Pruning UNSTABLE redundant ops >>>>");
         self.unstable.retain(|old_tagged_op| {
             // Note: the new operation is not in the log at this point.
             let is_conc = !old_tagged_op.id().is_predecessor_of(version);
@@ -148,18 +141,12 @@ where
                 is_conc,
                 new_tagged_op,
             );
-            info!(
-                "The op {} is {} by {}",
-                old_tagged_op,
-                if boo { "not redundant" } else { "redundant" },
-                new_tagged_op
-            );
             boo
         });
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test_utils")]
 impl<O, U> IsLogTest for POLog<O, U>
 where
     O: PureCRDT + Clone,

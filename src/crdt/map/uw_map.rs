@@ -445,7 +445,7 @@ mod tests {
             UWMap::Update("a".to_string(), UWMap::Remove(6)),
         ]);
 
-        let run = RunConfig::new(0.4, 64, 100, None, None);
+        let run = RunConfig::new(0.4, 16, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config =

@@ -1,9 +1,12 @@
-use std::{collections::HashSet, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
-use crate::protocol::{
-    crdt::pure_crdt::PureCRDT,
-    event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+use crate::{
+    protocol::{
+        crdt::pure_crdt::PureCRDT,
+        event::{tag::Tag, tagged_op::TaggedOp},
+        state::unstable_state::IsUnstableState,
+    },
+    HashSet,
 };
 
 #[derive(Clone, Debug)]
@@ -61,14 +64,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use crate::{
         crdt::{
             register::mv_register::MVRegister,
             test_util::{triplet, twins},
         },
         protocol::replica::IsReplica,
+        set_from_slice, HashSet,
     };
 
     #[test]
@@ -78,13 +80,13 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("a")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from(["a"]));
-        assert_eq!(replica_b.query(), HashSet::from(["a"]));
+        assert_eq!(replica_a.query(), HashSet::from_iter(["a"].iter().cloned()));
+        assert_eq!(replica_b.query(), set_from_slice(&["a"]));
 
         let event = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_a.receive(event);
 
-        let result = HashSet::from(["b"]);
+        let result = set_from_slice(&["b"]);
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -96,21 +98,21 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from(["c"]));
-        assert_eq!(replica_b.query(), HashSet::from(["c"]));
+        assert_eq!(replica_a.query(), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from(["d"]));
-        assert_eq!(replica_b.query(), HashSet::from(["d"]));
+        assert_eq!(replica_a.query(), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let result = HashSet::from(["b", "a"]);
+        let result = set_from_slice(&["b", "a"]);
         let eval_a = replica_a.query();
         let eval_b = replica_b.query();
         assert_eq!(eval_a, result);
@@ -124,14 +126,14 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from(["c"]));
-        assert_eq!(replica_b.query(), HashSet::from(["c"]));
+        assert_eq!(replica_a.query(), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from(["d"]));
-        assert_eq!(replica_b.query(), HashSet::from(["d"]));
+        assert_eq!(replica_a.query(), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_aa = replica_a.send(MVRegister::Write("aa")).unwrap();
@@ -142,7 +144,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_aa);
 
-        let result = HashSet::from(["aa", "b"]);
+        let result = set_from_slice(&["aa", "b"]);
         let eval_a = replica_a.query();
         let eval_b = replica_b.query();
         assert_eq!(eval_a, result);
@@ -154,18 +156,18 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<u32>>();
 
         let event_a_1 = replica_a.send(MVRegister::Write(4)).unwrap();
-        assert_eq!(replica_a.query(), HashSet::from([4]));
+        assert_eq!(replica_a.query(), set_from_slice(&[4]));
         let event_b_1 = replica_b.send(MVRegister::Write(5)).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([5]));
+        assert_eq!(replica_b.query(), set_from_slice(&[5]));
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(), HashSet::from([4, 5]));
+        assert_eq!(replica_a.query(), set_from_slice(&[4, 5]));
 
         let event_b_2 = replica_b.send(MVRegister::Write(2)).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([2]));
+        assert_eq!(replica_b.query(), set_from_slice(&[2]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(), HashSet::from([4, 2]));
+        assert_eq!(replica_a.query(), set_from_slice(&[4, 2]));
         assert_eq!(replica_a.query(), replica_b.query());
     }
 
@@ -183,7 +185,7 @@ mod tests {
     //             MVRegister::Write("b"),
     //             MVRegister::Clear,
     //         ],
-    //         HashSet::from(["a", "b"]),
+    //         set_from_slice(&["a", "b"]),
     //         HashSet::eq,
     //     );
     // }

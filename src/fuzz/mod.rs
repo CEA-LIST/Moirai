@@ -15,7 +15,10 @@ use crate::{
 pub mod config;
 pub mod convergence_checker;
 
-pub fn fuzzer<L: IsLog>(config: FuzzerConfig<L>) {
+pub fn fuzzer<L>(config: FuzzerConfig<L>)
+where
+    L: IsLog,
+{
     for run_config in config.runs {
         runner::<L>(
             run_config,
@@ -26,12 +29,14 @@ pub fn fuzzer<L: IsLog>(config: FuzzerConfig<L>) {
     }
 }
 
-pub fn runner<L: IsLog>(
+pub fn runner<L>(
     config: RunConfig,
     operations: &OpConfig<L::Op>,
     final_merge: bool,
     compare: fn(&L::Value, &L::Value) -> bool,
-) {
+) where
+    L: IsLog,
+{
     let mut rng = if let Some(seed) = config.seed {
         ChaCha8Rng::from_seed(seed)
     } else {
@@ -91,7 +96,7 @@ pub fn runner<L: IsLog>(
         // }
 
         let start = Instant::now();
-        let event = replicas[replica_idx].send(op.clone()).unwrap();
+        let msg = replicas[replica_idx].send(op.clone()).unwrap();
         let duration = start.elapsed();
         time_to_deliver
             .entry(replica_idx)
@@ -105,7 +110,7 @@ pub fn runner<L: IsLog>(
                     && reachability[replica_idx][other_idx]
                 {
                     let start = Instant::now();
-                    replicas[other_idx].receive(event.clone());
+                    replicas[other_idx].receive(msg.clone());
                     let duration = start.elapsed();
                     time_to_deliver
                         .entry(other_idx)
@@ -143,18 +148,108 @@ pub fn runner<L: IsLog>(
     // Check convergence
     let first_value = replicas[0].query();
     let num_delivered_events = replicas[0].num_delivered_events();
-    for (i, replica) in replicas.iter().enumerate().skip(1) {
-        let replica_delivered_events = replica.num_delivered_events();
+
+    // println!(
+    //     "Replica {} delivered {} events and has state: {:?}",
+    //     replicas[0].id(),
+    //     replicas[0].num_delivered_events(),
+    //     replicas[0].query()
+    // );
+    // let mut outbox_events = replicas[0]
+    //     .tcsb()
+    //     .outbox()
+    //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+    //     .collect::<Vec<_>>();
+    // outbox_events.sort();
+    // println!(
+    //     "Replica {} has the following events in its outbox: {}",
+    //     replicas[0].id(),
+    //     outbox_events.join(", ")
+    // );
+    // let mut inbox_events = replicas[0]
+    //     .tcsb()
+    //     .inbox()
+    //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+    //     .collect::<Vec<_>>();
+    // inbox_events.sort();
+    // println!(
+    //     "Replica {} has the following events in its inbox: {}",
+    //     replicas[0].id(),
+    //     inbox_events.join(", ")
+    // );
+    // println!("---------------------------------------");
+
+    for (idx, r) in replicas.iter().enumerate().skip(1) {
+        let replica_delivered_events = r.num_delivered_events();
         if num_delivered_events != replica_delivered_events {
+            // println!(
+            //     "Replica {} delivered {} events and has state: {:?}",
+            //     r.id(),
+            //     r.num_delivered_events(),
+            //     r.query()
+            // );
+            // let mut outbox_events = r
+            //     .tcsb()
+            //     .outbox()
+            //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+            //     .collect::<Vec<_>>();
+            // outbox_events.sort();
+            // println!(
+            //     "Replica {} has the following events in its outbox: {}",
+            //     r.id(),
+            //     outbox_events.join(", ")
+            // );
+            // let mut inbox_events = r
+            //     .tcsb()
+            //     .inbox()
+            //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+            //     .collect::<Vec<_>>();
+            // inbox_events.sort();
+            // println!(
+            //     "Replica {} has the following events in its inbox: {}",
+            //     r.id(),
+            //     inbox_events.join(", ")
+            // );
+            // println!("---------------------------------------");
             panic!(
                 "Replica {} and {} have delivered a different number of events: {num_delivered_events} vs {replica_delivered_events}",
                 replicas[0].id(),
-                replica.id()
+                r.id()
             );
         }
-        let value = replica.query();
+        let value = r.query();
         if !compare(&first_value, &value) {
-            panic!("Replicas 0 and {i} diverged: {first_value:?} vs {value:?}");
+            // for (_, r) in replicas.iter().enumerate() {
+            //     println!(
+            //         "Replica {} delivered {} events and has state: {:?}",
+            //         r.id(),
+            //         r.num_delivered_events(),
+            //         r.query()
+            //     );
+            //     let mut outbox_events = r
+            //         .tcsb()
+            //         .outbox()
+            //         .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+            //         .collect::<Vec<_>>();
+            //     outbox_events.sort();
+            //     println!(
+            //         "Replica {} has the following events in its outbox: {}",
+            //         r.id(),
+            //         outbox_events.join(", ")
+            //     );
+            //     let mut inbox_events = r
+            //         .tcsb()
+            //         .inbox()
+            //         .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
+            //         .collect::<Vec<_>>();
+            //     inbox_events.sort();
+            //     println!(
+            //         "Replica {} has the following events in its inbox: {}",
+            //         r.id(),
+            //         inbox_events.join(", ")
+            //     );
+            // }
+            panic!("Replicas 0 and {idx} diverged: {first_value:?} vs {value:?}");
         }
     }
 

@@ -1,14 +1,14 @@
-use std::{fmt::Debug, str::FromStr};
-
-use tinystr::TinyAsciiStr;
-use tracing::{info, instrument};
+use std::fmt::Debug;
 
 use crate::{
     protocol::{
-        broadcast::{batch::Batch, since::Since, tcsb::IsTcsb},
+        broadcast::{
+            message::{BatchMessage, EventMessage, SinceMessage},
+            tcsb::{IsTcsb, IsTcsbTest},
+        },
         event::Event,
         membership::{ReplicaId, ReplicaIdOwned},
-        state::log::IsLog,
+        state::log::{IsLog, IsLogTest},
     },
     utils::intern_str::Interner,
 };
@@ -19,15 +19,15 @@ where
 {
     fn new(id: ReplicaIdOwned) -> Self;
     fn id(&self) -> &ReplicaId;
-    fn receive(&mut self, event: Event<L::Op>);
-    fn receive_batch(&mut self, batch: Batch<L::Op>);
-    fn since(&self) -> Since;
-    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>>;
-    fn pull(&mut self, since: Since) -> Batch<L::Op>;
+    fn receive(&mut self, message: EventMessage<L::Op>);
+    fn receive_batch(&mut self, message: BatchMessage<L::Op>);
+    fn since(&self) -> SinceMessage;
+    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>>;
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
     // TODO: Add support for custom queries
     fn query(&self) -> L::Value;
     fn update(&mut self, op: L::Op);
-    fn bootstrap(id: String, members: &[&ReplicaId]) -> Self;
+    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
 }
 
 #[derive(Debug)]
@@ -52,33 +52,31 @@ where
         }
     }
 
-    fn receive(&mut self, event: Event<L::Op>) {
-        // TODO: check if the event comes from a known replica
-        // The event should not come from an unknown replica
-        // if self.resolver.get(event.id().origin_id()).is_none() {
-        //     error!("Event from unknown replica");
-        //     return false;
-        // }
-
-        self.tcsb.receive(event);
-        while let Some(event) = self.tcsb.next_causally_ready() {
-            self.deliver(event);
+    fn receive(&mut self, message: EventMessage<L::Op>) {
+        self.tcsb.receive(message);
+        while let Some(e) = self.tcsb.next_causally_ready() {
+            self.deliver(e);
         }
     }
 
-    fn send(&mut self, op: L::Op) -> Option<Event<L::Op>> {
+    fn receive_batch(&mut self, message: BatchMessage<L::Op>) {
+        self.tcsb.receive_batch(message);
+        while let Some(e) = self.tcsb.next_causally_ready() {
+            self.deliver(e);
+        }
+    }
+
+    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>> {
         if !self.state.is_enabled(&op) {
-            info!("Operation is not enabled: {op:?}");
             return None;
         }
         let op = L::prepare(op);
-        let event = self.tcsb.send(op);
-        self.deliver(event.clone());
-        Some(event)
+        let message = self.tcsb.send(op);
+        self.deliver(message.event().clone());
+        Some(message)
     }
 
-    fn pull(&mut self, since: Since) -> Batch<L::Op> {
-        // assert_ne!(since.version().origin_id(), self.id);
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op> {
         self.tcsb.pull(since)
     }
 
@@ -90,31 +88,22 @@ where
         self.send(op).unwrap();
     }
 
-    fn since(&self) -> Since {
+    fn since(&self) -> SinceMessage {
         self.tcsb.since()
-    }
-
-    // #[instrument(skip(self, batch), fields(id = self.id))]
-    fn receive_batch(&mut self, batch: Batch<<L as IsLog>::Op>) {
-        for event in batch.events() {
-            self.receive(event);
-        }
-        // TODO: is it correct?
-        // self.tcsb.update_version(batch.version());
     }
 
     fn id(&self) -> &ReplicaId {
         &self.id
     }
 
-    fn bootstrap(id: String, members: &[&ReplicaId]) -> Self {
+    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(&id);
         for member in members {
             interner.intern(member);
         }
         Self {
-            id: TinyAsciiStr::from_str(&id).unwrap(),
+            id,
             tcsb: T::new(idx, interner),
             state: L::new(),
         }
@@ -126,22 +115,37 @@ where
     L: IsLog,
     T: IsTcsb<L::Op>,
 {
-    #[instrument(skip(self, event))]
     fn deliver(&mut self, event: Event<L::Op>) {
-        info!("Delivering event: {event}");
         self.state.effect(event);
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {
             self.state.stabilize(version);
         }
     }
+}
 
-    #[cfg(test)]
+impl<L, T> Replica<L, T>
+where
+    L: IsLogTest,
+    T: IsTcsb<L::Op>,
+{
+    #[cfg(feature = "test_utils")]
     pub fn state(&self) -> &L {
         &self.state
     }
+}
 
-    #[cfg(feature = "fuzz")]
+impl<L, T> Replica<L, T>
+where
+    L: IsLog,
+    T: IsTcsbTest<L::Op>,
+{
+    #[cfg(feature = "test_utils")]
+    pub fn tcsb(&self) -> &T {
+        &self.tcsb
+    }
+
+    #[cfg(feature = "test_utils")]
     pub fn num_delivered_events(&self) -> usize {
         self.tcsb.matrix_clock().origin_version().sum()
     }

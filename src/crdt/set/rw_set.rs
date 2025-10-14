@@ -1,9 +1,12 @@
-use std::{collections::HashSet, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
-use crate::protocol::{
-    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
-    event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+use crate::{
+    protocol::{
+        crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+        event::{tag::Tag, tagged_op::TaggedOp},
+        state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    },
+    HashSet,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -146,7 +149,7 @@ where
 
     fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
         let mut set = stable.0.clone();
-        let mut removed = HashSet::new();
+        let mut removed = HashSet::default();
 
         for o in unstable.iter().map(|t| t.op()) {
             match o {
@@ -174,7 +177,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
 
     use crate::{
         crdt::{set::rw_set::RWSet, test_util::twins},
@@ -182,6 +184,7 @@ mod tests {
             replica::IsReplica,
             state::{log::IsLogTest, unstable_state::IsUnstableState},
         },
+        set_from_slice, HashSet,
     };
 
     #[test]
@@ -197,7 +200,7 @@ mod tests {
         let event = replica_a.send(RWSet::Clear).unwrap();
         replica_b.receive(event);
 
-        let result = HashSet::new();
+        let result = HashSet::default();
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -210,7 +213,7 @@ mod tests {
         let event = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        let result = HashSet::from(["a"]);
+        let result = set_from_slice(&["a"]);
         assert_eq!(replica_b.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -228,7 +231,7 @@ mod tests {
         assert_eq!(replica_a.state().unstable().len(), 1);
         assert_eq!(replica_b.state().unstable().len(), 1);
 
-        let result = HashSet::from(["a"]);
+        let result = set_from_slice(&["a"]);
         assert_eq!(replica_b.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -245,7 +248,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a_2);
 
-        let result = HashSet::from([]);
+        let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -259,7 +262,7 @@ mod tests {
         assert_eq!(replica_a.state().unstable().len(), 1);
         assert_eq!(replica_b.state().unstable().len(), 0);
 
-        let result = HashSet::from([]);
+        let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -273,7 +276,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let result = HashSet::from([]);
+        let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -284,7 +287,7 @@ mod tests {
         let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(), HashSet::from(["a"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["a"]));
         assert_eq!(replica_a.query(), replica_b.query());
 
         let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
@@ -292,14 +295,14 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        assert_eq!(replica_b.query(), HashSet::from([]));
+        assert_eq!(replica_b.query(), set_from_slice(&[]));
         assert_eq!(replica_a.query(), replica_b.query());
 
         let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(), HashSet::from(["a"]));
-        assert_eq!(replica_a.query(), HashSet::from(["a"]));
+        assert_eq!(replica_b.query(), set_from_slice(&["a"]));
+        assert_eq!(replica_a.query(), set_from_slice(&["a"]));
     }
 
     //     #[cfg(feature = "utils")]
@@ -311,7 +314,7 @@ mod tests {
 
     //         convergence_checker::<EventGraph<RWSet<&str>>>(
     //             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
-    //             HashSet::new(),
+    //             HashSet::default(),
     //             HashSet::eq,
     //         );
     //     }

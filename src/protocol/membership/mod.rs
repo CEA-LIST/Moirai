@@ -8,7 +8,8 @@
 // pub mod view;
 
 pub type ReplicaId = str;
-pub type ReplicaIdOwned = tinystr::TinyAsciiStr<8>;
+// pub type ReplicaIdOwned = tinystr::TinyAsciiStr<8>;
+pub type ReplicaIdOwned = String;
 pub type ReplicaIdx = usize;
 
 // #[derive(Debug, Clone)]

@@ -116,7 +116,7 @@ where
         while scan_idx < right {
             let other = &doc.items[scan_idx];
 
-            if matches!(other.cur_state, State::NotYetInserted) {
+            if !matches!(other.cur_state, State::NotYetInserted) {
                 break;
             }
 
@@ -237,11 +237,6 @@ where
                         State::NotYetInserted | State::Deleted(_)
                     )
                 {
-                    // println!(
-                    //     "ERROR: Item to the left is not inserted! idx={}, left_item.cur_state={}",
-                    //     idx,
-                    //     doc.items[idx - 1].cur_state
-                    // );
                     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
                 }
 

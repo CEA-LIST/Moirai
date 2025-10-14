@@ -9,9 +9,8 @@ pub mod register;
 pub mod set;
 
 pub mod test_util {
-    use std::{fmt::Debug, str::FromStr};
+    use std::fmt::Debug;
 
-    use tinystr::TinyAsciiStr;
     use tracing_subscriber::fmt;
 
     use crate::protocol::{
@@ -86,8 +85,16 @@ pub mod test_util {
     {
         let mut replicas = Vec::new();
         for i in 0..n {
-            let id = TinyAsciiStr::from_str(&i.to_string()).unwrap();
-            let replica = Replica::<L, T>::new(id);
+            let id = i.to_string();
+            let replica = Replica::<L, T>::bootstrap(
+                id,
+                &(0..n)
+                    .map(|j| j.to_string())
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            );
             replicas.push(replica);
         }
         replicas
@@ -111,7 +118,7 @@ pub mod test_util {
         init_tracing();
 
         let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), &["a", "b"]);
-        let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), &["a", "b"]);
+        let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), &["a", "b"]);
         (replica_a, replica_b)
     }
 
@@ -130,9 +137,9 @@ pub mod test_util {
     {
         init_tracing();
 
-        let replica_a = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("a").unwrap());
-        let replica_b = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("b").unwrap());
-        let replica_c = Replica::<L, Tcsb<L::Op>>::new(TinyAsciiStr::from_str("c").unwrap());
+        let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), &["a", "b", "c"]);
+        let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), &["a", "b", "c"]);
+        let replica_c = Replica::<L, Tcsb<L::Op>>::bootstrap("c".to_string(), &["a", "b", "c"]);
         (replica_a, replica_b, replica_c)
     }
 

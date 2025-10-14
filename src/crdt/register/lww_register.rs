@@ -80,10 +80,14 @@ mod tests {
     pub fn lww_register_with_write() {
         let (mut replica_a, mut replica_b) = twins::<LWWRegister<String>>();
 
-        let event = replica_a.send(LWWRegister::Write("Hello".to_string())).unwrap();
+        let event = replica_a
+            .send(LWWRegister::Write("Hello".to_string()))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(LWWRegister::Write("World".to_string())).unwrap();
+        let event = replica_a
+            .send(LWWRegister::Write("World".to_string()))
+            .unwrap();
         replica_b.receive(event);
 
         let result = "World".to_string();
@@ -95,9 +99,13 @@ mod tests {
     pub fn lww_register_concurrent_writes() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet::<LWWRegister<String>>();
 
-        let event_a = replica_a.send(LWWRegister::Write("Hello".to_string())).unwrap();
+        let event_a = replica_a
+            .send(LWWRegister::Write("Hello".to_string()))
+            .unwrap();
         assert!(replica_a.query() == "Hello");
-        let event_b = replica_b.send(LWWRegister::Write("World".to_string())).unwrap();
+        let event_b = replica_b
+            .send(LWWRegister::Write("World".to_string()))
+            .unwrap();
         assert!(replica_b.query() == "World");
 
         replica_a.receive(event_b.clone());

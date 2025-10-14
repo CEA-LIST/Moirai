@@ -1,7 +1,11 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash};
+use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
-use crate::protocol::{
-    crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
+use crate::{
+    protocol::{
+        crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp,
+        state::unstable_state::IsUnstableState,
+    },
+    HashSet,
 };
 
 #[derive(Clone, Debug)]
@@ -65,11 +69,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{cmp::Ordering, collections::HashSet};
+    use std::cmp::Ordering;
 
     use crate::{
         crdt::{register::po_register::PORegister, test_util::twins},
         protocol::replica::IsReplica,
+        set_from_slice,
     };
 
     #[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
@@ -103,13 +108,15 @@ mod tests {
         let event = replica_a.send(PORegister::Write(Family::Child)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from([Family::Child]));
-        assert_eq!(replica_b.query(), HashSet::from([Family::Child]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Child]));
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Child]));
 
-        let event = replica_b.send(PORegister::Write(Family::Parent(20))).unwrap();
+        let event = replica_b
+            .send(PORegister::Write(Family::Parent(20)))
+            .unwrap();
         replica_a.receive(event);
 
-        let result = HashSet::from([Family::Parent(20)]);
+        let result = set_from_slice(&[Family::Parent(20)]);
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -118,16 +125,18 @@ mod tests {
     fn simple_po_register_2() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
+        let event = replica_a
+            .send(PORegister::Write(Family::Parent(20)))
+            .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from([Family::Parent(20)]));
-        assert_eq!(replica_b.query(), HashSet::from([Family::Parent(20)]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Parent(20)]));
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Parent(20)]));
 
         let event = replica_b.send(PORegister::Write(Family::Child)).unwrap();
         replica_a.receive(event);
 
-        let result = HashSet::from([Family::Child]);
+        let result = set_from_slice(&[Family::Child]);
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -136,12 +145,16 @@ mod tests {
     fn concurrent_po_register() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
-        let event_b = replica_b.send(PORegister::Write(Family::Parent(21))).unwrap();
+        let event_a = replica_a
+            .send(PORegister::Write(Family::Parent(20)))
+            .unwrap();
+        let event_b = replica_b
+            .send(PORegister::Write(Family::Parent(21)))
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let result = HashSet::from([Family::Parent(20), Family::Parent(21)]);
+        let result = set_from_slice(&[Family::Parent(20), Family::Parent(21)]);
         assert_eq!(replica_a.query(), result);
         assert_eq!(replica_a.query(), replica_b.query());
     }
@@ -151,18 +164,22 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
         let event_a_1 = replica_a.send(PORegister::Write(Family::Child)).unwrap();
-        assert_eq!(replica_a.query(), HashSet::from([Family::Child]));
-        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42))).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([Family::Parent(42)]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Child]));
+        let event_b_1 = replica_b
+            .send(PORegister::Write(Family::Parent(42)))
+            .unwrap();
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Parent(42)]));
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(), HashSet::from([Family::Parent(42)]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Parent(42)]));
 
-        let event_b_2 = replica_b.send(PORegister::Write(Family::Parent(21))).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([Family::Parent(21)]));
+        let event_b_2 = replica_b
+            .send(PORegister::Write(Family::Parent(21)))
+            .unwrap();
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Parent(21)]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(), HashSet::from([Family::Parent(21)]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Parent(21)]));
         assert_eq!(replica_a.query(), replica_b.query());
     }
 
@@ -170,22 +187,26 @@ mod tests {
     fn po_register_instability_2() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a_1 = replica_a.send(PORegister::Write(Family::Parent(20))).unwrap();
-        assert_eq!(replica_a.query(), HashSet::from([Family::Parent(20)]));
-        let event_b_1 = replica_b.send(PORegister::Write(Family::Parent(42))).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([Family::Parent(42)]));
+        let event_a_1 = replica_a
+            .send(PORegister::Write(Family::Parent(20)))
+            .unwrap();
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Parent(20)]));
+        let event_b_1 = replica_b
+            .send(PORegister::Write(Family::Parent(42)))
+            .unwrap();
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Parent(42)]));
         replica_a.receive(event_b_1);
         assert_eq!(
             replica_a.query(),
-            HashSet::from([Family::Parent(42), Family::Parent(20)])
+            set_from_slice(&[Family::Parent(42), Family::Parent(20)])
         );
 
         let event_b_2 = replica_b.send(PORegister::Write(Family::Child)).unwrap();
-        assert_eq!(replica_b.query(), HashSet::from([Family::Child]));
+        assert_eq!(replica_b.query(), set_from_slice(&[Family::Child]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(), HashSet::from([Family::Parent(20)]));
+        assert_eq!(replica_a.query(), set_from_slice(&[Family::Parent(20)]));
         assert_eq!(replica_a.query(), replica_b.query());
     }
 
@@ -203,7 +224,7 @@ mod tests {
     //             PORegister::Write(Family::Parent(40)),
     //             PORegister::Clear,
     //         ],
-    //         HashSet::from([Family::Parent(30), Family::Parent(40)]),
+    //         set_from_slice(&[Family::Parent(30), Family::Parent(40)]),
     //         HashSet::eq,
     //     );
     // }
