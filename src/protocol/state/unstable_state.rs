@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use tracing::info;
-
 use crate::{
     protocol::{
         clock::version_vector::Version,
@@ -42,7 +40,7 @@ where
 
     // TODO: very very slow
     fn remove(&mut self, event_id: &EventId) {
-        info!("Removing event: {}", event_id);
+        // info!("Removing event: {}", event_id);
         let maybe_pos = self.iter().position(|to| to.id() == event_id);
         if let Some(pos) = maybe_pos {
             self.remove(pos);

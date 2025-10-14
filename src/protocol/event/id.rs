@@ -52,7 +52,7 @@ impl EventId {
 
 impl Display for EventId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "({}{})", self.origin_id(), self.seq,)
+        write!(f, "({}:{})", self.origin_id(), self.seq())
     }
 }
 
@@ -71,7 +71,7 @@ impl PartialOrd for EventId {
 
 impl Ord for EventId {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.origin_id().cmp(&other.origin_id()) {
+        match self.origin_id().cmp(other.origin_id()) {
             Ordering::Equal => self.seq.cmp(&other.seq),
             ord => ord,
         }

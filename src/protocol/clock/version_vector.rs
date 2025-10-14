@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Display};
+use std::{cmp::Ordering, fmt::Display, hash::Hash};
 
 use log::error;
 // #[cfg(feature = "utils")]
@@ -35,6 +35,8 @@ impl VersionEntries {
         }
     }
 
+    /// # Complexity
+    /// Runs in `O(n)` time complexity with `n` being the number of members in the view
     fn join(&mut self, other: &Self) {
         self.fill_to(other.0.len());
         self.0
@@ -47,6 +49,8 @@ impl VersionEntries {
             });
     }
 
+    /// # Complexity
+    /// Runs in `O(n)` time complexity with `n` being the number of members in the view
     fn meet(&mut self, other: &Self) {
         self.fill_to(other.0.len());
         self.0
@@ -77,6 +81,13 @@ pub struct Version {
     resolver: Resolver,
 }
 
+impl Hash for Version {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.origin_idx.hash(state);
+        self.entries.0.hash(state);
+    }
+}
+
 impl Version {
     pub fn new(origin_idx: ReplicaIdx, resolver: Resolver) -> Self {
         let entries = vec![0; resolver.len()];
@@ -94,8 +105,7 @@ impl Version {
     pub fn increment(&mut self) -> usize {
         let seq = self.entries.get_mut(self.origin_idx);
         *seq += 1;
-        let res = *seq;
-        res
+        *seq
     }
 
     /// Merge two clocks that share the same view.
@@ -186,12 +196,16 @@ impl From<&Version> for EventId {
 
 impl Display for Version {
     fn fmt(&self, _f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(_f, "V[")?;
-        for (idx, seq) in self.iter() {
-            let id = self.resolver.resolve(idx).unwrap();
-            write!(_f, "{}: {}, ", id, seq)?;
-        }
-        write!(_f, "]")
+        // ["a":1,"b":2,"c":3]@a
+        write!(
+            _f,
+            "{{{}}}@{}",
+            self.iter()
+                .map(|(idx, seq)| format!("\"{}\":{}", self.resolver.resolve(idx).unwrap(), seq))
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.origin_id()
+        )
     }
 }
 
@@ -209,8 +223,7 @@ impl PartialOrd for Version {
     // TODO: add shortcut + check correctness
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.resolver != other.resolver {
-            error!("Comparing versions with different views");
-            return None;
+            panic!("Comparing versions with different views");
         }
         let mut self_greater = false;
         let mut other_greater = false;
@@ -244,9 +257,8 @@ impl PartialOrd for Version {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::intern_str::Interner;
-
     use super::*;
+    use crate::utils::intern_str::Interner;
 
     #[test]
     fn concurrent_clock() {

@@ -38,7 +38,7 @@ impl<'a> Ord for Lww<'a> {
         match self.0.lamport.cmp(&other.0.lamport) {
             Ordering::Equal => {
                 // Tie-break using origin id
-                self.0.id.origin_id().cmp(&other.0.id.origin_id())
+                self.0.id.origin_id().cmp(other.0.id.origin_id())
             }
             other_order => other_order,
         }
@@ -61,7 +61,7 @@ impl<'a> Ord for Fww<'a> {
         match self.0.lamport.cmp(&other.0.lamport) {
             Ordering::Equal => {
                 // Tie-break using origin id
-                other.0.id.origin_id().cmp(&self.0.id.origin_id())
+                other.0.id.origin_id().cmp(self.0.id.origin_id())
             }
             other_order => other_order,
         }

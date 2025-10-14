@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::fmt::Debug;
 
 use bimap::BiMap;
 use petgraph::{
@@ -16,7 +16,7 @@ use crate::{
         event::{id::EventId, tagged_op::TaggedOp, Event},
         state::{log::IsLog, unstable_state::IsUnstableState},
     },
-    HashMap,
+    HashMap, HashSet,
 };
 
 #[derive(Debug, Clone)]
@@ -93,7 +93,7 @@ where
 
         #[allow(clippy::mutable_key_type)] // false positive
         fn max_one_per_id(set: &HashSet<EventId>) -> bool {
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::default();
             for p in set {
                 if !seen.insert(p.origin_id()) {
                     return false; // duplicate name found
@@ -193,7 +193,7 @@ impl<O> Default for EventGraph<O> {
     fn default() -> Self {
         Self {
             graph: StableDiGraph::new(),
-            heads: HashSet::new(),
+            heads: HashSet::default(),
             map: BiMap::new(),
         }
     }

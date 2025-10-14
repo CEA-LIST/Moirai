@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-#[cfg(test)]
+#[cfg(feature = "test_utils")]
 use crate::protocol::state::{stable_state::IsStableState, unstable_state::IsUnstableState};
 use crate::protocol::{clock::version_vector::Version, event::Event};
 
@@ -25,7 +25,7 @@ pub trait IsLog: Default + Debug {
     fn is_empty(&self) -> bool;
 }
 
-#[cfg(test)]
+#[cfg(feature = "test_utils")]
 pub trait IsLogTest: IsLog {
     fn stable(&self) -> &impl IsStableState<Self::Op>;
     fn unstable(&self) -> &impl IsUnstableState<Self::Op>;

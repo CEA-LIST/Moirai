@@ -2,10 +2,10 @@ use std::fmt::{Debug, Display};
 
 use crate::protocol::{clock::version_vector::Version, event::Event, membership::ReplicaId};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Batch<O> {
-    pub events: Vec<Event<O>>,
-    pub version: Version,
+    events: Vec<Event<O>>,
+    version: Version,
 }
 
 impl<O> Batch<O> {
@@ -13,8 +13,12 @@ impl<O> Batch<O> {
         Self { events, version }
     }
 
-    pub fn events(self) -> Vec<Event<O>> {
+    pub fn into_events(self) -> Vec<Event<O>> {
         self.events
+    }
+
+    pub fn events(&self) -> &Vec<Event<O>> {
+        &self.events
     }
 
     pub fn version(&self) -> &Version {
