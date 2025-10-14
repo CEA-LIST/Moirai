@@ -120,6 +120,8 @@ where
             .set_by_idx(version.origin_idx(), version.clone());
     }
 
+    /// # Performance
+    /// `Θ(n)` where `n` is the number of events in the outbox.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
         let since = self.internalize_since(since);
         let events: Vec<Event<O>> = self
