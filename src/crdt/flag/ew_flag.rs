@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+    crdt::pure_crdt::{Eval, PureCRDT, Read, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -85,8 +85,14 @@ impl PureCRDT for EWFlag {
     ) -> bool {
         !is_conc
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+impl Eval<Read<<Self as PureCRDT>::Value>> for EWFlag {
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> bool {
         let mut flag = match stable {
             Some(v) => *v,
             None => false,
@@ -105,7 +111,7 @@ impl PureCRDT for EWFlag {
 mod tests {
     use crate::{
         crdt::{flag::ew_flag::EWFlag, test_util::twins},
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
     };
 
     // Test the Enable-Wins Flag CRDT using two replicas (twins)
@@ -116,27 +122,27 @@ mod tests {
         // Replica A enables the flag
         let event = replica_a.send(EWFlag::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(), true);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), true);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 
         // Replica B disables the flag
         let event = replica_b.send(EWFlag::Disable).unwrap();
         replica_a.receive(event);
-        assert_eq!(replica_b.query(), false);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_b.query(Read::new()), false);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 
         // Replica A enables again
         let event = replica_a.send(EWFlag::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(), true);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), true);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
         // Concurrent Enable and Disable: Disable wins
         let event_a = replica_a.send(EWFlag::Enable).unwrap();
         let event_b = replica_b.send(EWFlag::Disable).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
-        assert_eq!(replica_a.query(), true);
-        assert_eq!(replica_b.query(), true);
+        assert_eq!(replica_a.query(Read::new()), true);
+        assert_eq!(replica_b.query(Read::new()), true);
     }
 
     // #[cfg(feature = "op_weaver")]

@@ -4,8 +4,12 @@ use crate::{
     crdt::list::eg_walker::List as SimpleList,
     protocol::{
         clock::version_vector::Version,
+        crdt::pure_crdt::{QueryOperation, Read},
         event::{id::EventId, Event},
-        state::{event_graph::EventGraph, log::IsLog},
+        state::{
+            event_graph::EventGraph,
+            log::{EvalNested, IsLog},
+        },
     },
     HashMap,
 };
@@ -120,7 +124,8 @@ where
                     .effect(child_event);
             }
             List::Set { pos, value } => {
-                let positions = self.position.eval();
+                // TODO: this precondition check should not appear here
+                let positions = self.position.eval(Read::new());
                 if pos >= positions.len() {
                     panic!(
                         "Set position {} out of bounds (len={})",
@@ -142,16 +147,6 @@ where
         }
     }
 
-    fn eval(&self) -> Self::Value {
-        let mut list = Self::Value::new();
-        let positions = self.position.eval();
-        for id in positions.iter() {
-            let child = self.children.get(id).unwrap();
-            list.push(child.eval());
-        }
-        list
-    }
-
     fn stabilize(&mut self, version: &Version) {
         for child in self.children.values_mut() {
             child.stabilize(version);
@@ -171,6 +166,40 @@ where
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn prepare(op: Self::Op) -> Self::Op {
+        op
+    }
+
+    fn is_enabled(&self, _op: &Self::Op) -> bool {
+        true
+    }
+
+    fn eval<Q>(&self, q: Q) -> Q::Response
+    where
+        Q: QueryOperation,
+        Self: EvalNested<Q>,
+    {
+        Self::execute_query(self, q)
+    }
+}
+
+impl<L> EvalNested<Read<<Self as IsLog>::Value>> for ListLog<L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+{
+    fn execute_query(
+        &self,
+        _q: Read<<Self as IsLog>::Value>,
+    ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
+        let mut list = Vec::new();
+        let positions = self.position.execute_query(Read::new());
+        for id in positions.iter() {
+            let child = self.children.get(id).unwrap();
+            list.push(child.execute_query(Read::new()));
+        }
+        list
+    }
 }
 
 #[cfg(test)]
@@ -181,7 +210,7 @@ mod tests {
             list::nested_list::{List, ListLog},
             test_util::twins_log,
         },
-        protocol::{replica::IsReplica, state::po_log::VecLog},
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica, state::po_log::VecLog},
     };
 
     #[test]
@@ -191,32 +220,32 @@ mod tests {
         let event = replica_a.send(List::insert(0, Counter::Inc(10))).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), vec![10]);
-        assert_eq!(replica_b.query(), vec![10]);
+        assert_eq!(replica_a.query(Read::new()), vec![10]);
+        assert_eq!(replica_b.query(Read::new()), vec![10]);
 
         let event = replica_b.send(List::set(0, Counter::Dec(5))).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), vec![5]);
-        assert_eq!(replica_b.query(), vec![5]);
+        assert_eq!(replica_a.query(Read::new()), vec![5]);
+        assert_eq!(replica_b.query(Read::new()), vec![5]);
 
         let event = replica_a.send(List::insert(1, Counter::Inc(10))).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), vec![5, 10]);
-        assert_eq!(replica_b.query(), vec![5, 10]);
+        assert_eq!(replica_a.query(Read::new()), vec![5, 10]);
+        assert_eq!(replica_b.query(Read::new()), vec![5, 10]);
 
         let event = replica_a.send(List::set(0, Counter::Inc(1))).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), vec![6, 10]);
-        assert_eq!(replica_b.query(), vec![6, 10]);
+        assert_eq!(replica_a.query(Read::new()), vec![6, 10]);
+        assert_eq!(replica_b.query(Read::new()), vec![6, 10]);
 
         let event = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), vec![10]);
-        assert_eq!(replica_b.query(), vec![10]);
+        assert_eq!(replica_a.query(Read::new()), vec![10]);
+        assert_eq!(replica_b.query(Read::new()), vec![10]);
 
         let event_a = replica_a.send(List::insert(1, Counter::Inc(21))).unwrap();
         let event_b = replica_b.send(List::delete(0)).unwrap();
@@ -224,8 +253,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(), vec![21]);
-        assert_eq!(replica_b.query(), vec![21]);
+        assert_eq!(replica_a.query(Read::new()), vec![21]);
+        assert_eq!(replica_b.query(Read::new()), vec![21]);
     }
 
     #[test]
@@ -237,7 +266,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(), vec![10, 20]);
-        assert_eq!(replica_b.query(), vec![10, 20]);
+        assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
+        assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
     }
 }

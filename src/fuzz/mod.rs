@@ -146,14 +146,14 @@ pub fn runner<L>(
     }
 
     // Check convergence
-    let first_value = replicas[0].query();
+    let first_value = replicas[0].query(Read::new());
     let num_delivered_events = replicas[0].num_delivered_events();
 
     // println!(
     //     "Replica {} delivered {} events and has state: {:?}",
     //     replicas[0].id(),
     //     replicas[0].num_delivered_events(),
-    //     replicas[0].query()
+    //     replicas[0].query(Read::new())
     // );
     // let mut outbox_events = replicas[0]
     //     .tcsb()
@@ -186,7 +186,7 @@ pub fn runner<L>(
             //     "Replica {} delivered {} events and has state: {:?}",
             //     r.id(),
             //     r.num_delivered_events(),
-            //     r.query()
+            //     r.query(Read::new())
             // );
             // let mut outbox_events = r
             //     .tcsb()
@@ -217,14 +217,14 @@ pub fn runner<L>(
                 r.id()
             );
         }
-        let value = r.query();
+        let value = r.query(Read::new());
         if !compare(&first_value, &value) {
             // for (_, r) in replicas.iter().enumerate() {
             //     println!(
             //         "Replica {} delivered {} events and has state: {:?}",
             //         r.id(),
             //         r.num_delivered_events(),
-            //         r.query()
+            //         r.query(Read::new())
             //     );
             //     let mut outbox_events = r
             //         .tcsb()

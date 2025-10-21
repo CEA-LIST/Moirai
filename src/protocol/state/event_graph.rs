@@ -12,9 +12,12 @@ use petgraph::{
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::PureCRDT,
+        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation},
         event::{id::EventId, tagged_op::TaggedOp, Event},
-        state::{log::IsLog, unstable_state::IsUnstableState},
+        state::{
+            log::{EvalNested, IsLog},
+            unstable_state::IsUnstableState,
+        },
     },
     HashMap, HashSet,
 };
@@ -31,8 +34,8 @@ impl<O> IsLog for EventGraph<O>
 where
     O: PureCRDT + Clone,
 {
-    type Op = O;
     type Value = O::Value;
+    type Op = O;
 
     fn new() -> Self {
         assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R && O::DISABLE_STABILIZE);
@@ -41,10 +44,6 @@ where
 
     fn effect(&mut self, event: Event<Self::Op>) {
         IsUnstableState::append(self, event);
-    }
-
-    fn eval(&self) -> Self::Value {
-        O::eval(&O::StableState::default(), self)
     }
 
     fn stabilize(&mut self, _version: &Version) {}
@@ -68,9 +67,9 @@ where
         IsUnstableState::is_empty(self)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        O::is_enabled(op, || O::eval(&O::StableState::default(), self))
-    }
+    // fn is_enabled(&self, op: &Self::Op) -> bool {
+    //     O::is_enabled(op, || O::eval(&O::StableState::default(), self))
+    // }
 }
 
 impl<O> IsUnstableState<O> for EventGraph<O>
@@ -277,5 +276,15 @@ impl<O> EventGraph<O> {
         }
 
         collected.values().cloned().collect()
+    }
+}
+
+impl<O, Q> EvalNested<Q> for EventGraph<O>
+where
+    O: PureCRDT + Clone + Eval<Q>,
+    Q: QueryOperation,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        O::execute_query(q, &O::StableState::default(), self)
     }
 }

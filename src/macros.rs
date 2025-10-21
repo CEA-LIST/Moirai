@@ -8,7 +8,7 @@ macro_rules! record {
             #[derive(Clone, Debug)]
             pub enum $name {
                 $(
-                    [<$field:camel>](< $T as $crate::protocol::state::log::IsLog>::Op),
+                    [<$field:camel>](<$T as $crate::protocol::state::log::IsLog>::Op),
                 )*
             }
 
@@ -19,7 +19,7 @@ macro_rules! record {
                 )*
             }
 
-            #[derive(Debug, Default)]
+            #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
                 $(
                     pub $field: $T,
@@ -27,8 +27,8 @@ macro_rules! record {
             }
 
             impl $crate::protocol::state::log::IsLog for [<$name Log>] {
-                type Op = $name;
                 type Value = [<$name Value>];
+                type Op = $name;
 
                 fn new() -> Self {
                     Self {
@@ -45,14 +45,6 @@ macro_rules! record {
                                 let child_op = $crate::protocol::event::Event::unfold(event, op);
                                 self.$field.effect(child_op);
                             }
-                        )*
-                    }
-                }
-
-                fn eval(&self) -> Self::Value {
-                    [<$name Value>] {
-                        $(
-                            $field: self.$field.eval(),
                         )*
                     }
                 }
@@ -77,10 +69,21 @@ macro_rules! record {
                     true $(&& self.$field.is_empty())*
                 }
 
+                // TODO: change
                 fn is_enabled(&self, op: &Self::Op) -> bool {
                     match op {
                         $(
                             $name::[<$field:camel>](o) => self.$field.is_enabled(o),
+                        )*
+                    }
+                }
+            }
+
+            impl $crate::protocol::state::log::EvalNested<$crate::protocol::crdt::pure_crdt::Read<<Self as $crate::protocol::state::log::IsLog>::Value>> for [<$name Log>] {
+                fn execute_query(&self, _q: $crate::protocol::crdt::pure_crdt::Read<<Self as $crate::protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
+                    [<$name Value>] {
+                        $(
+                            $field: self.$field.execute_query($crate::protocol::crdt::pure_crdt::Read::new()),
                         )*
                     }
                 }

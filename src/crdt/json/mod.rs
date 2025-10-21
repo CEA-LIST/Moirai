@@ -346,8 +346,8 @@
 //         replica_b.receive(event_a);
 //         replica_a.receive(event_b);
 
-//         println!("{}", replica_a.query());
-//         println!("{}", replica_b.query());
+//         println!("{}", replica_a.query(Read::new()));
+//         println!("{}", replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -371,8 +371,8 @@
 //             .unwrap();
 //         replica_a.receive(event_b);
 
-//         println!("{}", replica_a.query());
-//         println!("{}", replica_b.query());
+//         println!("{}", replica_a.query(Read::new()));
+//         println!("{}", replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -385,8 +385,8 @@
 //             )))
 //             .unwrap();
 //         replica_b.receive(event_a);
-//         println!("A: {}", replica_a.query());
-//         println!("B: {}", replica_b.query());
+//         println!("A: {}", replica_a.query(Read::new()));
+//         println!("B: {}", replica_b.query(Read::new()));
 //         let event_b = replica_b
 //             .send(Json::Object(UWMap::Update(
 //                 "test".to_string(),
@@ -397,14 +397,14 @@
 //             )))
 //             .unwrap();
 //         println!("-----");
-//         println!("B: {}", replica_b.query());
+//         println!("B: {}", replica_b.query(Read::new()));
 //         let event_a = replica_a.send(Json::Bool(EWFlag::Enable)).unwrap();
-//         println!("A: {}", replica_a.query());
+//         println!("A: {}", replica_a.query(Read::new()));
 //         replica_a.receive(event_b);
 //         replica_b.receive(event_a);
 //         println!("-----");
-//         println!("A: {}", replica_a.query());
-//         println!("B: {}", replica_b.query());
+//         println!("A: {}", replica_a.query(Read::new()));
+//         println!("B: {}", replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -431,16 +431,16 @@
 //         replica_b.receive(event_a);
 //         replica_a.receive(event_b);
 
-//         println!("A: {}", replica_a.query());
-//         println!("B: {}", replica_b.query());
+//         println!("A: {}", replica_a.query(Read::new()));
+//         println!("B: {}", replica_b.query(Read::new()));
 //     }
 
 //     #[test]
 //     fn empty_root() {
 //         let (replica_a, replica_b) = twins_log::<JsonLogContainer>();
 
-//         assert_eq!(Value::Null, replica_a.query());
-//         assert_eq!(Value::Null, replica_b.query());
+//         assert_eq!(Value::Null, replica_a.query(Read::new()));
+//         assert_eq!(Value::Null, replica_b.query(Read::new()));
 //     }
 
 //     #[cfg(feature = "fuzz")]

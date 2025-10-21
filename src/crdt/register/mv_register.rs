@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::PureCRDT,
+        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
         event::{tag::Tag, tagged_op::TaggedOp},
         state::unstable_state::IsUnstableState,
     },
@@ -50,9 +50,18 @@ where
     ) -> bool {
         !is_conc
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
-        let mut set = Self::Value::default();
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for MVRegister<V>
+where
+    V: Debug + Clone + Eq + Hash + Default,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &<MVRegister<V> as PureCRDT>::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+        let mut set = HashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let MVRegister::Write(v) = o {
                 set.insert(v.clone());
@@ -69,7 +78,7 @@ mod tests {
             register::mv_register::MVRegister,
             test_util::{triplet, twins},
         },
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
         set_from_slice, HashSet,
     };
 
@@ -80,15 +89,18 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("a")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), HashSet::from_iter(["a"].iter().cloned()));
-        assert_eq!(replica_b.query(), set_from_slice(&["a"]));
+        assert_eq!(
+            replica_a.query(Read::new()),
+            HashSet::from_iter(["a"].iter().cloned())
+        );
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
 
         let event = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = set_from_slice(&["b"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -98,14 +110,14 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), set_from_slice(&["c"]));
-        assert_eq!(replica_b.query(), set_from_slice(&["c"]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), set_from_slice(&["d"]));
-        assert_eq!(replica_b.query(), set_from_slice(&["d"]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
@@ -113,8 +125,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = set_from_slice(&["b", "a"]);
-        let eval_a = replica_a.query();
-        let eval_b = replica_b.query();
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -126,14 +138,14 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), set_from_slice(&["c"]));
-        assert_eq!(replica_b.query(), set_from_slice(&["c"]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), set_from_slice(&["d"]));
-        assert_eq!(replica_b.query(), set_from_slice(&["d"]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_aa = replica_a.send(MVRegister::Write("aa")).unwrap();
@@ -145,8 +157,8 @@ mod tests {
         replica_b.receive(event_aa);
 
         let result = set_from_slice(&["aa", "b"]);
-        let eval_a = replica_a.query();
-        let eval_b = replica_b.query();
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -156,19 +168,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<u32>>();
 
         let event_a_1 = replica_a.send(MVRegister::Write(4)).unwrap();
-        assert_eq!(replica_a.query(), set_from_slice(&[4]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4]));
         let event_b_1 = replica_b.send(MVRegister::Write(5)).unwrap();
-        assert_eq!(replica_b.query(), set_from_slice(&[5]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[5]));
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(), set_from_slice(&[4, 5]));
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4, 5]));
 
         let event_b_2 = replica_b.send(MVRegister::Write(2)).unwrap();
-        assert_eq!(replica_b.query(), set_from_slice(&[2]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[2]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(), set_from_slice(&[4, 2]));
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4, 2]));
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     // #[cfg(feature = "utils")]

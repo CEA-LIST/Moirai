@@ -74,7 +74,7 @@
 //         }
 //         assert_eq!(tcsbs[i].my_clock().sum(), ops.len());
 //         assert!(
-//             cmp(&tcsbs[i].query(), &value),
+//             cmp(&tcsbs[i].query(Read::new()), &value),
 //             "Convergence check failed for sequence {:?}",
 //             permutations[i]
 //                 .iter()

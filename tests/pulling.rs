@@ -2,11 +2,11 @@
 
 // Tests for event pulling in CRDTs.
 
-use moirai::crdt::test_util::twins;
-use moirai::crdt::{counter::resettable_counter::Counter, set::aw_set::AWSet};
-use moirai::protocol::broadcast::tcsb::IsTcsbTest;
-use moirai::protocol::replica::IsReplica;
-use moirai::set_from_slice;
+use moirai::{
+    crdt::{counter::resettable_counter::Counter, set::aw_set::AWSet, test_util::twins},
+    protocol::{broadcast::tcsb::IsTcsbTest, crdt::pure_crdt::Read, replica::IsReplica},
+    set_from_slice,
+};
 
 #[test]
 fn events_since_concurrent_counter() {
@@ -18,7 +18,7 @@ fn events_since_concurrent_counter() {
     let _ = replica_a.send(Counter::Inc(1)).unwrap();
     let _ = replica_a.send(Counter::Inc(1)).unwrap();
     let _ = replica_a.send(Counter::Inc(1)).unwrap();
-    assert_eq!(6, replica_a.query());
+    assert_eq!(6, replica_a.query(Read::new()));
 
     let _ = replica_b.send(Counter::Dec(1)).unwrap();
     let _ = replica_b.send(Counter::Dec(1)).unwrap();
@@ -26,7 +26,7 @@ fn events_since_concurrent_counter() {
     let _ = replica_b.send(Counter::Dec(1)).unwrap();
     let _ = replica_b.send(Counter::Dec(1)).unwrap();
     let _ = replica_b.send(Counter::Dec(1)).unwrap();
-    assert_eq!(-6, replica_b.query());
+    assert_eq!(-6, replica_b.query(Read::new()));
 
     let msg_batch = replica_a.pull(replica_b.since());
     assert_eq!(6, msg_batch.batch().events().len());
@@ -40,8 +40,8 @@ fn events_since_concurrent_counter() {
 
     assert_eq!(replica_a.tcsb().inbox_len(), 0);
     assert_eq!(replica_b.tcsb().inbox_len(), 0);
-    assert_eq!(replica_a.query(), 0);
-    assert_eq!(replica_b.query(), 0);
+    assert_eq!(replica_a.query(Read::new()), 0);
+    assert_eq!(replica_b.query(Read::new()), 0);
 }
 
 #[test]
@@ -66,8 +66,11 @@ fn event_since_concurrent_aw_set() {
 
     assert_eq!(replica_a.tcsb().inbox_len(), 0);
     assert_eq!(replica_b.tcsb().inbox_len(), 0);
-    assert_eq!(replica_a.query(), replica_b.query());
-    assert_eq!(replica_a.query(), set_from_slice(&["a", "b", "c", "p"]));
+    assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    assert_eq!(
+        replica_a.query(Read::new()),
+        set_from_slice(&["a", "b", "c", "p"])
+    );
 }
 
 #[test]
@@ -95,6 +98,9 @@ fn event_since_concurrent_complex_aw_set() {
 
     assert_eq!(replica_a.tcsb().inbox_len(), 0);
     assert_eq!(replica_b.tcsb().inbox_len(), 0);
-    assert_eq!(replica_a.query(), replica_b.query());
-    assert_eq!(replica_a.query(), set_from_slice(&["b", "c", "p"]));
+    assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    assert_eq!(
+        replica_a.query(Read::new()),
+        set_from_slice(&["b", "c", "p"])
+    );
 }

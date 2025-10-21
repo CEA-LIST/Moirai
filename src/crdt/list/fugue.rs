@@ -257,8 +257,8 @@
 //         replica_b.receive(event);
 
 //         // Evaluate
-//         assert_eq!(replica_a.query(), "A");
-//         assert_eq!(replica_b.query(), "A");
+//         assert_eq!(replica_a.query(Read::new()), "A");
+//         assert_eq!(replica_b.query(Read::new()), "A");
 //     }
 
 //     #[test]
@@ -271,7 +271,7 @@
 //         let id1 = extract_item_id_from_event(&event1).unwrap();
 
 //         replica_b.receive(event1);
-//         let result = replica_a.query();
+//         let result = replica_a.query(Read::new());
 //         assert_eq!(result, "H");
 //         let event2a = replica_a
 //             .send(FugueTextOp::insert('e', Some(id1.clone()), None))
@@ -281,9 +281,9 @@
 //             .unwrap();
 //         replica_b.receive(event2a);
 //         replica_a.receive(event2b);
-//         let result2b = replica_b.query();
+//         let result2b = replica_b.query(Read::new());
 //         assert_eq!(result2b, "Hei");
-//         assert!(replica_a.query() == replica_b.query());
+//         assert!(replica_a.query(Read::new()) == replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -304,9 +304,9 @@
 //         replica_b.receive(event2a);
 
 //         // Evaluate
-//         let result = replica_a.query();
+//         let result = replica_a.query(Read::new());
 //         assert_eq!(result, "");
-//         assert_eq!(replica_a.query(), replica_b.query());
+//         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -330,9 +330,9 @@
 //         replica_b.receive(event2a);
 
 //         // Evaluate
-//         let result = replica_a.query();
+//         let result = replica_a.query(Read::new());
 //         assert_eq!(result, "B");
-//         assert_eq!(replica_a.query(), replica_b.query());
+//         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 //     }
 
 //     #[test]
@@ -345,7 +345,7 @@
 //         let id1 = extract_item_id_from_event(&event1).unwrap();
 
 //         replica_b.receive(event1);
-//         let result = replica_a.query();
+//         let result = replica_a.query(Read::new());
 //         assert_eq!(result, "H");
 //         // let id1 = EventId::new("a".to_string(), 0);
 //         let event2a = replica_a
@@ -358,7 +358,7 @@
 //         let id2b = extract_item_id_from_event(&event2b);
 //         replica_b.receive(event2a);
 //         replica_a.receive(event2b);
-//         let result2b = replica_b.query();
+//         let result2b = replica_b.query(Read::new());
 //         assert_eq!(result2b, "Hei");
 
 //         let event3a = replica_a
@@ -371,8 +371,8 @@
 
 //         replica_b.receive(event3a);
 //         replica_b.receive(event4a);
-//         //let result = replica_a.query();
-//         assert!(replica_a.query() == replica_b.query());
-//         assert_eq!("He hi", replica_a.query());
+//         //let result = replica_a.query(Read::new());
+//         assert!(replica_a.query(Read::new()) == replica_b.query(Read::new()));
+//         assert_eq!("He hi", replica_a.query(Read::new()));
 //     }
 // }
