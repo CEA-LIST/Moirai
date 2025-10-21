@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     crdt::{
@@ -6,7 +6,7 @@ use crate::{
         map::uw_map::{UWMap, UWMapLog},
     },
     protocol::state::po_log::VecLog,
-    HashMap,
+    HashMap, HashSet,
 };
 
 pub type EWFlagSet<T> = UWMapLog<T, VecLog<EWFlag>>;
@@ -42,7 +42,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crdt::test_util::twins_log, protocol::replica::IsReplica};
+    use crate::{
+        crdt::test_util::twins_log,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+    };
 
     #[test]
     fn test_ewflag_set() {
@@ -59,7 +62,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        MapVal(replica_a.query()).to_set();
-        MapVal(replica_b.query()).to_set();
+        MapVal(replica_a.query(Read::new())).to_set();
+        MapVal(replica_b.query(Read::new())).to_set();
     }
 }

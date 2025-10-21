@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::protocol::{
-    crdt::pure_crdt::PureCRDT,
+    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
     event::{id::EventId, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableState,
 };
@@ -377,7 +377,24 @@ where
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_STABILIZE: bool = true;
 
-    fn eval(_stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+    // fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
+    //     let eval = state();
+    //     match op {
+    //         List::Insert { pos, .. } => *pos <= eval.len(),
+    //         List::Delete { pos } => *pos < eval.len(),
+    //     }
+    // }
+}
+
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for List<V>
+where
+    V: Debug + Clone,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        _stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut document = Document::default();
         let mut snapshot: Vec<V> = Vec::new();
 
@@ -400,14 +417,6 @@ where
 
         snapshot.into_iter().collect()
     }
-
-    fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
-        let eval = state();
-        match op {
-            List::Insert { pos, .. } => *pos <= eval.len(),
-            List::Delete { pos } => *pos < eval.len(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -429,8 +438,8 @@ mod tests {
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
 
-        assert_eq!(to_string(&replica_a.query()), "A");
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(to_string(&replica_a.query(Read::new())), "A");
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -439,20 +448,20 @@ mod tests {
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
-        assert_eq!(to_string(&replica_a.query()), "H");
+        assert_eq!(to_string(&replica_a.query(Read::new())), "H");
 
         let e2a = replica_a.send(List::insert('e', 1)).unwrap();
         let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
 
-        let res_b = to_string(&replica_b.query());
+        let res_b = to_string(&replica_b.query(Read::new()));
         assert!(
             res_b == "Hei" || res_b == "Hie",
             "Unexpected order: {}",
             res_b
         );
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -464,13 +473,13 @@ mod tests {
         replica_a.receive(e2);
         replica_b.receive(e1);
 
-        let res_a = to_string(&replica_a.query());
+        let res_a = to_string(&replica_a.query(Read::new()));
         assert!(
             res_a == "Hi" || res_a == "iH",
             "Unexpected order: {}",
             res_a
         );
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -483,8 +492,11 @@ mod tests {
         let e2 = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(e2);
 
-        assert_eq!(to_string(&replica_a.query()), "");
-        assert_eq!(to_string(&replica_a.query()), to_string(&replica_b.query()));
+        assert_eq!(to_string(&replica_a.query(Read::new())), "");
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
     }
 
     #[test]
@@ -499,8 +511,11 @@ mod tests {
         replica_a.receive(eins);
         replica_b.receive(edel);
 
-        assert_eq!(to_string(&replica_a.query()), "B");
-        assert_eq!(to_string(&replica_a.query()), to_string(&replica_b.query()));
+        assert_eq!(to_string(&replica_a.query(Read::new())), "B");
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
     }
 
     #[test]
@@ -509,18 +524,21 @@ mod tests {
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
-        assert_eq!(to_string(&replica_a.query()), "H");
+        assert_eq!(to_string(&replica_a.query(Read::new())), "H");
 
         let e2a = replica_a.send(List::insert('e', 1)).unwrap();
         let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
-        assert!(to_string(&replica_b.query()) == "Hei" || to_string(&replica_b.query()) == "Hie");
+        assert!(
+            to_string(&replica_b.query(Read::new())) == "Hei"
+                || to_string(&replica_b.query(Read::new())) == "Hie"
+        );
 
         // Insert a space between e and i from A's perspective (which will be position 2 if e<i)
         let e3 = replica_a.send(List::insert(' ', 2)).unwrap();
         replica_b.receive(e3);
-        let res = to_string(&replica_a.query());
+        let res = to_string(&replica_a.query(Read::new()));
         // Depending on tie-breaker, expected is either "He i" or "Hi e". We accept either space between letters.
         assert!(res == "He i" || res == "Hi e", "Unexpected result: {}", res);
     }
@@ -564,16 +582,16 @@ mod tests {
         replica_a.receive(e7.clone());
         // Merge both replicas so they see all events before e8
         // At this point both should be "Hey"
-        // assert_eq!(replica_a.query(), "Hey");
-        // assert_eq!(replica_a.query(), replica_b.query());
+        // assert_eq!(replica_a.query(Read::new()), "Hey");
+        // assert_eq!(replica_a.query(Read::new()));
 
         // e8: Insert(3, '!')
         let e8 = replica_b.send(List::insert('!', 3)).unwrap();
         replica_a.receive(e8.clone());
 
         // Final result should be "Hey!"
-        assert_eq!(to_string(&replica_a.query()), "Hey!");
-        // assert_eq!(to_string(&replica_a.query()), to_string(&replica_b.query()));
+        assert_eq!(to_string(&replica_a.query(Read::new())), "Hey!");
+        // assert_eq!(to_string(&replica_a.query(Read::new())));
     }
 
     #[cfg(feature = "fuzz")]

@@ -1,7 +1,12 @@
 use std::{fmt::Debug, hash::Hash};
 
 use crate::{
-    protocol::{clock::version_vector::Version, event::Event, state::log::IsLog},
+    protocol::{
+        clock::version_vector::Version,
+        crdt::pure_crdt::{Get, QueryOperation, Read},
+        event::Event,
+        state::log::{EvalNested, IsLog},
+    },
     HashMap,
 };
 
@@ -50,10 +55,9 @@ impl<K, L> IsLog for UWMapLog<K, L>
 where
     L: IsLog,
     K: Clone + Debug + Hash + Eq,
-    <L as IsLog>::Value: Default + PartialEq,
 {
-    type Op = UWMap<K, L::Op>;
     type Value = HashMap<K, L::Value>;
+    type Op = UWMap<K, L::Op>;
 
     fn new() -> Self {
         Self::default()
@@ -78,17 +82,6 @@ where
         }
     }
 
-    fn eval(&self) -> Self::Value {
-        let mut map = Self::Value::default();
-        for (k, v) in &self.children {
-            let val = v.eval();
-            if val != <L as IsLog>::Value::default() {
-                map.insert(k.clone(), val);
-            }
-        }
-        map
-    }
-
     fn stabilize(&mut self, version: &Version) {
         for child in self.children.values_mut() {
             child.stabilize(version);
@@ -110,6 +103,50 @@ where
     }
 }
 
+impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    K: Clone + Debug + Hash + Eq + PartialEq,
+    <L as IsLog>::Value: Default + PartialEq,
+{
+    fn execute_query(
+        &self,
+        _q: Read<Self::Value>,
+    ) -> <Read<Self::Value> as QueryOperation>::Response {
+        let mut map = HashMap::default();
+        for (k, v) in &self.children {
+            let val = v.execute_query(Read::new());
+            if val != <L as IsLog>::Value::default() {
+                map.insert(k.clone(), val);
+            }
+        }
+        map
+    }
+}
+
+impl<K, L> EvalNested<Get<K, <L as IsLog>::Value>> for UWMapLog<K, L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    K: Clone + Debug + Hash + Eq + PartialEq,
+    <L as IsLog>::Value: Default + PartialEq,
+{
+    fn execute_query(
+        &self,
+        q: Get<K, <L as IsLog>::Value>,
+    ) -> <Get<K, <L as IsLog>::Value> as QueryOperation>::Response {
+        if let Some(child) = self.children.get(&q.0) {
+            let val = child.execute_query(Read::new());
+            if val != <L as IsLog>::Value::default() {
+                Some(val)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -119,12 +156,10 @@ mod tests {
             test_util::{triplet_log, twins_log},
         },
         protocol::{
+            crdt::pure_crdt::{Get, Read},
             event::tagged_op::TaggedOp,
             replica::IsReplica,
-            state::{
-                log::IsLog,
-                po_log::{POLog, VecLog},
-            },
+            state::po_log::{POLog, VecLog},
         },
         record, HashMap,
     };
@@ -156,8 +191,8 @@ mod tests {
         let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
     }
 
     #[test]
@@ -174,8 +209,9 @@ mod tests {
 
         let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(Some(10), replica_a.query(Get::new("a".to_string())));
     }
 
     #[test]
@@ -211,7 +247,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
+        let mut map = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -226,8 +262,8 @@ mod tests {
                 second: -7,
             },
         );
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
     }
 
     #[test]
@@ -247,7 +283,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
+        let mut map = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -262,8 +298,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
 
         let event_a = replica_a
             .send(UWMap::Update(
@@ -275,7 +311,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
+        let mut map = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -290,8 +326,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
 
         let event = replica_a
             .send(UWMap::Update(
@@ -304,7 +340,7 @@ mod tests {
         let event = replica_a.send(UWMap::Remove("b".to_string())).unwrap();
         replica_b.receive(event);
 
-        let mut map: <UWMapLog<String, DuetLog> as IsLog>::Value = HashMap::default();
+        let mut map = HashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -312,8 +348,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query());
-        assert_eq!(map, replica_b.query());
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
     }
 
     #[test]
@@ -379,8 +415,8 @@ mod tests {
         replica_c.receive(event_a_2.clone());
         replica_c.receive(event_a_1.clone());
 
-        assert_eq!(replica_a.query(), replica_b.query());
-        assert_eq!(replica_c.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
     }
 
     // #[cfg(feature = "utils")]

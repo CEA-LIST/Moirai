@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use crate::protocol::{
-    crdt::pure_crdt::PureCRDT,
+    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
     event::{
         tag::{Lww, Tag},
         tagged_op::TaggedOp,
@@ -54,8 +54,17 @@ impl<V: Default + Debug + Clone> PureCRDT for LWWRegister<V> {
             true
         }
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for LWWRegister<V>
+where
+    V: Default + Debug + Clone,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &<LWWRegister<V> as PureCRDT>::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut value = V::default();
         for op in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             match op {
@@ -73,7 +82,7 @@ mod tests {
             register::lww_register::LWWRegister,
             test_util::{triplet, twins},
         },
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
     };
 
     #[test]
@@ -91,8 +100,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = "World".to_string();
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -102,20 +111,20 @@ mod tests {
         let event_a = replica_a
             .send(LWWRegister::Write("Hello".to_string()))
             .unwrap();
-        assert!(replica_a.query() == "Hello");
+        assert!(replica_a.query(Read::new()) == "Hello");
         let event_b = replica_b
             .send(LWWRegister::Write("World".to_string()))
             .unwrap();
-        assert!(replica_b.query() == "World");
+        assert!(replica_b.query(Read::new()) == "World");
 
         replica_a.receive(event_b.clone());
-        assert_eq!(replica_a.query(), "World");
+        assert_eq!(replica_a.query(Read::new()), "World");
         replica_b.receive(event_a.clone());
-        assert_eq!(replica_b.query(), "World");
+        assert_eq!(replica_b.query(Read::new()), "World");
         replica_c.receive(event_a);
-        assert_eq!(replica_c.query(), "Hello");
+        assert_eq!(replica_c.query(Read::new()), "Hello");
         replica_c.receive(event_b);
-        assert_eq!(replica_c.query(), "World");
+        assert_eq!(replica_c.query(Read::new()), "World");
     }
 
     #[test]
@@ -136,9 +145,9 @@ mod tests {
         replica_c.receive(event_a_1.clone());
         replica_a.receive(event_b_1);
 
-        assert_eq!(replica_a.query(), "y".to_string());
-        assert_eq!(replica_b.query(), "y".to_string());
-        assert_eq!(replica_c.query(), "y".to_string());
+        assert_eq!(replica_a.query(Read::new()), "y".to_string());
+        assert_eq!(replica_b.query(Read::new()), "y".to_string());
+        assert_eq!(replica_c.query(Read::new()), "y".to_string());
     }
 
     #[cfg(feature = "fuzz")]

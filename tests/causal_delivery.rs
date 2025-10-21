@@ -7,7 +7,7 @@ use moirai::{
         counter::resettable_counter::Counter,
         test_util::{triplet, twins},
     },
-    protocol::replica::IsReplica,
+    protocol::{crdt::pure_crdt::Read, replica::IsReplica},
 };
 
 #[test]
@@ -20,8 +20,8 @@ fn causal_delivery_twins() {
     replica_b.receive(event_a_2);
     replica_b.receive(event_a_1);
 
-    assert_eq!(replica_b.query(), 2);
-    assert_eq!(replica_a.query(), 2);
+    assert_eq!(replica_b.query(Read::new()), 2);
+    assert_eq!(replica_a.query(Read::new()), 2);
 
     let event_b_1 = replica_b.send(Counter::Inc(1)).unwrap();
     let event_b_2 = replica_b.send(Counter::Inc(1)).unwrap();
@@ -33,8 +33,8 @@ fn causal_delivery_twins() {
     replica_a.receive(event_b_4);
     replica_a.receive(event_b_2);
 
-    assert_eq!(replica_a.query(), 6);
-    assert_eq!(replica_b.query(), 6);
+    assert_eq!(replica_a.query(Read::new()), 6);
+    assert_eq!(replica_b.query(Read::new()), 6);
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn causal_delivery_triplet() {
     replica_c.receive(event_a.clone());
     replica_c.receive(event_b.clone());
 
-    assert_eq!(replica_a.query(), -5);
-    assert_eq!(replica_b.query(), -5);
-    assert_eq!(replica_c.query(), -5);
+    assert_eq!(replica_a.query(Read::new()), -5);
+    assert_eq!(replica_b.query(Read::new()), -5);
+    assert_eq!(replica_c.query(Read::new()), -5);
 }

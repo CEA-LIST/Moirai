@@ -6,9 +6,10 @@ use crate::{
             message::{BatchMessage, EventMessage, SinceMessage},
             tcsb::{IsTcsb, IsTcsbTest},
         },
+        crdt::pure_crdt::QueryOperation,
         event::Event,
         membership::{ReplicaId, ReplicaIdOwned},
-        state::log::{IsLog, IsLogTest},
+        state::log::{EvalNested, IsLog, IsLogTest},
     },
     utils::intern_str::Interner,
 };
@@ -25,7 +26,9 @@ where
     fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>>;
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
     // TODO: Add support for custom queries
-    fn query(&self) -> L::Value;
+    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    where
+        L: EvalNested<Q>;
     fn update(&mut self, op: L::Op);
     fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
 }
@@ -80,8 +83,11 @@ where
         self.tcsb.pull(since)
     }
 
-    fn query(&self) -> L::Value {
-        self.state.eval()
+    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    where
+        L: EvalNested<Q>,
+    {
+        self.state.eval(q)
     }
 
     fn update(&mut self, op: L::Op) {

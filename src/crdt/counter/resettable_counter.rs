@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -24,7 +24,7 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
 
 impl<V> IsStableState<Counter<V>> for V
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
     fn len(&self) -> usize {
         // TODO: maybe len is not necessary. Is empty would be better
@@ -62,8 +62,9 @@ impl<V> PureCRDT for Counter<V>
 where
     V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
-    type StableState = V;
     type Value = V;
+    type StableState = V;
+
     const DISABLE_R_WHEN_NOT_R: bool = true;
 
     fn redundant_itself<'a>(
@@ -85,8 +86,17 @@ where
     ) -> bool {
         !is_conc && matches!(new_tagged_op.op(), Counter::Reset)
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for Counter<V>
+where
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
             match op {
@@ -120,6 +130,7 @@ mod tests {
             test_util::{triplet, twins},
         },
         protocol::{
+            crdt::pure_crdt::Read,
             replica::IsReplica,
             state::{log::IsLogTest, unstable_state::IsUnstableState},
         },
@@ -136,8 +147,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 0;
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -157,16 +168,16 @@ mod tests {
         replica_a.receive(event);
 
         let result = 8;
-        assert_eq!(replica_a.query(), result);
+        assert_eq!(replica_a.query(Read::new()), result);
         assert_eq!(replica_a.state().unstable().len(), 0);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 
         let event = replica_a.send(Counter::Inc(5)).unwrap();
         replica_b.receive(event);
 
         let result = 13;
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -188,9 +199,9 @@ mod tests {
         replica_c.receive(event_a_1);
 
         let result = 18;
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
-        assert_eq!(replica_a.query(), replica_c.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(Read::new()), replica_c.query(Read::new()));
     }
 
     // #[cfg(feature = "utils")]

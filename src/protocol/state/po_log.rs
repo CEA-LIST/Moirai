@@ -5,9 +5,13 @@ use crate::protocol::state::log::IsLogTest;
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, RedundancyRelation},
         event::{id::EventId, tagged_op::TaggedOp, Event},
-        state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
+        state::{
+            log::{EvalNested, IsLog},
+            stable_state::IsStableState,
+            unstable_state::IsUnstableState,
+        },
     },
     HashMap,
 };
@@ -29,8 +33,8 @@ where
     O: PureCRDT + Clone,
     U: IsUnstableState<O> + Default + Debug,
 {
-    type Op = O;
     type Value = O::Value;
+    type Op = O;
 
     fn new() -> Self {
         Self {
@@ -59,10 +63,6 @@ where
             }
             self.unstable.append(event);
         }
-    }
-
-    fn eval(&self) -> Self::Value {
-        O::eval(&self.stable, &self.unstable)
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -102,9 +102,9 @@ where
         self.stable.is_empty() && self.unstable.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        O::is_enabled(op, || O::eval(&self.stable, &self.unstable))
-    }
+    // fn is_enabled(&self, op: &Self::Op) -> bool {
+    //     O::is_enabled(op, || O::eval(&self.stable, &self.unstable))
+    // }
 }
 
 impl<O, U> Default for POLog<O, U>
@@ -143,6 +143,17 @@ where
             );
             boo
         });
+    }
+}
+
+impl<Q, O, U> EvalNested<Q> for POLog<O, U>
+where
+    Q: QueryOperation,
+    O: PureCRDT + Clone + Debug + Eval<Q>,
+    U: IsUnstableState<O> + Default + Debug,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        O::execute_query(q, &self.stable, &self.unstable)
     }
 }
 

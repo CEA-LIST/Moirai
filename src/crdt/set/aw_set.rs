@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+        crdt::pure_crdt::{Contains, Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
         event::{tag::Tag, tagged_op::TaggedOp},
         state::{stable_state::IsStableState, unstable_state::IsUnstableState},
     },
@@ -95,8 +95,17 @@ where
     ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for AWSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &<AWSet<V> as PureCRDT>::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut set = stable.clone();
         for o in unstable.iter() {
             if let AWSet::Add(v) = o.op() {
@@ -107,13 +116,33 @@ where
     }
 }
 
+impl<V> Eval<Contains<V>> for AWSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    fn execute_query(
+        q: Contains<V>,
+        stable: &<AWSet<V> as PureCRDT>::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Contains<V> as crate::protocol::crdt::pure_crdt::QueryOperation>::Response {
+        stable.contains(&q.0)
+            || unstable.iter().any(|o| {
+                if let AWSet::Add(v) = o.op() {
+                    v == &q.0
+                } else {
+                    false
+                }
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-
     use crate::{
         crdt::{set::aw_set::AWSet, test_util::bootstrap_n},
         protocol::{
             broadcast::tcsb::Tcsb,
+            crdt::pure_crdt::{Contains, Read},
             replica::IsReplica,
             state::{log::IsLogTest, po_log::VecLog, stable_state::IsStableState},
         },
@@ -130,15 +159,15 @@ mod tests {
         let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(set_from_slice(&["a"]), replica_a.query());
-        assert_eq!(set_from_slice(&["a"]), replica_b.query());
+        assert_eq!(set_from_slice(&["a"]), replica_a.query(Read::new()));
+        assert_eq!(set_from_slice(&["a"]), replica_b.query(Read::new()));
 
         let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
 
         let result = set_from_slice(&["b", "a"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
 
         let event = replica_a.send(AWSet::Remove("a")).unwrap();
         replica_b.receive(event);
@@ -147,8 +176,10 @@ mod tests {
         replica_a.receive(event);
 
         let result = set_from_slice(&["b", "c"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_b.query(), result);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(true, replica_a.query(Contains("b")));
+        assert_eq!(false, replica_a.query(Contains("a")));
     }
 
     #[test]
@@ -171,8 +202,8 @@ mod tests {
         replica_b.receive(event_a);
 
         let result = set_from_slice(&["b", "c"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -196,8 +227,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = HashSet::default();
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -223,8 +254,8 @@ mod tests {
         replica_b.receive(event_a);
 
         let result = set_from_slice(&["a", "b"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -250,8 +281,8 @@ mod tests {
         replica_b.receive(event_a);
 
         let result = set_from_slice(&["a", "c", "b"]);
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -267,8 +298,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(), set_from_slice(&["a"]));
-        assert_eq!(replica_b.query(), replica_a.query());
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
     }
 
     #[cfg(feature = "fuzz")]

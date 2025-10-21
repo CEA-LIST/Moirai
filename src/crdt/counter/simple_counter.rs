@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{PureCRDT, RedundancyRelation},
+    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
     event::tagged_op::TaggedOp,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -58,10 +58,20 @@ where
 {
     type Value = V;
     type StableState = V;
+
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_R_WHEN_NOT_R: bool = true;
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for Counter<V>
+where
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
             match op {
@@ -89,7 +99,7 @@ where
 mod tests {
     use crate::{
         crdt::{counter::simple_counter::Counter, test_util::twins},
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
     };
 
     #[test]
@@ -103,8 +113,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 0;
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -121,8 +131,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 5;
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     //     #[test]

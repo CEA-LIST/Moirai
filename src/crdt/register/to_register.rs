@@ -1,7 +1,9 @@
 use std::fmt::Debug;
 
 use crate::protocol::{
-    crdt::pure_crdt::PureCRDT, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableState,
+    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+    event::tagged_op::TaggedOp,
+    state::unstable_state::IsUnstableState,
 };
 
 #[derive(Clone, Debug)]
@@ -45,9 +47,18 @@ where
     ) -> bool {
         !is_conc
     }
+}
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
-        let mut val = Self::Value::default();
+impl<V> Eval<Read<<Self as PureCRDT>::Value>> for TORegister<V>
+where
+    V: Debug + Default + PartialOrd + Ord + Clone,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &<TORegister<V> as PureCRDT>::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+        let mut val = V::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let TORegister::Write(v) = o {
                 if v > &val {
@@ -66,7 +77,7 @@ mod tests {
             register::to_register::TORegister,
             test_util::{triplet, twins},
         },
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
     };
 
     #[test]
@@ -76,15 +87,15 @@ mod tests {
         let event = replica_a.send(TORegister::Write("a")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), "a");
-        assert_eq!(replica_b.query(), "a");
+        assert_eq!(replica_a.query(Read::new()), "a");
+        assert_eq!(replica_b.query(Read::new()), "a");
 
         let event = replica_b.send(TORegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = "b";
-        assert_eq!(replica_a.query(), result);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     #[test]
@@ -94,14 +105,14 @@ mod tests {
         let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), "c");
-        assert_eq!(replica_b.query(), "c");
+        assert_eq!(replica_a.query(Read::new()), "c");
+        assert_eq!(replica_b.query(Read::new()), "c");
 
         let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), "d");
-        assert_eq!(replica_b.query(), "d");
+        assert_eq!(replica_a.query(Read::new()), "d");
+        assert_eq!(replica_b.query(Read::new()), "d");
 
         let event_a = replica_a.send(TORegister::Write("a")).unwrap();
         let event_b = replica_b.send(TORegister::Write("b")).unwrap();
@@ -109,8 +120,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = "b";
-        let eval_a = replica_a.query();
-        let eval_b = replica_b.query();
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -122,14 +133,14 @@ mod tests {
         let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(), "c");
-        assert_eq!(replica_b.query(), "c");
+        assert_eq!(replica_a.query(Read::new()), "c");
+        assert_eq!(replica_b.query(Read::new()), "c");
 
         let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(), "d");
-        assert_eq!(replica_b.query(), "d");
+        assert_eq!(replica_a.query(Read::new()), "d");
+        assert_eq!(replica_b.query(Read::new()), "d");
 
         let event_a = replica_a.send(TORegister::Write("a")).unwrap();
         let event_aa = replica_a.send(TORegister::Write("aa")).unwrap();
@@ -141,8 +152,8 @@ mod tests {
         replica_b.receive(event_aa);
 
         let result = "b";
-        let eval_a = replica_a.query();
-        let eval_b = replica_b.query();
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -152,19 +163,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<TORegister<u32>>();
 
         let event_a_1 = replica_a.send(TORegister::Write(4)).unwrap();
-        assert_eq!(replica_a.query(), 4);
+        assert_eq!(replica_a.query(Read::new()), 4);
         let event_b_1 = replica_b.send(TORegister::Write(5)).unwrap();
-        assert_eq!(replica_b.query(), 5);
+        assert_eq!(replica_b.query(Read::new()), 5);
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(), 5);
+        assert_eq!(replica_a.query(Read::new()), 5);
 
         let event_b_2 = replica_b.send(TORegister::Write(2)).unwrap();
-        assert_eq!(replica_b.query(), 2);
+        assert_eq!(replica_b.query(Read::new()), 2);
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(), 4);
-        assert_eq!(replica_a.query(), replica_b.query());
+        assert_eq!(replica_a.query(Read::new()), 4);
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
     // #[cfg(feature = "utils")]

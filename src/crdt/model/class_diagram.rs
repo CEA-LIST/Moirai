@@ -6,7 +6,10 @@
 
 use std::cmp::Ordering;
 
-use petgraph::graph::DiGraph;
+use petgraph::{
+    dot::{Config, Dot},
+    graph::{DiGraph, NodeIndex},
+};
 
 use crate::{
     crdt::{
@@ -16,7 +19,7 @@ use crate::{
         register::{mv_register::MVRegister, to_register::TORegister},
     },
     protocol::state::po_log::VecLog,
-    record,
+    record, HashMap,
 };
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
@@ -201,174 +204,174 @@ pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationL
 pub type ClassDiagram<'a> =
     DiGraph<Content<&'a str, ClassValue>, Content<(&'a str, &'a str, &'a str), RelationValue>>;
 
-// pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
-//     let fancy_dot = Dot::with_attr_getters(
-//         graph,
-//         &[Config::EdgeNoLabel, Config::NodeNoLabel],
-//         &edge_attr,
-//         &node_attr,
-//     );
-//     let mut fancy_string = format!("{fancy_dot:?}");
-//     fancy_string = fancy_string.replace(
-//         "digraph {",
-//         "digraph {\n    rankdir=BT\n    node [shape=record, fontname=\"Helvetica\", fontsize=10]\n    edge [fontname=\"Helvetica\", fontsize=10]\n",
-//     );
-//     fancy_string
-// }
+pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
+    let fancy_dot = Dot::with_attr_getters(
+        graph,
+        &[Config::EdgeNoLabel, Config::NodeNoLabel],
+        &edge_attr,
+        &node_attr,
+    );
+    let mut fancy_string = format!("{fancy_dot:?}");
+    fancy_string = fancy_string.replace(
+        "digraph {",
+        "digraph {\n    rankdir=BT\n    node [shape=record, fontname=\"Helvetica\", fontsize=10]\n    edge [fontname=\"Helvetica\", fontsize=10]\n",
+    );
+    fancy_string
+}
 
-// fn edge_attr(
-//     _g: &ClassDiagram,
-//     edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationValue>>,
-// ) -> String {
-//     let label = &edge
-//         .weight()
-//         .val
-//         .label
-//         .iter()
-//         .cloned()
-//         .collect::<Vec<String>>()
-//         .join("/");
-//     let rtype = &edge.weight().val.typ;
+fn edge_attr(
+    _g: &ClassDiagram,
+    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationValue>>,
+) -> String {
+    let label = &edge
+        .weight()
+        .val
+        .label
+        .iter()
+        .cloned()
+        .collect::<Vec<String>>()
+        .join("/");
+    let rtype = &edge.weight().val.typ;
 
-//     let multiplicity_from = format_mult(&edge.weight().val.ends.source);
-//     let multiplicity_to = format_mult(&edge.weight().val.ends.target);
+    let multiplicity_from = format_mult(&edge.weight().val.ends.source);
+    let multiplicity_to = format_mult(&edge.weight().val.ends.target);
 
-//     let (head, style) = match rtype {
-//         RelationType::Extends => ("empty", "normal"),
-//         RelationType::Implements => ("empty", "dashed"),
-//         RelationType::Aggregates => ("odiamond", "normal"),
-//         RelationType::Composes => ("diamond", "normal"),
-//         RelationType::Associates => ("normal", "normal"),
-//     };
-//     format!(
-//         "label=\"{label}\", arrowhead=\"{head}\", style=\"{style}\", taillabel=\"{multiplicity_from}\", headlabel=\"{multiplicity_to}\", labeldistance=1.25, labelangle=45, fontcolor=brown"
-//     )
-// }
+    let (head, style) = match rtype {
+        RelationType::Extends => ("empty", "normal"),
+        RelationType::Implements => ("empty", "dashed"),
+        RelationType::Aggregates => ("odiamond", "normal"),
+        RelationType::Composes => ("diamond", "normal"),
+        RelationType::Associates => ("normal", "normal"),
+    };
+    format!(
+        "label=\"{label}\", arrowhead=\"{head}\", style=\"{style}\", taillabel=\"{multiplicity_from}\", headlabel=\"{multiplicity_to}\", labeldistance=1.25, labelangle=45, fontcolor=brown"
+    )
+}
 
-// fn format_mult(m: &Multiplicity) -> String {
-//     match m {
-//         Multiplicity::Unspecified => "".to_string(),
-//         Multiplicity::One => "1".to_string(),
-//         Multiplicity::ZeroOrOne => "0..1".to_string(),
-//         Multiplicity::ZeroOrMany => "0..*".to_string(),
-//         Multiplicity::OneOrMany => "1..*".to_string(),
-//         Multiplicity::ManyToMany(min, max) => format!("{min}..{max}"),
-//         Multiplicity::Exactly(n) => format!("{n}"),
-//         Multiplicity::ZeroToMany(n) => format!("0..{n}"),
-//         Multiplicity::OneToMany(n) => format!("1..{n}"),
-//     }
-// }
+fn format_mult(m: &Multiplicity) -> String {
+    match m {
+        Multiplicity::Unspecified => "".to_string(),
+        Multiplicity::One => "1".to_string(),
+        Multiplicity::ZeroOrOne => "0..1".to_string(),
+        Multiplicity::ZeroOrMany => "0..*".to_string(),
+        Multiplicity::OneOrMany => "1..*".to_string(),
+        Multiplicity::ManyToMany(min, max) => format!("{min}..{max}"),
+        Multiplicity::Exactly(n) => format!("{n}"),
+        Multiplicity::ZeroToMany(n) => format!("0..{n}"),
+        Multiplicity::OneToMany(n) => format!("1..{n}"),
+    }
+}
 
-// fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue>)) -> String {
-//     let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
-//     let name = format_node_name(&class.val, &name_vec);
-//     let features = format_features(&class.val.features);
-//     let operations = format_operations(g, &class.val.operations);
-//     let is_abstract = if class.val.is_abstract {
-//         "style=filled, fillcolor=\"#e5f2ff\""
-//     } else {
-//         "style=filled, fillcolor=\"#e5ffe5\""
-//     };
-//     format!("label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}")
-// }
+fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue>)) -> String {
+    let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
+    let name = format_node_name(&class.val, &name_vec);
+    let features = format_features(&class.val.features);
+    let operations = format_operations(g, &class.val.operations);
+    let is_abstract = if class.val.is_abstract {
+        "style=filled, fillcolor=\"#e5f2ff\""
+    } else {
+        "style=filled, fillcolor=\"#e5ffe5\""
+    };
+    format!("label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}")
+}
 
-// fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
-//     let prefix = if class.is_abstract { "Ⓐ " } else { "Ⓒ " };
-//     let name_str = if name_vec.is_empty() {
-//         "Unnamed".to_string()
-//     } else {
-//         name_vec.join("/")
-//     };
-//     format!("{prefix}{name_str}")
-// }
+fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
+    let prefix = if class.is_abstract { "Ⓐ " } else { "Ⓒ " };
+    let name_str = if name_vec.is_empty() {
+        "Unnamed".to_string()
+    } else {
+        name_vec.join("/")
+    };
+    format!("{prefix}{name_str}")
+}
 
-// fn format_features(features: &HashMap<String, FeatureValue>) -> String {
-//     features
-//         .iter()
-//         .map(|(k, v)| {
-//             let feature_name = k.clone();
-//             let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{t:?}")).collect();
-//             let feature_type = if types.is_empty() {
-//                 "Unknown".to_string()
-//             } else {
-//                 types.join("/")
-//             };
-//             let feature_vis = match v.visibility {
-//                 Visibility::Public => "+",
-//                 Visibility::Private => "-",
-//                 Visibility::Protected => "#",
-//                 Visibility::Package => "~",
-//             };
-//             format!("{feature_vis}{feature_name}: {feature_type}")
-//         })
-//         .collect::<Vec<String>>()
-//         .join("\\l")
-// }
+fn format_features(features: &HashMap<String, FeatureValue>) -> String {
+    features
+        .iter()
+        .map(|(k, v)| {
+            let feature_name = k.clone();
+            let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{t:?}")).collect();
+            let feature_type = if types.is_empty() {
+                "Unknown".to_string()
+            } else {
+                types.join("/")
+            };
+            let feature_vis = match v.visibility {
+                Visibility::Public => "+",
+                Visibility::Private => "-",
+                Visibility::Protected => "#",
+                Visibility::Package => "~",
+            };
+            format!("{feature_vis}{feature_name}: {feature_type}")
+        })
+        .collect::<Vec<String>>()
+        .join("\\l")
+}
 
-// fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationValue>) -> String {
-//     operations
-//         .iter()
-//         .map(|(k, v)| {
-//             let op_name = k.clone();
-//             let op_vis = match v.visibility {
-//                 Visibility::Public => "+",
-//                 Visibility::Private => "-",
-//                 Visibility::Protected => "#",
-//                 Visibility::Package => "~",
-//             };
-//             let params: Vec<String> = v
-//                 .parameters
-//                 .iter()
-//                 .map(|(p, t)| {
-//                     let types: Vec<String> =
-//                         t.iter().cloned().map(|ty| format!("{ty:?}")).collect();
-//                     format!("{}: {}", p, types.join("/"))
-//                 })
-//                 .collect();
-//             let return_types: Vec<String> = v
-//                 .return_type
-//                 .iter()
-//                 .cloned()
-//                 .map(|t| match t {
-//                     TypeRef::Primitive(pt) => format!("{pt:?}"),
-//                     TypeRef::Class(c) => g
-//                         .raw_nodes()
-//                         .iter()
-//                         .find_map(|n| {
-//                             if n.weight.id == c {
-//                                 Some(
-//                                     n.weight
-//                                         .val
-//                                         .name
-//                                         .iter()
-//                                         .cloned()
-//                                         .collect::<Vec<String>>()
-//                                         .join("/"),
-//                                 )
-//                             } else {
-//                                 None
-//                             }
-//                         })
-//                         .unwrap_or_else(|| "Unknown".to_string()),
-//                 })
-//                 .collect();
-//             let return_type_str = if return_types.is_empty() {
-//                 "".to_string()
-//             } else {
-//                 format!(": {}", return_types.join("/"))
-//             };
-//             format!(
-//                 "{}{}{}({}){}",
-//                 op_vis,
-//                 if v.is_abstract { "Ⓐ " } else { "" },
-//                 op_name,
-//                 params.join("/"),
-//                 return_type_str
-//             )
-//         })
-//         .collect::<Vec<String>>()
-//         .join("\\l")
-// }
+fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationValue>) -> String {
+    operations
+        .iter()
+        .map(|(k, v)| {
+            let op_name = k.clone();
+            let op_vis = match v.visibility {
+                Visibility::Public => "+",
+                Visibility::Private => "-",
+                Visibility::Protected => "#",
+                Visibility::Package => "~",
+            };
+            let params: Vec<String> = v
+                .parameters
+                .iter()
+                .map(|(p, t)| {
+                    let types: Vec<String> =
+                        t.iter().cloned().map(|ty| format!("{ty:?}")).collect();
+                    format!("{}: {}", p, types.join("/"))
+                })
+                .collect();
+            let return_types: Vec<String> = v
+                .return_type
+                .iter()
+                .cloned()
+                .map(|t| match t {
+                    TypeRef::Primitive(pt) => format!("{pt:?}"),
+                    TypeRef::Class(c) => g
+                        .raw_nodes()
+                        .iter()
+                        .find_map(|n| {
+                            if n.weight.id == c {
+                                Some(
+                                    n.weight
+                                        .val
+                                        .name
+                                        .iter()
+                                        .cloned()
+                                        .collect::<Vec<String>>()
+                                        .join("/"),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                })
+                .collect();
+            let return_type_str = if return_types.is_empty() {
+                "".to_string()
+            } else {
+                format!(": {}", return_types.join("/"))
+            };
+            format!(
+                "{}{}{}({}){}",
+                op_vis,
+                if v.is_abstract { "Ⓐ " } else { "" },
+                op_name,
+                params.join("/"),
+                return_type_str
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\\l")
+}
 
 #[cfg(test)]
 mod tests {
@@ -425,695 +428,785 @@ mod tests {
     // Manufacturer "1..*" --> "0..*" WindTurbine : repairs
     // @enduml
 
-    // fn wind_turbine_diagram() -> (
-    //     Tcsb<ClassDiagramCrdt<'static>>,
-    //     Tcsb<ClassDiagramCrdt<'static>>,
-    // ) {
-    //     let (mut replica_a, mut replica_b) = twins::<ClassDiagramCrdt>();
+    use crate::{
+        crdt::{
+            flag::ew_flag::EWFlag,
+            graph::uw_multidigraph::{UWGraph, UWGraphLog},
+            map::uw_map::UWMap,
+            model::class_diagram::{
+                export_fancy_class_diagram, Class, ClassDiagramCrdt, ClassLog, Ends, Feature,
+                Multiplicity, Operation, PrimitiveType, Relation, RelationLog, RelationType,
+                TypeRef, Visibility,
+            },
+            register::{mv_register::MVRegister, to_register::TORegister},
+            test_util::twins_log,
+        },
+        protocol::{
+            broadcast::tcsb::Tcsb,
+            crdt::pure_crdt::Read,
+            replica::{IsReplica, Replica},
+        },
+    };
 
-    //     // WindTurbine class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Name(MVRegister::Write("WindTurbine".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Operations(UWMap::Update(
-    //             "start".to_string(),
-    //             Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Operations(UWMap::Update(
-    //             "shutdown".to_string(),
-    //             Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
-    //         )),
-    //     ));
-    //     // EnergyGenerator class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "eg",
-    //         Class::Name(MVRegister::Write("EnergyGenerator".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "eg",
-    //         Class::Operations(UWMap::Update(
-    //             "getEnergyOutput".to_string(),
-    //             Operation::ReturnType(MVRegister::Write(TypeRef::Class("wt".to_string()))),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "eg",
-    //         Class::Operations(UWMap::Update(
-    //             "getEnergyOutput".to_string(),
-    //             Operation::IsAbstract(EWFlag::Enable),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "eg",
-    //         Class::IsAbstract(EWFlag::Enable),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "wt",
-    //         "eg",
-    //         "ext",
-    //         Relation::Typ(TORegister::Write(RelationType::Extends)),
-    //     ));
+    fn wind_turbine_diagram() -> (
+        Replica<
+            UWGraphLog<&'static str, &'static str, ClassLog, RelationLog>,
+            Tcsb<UWGraph<&'static str, &'static str, Class, Relation>>,
+        >,
+        Replica<
+            UWGraphLog<&'static str, &'static str, ClassLog, RelationLog>,
+            Tcsb<UWGraph<&'static str, &'static str, Class, Relation>>,
+        >,
+    ) {
+        let (mut replica_a, mut replica_b) = twins_log::<ClassDiagramCrdt>();
 
-    //     // Rotor class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Name(MVRegister::Write("Rotor".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "diameter".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Visibility(TORegister::Write(Visibility::Private)),
-    //         )),
-    //     ));
-    //     // Blade class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "blade",
-    //         Class::Name(MVRegister::Write("Blade".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "blade",
-    //         "rotor",
-    //         "comprises",
-    //         Relation::Typ(TORegister::Write(RelationType::Composes)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "blade",
-    //         "rotor",
-    //         "comprises",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "blade",
-    //         "rotor",
-    //         "comprises",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::Exactly(3)))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "blade",
-    //         "rotor",
-    //         "comprises",
-    //         Relation::Label(MVRegister::Write("comprises".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "rotor",
-    //         "wt",
-    //         "hasRotor",
-    //         Relation::Typ(TORegister::Write(RelationType::Aggregates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "rotor",
-    //         "wt",
-    //         "hasRotor",
-    //         Relation::Label(MVRegister::Write("hasRotor".to_string())),
-    //     ));
-    //     // Tower class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "tower",
-    //         Class::Name(MVRegister::Write("Tower".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "tower",
-    //         Class::Features(UWMap::Update(
-    //             "heightM".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "tower",
-    //         Class::Features(UWMap::Update(
-    //             "material".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::String)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "tower",
-    //         "wt",
-    //         "mountedOn",
-    //         Relation::Typ(TORegister::Write(RelationType::Aggregates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "tower",
-    //         "wt",
-    //         "mountedOn",
-    //         Relation::Label(MVRegister::Write("mountedOn".to_string())),
-    //     ));
-    //     // Nacelle class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "nacelle",
-    //         Class::Name(MVRegister::Write("Nacelle".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "nacelle",
-    //         Class::Features(UWMap::Update(
-    //             "weightTons".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "nacelle",
-    //         Class::Features(UWMap::Update(
-    //             "internalTempC".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "nacelle",
-    //         Class::Features(UWMap::Update(
-    //             "internalTempC".to_string(),
-    //             Feature::Visibility(TORegister::Write(Visibility::Private)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "nacelle",
-    //         "wt",
-    //         "hasNacelle",
-    //         Relation::Typ(TORegister::Write(RelationType::Aggregates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "nacelle",
-    //         "wt",
-    //         "hasNacelle",
-    //         Relation::Label(MVRegister::Write("hasNacelle".to_string())),
-    //     ));
-    //     // EnergyGrid class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "energy_grid",
-    //         Class::Name(MVRegister::Write("EnergyGrid".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "energy_grid",
-    //         Class::Features(UWMap::Update(
-    //             "gridName".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::String)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "energy_grid",
-    //         Class::Features(UWMap::Update(
-    //             "capacityMW".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "eg",
-    //         "energy_grid",
-    //         "feedsInto",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "eg",
-    //         "energy_grid",
-    //         "feedsInto",
-    //         Relation::Label(MVRegister::Write("feedsInto".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "eg",
-    //         "energy_grid",
-    //         "feedsInto",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "eg",
-    //         "energy_grid",
-    //         "feedsInto",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "energy_grid",
-    //         "energy_grid",
-    //         "connectedTo",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "energy_grid",
-    //         "energy_grid",
-    //         "connectedTo",
-    //         Relation::Label(MVRegister::Write("connectedTo".to_string())),
-    //     ));
-    //     // Manufacturer class
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "manufacturer",
-    //         Class::Name(MVRegister::Write("Manufacturer".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateVertex(
-    //         "manufacturer",
-    //         Class::Features(UWMap::Update(
-    //             "name".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::String)),
-    //         )),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "owns",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "owns",
-    //         Relation::Label(MVRegister::Write("owns".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "owns",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "owns",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "repairs",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "repairs",
-    //         Relation::Label(MVRegister::Write("repairs".to_string())),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "repairs",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
-    //     ));
-    //     let _ = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "wt",
-    //         "repairs",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
-    //     ));
+        // WindTurbine class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "wt",
+            Class::Name(MVRegister::Write("WindTurbine".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "wt",
+            Class::Operations(UWMap::Update(
+                "start".to_string(),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "wt",
+            Class::Operations(UWMap::Update(
+                "shutdown".to_string(),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
+            )),
+        ));
+        // EnergyGenerator class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "eg",
+            Class::Name(MVRegister::Write("EnergyGenerator".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "eg",
+            Class::Operations(UWMap::Update(
+                "getEnergyOutput".to_string(),
+                Operation::ReturnType(MVRegister::Write(TypeRef::Class("wt".to_string()))),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "eg",
+            Class::Operations(UWMap::Update(
+                "getEnergyOutput".to_string(),
+                Operation::IsAbstract(EWFlag::Enable),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "eg",
+            Class::IsAbstract(EWFlag::Enable),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "wt",
+            "eg",
+            "ext",
+            Relation::Typ(TORegister::Write(RelationType::Extends)),
+        ));
 
-    //     let batch = replica_a.events_since(&Since::new_from(&replica_b));
-    //     replica_b.deliver_batch(batch);
+        // Rotor class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Name(MVRegister::Write("Rotor".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "diameter".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "maxRpm".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "rotor",
+            Class::Features(UWMap::Update(
+                "maxRpm".to_string(),
+                Feature::Visibility(TORegister::Write(Visibility::Private)),
+            )),
+        ));
+        // Blade class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "blade",
+            Class::Name(MVRegister::Write("Blade".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Typ(TORegister::Write(RelationType::Composes)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::Exactly(3)))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "blade",
+            "rotor",
+            "comprises",
+            Relation::Label(MVRegister::Write("comprises".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "rotor",
+            "wt",
+            "hasRotor",
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "rotor",
+            "wt",
+            "hasRotor",
+            Relation::Label(MVRegister::Write("hasRotor".to_string())),
+        ));
+        // Tower class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "tower",
+            Class::Name(MVRegister::Write("Tower".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "tower",
+            Class::Features(UWMap::Update(
+                "heightM".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "tower",
+            Class::Features(UWMap::Update(
+                "material".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "tower",
+            "wt",
+            "mountedOn",
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "tower",
+            "wt",
+            "mountedOn",
+            Relation::Label(MVRegister::Write("mountedOn".to_string())),
+        ));
+        // Nacelle class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "nacelle",
+            Class::Name(MVRegister::Write("Nacelle".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "nacelle",
+            Class::Features(UWMap::Update(
+                "weightTons".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "nacelle",
+            Class::Features(UWMap::Update(
+                "internalTempC".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "nacelle",
+            Class::Features(UWMap::Update(
+                "internalTempC".to_string(),
+                Feature::Visibility(TORegister::Write(Visibility::Private)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "nacelle",
+            "wt",
+            "hasNacelle",
+            Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "nacelle",
+            "wt",
+            "hasNacelle",
+            Relation::Label(MVRegister::Write("hasNacelle".to_string())),
+        ));
+        // EnergyGrid class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "energy_grid",
+            Class::Name(MVRegister::Write("EnergyGrid".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "energy_grid",
+            Class::Features(UWMap::Update(
+                "gridName".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "energy_grid",
+            Class::Features(UWMap::Update(
+                "capacityMW".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "eg",
+            "energy_grid",
+            "feedsInto",
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "eg",
+            "energy_grid",
+            "feedsInto",
+            Relation::Label(MVRegister::Write("feedsInto".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "eg",
+            "energy_grid",
+            "feedsInto",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "eg",
+            "energy_grid",
+            "feedsInto",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "energy_grid",
+            "energy_grid",
+            "connectedTo",
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "energy_grid",
+            "energy_grid",
+            "connectedTo",
+            Relation::Label(MVRegister::Write("connectedTo".to_string())),
+        ));
+        // Manufacturer class
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "manufacturer",
+            Class::Name(MVRegister::Write("Manufacturer".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateVertex(
+            "manufacturer",
+            Class::Features(UWMap::Update(
+                "name".to_string(),
+                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+            )),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "owns",
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "owns",
+            Relation::Label(MVRegister::Write("owns".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "owns",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "owns",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "repairs",
+            Relation::Typ(TORegister::Write(RelationType::Associates)),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "repairs",
+            Relation::Label(MVRegister::Write("repairs".to_string())),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "repairs",
+            Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+        ));
+        let _ = replica_a.send(UWGraph::UpdateArc(
+            "manufacturer",
+            "wt",
+            "repairs",
+            Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+        ));
 
-    //     assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
-    //         .first()
-    //         .is_some());
+        let batch = replica_a.pull(replica_b.since());
+        replica_b.receive_batch(batch);
 
-    //     (replica_a, replica_b)
-    // }
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
+
+        (replica_a, replica_b)
+    }
 
     // Conflict resolution tests
 
     // Alice and Bob both concurrently edit the WindTurbine class diagram name
-    // #[test]
-    // fn concurrent_class_name() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    #[test]
+    fn concurrent_class_name() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     let event_a = replica_a.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Name(MVRegister::Write("WindGenerator".to_string())),
-    //     ));
-    //     let event_b = replica_b.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Name(MVRegister::Write("WindTurbineGenerator".to_string())),
-    //     ));
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_b.receive(event_a);
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex(
+                "wt",
+                Class::Name(MVRegister::Write("WindGenerator".to_string())),
+            ))
+            .unwrap();
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex(
+                "wt",
+                Class::Name(MVRegister::Write("WindTurbineGenerator".to_string())),
+            ))
+            .unwrap();
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
 
-    //     println!("Class Diagram A: {}", export_fancy_class_diagram(&eval_a));
-    //     println!("Class Diagram B: {}", export_fancy_class_diagram(&eval_b));
-    // }
+        println!("Class Diagram A: {}", export_fancy_class_diagram(&eval_a));
+        println!("Class Diagram B: {}", export_fancy_class_diagram(&eval_b));
+    }
 
-    // /// Alice believes that the WindTurbine class should be removed, while Bob believes it should be renamed to WindGenerator.
-    // #[test]
-    // fn concurrent_remove_update_class() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice believes that the WindTurbine class should be removed, while Bob believes it should be renamed to WindGenerator.
+    #[test]
+    fn concurrent_remove_update_class() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveVertex("wt")).unwrap();
+        // A removes the class
+        let event_a = replica_a.send(UWGraph::RemoveVertex("wt")).unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     // B updates the class name
-    //     let event_b = replica_b.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Name(MVRegister::Write("WindGenerator".to_string())),
-    //     ));
+        // B updates the class name
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex(
+                "wt",
+                Class::Name(MVRegister::Write("WindGenerator".to_string())),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram B: {}",
-    //         export_fancy_class_diagram(&replica_b.query())
-    //     );
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&replica_b.query(Read::new()))
+        );
 
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_b.receive(event_a);
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
-    //     println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
-    // }
+        println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
+    }
 
-    // /// Alice believes that the relation from EnergyGenerator to EnergyGrid should be removed,
-    // /// while Bob believes it should be updated to have a different multiplicity.
-    // #[test]
-    // fn concurrent_remove_update_arc() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice believes that the relation from EnergyGenerator to EnergyGrid should be removed,
+    /// while Bob believes it should be updated to have a different multiplicity.
+    #[test]
+    fn concurrent_remove_update_arc() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveArc("eg", "energy_grid", "feedsInto")).unwrap();
+        // A removes the class
+        let event_a = replica_a
+            .send(UWGraph::RemoveArc("eg", "energy_grid", "feedsInto"))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     // B updates the class name
-    //     let event_b = replica_b.send(UWGraph::UpdateArc(
-    //         "eg",
-    //         "energy_grid",
-    //         "feedsInto",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneToMany(2)))),
-    //     ));
+        // B updates the class name
+        let event_b = replica_b
+            .send(UWGraph::UpdateArc(
+                "eg",
+                "energy_grid",
+                "feedsInto",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneToMany(2)))),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram B: {}",
-    //         export_fancy_class_diagram(&replica_b.query())
-    //     );
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&replica_b.query(Read::new()))
+        );
 
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_b.receive(event_a);
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
-    //     println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
-    // }
+        println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
+    }
 
-    // /// Alice believes that the EnergyGrid class should be removed,
-    // /// while Bob believes there should be an association from Manufacturer to EnergyGrid
-    // /// to reprensent that the manufacturer operates the energy grid, with a multiplicity of 0..* from Manufacturer to EnergyGrid and
-    // /// 1 from EnergyGrid to Manufacturer.
-    // #[test]
-    // fn concurrent_remove_vertex_update_arc() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice believes that the EnergyGrid class should be removed,
+    /// while Bob believes there should be an association from Manufacturer to EnergyGrid
+    /// to reprensent that the manufacturer operates the energy grid, with a multiplicity of 0..* from Manufacturer to EnergyGrid and
+    /// 1 from EnergyGrid to Manufacturer.
+    #[test]
+    fn concurrent_remove_vertex_update_arc() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A removes the class
-    //     let event_a = replica_a.send(UWGraph::RemoveVertex("energy_grid")).unwrap();
+        // A removes the class
+        let event_a = replica_a
+            .send(UWGraph::RemoveVertex("energy_grid"))
+            .unwrap();
 
-    //     let event_b_1 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "operates",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let event_b_2 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "operates",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
-    //     ));
-    //     let event_b_3 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "operates",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
-    //     ));
-    //     let event_b_4 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "operates",
-    //         Relation::Label(MVRegister::Write("operates".to_string())),
-    //     ));
+        let event_b_1 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "operates",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ))
+            .unwrap();
+        let event_b_2 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "operates",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
+            ))
+            .unwrap();
+        let event_b_3 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "operates",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+            ))
+            .unwrap();
+        let event_b_4 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "operates",
+                Relation::Label(MVRegister::Write("operates".to_string())),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     println!(
-    //         "Class Diagram B: {}",
-    //         export_fancy_class_diagram(&replica_b.query())
-    //     );
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&replica_b.query(Read::new()))
+        );
 
-    //     // Deliver events
-    //     replica_a.receive(event_b_1);
-    //     replica_a.receive(event_b_2);
-    //     replica_a.receive(event_b_3);
-    //     replica_a.receive(event_b_4);
-    //     replica_b.receive(event_a);
+        // Deliver events
+        replica_a.receive(event_b_1);
+        replica_a.receive(event_b_2);
+        replica_a.receive(event_b_3);
+        replica_a.receive(event_b_4);
+        replica_b.receive(event_a);
 
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
-    // }
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+    }
 
-    // /// Alice believes that the `maxRpm` feature of the Rotor class should be public,
-    // /// and have its unit type rad/s directly in the field as a string,
-    // /// while Bob believes it should be protected and remain a Number.
-    // /// In addition, Alice wants to remove the diameter feature,
-    // /// while Bob wants to keep it be private.
-    // /// They both update the class name: Alice to "RotorUnit" and Bob to "RotorSystem".
-    // #[test]
-    // fn concurrent_update_feature_visibility_class_name() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice believes that the `maxRpm` feature of the Rotor class should be public,
+    /// and have its unit type rad/s directly in the field as a string,
+    /// while Bob believes it should be protected and remain a Number.
+    /// In addition, Alice wants to remove the diameter feature,
+    /// while Bob wants to keep it be private.
+    /// They both update the class name: Alice to "RotorUnit" and Bob to "RotorSystem".
+    #[test]
+    fn concurrent_update_feature_visibility_class_name() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A updates the feature visibility and type
-    //     let event_a = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Visibility(TORegister::Write(Visibility::Public)),
-    //         )),
-    //     ));
-    //     let event_a_2 = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::String)),
-    //         )),
-    //     ));
-    //     let event_a_3 = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::String)),
-    //         )),
-    //     ));
-    //     let event_a_4 = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Remove("diameter".to_string())),
-    //     ));
+        // A updates the feature visibility and type
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Visibility(TORegister::Write(Visibility::Public)),
+                )),
+            ))
+            .unwrap();
+        let event_a_2 = replica_a
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ))
+            .unwrap();
+        let event_a_3 = replica_a
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                )),
+            ))
+            .unwrap();
+        let event_a_4 = replica_a
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Remove("diameter".to_string())),
+            ))
+            .unwrap();
 
-    //     let event_a_5 = replica_a.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Name(MVRegister::Write("RotorUnit".to_string())),
-    //     ));
+        let event_a_5 = replica_a
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Name(MVRegister::Write("RotorUnit".to_string())),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     // B updates the feature visibility and type
-    //     let event_b = replica_b.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Visibility(TORegister::Write(Visibility::Protected)),
-    //         )),
-    //     ));
-    //     let event_b_2 = replica_b.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "maxRpm".to_string(),
-    //             Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
-    //         )),
-    //     ));
-    //     let event_b_3 = replica_b.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Name(MVRegister::Write("RotorSystem".to_string())),
-    //     ));
-    //     let event_b_4 = replica_b.send(UWGraph::UpdateVertex(
-    //         "rotor",
-    //         Class::Features(UWMap::Update(
-    //             "diameter".to_string(),
-    //             Feature::Visibility(TORegister::Write(Visibility::Private)),
-    //         )),
-    //     ));
-    //     println!(
-    //         "Class Diagram B: {}",
-    //         export_fancy_class_diagram(&replica_b.query())
-    //     );
+        // B updates the feature visibility and type
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Visibility(TORegister::Write(Visibility::Protected)),
+                )),
+            ))
+            .unwrap();
+        let event_b_2 = replica_b
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "maxRpm".to_string(),
+                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                )),
+            ))
+            .unwrap();
+        let event_b_3 = replica_b
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Name(MVRegister::Write("RotorSystem".to_string())),
+            ))
+            .unwrap();
+        let event_b_4 = replica_b
+            .send(UWGraph::UpdateVertex(
+                "rotor",
+                Class::Features(UWMap::Update(
+                    "diameter".to_string(),
+                    Feature::Visibility(TORegister::Write(Visibility::Private)),
+                )),
+            ))
+            .unwrap();
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&replica_b.query(Read::new()))
+        );
 
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_a.receive(event_b_2);
-    //     replica_a.receive(event_b_3);
-    //     replica_a.receive(event_b_4);
-    //     replica_b.receive(event_a);
-    //     replica_b.receive(event_a_2);
-    //     replica_b.receive(event_a_3);
-    //     replica_b.receive(event_a_4);
-    //     replica_b.receive(event_a_5);
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
-    //     println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
-    // }
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_a.receive(event_b_2);
+        replica_a.receive(event_b_3);
+        replica_a.receive(event_b_4);
+        replica_b.receive(event_a);
+        replica_b.receive(event_a_2);
+        replica_b.receive(event_a_3);
+        replica_b.receive(event_a_4);
+        replica_b.receive(event_a_5);
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+        println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
+    }
 
-    // /// Alice believes that the `start()` operation of the WindTurbine class should return a Boolean,
-    // /// while Bob believes it should return a Number.
-    // #[test]
-    // fn concurrent_update_operation_return_type() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice believes that the `start()` operation of the WindTurbine class should return a Boolean,
+    /// while Bob believes it should return a Number.
+    #[test]
+    fn concurrent_update_operation_return_type() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A updates the return type to Boolean
-    //     let event_a = replica_a.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Operations(UWMap::Update(
-    //             "start".to_string(),
-    //             Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
-    //         )),
-    //     ));
+        // A updates the return type to Boolean
+        let event_a = replica_a
+            .send(UWGraph::UpdateVertex(
+                "wt",
+                Class::Operations(UWMap::Update(
+                    "start".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     // B updates the return type to Number
-    //     let event_b = replica_b.send(UWGraph::UpdateVertex(
-    //         "wt",
-    //         Class::Operations(UWMap::Update(
-    //             "start".to_string(),
-    //             Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
-    //         )),
-    //     ));
+        // B updates the return type to Number
+        let event_b = replica_b
+            .send(UWGraph::UpdateVertex(
+                "wt",
+                Class::Operations(UWMap::Update(
+                    "start".to_string(),
+                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                        PrimitiveType::Void,
+                    ))),
+                )),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram B: {}",
-    //         export_fancy_class_diagram(&replica_b.query())
-    //     );
+        println!(
+            "Class Diagram B: {}",
+            export_fancy_class_diagram(&replica_b.query(Read::new()))
+        );
 
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_b.receive(event_a);
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
-    // }
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+    }
 
-    // /// Alice and Bob believes there should be a relation from Manufacturer to EnergyGrid.
-    // /// But they concurrently update the relation.
-    // /// Alice: label="employ", type=Aggregates, multiplicity=0..* from Manufacturer to EnergyGrid and 1..* from EnergyGrid to Manufacturer.
-    // /// Bob: label="operates" type=Associates, multiplicity=1..2 from Manufacturer to EnergyGrid and 1 from EnergyGrid to Manufacturer.
-    // #[test]
-    // fn concurrent_update_relation() {
-    //     let (mut replica_a, mut replica_b) = wind_turbine_diagram();
+    /// Alice and Bob believes there should be a relation from Manufacturer to EnergyGrid.
+    /// But they concurrently update the relation.
+    /// Alice: label="employ", type=Aggregates, multiplicity=0..* from Manufacturer to EnergyGrid and 1..* from EnergyGrid to Manufacturer.
+    /// Bob: label="operates" type=Associates, multiplicity=1..2 from Manufacturer to EnergyGrid and 1 from EnergyGrid to Manufacturer.
+    #[test]
+    fn concurrent_update_relation() {
+        let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
-    //     // A updates the relation
-    //     let event_a = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Typ(TORegister::Write(RelationType::Aggregates)),
-    //     ));
-    //     let event_a_2 = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
-    //     ));
-    //     let event_a_3 = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneOrMany))),
-    //     ));
-    //     let event_a_4 = replica_a.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Label(MVRegister::Write("employs".to_string())),
-    //     ));
+        // A updates the relation
+        let event_a = replica_a
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            ))
+            .unwrap();
+        let event_a_2 = replica_a
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
+            ))
+            .unwrap();
+        let event_a_3 = replica_a
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneOrMany))),
+            ))
+            .unwrap();
+        let event_a_4 = replica_a
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Label(MVRegister::Write("employs".to_string())),
+            ))
+            .unwrap();
 
-    //     println!(
-    //         "Class Diagram A: {}",
-    //         export_fancy_class_diagram(&replica_a.query())
-    //     );
+        println!(
+            "Class Diagram A: {}",
+            export_fancy_class_diagram(&replica_a.query(Read::new()))
+        );
 
-    //     // B updates the relation
-    //     let event_b = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Typ(TORegister::Write(RelationType::Associates)),
-    //     ));
-    //     let event_b_2 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneToMany(2)))),
-    //     ));
-    //     let event_b_3 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
-    //     ));
-    //     let event_b_4 = replica_b.send(UWGraph::UpdateArc(
-    //         "manufacturer",
-    //         "energy_grid",
-    //         "rel",
-    //         Relation::Label(MVRegister::Write("operates".to_string())),
-    //     ));
+        // B updates the relation
+        let event_b = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Typ(TORegister::Write(RelationType::Associates)),
+            ))
+            .unwrap();
+        let event_b_2 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneToMany(2)))),
+            ))
+            .unwrap();
+        let event_b_3 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+            ))
+            .unwrap();
+        let event_b_4 = replica_b
+            .send(UWGraph::UpdateArc(
+                "manufacturer",
+                "energy_grid",
+                "rel",
+                Relation::Label(MVRegister::Write("operates".to_string())),
+            ))
+            .unwrap();
 
-    //     // Deliver events
-    //     replica_a.receive(event_b);
-    //     replica_a.receive(event_b_2);
-    //     replica_a.receive(event_b_3);
-    //     replica_a.receive(event_b_4);
-    //     replica_b.receive(event_a);
-    //     replica_b.receive(event_a_2);
-    //     replica_b.receive(event_a_3);
-    //     replica_b.receive(event_a_4);
-    //     let eval_a = replica_a.query();
-    //     let eval_b = replica_b.query();
-    //     assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
-    // }
+        // Deliver events
+        replica_a.receive(event_b);
+        replica_a.receive(event_b_2);
+        replica_a.receive(event_b_3);
+        replica_a.receive(event_b_4);
+        replica_b.receive(event_a);
+        replica_b.receive(event_a_2);
+        replica_b.receive(event_a_3);
+        replica_b.receive(event_a_4);
+        let eval_a = replica_a.query(Read::new());
+        let eval_b = replica_b.query(Read::new());
+        assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
+    }
 
     // #[cfg(feature = "op_weaver")]
     // #[test]

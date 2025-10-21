@@ -162,7 +162,7 @@
 //         let event = replica_b.send(AWGraph::RemoveVertex("B")).unwrap();
 //         replica_a.receive(event);
 
-//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
+//         assert!(is_isomorphic(&replica_a.query(Read::new()), &replica_b.query(Read::new())));
 //     }
 
 //     #[test]
@@ -180,10 +180,10 @@
 //         replica_b.receive(event_a);
 //         replica_a.receive(event_b);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
-//         assert_eq!(replica_a.query().node_count(), 2);
-//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]));
+//         assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+//         assert!(is_isomorphic(&replica_a.query(Read::new()), &replica_b.query(Read::new())));
 //     }
 
 //     #[test]
@@ -201,10 +201,10 @@
 //         replica_b.receive(event_a);
 //         // replica_a.receive(event_b);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
-//         assert_eq!(replica_a.query().node_count(), 0);
-//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]));
+//         assert_eq!(replica_a.query(Read::new()).node_count(), 0);
+//         assert!(is_isomorphic(&replica_a.query(Read::new()), &replica_b.query(Read::new())));
 //     }
 
 //     #[test]
@@ -216,8 +216,8 @@
 //         replica_a.receive(event_b);
 //         replica_b.receive(event_a);
 
-//         assert_eq!(replica_a.query().node_count(), 1);
-//         assert!(is_isomorphic(&replica_a.query(), &replica_b.query()));
+//         assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+//         assert!(is_isomorphic(&replica_a.query(Read::new()), &replica_b.query(Read::new())));
 //     }
 
 //     #[test]
@@ -227,7 +227,7 @@
 //         let event = replica_a.send(AWGraph::AddArc("A", "B", 1)).unwrap();
 //         replica_b.receive(event);
 
-//         assert!(is_isomorphic(&replica_a.query(), &DiGraph::<&str, ()>::new()));
+//         assert!(is_isomorphic(&replica_a.query(Read::new()), &DiGraph::<&str, ()>::new()));
 //     }
 
 //     #[test]
@@ -241,7 +241,7 @@
 //         let event_a = replica_a.send(AWGraph::AddVertex("A")).unwrap();
 //         replica_b.receive(event_a);
 
-//         assert_eq!(replica_a.query().node_count(), 1);
+//         assert_eq!(replica_a.query(Read::new()).node_count(), 1);
 //     }
 
 //     #[test]
@@ -259,14 +259,14 @@
 //         replica_a.receive(event_b);
 //         replica_b.receive(event_a);
 
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(), &[]));
-//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]));
+//         println!("{:?}", petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]));
 
-//         assert_eq!(replica_a.query().edge_count(), 2);
-//         assert_eq!(replica_a.query().node_count(), 2);
+//         assert_eq!(replica_a.query(Read::new()).edge_count(), 2);
+//         assert_eq!(replica_a.query(Read::new()).node_count(), 2);
 //         assert!(petgraph::algo::is_isomorphic(
-//             &replica_a.query(),
-//             &replica_b.query()
+//             &replica_a.query(Read::new()),
+//             &replica_b.query(Read::new())
 //         ));
 //     }
 // }

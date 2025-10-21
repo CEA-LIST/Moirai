@@ -4,7 +4,7 @@ use petgraph::graph::DiGraph;
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::PureCRDT,
+        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
         event::{tag::Tag, tagged_op::TaggedOp},
         state::unstable_state::IsUnstableState,
     },
@@ -74,7 +74,45 @@ where
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
-    fn eval(stable: &Self::StableState, unstable: &impl IsUnstableState<Self>) -> Self::Value {
+    // fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
+    //     match op {
+    //         Graph::AddVertex(_) => true,
+    //         // The vertex must exist to be removed.
+    //         Graph::RemoveVertex(v) => state().node_weights().any(|node| node == v),
+    //         // Both vertices must exist to add an arc.
+    //         Graph::AddArc(v1, v2, _) => {
+    //             state().node_weights().any(|node| node == v1)
+    //                 && state().node_weights().any(|node| node == v2)
+    //         }
+    //         Graph::RemoveArc(v1, v2, e) => {
+    //             let idx_1 = state()
+    //                 .node_indices()
+    //                 .find(|&idx| state().node_weight(idx) == Some(v1));
+    //             let idx_2 = state()
+    //                 .node_indices()
+    //                 .find(|&idx| state().node_weight(idx) == Some(v2));
+    //             if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
+    //                 state()
+    //                     .edges_connecting(i1, i2)
+    //                     .any(|edge| edge.weight() == e)
+    //             } else {
+    //                 false
+    //             }
+    //         }
+    //     }
+    // }
+}
+
+impl<V, E> Eval<Read<<Self as PureCRDT>::Value>> for Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+{
+    fn execute_query(
+        _q: Read<<Self as PureCRDT>::Value>,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut ops: Vec<&Self> = stable
             .iter()
             .chain(unstable.iter().map(|t| t.op()))
@@ -112,41 +150,13 @@ where
         }
         graph
     }
-
-    fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
-        match op {
-            Graph::AddVertex(_) => true,
-            // The vertex must exist to be removed.
-            Graph::RemoveVertex(v) => state().node_weights().any(|node| node == v),
-            // Both vertices must exist to add an arc.
-            Graph::AddArc(v1, v2, _) => {
-                state().node_weights().any(|node| node == v1)
-                    && state().node_weights().any(|node| node == v2)
-            }
-            Graph::RemoveArc(v1, v2, e) => {
-                let idx_1 = state()
-                    .node_indices()
-                    .find(|&idx| state().node_weight(idx) == Some(v1));
-                let idx_2 = state()
-                    .node_indices()
-                    .find(|&idx| state().node_weight(idx) == Some(v2));
-                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
-                    state()
-                        .edges_connecting(i1, i2)
-                        .any(|edge| edge.weight() == e)
-                } else {
-                    false
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         crdt::{graph::aw_multidigraph::Graph, test_util::twins},
-        protocol::replica::IsReplica,
+        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
     };
 
     #[test]
@@ -165,9 +175,11 @@ mod tests {
         let event = replica_b.send(Graph::RemoveVertex("B")).unwrap();
         replica_a.receive(event);
 
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
-            .first()
-            .is_some());
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+                .first()
+                .is_some()
+        );
     }
 
     #[test]
@@ -185,9 +197,11 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
-            .first()
-            .is_some());
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+                .first()
+                .is_some()
+        );
     }
 
     #[test]
@@ -199,10 +213,12 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query().node_count(), 1);
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
-            .first()
-            .is_some());
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+                .first()
+                .is_some()
+        );
     }
 
     #[test]
@@ -216,7 +232,7 @@ mod tests {
         let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query().node_count(), 1);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
     }
 
     #[test]
@@ -233,22 +249,26 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
-            .first()
-            .is_some());
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
 
-        assert_eq!(replica_a.query().node_count(), 1);
-        assert_eq!(replica_a.query().edge_count(), 0);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
 
         let event_a = replica_a.send(Graph::AddVertex("B")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query().node_count(), 2);
-        assert_eq!(replica_a.query().edge_count(), 1);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
 
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query(),)
-            .first()
-            .is_some());
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+                .first()
+                .is_some()
+        );
     }
 
     #[test]
@@ -266,11 +286,13 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query().edge_count(), 2);
-        assert_eq!(replica_a.query().node_count(), 2);
-        assert!(vf2::isomorphisms(&replica_a.query(), &replica_b.query())
-            .first()
-            .is_some());
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 2);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
     }
 
     //     #[cfg(feature = "utils")]
