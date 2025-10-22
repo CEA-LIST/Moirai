@@ -7,7 +7,7 @@ use crate::{
     crdt::test_util::bootstrap_n,
     fuzz::{
         config::{FuzzerConfig, OpConfig, RunConfig},
-        utils::format_number,
+        utils::{format_number, format_string},
     },
     protocol::{
         broadcast::tcsb::Tcsb,
@@ -140,6 +140,7 @@ pub fn runner<L>(
 
     // Check convergence
     let first_value = replicas[0].query(Read::new());
+    let val = format_string(&first_value);
     let num_delivered_events = replicas[0].num_delivered_events();
 
     for (idx, r) in replicas.iter().enumerate().skip(1) {
@@ -153,11 +154,11 @@ pub fn runner<L>(
         }
         let value = r.query(Read::new());
         if !compare(&first_value, &value) {
-            panic!("Replicas 0 and {idx} diverged: {first_value:?} vs {value:?}");
+            panic!("Replicas 0 and {idx} diverged: {val} vs {value:?}");
         }
     }
 
-    println!("All replicas converged to the same state: {first_value:?}");
+    println!("All replicas converged to the same state: {val:?}");
     for (idx, duration) in time_to_deliver.iter() {
         println!(
             "Replica {} total time to deliver: {:?} ms",

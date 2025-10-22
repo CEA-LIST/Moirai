@@ -43,7 +43,7 @@ pub struct UWMapLog<K, L>
 where
     K: Clone + Debug + Eq + Hash,
 {
-    children: HashMap<K, L>,
+    pub(crate) children: HashMap<K, L>,
 }
 
 impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {

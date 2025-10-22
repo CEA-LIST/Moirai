@@ -28,19 +28,22 @@ impl<O> IsUnstableState<O> for Vec<TaggedOp<O>>
 where
     O: Debug + Clone,
 {
+    /// # Complexity
+    /// `O(1)`
     fn append(&mut self, event: Event<O>) {
         let tagged_op = TaggedOp::from(&event);
         self.push(tagged_op);
     }
 
-    // TODO: O(n)
+    /// # Complexity
+    /// `O(n)`
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.iter().find(|to| to.id() == event_id)
     }
 
-    // TODO: very very slow
+    /// # Complexity
+    /// `O(n)`
     fn remove(&mut self, event_id: &EventId) {
-        // info!("Removing event: {}", event_id);
         let maybe_pos = self.iter().position(|to| to.id() == event_id);
         if let Some(pos) = maybe_pos {
             self.remove(pos);
@@ -70,6 +73,8 @@ where
         self.clear();
     }
 
+    /// # Complexity
+    /// `O(n)`
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.iter()
             .filter(|to| to.id().is_predecessor_of(version))
@@ -81,6 +86,8 @@ where
         unimplemented!()
     }
 
+    /// # Complexity
+    /// `O(n)`
     fn delivery_order(&self, event_id: &EventId) -> usize {
         self.iter().position(|to| to.id() == event_id).unwrap()
     }
@@ -90,15 +97,21 @@ impl<O> IsUnstableState<O> for HashMap<EventId, TaggedOp<O>>
 where
     O: Debug + Clone,
 {
+    /// # Complexity
+    /// `O(1)`
     fn append(&mut self, event: Event<O>) {
         let tagged_op = TaggedOp::from(&event);
         self.insert(tagged_op.id().clone(), tagged_op);
     }
 
+    /// # Complexity
+    /// `O(1)`
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.get(event_id)
     }
 
+    /// # Complexity
+    /// `O(1)`
     fn remove(&mut self, event_id: &EventId) {
         self.remove(event_id);
     }
@@ -126,6 +139,8 @@ where
         self.clear();
     }
 
+    /// # Complexity
+    /// `O(n)`
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.values()
             .filter(|to| to.id().is_predecessor_of(version))

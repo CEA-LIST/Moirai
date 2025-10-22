@@ -312,36 +312,40 @@ mod tests {
                 config::{FuzzerConfig, OpConfig, RunConfig},
                 fuzzer,
             },
+            protocol::state::po_log::MapLog,
             protocol::state::po_log::VecLog,
         };
 
         // init_tracing();
 
-        let ops = OpConfig::Uniform(&[
-            AWSet::Add(1),
-            AWSet::Add(2),
-            AWSet::Add(3),
-            AWSet::Add(4),
-            AWSet::Add(5),
-            AWSet::Add(6),
-            AWSet::Add(7),
-            AWSet::Add(8),
-            AWSet::Add(9),
-            AWSet::Add(10),
-            AWSet::Remove(1),
-            AWSet::Remove(2),
-            AWSet::Remove(3),
-            AWSet::Remove(4),
-            AWSet::Remove(5),
-            AWSet::Remove(6),
-            AWSet::Remove(7),
-            AWSet::Remove(8),
-            AWSet::Remove(9),
-            AWSet::Remove(10),
-            AWSet::Clear,
+        // Génération de 20 000 opérations : 10 000 Add et 10 000 Remove
+        let mut ops_vec = Vec::with_capacity(20_000);
+
+        // 10 000 opérations Add (valeurs de 1 à 10 000)
+        for i in 1..=10_000 {
+            ops_vec.push(AWSet::Add(i));
+        }
+
+        // 10 000 opérations Remove (valeurs de 1 à 10 000)
+        for i in 1..=10_000 {
+            ops_vec.push(AWSet::Remove(i));
+        }
+
+        let ops = OpConfig::Uniform(&ops_vec);
+
+        // One replica is inaccessible to every other replica
+        let reachability = Some(vec![
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![true, true, true, true, true, true, true, false],
+            vec![false, false, false, false, false, false, false, false],
         ]);
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let run = RunConfig::new(0.4, 8, 10_000, reachability, None);
         let runs = vec![run.clone(); 1];
 
         let config =
