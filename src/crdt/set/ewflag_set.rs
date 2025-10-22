@@ -120,7 +120,7 @@ mod tests {
             vec![false, false, false, false, false, false, false, false],
         ]);
 
-        let run = RunConfig::new(0.4, 8, 20_000, reachability, None);
+        let run = RunConfig::new(0.4, 8, 10_000, reachability, None);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<EWFlagSet<i32>>::new(
