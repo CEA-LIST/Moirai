@@ -94,12 +94,8 @@ where
         }
     }
 
-    fn len(&self) -> usize {
-        self.stable.len() + self.unstable.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.stable.is_empty() && self.unstable.is_empty()
+    fn is_default(&self) -> bool {
+        self.stable.is_default() && self.unstable.is_empty()
     }
 
     // fn is_enabled(&self, op: &Self::Op) -> bool {

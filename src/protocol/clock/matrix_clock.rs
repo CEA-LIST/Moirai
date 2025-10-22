@@ -118,10 +118,8 @@ impl MatrixClock {
     /// # Complexity
     /// `O(n)`
     fn is_square(&self) -> bool {
-        // TODO: change
-        // let n = self.entries.len();
-        // self.entries.values().all(|c| c.len() == n)
-        true
+        let n = self.entries.0.len();
+        self.entries.0.iter().all(|c| c.len() == n)
     }
 
     /// Check that no clock i has an entry j greater than the entry j of clock j

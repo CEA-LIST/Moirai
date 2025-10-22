@@ -59,12 +59,8 @@ where
         }
     }
 
-    fn len(&self) -> usize {
-        IsUnstableState::len(self)
-    }
-
-    fn is_empty(&self) -> bool {
-        IsUnstableState::is_empty(self)
+    fn is_default(&self) -> bool {
+        self.graph.node_count() == 0
     }
 
     // fn is_enabled(&self, op: &Self::Op) -> bool {

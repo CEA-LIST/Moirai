@@ -113,13 +113,12 @@ impl Version {
     /// # Complexity
     /// Checks that the views are identical.
     /// Then runs in `O(n)` time complexity with `n` being the number of members in the view
-    // TODO: using lamport timestamp: if other_old.lamport = other_new.lamport + 1, then just incr the other origin value
+    // TODO: lsv has an origin_id
     pub fn join(&mut self, other: &Self) {
         // if `self` dominate `other`, then no need to merge.
-        // TODO: lsv has an origin_id
-        // if EventId::from(other).is_predecessor_of(self) {
-        //     return;
-        // }
+        if EventId::from(other).is_predecessor_of(self) {
+            return;
+        }
         self.entries.join(&other.entries);
     }
 
@@ -219,38 +218,112 @@ impl PartialEq for Version {
 
 impl Eq for Version {}
 
-impl PartialOrd for Version {
-    // TODO: add shortcut + check correctness
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.resolver != other.resolver {
-            panic!("Comparing versions with different views");
-        }
+impl Version {
+    /// Compare les entrées non-origine pour déterminer la relation d'ordre
+    fn compare_non_origin_entries(&self, other: &Self) -> (bool, bool) {
         let mut self_greater = false;
         let mut other_greater = false;
-
         let l = self.entries.0.len().max(other.entries.0.len());
 
-        for (a, b) in self
+        for (idx, (a, b)) in self
             .entries
             .values()
             .chain(std::iter::repeat(&0))
             .zip(other.entries.values().chain(std::iter::repeat(&0)))
             .take(l)
+            .enumerate()
         {
+            // On ignore les entrées des origines (déjà vérifiées)
+            if ReplicaIdx(idx) == self.origin_idx || ReplicaIdx(idx) == other.origin_idx {
+                continue;
+            }
             match a.cmp(b) {
                 Ordering::Greater => self_greater = true,
                 Ordering::Less => other_greater = true,
                 Ordering::Equal => {}
             }
-            if self_greater && other_greater {
-                return None;
-            }
         }
+
+        (self_greater, other_greater)
+    }
+
+    /// Détermine l'ordre partiel lorsque les deux versions ont des connaissances complètes
+    /// de leurs origines respectives (cas complexe nécessitant une comparaison complète)
+    fn compare_with_full_knowledge(
+        &self,
+        other: &Self,
+        self_at_other_origin: Seq,
+        other_at_other_origin: Seq,
+        other_at_self_origin: Seq,
+        self_at_self_origin: Seq,
+    ) -> Option<Ordering> {
+        // Initialiser avec les différences déjà connues des origines
+        let mut self_greater = self_at_other_origin > other_at_other_origin
+            || other_at_self_origin < self_at_self_origin;
+        let mut other_greater = self_at_other_origin < other_at_other_origin
+            || other_at_self_origin > self_at_self_origin;
+
+        // Comparer les autres entrées
+        let (other_entries_self_greater, other_entries_other_greater) =
+            self.compare_non_origin_entries(other);
+
+        self_greater = self_greater || other_entries_self_greater;
+        other_greater = other_greater || other_entries_other_greater;
+
+        // Déterminer la relation finale
         match (self_greater, other_greater) {
             (true, false) => Some(Ordering::Greater),
             (false, true) => Some(Ordering::Less),
             (false, false) => Some(Ordering::Equal),
-            (true, true) => unreachable!(),
+            (true, true) => None, // Concurrent/incomparable
+        }
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.resolver != other.resolver {
+            panic!("Comparing versions with different views");
+        }
+
+        // Optimisation 1: Même origine => comparaison directe des séquences
+        if self.origin_idx == other.origin_idx {
+            return Some(self.origin_seq().cmp(&other.origin_seq()));
+        }
+
+        // Optimisation 2: Vérification rapide basée sur les séquences d'origine
+        // Propriété clé: si v1[v2.origin] >= v2[v2.origin], alors v1 >= v2 (jamais v1 < v2)
+        let self_at_other_origin = self.seq_by_idx(other.origin_idx);
+        let other_at_other_origin = other.origin_seq();
+        let other_at_self_origin = other.seq_by_idx(self.origin_idx);
+        let self_at_self_origin = self.origin_seq();
+
+        match (
+            self_at_other_origin.cmp(&other_at_other_origin),
+            other_at_self_origin.cmp(&self_at_self_origin),
+        ) {
+            // Les deux connaissent tous les événements de l'origine de l'autre
+            // => besoin d'une comparaison complète
+            (Ordering::Greater | Ordering::Equal, Ordering::Greater | Ordering::Equal) => self
+                .compare_with_full_knowledge(
+                    other,
+                    self_at_other_origin,
+                    other_at_other_origin,
+                    other_at_self_origin,
+                    self_at_self_origin,
+                ),
+
+            // other connaît tous les événements de self.origin, mais self ne connaît pas
+            // tous ceux de other.origin => other > self
+            (Ordering::Less, Ordering::Greater | Ordering::Equal) => Some(Ordering::Less),
+
+            // self connaît tous les événements de other.origin, mais other ne connaît pas
+            // tous ceux de self.origin => self > other
+            (Ordering::Greater | Ordering::Equal, Ordering::Less) => Some(Ordering::Greater),
+
+            // Aucun ne connaît tous les événements de l'origine de l'autre
+            // => versions concurrentes
+            (Ordering::Less, Ordering::Less) => None,
         }
     }
 }

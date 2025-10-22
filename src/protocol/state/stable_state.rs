@@ -3,9 +3,7 @@ use std::fmt::Debug;
 use crate::protocol::{crdt::pure_crdt::RedundancyRelation, event::tagged_op::TaggedOp};
 
 pub trait IsStableState<O>: Default + Debug {
-    // TODO: is_default
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool;
+    fn is_default(&self) -> bool;
     fn apply(&mut self, value: O);
     fn clear(&mut self);
     // TODO: maybe give just the op and not the tagged_op
@@ -16,12 +14,8 @@ impl<O> IsStableState<O> for Vec<O>
 where
     O: Debug,
 {
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        Vec::is_empty(self)
+    fn is_default(&self) -> bool {
+        self.is_empty()
     }
 
     fn apply(&mut self, value: O) {

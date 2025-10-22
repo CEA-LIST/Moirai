@@ -104,13 +104,8 @@ where
         }
     }
 
-    fn len(&self) -> usize {
-        self.vertex_content.values().map(|v| v.len()).sum::<usize>()
-            + self.arc_content.values().map(|e| e.len()).sum::<usize>()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+    fn is_default(&self) -> bool {
+        self.arc_content.is_empty() && self.vertex_content.is_empty()
     }
 
     // fn is_enabled(&self, op: &Self::Op) -> bool {
@@ -173,15 +168,14 @@ where
         let mut graph = Self::Value::new();
         let mut node_idx = HashMap::default();
         for (v, child) in self.vertex_content.iter() {
-            // TODO: skip empty nodes
-            if child.is_empty() {
+            if child.is_default() {
                 continue;
             }
             let idx = graph.add_node(Content::new(v.clone(), child.execute_query(Read::new())));
             node_idx.insert(v.clone(), idx);
         }
         for ((v1, v2, e), child) in self.arc_content.iter() {
-            if child.is_empty() {
+            if child.is_default() {
                 continue;
             }
             let idx1 = node_idx.get(v1);
