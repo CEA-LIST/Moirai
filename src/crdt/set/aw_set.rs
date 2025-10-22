@@ -312,7 +312,6 @@ mod tests {
                 config::{FuzzerConfig, OpConfig, RunConfig},
                 fuzzer,
             },
-            protocol::state::po_log::MapLog,
             protocol::state::po_log::VecLog,
         };
 
