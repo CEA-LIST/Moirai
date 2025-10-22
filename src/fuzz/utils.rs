@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 pub fn format_number(value: f64) -> String {
     // Round up & convert to integer
     let rounded = value.ceil() as u64;
@@ -14,4 +16,20 @@ pub fn format_number(value: f64) -> String {
     }
 
     result.chars().rev().collect::<String>().to_string()
+}
+
+pub fn format_string<V>(value: &V) -> String
+where
+    V: Debug,
+{
+    const LIMIT: usize = 100;
+
+    let s = format!("{:?}", value);
+    if s.len() <= LIMIT {
+        s.to_string()
+    } else {
+        let start = &s[..LIMIT]; // les LIMIT premiers caractères
+        let end = &s[s.len() - 3..]; // les 3 derniers caractères
+        format!("{} ... {}", start, end)
+    }
 }

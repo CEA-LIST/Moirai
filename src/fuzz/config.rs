@@ -122,6 +122,18 @@ impl RunConfig {
             num_operations > 0,
             "Number of operations must be greater than 0"
         );
+        if let Some(matrix) = &reachability {
+            assert!(
+                matrix.len() == num_replicas as usize,
+                "Reachability matrix must have size equal to number of replicas"
+            );
+            for row in matrix {
+                assert!(
+                    row.len() == num_replicas as usize,
+                    "Each row in reachability matrix must have size equal to number of replicas"
+                );
+            }
+        }
         Self {
             churn_rate,
             num_replicas,
