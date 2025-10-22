@@ -25,7 +25,6 @@ where
     fn since(&self) -> SinceMessage;
     fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>>;
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
-    // TODO: Add support for custom queries
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where
         L: EvalNested<Q>;

@@ -21,11 +21,7 @@ impl<V> IsStableState<RWSet<V>> for (HashSet<V>, Vec<RWSet<V>>)
 where
     V: Clone + Eq + Hash + Debug,
 {
-    fn len(&self) -> usize {
-        self.0.len() + self.1.len()
-    }
-
-    fn is_empty(&self) -> bool {
+    fn is_default(&self) -> bool {
         self.0.is_empty() && self.1.is_empty()
     }
 

@@ -26,12 +26,7 @@ impl<V> IsStableState<Counter<V>> for V
 where
     V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
-    fn len(&self) -> usize {
-        // TODO: maybe len is not necessary. Is empty would be better
-        1
-    }
-
-    fn is_empty(&self) -> bool {
+    fn is_default(&self) -> bool {
         *self == V::default()
     }
 

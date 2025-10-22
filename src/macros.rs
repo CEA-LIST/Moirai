@@ -61,12 +61,13 @@ macro_rules! record {
                     )*
                 }
 
-                fn len(&self) -> usize {
-                    0 $(+ self.$field.len())*
-                }
-
-                fn is_empty(&self) -> bool {
-                    true $(&& self.$field.is_empty())*
+                fn is_default(&self) -> bool {
+                    $(
+                        if !self.$field.is_default() {
+                            return false;
+                        }
+                    )*
+                    true
                 }
 
                 // TODO: change

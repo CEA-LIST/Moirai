@@ -29,8 +29,7 @@ pub trait IsLog: Default + Debug {
     }
     fn stabilize(&mut self, version: &Version);
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool;
+    fn is_default(&self) -> bool;
 }
 
 #[cfg(feature = "test_utils")]

@@ -159,12 +159,8 @@ where
         }
     }
 
-    fn len(&self) -> usize {
-        self.children.values().map(|c| c.len()).sum()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+    fn is_default(&self) -> bool {
+        self.position.is_default() && self.children.is_empty()
     }
 
     fn prepare(op: Self::Op) -> Self::Op {

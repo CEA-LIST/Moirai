@@ -20,16 +20,8 @@ pub enum EWFlag {
 }
 
 impl IsStableState<EWFlag> for Option<bool> {
-    fn len(&self) -> usize {
-        if self.is_some() {
-            1
-        } else {
-            0
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        <Option<bool> as IsStableState<EWFlag>>::len(self) == 0
+    fn is_default(&self) -> bool {
+        self.is_none()
     }
 
     fn apply(&mut self, value: EWFlag) {
