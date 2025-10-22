@@ -1,8 +1,6 @@
 use std::{cmp::Ordering, fmt::Display, hash::Hash};
 
 use log::error;
-// #[cfg(feature = "utils")]
-// use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -68,7 +66,6 @@ impl VersionEntries {
     }
 }
 
-// #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
