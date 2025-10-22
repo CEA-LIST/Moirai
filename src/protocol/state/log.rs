@@ -3,12 +3,14 @@ use std::fmt::Debug;
 #[cfg(feature = "test_utils")]
 use crate::protocol::state::{stable_state::IsStableState, unstable_state::IsUnstableState};
 use crate::protocol::{
-    clock::version_vector::Version, crdt::pure_crdt::QueryOperation, event::Event,
+    clock::version_vector::Version,
+    crdt::{eval::EvalNested, query::QueryOperation},
+    event::Event,
 };
 
 /// Define the interface of a log structure for CRDTs that store events.
 pub trait IsLog: Default + Debug {
-    type Value: Default;
+    type Value: Default + Debug;
     type Op: Debug + Clone;
 
     fn new() -> Self;
@@ -36,12 +38,4 @@ pub trait IsLog: Default + Debug {
 pub trait IsLogTest: IsLog {
     fn stable(&self) -> &impl IsStableState<Self::Op>;
     fn unstable(&self) -> &impl IsUnstableState<Self::Op>;
-}
-
-pub trait EvalNested<Q>
-where
-    Q: QueryOperation,
-    Self: IsLog,
-{
-    fn execute_query(&self, q: Q) -> Q::Response;
 }

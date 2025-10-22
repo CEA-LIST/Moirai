@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
+    crdt::{
+        eval::Eval,
+        pure_crdt::PureCRDT,
+        query::{QueryOperation, Read},
+        redundancy::RedundancyRelation,
+    },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -47,6 +52,7 @@ where
         _rdnt: RedundancyRelation<Counter<V>>,
         tagged_op: &TaggedOp<Counter<V>>,
     ) {
+        let _ = _rdnt;
         if let Counter::Reset = tagged_op.op() {
             <V as IsStableState<Counter<V>>>::clear(self);
         }
@@ -125,7 +131,7 @@ mod tests {
             test_util::{triplet, twins},
         },
         protocol::{
-            crdt::pure_crdt::Read,
+            crdt::query::Read,
             replica::IsReplica,
             state::{log::IsLogTest, unstable_state::IsUnstableState},
         },

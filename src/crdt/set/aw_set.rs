@@ -2,7 +2,12 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{Contains, Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{Contains, QueryOperation, Read},
+            redundancy::RedundancyRelation,
+        },
         event::{tag::Tag, tagged_op::TaggedOp},
         state::{stable_state::IsStableState, unstable_state::IsUnstableState},
     },
@@ -120,7 +125,7 @@ where
         q: Contains<V>,
         stable: &<AWSet<V> as PureCRDT>::StableState,
         unstable: &impl IsUnstableState<Self>,
-    ) -> <Contains<V> as crate::protocol::crdt::pure_crdt::QueryOperation>::Response {
+    ) -> <Contains<V> as QueryOperation>::Response {
         stable.contains(&q.0)
             || unstable.iter().any(|o| {
                 if let AWSet::Add(v) = o.op() {
@@ -138,7 +143,7 @@ mod tests {
         crdt::{set::aw_set::AWSet, test_util::bootstrap_n},
         protocol::{
             broadcast::tcsb::Tcsb,
-            crdt::pure_crdt::{Contains, Read},
+            crdt::query::{Contains, Read},
             replica::IsReplica,
             state::po_log::VecLog,
         },

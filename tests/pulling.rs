@@ -4,7 +4,7 @@
 
 use moirai::{
     crdt::{counter::resettable_counter::Counter, set::aw_set::AWSet, test_util::twins},
-    protocol::{broadcast::tcsb::IsTcsbTest, crdt::pure_crdt::Read, replica::IsReplica},
+    protocol::{broadcast::tcsb::IsTcsbTest, crdt::query::Read, replica::IsReplica},
     set_from_slice,
 };
 

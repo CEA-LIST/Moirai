@@ -4,7 +4,11 @@ use petgraph::graph::DiGraph;
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{QueryOperation, Read},
+        },
         event::{tag::Tag, tagged_op::TaggedOp},
         state::unstable_state::IsUnstableState,
     },
@@ -156,7 +160,7 @@ where
 mod tests {
     use crate::{
         crdt::{graph::aw_multidigraph::Graph, test_util::twins},
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
     };
 
     #[test]

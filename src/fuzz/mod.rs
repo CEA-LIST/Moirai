@@ -5,19 +5,27 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     crdt::test_util::bootstrap_n,
-    fuzz::config::{FuzzerConfig, OpConfig, RunConfig},
+    fuzz::{
+        config::{FuzzerConfig, OpConfig, RunConfig},
+        utils::format_number,
+    },
     protocol::{
-        broadcast::tcsb::Tcsb, membership::ReplicaIdx, replica::IsReplica, state::log::IsLog,
+        broadcast::tcsb::Tcsb,
+        crdt::{eval::EvalNested, query::Read},
+        membership::ReplicaIdx,
+        replica::IsReplica,
+        state::log::IsLog,
     },
     HashMap,
 };
 
 pub mod config;
 pub mod convergence_checker;
+mod utils;
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog,
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
 {
     for run_config in config.runs {
         runner::<L>(
@@ -35,7 +43,7 @@ pub fn runner<L>(
     final_merge: bool,
     compare: fn(&L::Value, &L::Value) -> bool,
 ) where
-    L: IsLog,
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
 {
     let mut rng = if let Some(seed) = config.seed {
         ChaCha8Rng::from_seed(seed)
@@ -79,21 +87,6 @@ pub fn runner<L>(
         // Send the operation
         let op = operations.choose(&mut rng);
         count_ops += 1;
-
-        // let mut event: Option<Event<L::Op>> = None;
-        // let mut iter = 0;
-        // while event.is_none() && iter < 500 {
-        //     let op = operations.choose(&mut rng);
-        //     event = replicas[replica_idx].send(op.clone());
-        //     if event.is_some() {
-        //         break;
-        //     }
-        //     iter += 1;
-        // }
-
-        // if iter == 500 {
-        //     panic!("Could not generate an operation after 500 tries. Consider changing the operation distribution or the churn rate.");
-        // }
 
         let start = Instant::now();
         let msg = replicas[replica_idx].send(op.clone()).unwrap();
@@ -149,68 +142,9 @@ pub fn runner<L>(
     let first_value = replicas[0].query(Read::new());
     let num_delivered_events = replicas[0].num_delivered_events();
 
-    // println!(
-    //     "Replica {} delivered {} events and has state: {:?}",
-    //     replicas[0].id(),
-    //     replicas[0].num_delivered_events(),
-    //     replicas[0].query(Read::new())
-    // );
-    // let mut outbox_events = replicas[0]
-    //     .tcsb()
-    //     .outbox()
-    //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-    //     .collect::<Vec<_>>();
-    // outbox_events.sort();
-    // println!(
-    //     "Replica {} has the following events in its outbox: {}",
-    //     replicas[0].id(),
-    //     outbox_events.join(", ")
-    // );
-    // let mut inbox_events = replicas[0]
-    //     .tcsb()
-    //     .inbox()
-    //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-    //     .collect::<Vec<_>>();
-    // inbox_events.sort();
-    // println!(
-    //     "Replica {} has the following events in its inbox: {}",
-    //     replicas[0].id(),
-    //     inbox_events.join(", ")
-    // );
-    // println!("---------------------------------------");
-
     for (idx, r) in replicas.iter().enumerate().skip(1) {
         let replica_delivered_events = r.num_delivered_events();
         if num_delivered_events != replica_delivered_events {
-            // println!(
-            //     "Replica {} delivered {} events and has state: {:?}",
-            //     r.id(),
-            //     r.num_delivered_events(),
-            //     r.query(Read::new())
-            // );
-            // let mut outbox_events = r
-            //     .tcsb()
-            //     .outbox()
-            //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-            //     .collect::<Vec<_>>();
-            // outbox_events.sort();
-            // println!(
-            //     "Replica {} has the following events in its outbox: {}",
-            //     r.id(),
-            //     outbox_events.join(", ")
-            // );
-            // let mut inbox_events = r
-            //     .tcsb()
-            //     .inbox()
-            //     .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-            //     .collect::<Vec<_>>();
-            // inbox_events.sort();
-            // println!(
-            //     "Replica {} has the following events in its inbox: {}",
-            //     r.id(),
-            //     inbox_events.join(", ")
-            // );
-            // println!("---------------------------------------");
             panic!(
                 "Replica {} and {} have delivered a different number of events: {num_delivered_events} vs {replica_delivered_events}",
                 replicas[0].id(),
@@ -219,36 +153,6 @@ pub fn runner<L>(
         }
         let value = r.query(Read::new());
         if !compare(&first_value, &value) {
-            // for (_, r) in replicas.iter().enumerate() {
-            //     println!(
-            //         "Replica {} delivered {} events and has state: {:?}",
-            //         r.id(),
-            //         r.num_delivered_events(),
-            //         r.query(Read::new())
-            //     );
-            //     let mut outbox_events = r
-            //         .tcsb()
-            //         .outbox()
-            //         .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-            //         .collect::<Vec<_>>();
-            //     outbox_events.sort();
-            //     println!(
-            //         "Replica {} has the following events in its outbox: {}",
-            //         r.id(),
-            //         outbox_events.join(", ")
-            //     );
-            //     let mut inbox_events = r
-            //         .tcsb()
-            //         .inbox()
-            //         .map(|e| format!("[{}, {:?}]", e.id(), e.op()))
-            //         .collect::<Vec<_>>();
-            //     inbox_events.sort();
-            //     println!(
-            //         "Replica {} has the following events in its inbox: {}",
-            //         r.id(),
-            //         inbox_events.join(", ")
-            //     );
-            // }
             panic!("Replicas 0 and {idx} diverged: {first_value:?} vs {value:?}");
         }
     }
@@ -272,10 +176,12 @@ pub fn runner<L>(
     );
     println!(
         "Average op/sec: {}",
-        (count_ops as f64 * 1000.0)
-            / time_to_deliver
-                .values()
-                .map(|d| d.as_millis())
-                .sum::<u128>() as f64
+        format_number(
+            (count_ops as f64 * 1000.0)
+                / time_to_deliver
+                    .values()
+                    .map(|d| d.as_millis())
+                    .sum::<u128>() as f64
+        )
     );
 }

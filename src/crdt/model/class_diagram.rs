@@ -443,7 +443,7 @@ mod tests {
         },
         protocol::{
             broadcast::tcsb::Tcsb,
-            crdt::pure_crdt::Read,
+            crdt::query::Read,
             replica::{IsReplica, Replica},
         },
     };

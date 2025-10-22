@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
+    crdt::{
+        eval::Eval,
+        pure_crdt::PureCRDT,
+        query::{QueryOperation, Read},
+        redundancy::RedundancyRelation,
+    },
     event::tagged_op::TaggedOp,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -95,7 +100,7 @@ where
 mod tests {
     use crate::{
         crdt::{counter::simple_counter::Counter, test_util::twins},
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
     };
 
     #[test]

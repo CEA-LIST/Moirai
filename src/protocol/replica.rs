@@ -6,10 +6,10 @@ use crate::{
             message::{BatchMessage, EventMessage, SinceMessage},
             tcsb::{IsTcsb, IsTcsbTest},
         },
-        crdt::pure_crdt::QueryOperation,
+        crdt::{eval::EvalNested, query::QueryOperation},
         event::Event,
         membership::{ReplicaId, ReplicaIdOwned},
-        state::log::{EvalNested, IsLog, IsLogTest},
+        state::log::{IsLog, IsLogTest},
     },
     utils::intern_str::Interner,
 };

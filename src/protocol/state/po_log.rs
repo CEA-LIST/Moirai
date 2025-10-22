@@ -5,13 +5,14 @@ use crate::protocol::state::log::IsLogTest;
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, RedundancyRelation},
-        event::{id::EventId, tagged_op::TaggedOp, Event},
-        state::{
-            log::{EvalNested, IsLog},
-            stable_state::IsStableState,
-            unstable_state::IsUnstableState,
+        crdt::{
+            eval::{Eval, EvalNested},
+            pure_crdt::PureCRDT,
+            query::QueryOperation,
+            redundancy::RedundancyRelation,
         },
+        event::{id::EventId, tagged_op::TaggedOp, Event},
+        state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
     },
     HashMap,
 };
