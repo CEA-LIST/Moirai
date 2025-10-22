@@ -1,16 +1,10 @@
 use std::fmt::Debug;
 
 use crate::protocol::{
+    crdt::{eval::Eval, query::QueryOperation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
-
-pub type RedundancyRelation<O> = fn(
-    _old_op: &O,
-    _old_event_id: Option<&Tag>,
-    is_conc: bool,
-    new_tagged_op: &TaggedOp<O>,
-) -> bool;
 
 pub trait PureCRDT: Debug + Sized {
     type Value: Default + Debug;
@@ -72,61 +66,4 @@ pub trait PureCRDT: Debug + Sized {
     // fn is_enabled(_op: &Self, _state: impl Fn() -> Self::Value) -> bool {
     //     true
     // }
-}
-
-pub trait QueryOperation {
-    type Response;
-}
-
-pub trait Eval<Q>
-where
-    Q: QueryOperation,
-    Self: PureCRDT,
-{
-    fn execute_query(
-        q: Q,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Q::Response;
-}
-
-#[derive(Debug)]
-pub struct Read<Crdt>(std::marker::PhantomData<Crdt>);
-
-impl<V> QueryOperation for Read<V> {
-    type Response = V;
-}
-
-impl<V> Read<V> {
-    pub fn new() -> Self {
-        Self(std::marker::PhantomData)
-    }
-}
-
-impl<V> Default for Read<V> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Contains<V>(pub V);
-
-impl<V> QueryOperation for Contains<V>
-where
-    V: Debug + Clone,
-{
-    type Response = bool;
-}
-
-pub struct Get<K, V>(pub K, std::marker::PhantomData<V>);
-
-impl<K, V> Get<K, V> {
-    pub fn new(key: K) -> Self {
-        Self(key, std::marker::PhantomData)
-    }
-}
-
-impl<K, V> QueryOperation for Get<K, V> {
-    type Response = Option<V>;
 }

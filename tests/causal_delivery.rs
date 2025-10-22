@@ -7,7 +7,7 @@ use moirai::{
         counter::resettable_counter::Counter,
         test_util::{triplet, twins},
     },
-    protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+    protocol::{crdt::query::Read, replica::IsReplica},
 };
 
 #[test]

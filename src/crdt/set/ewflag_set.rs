@@ -44,7 +44,7 @@ mod tests {
     use super::*;
     use crate::{
         crdt::test_util::twins_log,
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
     };
 
     #[test]

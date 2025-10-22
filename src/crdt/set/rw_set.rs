@@ -2,7 +2,12 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{Contains, Eval, PureCRDT, QueryOperation, Read, RedundancyRelation},
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{Contains, QueryOperation, Read},
+            redundancy::RedundancyRelation,
+        },
         event::{tag::Tag, tagged_op::TaggedOp},
         state::{stable_state::IsStableState, unstable_state::IsUnstableState},
     },
@@ -188,7 +193,7 @@ where
         q: Contains<V>,
         stable: &<RWSet<V> as PureCRDT>::StableState,
         unstable: &impl IsUnstableState<Self>,
-    ) -> <Contains<V> as crate::protocol::crdt::pure_crdt::QueryOperation>::Response {
+    ) -> <Contains<V> as QueryOperation>::Response {
         let exist = stable.0.contains(&q.0)
             && !stable
                 .1
@@ -211,7 +216,7 @@ mod tests {
     use crate::{
         crdt::{set::rw_set::RWSet, test_util::twins},
         protocol::{
-            crdt::pure_crdt::{Contains, Read},
+            crdt::query::{Contains, Read},
             replica::IsReplica,
             state::{log::IsLogTest, unstable_state::IsUnstableState},
         },

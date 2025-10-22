@@ -80,11 +80,11 @@ macro_rules! record {
                 }
             }
 
-            impl $crate::protocol::state::log::EvalNested<$crate::protocol::crdt::pure_crdt::Read<<Self as $crate::protocol::state::log::IsLog>::Value>> for [<$name Log>] {
-                fn execute_query(&self, _q: $crate::protocol::crdt::pure_crdt::Read<<Self as $crate::protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
+            impl $crate::protocol::crdt::eval::EvalNested<$crate::protocol::crdt::query::Read<<Self as $crate::protocol::state::log::IsLog>::Value>> for [<$name Log>] {
+                fn execute_query(&self, _q: $crate::protocol::crdt::query::Read<<Self as $crate::protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: self.$field.execute_query($crate::protocol::crdt::pure_crdt::Read::new()),
+                            $field: self.$field.execute_query($crate::protocol::crdt::query::Read::new()),
                         )*
                     }
                 }

@@ -1,7 +1,11 @@
 use std::fmt::Debug;
 
 use crate::protocol::{
-    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+    crdt::{
+        eval::Eval,
+        pure_crdt::PureCRDT,
+        query::{QueryOperation, Read},
+    },
     event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableState,
 };
@@ -77,7 +81,7 @@ mod tests {
             register::to_register::TORegister,
             test_util::{triplet, twins},
         },
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
     };
 
     #[test]

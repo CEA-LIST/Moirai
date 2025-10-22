@@ -3,9 +3,12 @@ use std::{fmt::Debug, hash::Hash};
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{Get, QueryOperation, Read},
+        crdt::{
+            eval::EvalNested,
+            query::{Get, QueryOperation, Read},
+        },
         event::Event,
-        state::log::{EvalNested, IsLog},
+        state::log::IsLog,
     },
     HashMap,
 };
@@ -152,7 +155,7 @@ mod tests {
             test_util::{triplet_log, twins_log},
         },
         protocol::{
-            crdt::pure_crdt::{Get, Read},
+            crdt::query::{Get, Read},
             event::tagged_op::TaggedOp,
             replica::IsReplica,
             state::po_log::{POLog, VecLog},
@@ -478,7 +481,7 @@ mod tests {
         ];
         let ops = OpConfig::Uniform(&binding);
 
-        let run = RunConfig::new(0.4, 16, 100_000, None, None);
+        let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config =

@@ -4,12 +4,12 @@ use crate::{
     crdt::list::eg_walker::List as SimpleList,
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{QueryOperation, Read},
-        event::{id::EventId, Event},
-        state::{
-            event_graph::EventGraph,
-            log::{EvalNested, IsLog},
+        crdt::{
+            eval::EvalNested,
+            query::{QueryOperation, Read},
         },
+        event::{id::EventId, Event},
+        state::{event_graph::EventGraph, log::IsLog},
     },
     HashMap,
 };
@@ -206,7 +206,7 @@ mod tests {
             list::nested_list::{List, ListLog},
             test_util::twins_log,
         },
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica, state::po_log::VecLog},
+        protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog},
     };
 
     #[test]

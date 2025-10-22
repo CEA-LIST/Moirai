@@ -4,7 +4,11 @@ use std::{
 };
 
 use crate::protocol::{
-    crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+    crdt::{
+        eval::Eval,
+        pure_crdt::PureCRDT,
+        query::{QueryOperation, Read},
+    },
     event::{id::EventId, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableState,
 };

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::protocol::{
-    crdt::pure_crdt::{Eval, PureCRDT, Read, RedundancyRelation},
+    crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
@@ -103,7 +103,7 @@ impl Eval<Read<<Self as PureCRDT>::Value>> for EWFlag {
 mod tests {
     use crate::{
         crdt::{flag::ew_flag::EWFlag, test_util::twins},
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
     };
 
     // Test the Enable-Wins Flag CRDT using two replicas (twins)

@@ -2,7 +2,11 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{QueryOperation, Read},
+        },
         event::{tag::Tag, tagged_op::TaggedOp},
         state::unstable_state::IsUnstableState,
     },
@@ -78,7 +82,7 @@ mod tests {
             register::mv_register::MVRegister,
             test_util::{triplet, twins},
         },
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
         set_from_slice, HashSet,
     };
 

@@ -12,12 +12,13 @@ use petgraph::{
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation},
-        event::{id::EventId, tagged_op::TaggedOp, Event},
-        state::{
-            log::{EvalNested, IsLog},
-            unstable_state::IsUnstableState,
+        crdt::{
+            eval::{Eval, EvalNested},
+            pure_crdt::PureCRDT,
+            query::QueryOperation,
         },
+        event::{id::EventId, tagged_op::TaggedOp, Event},
+        state::{log::IsLog, unstable_state::IsUnstableState},
     },
     HashMap, HashSet,
 };

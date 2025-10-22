@@ -8,9 +8,12 @@ use petgraph::graph::DiGraph;
 use crate::{
     protocol::{
         clock::version_vector::Version,
-        crdt::pure_crdt::{QueryOperation, Read},
+        crdt::{
+            eval::EvalNested,
+            query::{QueryOperation, Read},
+        },
         event::Event,
-        state::log::{EvalNested, IsLog},
+        state::log::IsLog,
     },
     HashMap,
 };
@@ -223,7 +226,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::protocol::crdt::pure_crdt::Read;
     use crate::{
         crdt::{
             counter::resettable_counter::Counter,
@@ -231,7 +233,7 @@ mod tests {
             register::lww_register::LWWRegister,
             test_util::{triplet_log, twins_log},
         },
-        protocol::{replica::IsReplica, state::po_log::VecLog},
+        protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog},
     };
     use petgraph::graph::DiGraph;
 

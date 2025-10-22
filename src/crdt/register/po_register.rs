@@ -2,7 +2,11 @@ use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
 use crate::{
     protocol::{
-        crdt::pure_crdt::{Eval, PureCRDT, QueryOperation, Read},
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{QueryOperation, Read},
+        },
         event::tagged_op::TaggedOp,
         state::unstable_state::IsUnstableState,
     },
@@ -83,7 +87,7 @@ mod tests {
 
     use crate::{
         crdt::{register::po_register::PORegister, test_util::twins},
-        protocol::{crdt::pure_crdt::Read, replica::IsReplica},
+        protocol::{crdt::query::Read, replica::IsReplica},
         set_from_slice,
     };
 
