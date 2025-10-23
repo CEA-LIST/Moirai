@@ -226,6 +226,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use petgraph::graph::DiGraph;
+
     use crate::{
         crdt::{
             counter::resettable_counter::Counter,
@@ -235,7 +237,6 @@ mod tests {
         },
         protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog},
     };
-    use petgraph::graph::DiGraph;
 
     type Lww = VecLog<LWWRegister<i32>>;
     type Cntr = VecLog<Counter<i32>>;
