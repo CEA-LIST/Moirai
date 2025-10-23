@@ -180,7 +180,7 @@ mod tests {
         replica_a.receive(event);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()
                 .is_some()
         );
@@ -202,7 +202,7 @@ mod tests {
         replica_a.receive(event_b);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()
                 .is_some()
         );
@@ -219,7 +219,7 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()).node_count(), 1);
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()
                 .is_some()
         );
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()),)
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()
                 .is_some()
         );

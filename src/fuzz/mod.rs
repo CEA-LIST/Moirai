@@ -161,7 +161,7 @@ pub fn runner<L>(
             } else {
                 0.0
             };
-            pb.set_message(format!("Avg: {:.3}ms/op", avg_time_ms));
+            pb.set_message(format!("Avg: {avg_time_ms:.3}ms/op"));
         }
 
         let start = Instant::now();
@@ -295,9 +295,9 @@ pub fn runner<L>(
     for (idx, duration) in time_to_deliver.iter() {
         let percentage = (duration.as_millis() as f64 / total_time_ms as f64) * 100.0;
         replica_table.add_row(vec![
-            &format!("Replica {}", idx),
+            &format!("Replica {idx}"),
             &format_number(duration.as_millis() as f64),
-            &format!("{:.1}%", percentage),
+            &format!("{percentage:.1}%"),
         ]);
     }
 
@@ -337,7 +337,7 @@ pub fn runner<L>(
 
     results_table.add_row(vec![
         "Avg per operation",
-        &format!("{:.3} ms", avg_time_per_op),
+        &format!("{avg_time_per_op:.3} ms"),
     ]);
 
     results_table.add_row(vec![
