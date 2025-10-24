@@ -44,6 +44,10 @@ where
         }
     }
 
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        O::is_enabled(op, &self.stable, &self.unstable)
+    }
+
     fn effect(&mut self, event: Event<Self::Op>) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {

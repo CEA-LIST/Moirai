@@ -100,6 +100,16 @@ where
     fn is_default(&self) -> bool {
         self.children.is_empty()
     }
+
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        match op {
+            UWMap::Update(k, v) => self
+                .children
+                .get(k)
+                .map_or(false, |child| child.is_enabled(v)),
+            UWMap::Remove(_) | UWMap::Clear => true,
+        }
+    }
 }
 
 impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>

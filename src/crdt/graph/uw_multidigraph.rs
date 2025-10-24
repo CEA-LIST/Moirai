@@ -111,37 +111,37 @@ where
         self.arc_content.is_empty() && self.vertex_content.is_empty()
     }
 
-    // fn is_enabled(&self, op: &Self::Op) -> bool {
-    //     match op {
-    //         UWGraph::UpdateVertex(_, _) => true,
-    //         UWGraph::RemoveVertex(v) => {
-    //             if let Some(child) = self.vertex_content.get(v) {
-    //                 !child.is_empty()
-    //             } else {
-    //                 false
-    //             }
-    //         }
-    //         UWGraph::UpdateArc(v1, v2, _, _) => {
-    //             if let (Some(child1), Some(child2)) =
-    //                 (self.vertex_content.get(v1), self.vertex_content.get(v2))
-    //             {
-    //                 if child1.is_empty() || child2.is_empty() {
-    //                     return false;
-    //                 }
-    //                 true
-    //             } else {
-    //                 false
-    //             }
-    //         }
-    //         UWGraph::RemoveArc(v1, v2, e) => {
-    //             if let Some(child) = self.arc_content.get(&(v1.clone(), v2.clone(), e.clone())) {
-    //                 !child.is_empty()
-    //             } else {
-    //                 false
-    //             }
-    //         }
-    //     }
-    // }
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        match op {
+            UWGraph::UpdateVertex(_, _) => true,
+            UWGraph::RemoveVertex(v) => {
+                if let Some(child) = self.vertex_content.get(v) {
+                    !child.is_default()
+                } else {
+                    false
+                }
+            }
+            UWGraph::UpdateArc(v1, v2, _, _) => {
+                if let (Some(child1), Some(child2)) =
+                    (self.vertex_content.get(v1), self.vertex_content.get(v2))
+                {
+                    if child1.is_default() || child2.is_default() {
+                        return false;
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            UWGraph::RemoveArc(v1, v2, e) => {
+                if let Some(child) = self.arc_content.get(&(v1.clone(), v2.clone(), e.clone())) {
+                    !child.is_default()
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>

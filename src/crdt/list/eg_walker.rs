@@ -381,13 +381,21 @@ where
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_STABILIZE: bool = true;
 
-    // fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
-    //     let eval = state();
-    //     match op {
-    //         List::Insert { pos, .. } => *pos <= eval.len(),
-    //         List::Delete { pos } => *pos < eval.len(),
-    //     }
-    // }
+    fn is_enabled(
+        op: &Self,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> bool {
+        let state = <Self as Eval<Read<<Self as PureCRDT>::Value>>>::execute_query(
+            Read::new(),
+            stable,
+            unstable,
+        );
+        match op {
+            List::Insert { pos, .. } => *pos <= state.len(),
+            List::Delete { pos } => *pos < state.len(),
+        }
+    }
 }
 
 impl<V> Eval<Read<<Self as PureCRDT>::Value>> for List<V>
