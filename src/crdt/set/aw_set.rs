@@ -303,6 +303,48 @@ mod tests {
         assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
     }
 
+    #[test]
+    fn concurrent_add_aw_set_3() {
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
+
+        let event_a_1 = replica_a.send(AWSet::Add("a")).unwrap();
+        let event_a_2 = replica_a.send(AWSet::Remove("a")).unwrap();
+        let event_b_1 = replica_b.send(AWSet::Add("a")).unwrap();
+        let event_b_2 = replica_b.send(AWSet::Remove("a")).unwrap();
+
+        replica_a.receive(event_b_1);
+        replica_b.receive(event_a_1);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
+
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
+    }
+
+    #[test]
+    fn concurrent_add_aw_set_4() {
+        let mut replicas = bootstrap_n::<VecLog<AWSet<&str>>, Tcsb<AWSet<&str>>>(2);
+        let (replica_a, replica_b) = replicas.split_at_mut(1);
+        let replica_a = &mut replica_a[0];
+        let replica_b = &mut replica_b[0];
+
+        let event_a_1 = replica_a.send(AWSet::Add("a")).unwrap();
+        let event_a_2 = replica_a.send(AWSet::Remove("b")).unwrap();
+        let event_b_1 = replica_b.send(AWSet::Add("b")).unwrap();
+        let event_b_2 = replica_b.send(AWSet::Remove("a")).unwrap();
+
+        replica_a.receive(event_b_1);
+        replica_b.receive(event_a_1);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
+
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a", "b"]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a", "b"]));
+    }
+
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_aw_set() {

@@ -18,9 +18,7 @@ pub trait IsLog: Default + Debug {
     fn prepare(op: Self::Op) -> Self::Op {
         op
     }
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
-    }
+    fn is_enabled(&self, op: &Self::Op) -> bool;
     fn effect(&mut self, event: Event<Self::Op>);
     fn eval<Q>(&self, q: Q) -> Q::Response
     where

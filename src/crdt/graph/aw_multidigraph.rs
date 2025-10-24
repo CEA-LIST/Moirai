@@ -78,33 +78,39 @@ where
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
-    // fn is_enabled(op: &Self, state: impl Fn() -> Self::Value) -> bool {
-    //     match op {
-    //         Graph::AddVertex(_) => true,
-    //         // The vertex must exist to be removed.
-    //         Graph::RemoveVertex(v) => state().node_weights().any(|node| node == v),
-    //         // Both vertices must exist to add an arc.
-    //         Graph::AddArc(v1, v2, _) => {
-    //             state().node_weights().any(|node| node == v1)
-    //                 && state().node_weights().any(|node| node == v2)
-    //         }
-    //         Graph::RemoveArc(v1, v2, e) => {
-    //             let idx_1 = state()
-    //                 .node_indices()
-    //                 .find(|&idx| state().node_weight(idx) == Some(v1));
-    //             let idx_2 = state()
-    //                 .node_indices()
-    //                 .find(|&idx| state().node_weight(idx) == Some(v2));
-    //             if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
-    //                 state()
-    //                     .edges_connecting(i1, i2)
-    //                     .any(|edge| edge.weight() == e)
-    //             } else {
-    //                 false
-    //             }
-    //         }
-    //     }
-    // }
+    fn is_enabled(
+        op: &Self,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> bool {
+        let state =
+            Eval::<Read<<Self as PureCRDT>::Value>>::execute_query(Read::new(), stable, unstable);
+        match op {
+            Graph::AddVertex(_) => true,
+            // The vertex must exist to be removed.
+            Graph::RemoveVertex(v) => state.node_weights().any(|node| node == v),
+            // Both vertices must exist to add an arc.
+            Graph::AddArc(v1, v2, _) => {
+                state.node_weights().any(|node| node == v1)
+                    && state.node_weights().any(|node| node == v2)
+            }
+            Graph::RemoveArc(v1, v2, e) => {
+                let idx_1 = state
+                    .node_indices()
+                    .find(|&idx| state.node_weight(idx) == Some(v1));
+                let idx_2 = state
+                    .node_indices()
+                    .find(|&idx| state.node_weight(idx) == Some(v2));
+                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
+                    state
+                        .edges_connecting(i1, i2)
+                        .any(|edge| edge.weight() == e)
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 impl<V, E> Eval<Read<<Self as PureCRDT>::Value>> for Graph<V, E>

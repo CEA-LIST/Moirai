@@ -64,9 +64,9 @@ where
         self.graph.node_count() == 0
     }
 
-    // fn is_enabled(&self, op: &Self::Op) -> bool {
-    //     O::is_enabled(op, || O::eval(&O::StableState::default(), self))
-    // }
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        O::is_enabled(op, &O::StableState::default(), self)
+    }
 }
 
 impl<O> IsUnstableState<O> for EventGraph<O>

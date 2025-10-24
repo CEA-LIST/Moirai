@@ -62,8 +62,13 @@ pub trait PureCRDT: Debug + Sized {
         Self::execute_query(q, stable, unstable)
     }
 
-    // `is_enabled` can inspect the state to determine if the operation violates any precondition.
-    // fn is_enabled(_op: &Self, _state: impl Fn() -> Self::Value) -> bool {
-    //     true
-    // }
+    /// `is_enabled` can inspect the state to determine if the operation violates any precondition.
+    #[allow(unused_variables)]
+    fn is_enabled(
+        op: &Self,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> bool {
+        true
+    }
 }
