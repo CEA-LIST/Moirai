@@ -5,7 +5,7 @@ use crate::{
         clock::version_vector::Version,
         crdt::{
             eval::EvalNested,
-            query::{Get, QueryOperation, Read},
+            query::{Get, NestedGet, QueryOperation, Read},
         },
         event::Event,
         state::log::IsLog,
@@ -146,16 +146,32 @@ where
     }
 }
 
+impl<K, Q, L> EvalNested<NestedGet<K, Q>> for UWMapLog<K, L>
+where
+    Q: QueryOperation,
+    L: IsLog + EvalNested<Q>,
+    K: Clone + Debug + Hash + Eq + PartialEq,
+{
+    fn execute_query(&self, q: NestedGet<K, Q>) -> <NestedGet<K, Q> as QueryOperation>::Response {
+        if let Some(child) = self.children.get(&q.key) {
+            Some(child.execute_query(q.nested_query))
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         crdt::{
             counter::resettable_counter::Counter,
             map::uw_map::{UWMap, UWMapLog},
+            set::aw_set::AWSet,
             test_util::{triplet_log, twins_log},
         },
         protocol::{
-            crdt::query::{Get, Read},
+            crdt::query::{Contains, Get, NestedGet, Read},
             event::tagged_op::TaggedOp,
             replica::IsReplica,
             state::po_log::{POLog, VecLog},
@@ -167,6 +183,19 @@ mod tests {
         first: POLog::<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>,
         second: POLog::<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>,
     });
+
+    #[test]
+    fn nested_query() {
+        let (mut replica_a, mut _replica_b) = twins_log::<UWMapLog<String, VecLog<AWSet<i32>>>>();
+
+        let _ = replica_a
+            .send(UWMap::Update("a".to_string(), AWSet::Add(10)))
+            .unwrap();
+        println!(
+            "{:?}",
+            replica_a.query(NestedGet::new("a".to_string(), Contains::<i32>(10)))
+        );
+    }
 
     #[test]
     fn simple_uw_map() {

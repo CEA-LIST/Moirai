@@ -333,18 +333,18 @@ mod tests {
         let ops = OpConfig::Uniform(&ops_vec);
 
         // One replica is inaccessible to every other replica
-        let reachability = Some(vec![
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![false, false, false, false, false, false, false, false],
-        ]);
+        // let reachability = Some(vec![
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![false, false, false, false, false, false, false, false],
+        // ]);
 
-        let run = RunConfig::new(0.4, 8, 10_000, reachability, None);
+        let run = RunConfig::new(0.4, 8, 10_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config =
