@@ -136,11 +136,6 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
-    //     #[test]
-    //     fn convergence_checker() {
-    //         // TODO: Implement a convergence checker for Counter
-    //     }
-
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_resettable_counter() {

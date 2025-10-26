@@ -97,20 +97,6 @@ impl MatrixClock {
             min_clock.meet(ver);
         }
 
-        // for (_, col_id) in self.view.borrow().members() {
-        //     let mut min = usize::MAX;
-        //     for (_, row_id) in self.view.borrow().members() {
-        //         let seq = self
-        //             .version_by_id(row_id)
-        //             .and_then(|v| v.seq_by_id(col_id))
-        //             .unwrap_or(0);
-        //         if seq < min {
-        //             min = seq;
-        //         }
-        //     }
-        //     min_clock.set_by_id(col_id, min);
-        // }
-
         min_clock
     }
 
@@ -126,8 +112,6 @@ impl MatrixClock {
     /// # Complexity
     /// `O(n^2)`
     fn diagonal(&self) -> bool {
-        // TODO: change
-
         for (i, version) in self.entries.0.iter().enumerate() {
             for (idx, seq) in version.iter() {
                 if idx.0 != i && seq > self.entries.0[idx.0].origin_seq() {
