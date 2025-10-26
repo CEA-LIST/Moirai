@@ -5,7 +5,7 @@ use crate::{
         clock::version_vector::Version,
         crdt::{
             eval::EvalNested,
-            query::{Get, NestedGet, QueryOperation, Read},
+            query::{Get, QueryOperation, Read},
         },
         event::Event,
         state::log::IsLog,
@@ -106,7 +106,7 @@ where
             UWMap::Update(k, v) => self
                 .children
                 .get(k)
-                .map_or(false, |child| child.is_enabled(v)),
+                .map_or_else(|| true, |child| child.is_enabled(v)),
             UWMap::Remove(_) | UWMap::Clear => true,
         }
     }
@@ -133,36 +133,13 @@ where
     }
 }
 
-impl<K, L> EvalNested<Get<K, <L as IsLog>::Value>> for UWMapLog<K, L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Default + PartialEq,
-{
-    fn execute_query(
-        &self,
-        q: Get<K, <L as IsLog>::Value>,
-    ) -> <Get<K, <L as IsLog>::Value> as QueryOperation>::Response {
-        if let Some(child) = self.children.get(&q.0) {
-            let val = child.execute_query(Read::new());
-            if val != <L as IsLog>::Value::default() {
-                Some(val)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
-
-impl<K, Q, L> EvalNested<NestedGet<K, Q>> for UWMapLog<K, L>
+impl<K, Q, L> EvalNested<Get<K, Q>> for UWMapLog<K, L>
 where
     Q: QueryOperation,
     L: IsLog + EvalNested<Q>,
     K: Clone + Debug + Hash + Eq + PartialEq,
 {
-    fn execute_query(&self, q: NestedGet<K, Q>) -> <NestedGet<K, Q> as QueryOperation>::Response {
+    fn execute_query(&self, q: Get<K, Q>) -> <Get<K, Q> as QueryOperation>::Response {
         if let Some(child) = self.children.get(&q.key) {
             Some(child.execute_query(q.nested_query))
         } else {
@@ -181,7 +158,7 @@ mod tests {
             test_util::{triplet_log, twins_log},
         },
         protocol::{
-            crdt::query::{Contains, Get, NestedGet, Read},
+            crdt::query::{Contains, Get, Read},
             event::tagged_op::TaggedOp,
             replica::IsReplica,
             state::po_log::{POLog, VecLog},
@@ -201,9 +178,9 @@ mod tests {
         let _ = replica_a
             .send(UWMap::Update("a".to_string(), AWSet::Add(10)))
             .unwrap();
-        println!(
-            "{:?}",
-            replica_a.query(NestedGet::new("a".to_string(), Contains::<i32>(10)))
+        assert_eq!(
+            Some(true),
+            replica_a.query(Get::new("a".to_string(), Contains::<i32>(10)))
         );
     }
 
@@ -249,7 +226,10 @@ mod tests {
         map.insert(String::from("a"), 10);
         assert_eq!(map, replica_a.query(Read::new()));
         assert_eq!(map, replica_b.query(Read::new()));
-        assert_eq!(Some(10), replica_a.query(Get::new("a".to_string())));
+        assert_eq!(
+            Some(10),
+            replica_a.query(Get::new("a".to_string(), Read::new()))
+        );
     }
 
     #[test]

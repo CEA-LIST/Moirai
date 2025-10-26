@@ -13,6 +13,8 @@ use crate::protocol::{
     state::unstable_state::IsUnstableState,
 };
 
+// TODO: use Fair Tag
+
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum List<V> {
