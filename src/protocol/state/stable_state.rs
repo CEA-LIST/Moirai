@@ -6,7 +6,6 @@ pub trait IsStableState<O>: Default + Debug {
     fn is_default(&self) -> bool;
     fn apply(&mut self, value: O);
     fn clear(&mut self);
-    // TODO: maybe give just the op and not the tagged_op
     fn prune_redundant_ops(&mut self, rdnt: RedundancyRelation<O>, tagged_op: &TaggedOp<O>);
 }
 

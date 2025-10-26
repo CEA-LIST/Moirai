@@ -124,15 +124,7 @@ where
                     .effect(child_event);
             }
             List::Set { pos, value } => {
-                // TODO: this precondition check should not appear here
                 let positions = self.position.eval(Read::new());
-                if pos >= positions.len() {
-                    panic!(
-                        "Set position {} out of bounds (len={})",
-                        pos,
-                        positions.len()
-                    );
-                }
                 let target_id = &positions[pos];
                 let child_event = Event::unfold(event.clone(), value);
                 self.children
@@ -167,16 +159,13 @@ where
         op
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
-    }
-
-    fn eval<Q>(&self, q: Q) -> Q::Response
-    where
-        Q: QueryOperation,
-        Self: EvalNested<Q>,
-    {
-        Self::execute_query(self, q)
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        let positions = self.position.eval(Read::new());
+        match op {
+            List::Insert { pos, .. } => *pos <= positions.len(),
+            List::Set { pos, .. } => *pos < positions.len(),
+            List::Delete { pos } => *pos < positions.len(),
+        }
     }
 }
 

@@ -135,7 +135,6 @@ impl WitnessGraph {
 
         let conc_3_pb = mp.add(ProgressBar::new(different_author_pairs.len() as u64));
         conc_3_pb.set_prefix("Checking concurrency".yellow().to_string());
-        // TODO: HumanCount(33857009).to_string()
         conc_3_pb.set_style(
             ProgressStyle::with_template(
                 "{prefix} {bar:40.magenta/blue} {pos}/{len} ({percent}%) [{elapsed_precise} elapsed, eta {eta_precise}] {msg}",
@@ -469,7 +468,6 @@ where
             cumulated_time_to_deliver: deliver_time.clone(),
             operation_seconds: (config.num_replicas * config.num_operations) as f64
                 / deliver_time.values().map(|d| d.as_secs_f64()).sum::<f64>(),
-            // TODO: fix export of graph to be readable
             execution_graph: None,
         };
         let json = serde_json::to_string_pretty(&record).unwrap();

@@ -90,8 +90,7 @@ macro_rules! record {
             }
 
             /// Evaluate a particular field of the record.
-            // TODO: it seems that this impl is too strong, as it requires all fields to implement EvalNested<Q>
-            // TODO: consider making it more flexible
+            // TODO: this impl is too strong, as it requires all fields to implement EvalNested<Q>
             impl<Q> $crate::protocol::crdt::eval::EvalNested<$crate::protocol::crdt::query::Get<String, Q>> for [<$name Log>]
             where
                 Q: $crate::protocol::crdt::query::QueryOperation,
