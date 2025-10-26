@@ -70,7 +70,6 @@ macro_rules! record {
                     true
                 }
 
-                // TODO: change
                 fn is_enabled(&self, op: &Self::Op) -> bool {
                     match op {
                         $(
@@ -86,6 +85,30 @@ macro_rules! record {
                         $(
                             $field: self.$field.execute_query($crate::protocol::crdt::query::Read::new()),
                         )*
+                    }
+                }
+            }
+
+            /// Evaluate a particular field of the record.
+            // TODO: it seems that this impl is too strong, as it requires all fields to implement EvalNested<Q>
+            // TODO: consider making it more flexible
+            impl<Q> $crate::protocol::crdt::eval::EvalNested<$crate::protocol::crdt::query::Get<String, Q>> for [<$name Log>]
+            where
+                Q: $crate::protocol::crdt::query::QueryOperation,
+                $(
+                    $T: $crate::protocol::crdt::eval::EvalNested<Q>,
+                )*
+            {
+                fn execute_query(&self, q: $crate::protocol::crdt::query::Get<String, Q>) -> <$crate::protocol::crdt::query::Get<String, Q> as $crate::protocol::crdt::query::QueryOperation>::Response {
+                    match q.key.as_str() {
+                        $(
+                            stringify!($field) => {
+                                let field = &self.$field;
+                                let response = <_ as $crate::protocol::crdt::eval::EvalNested<Q>>::execute_query(field, q.nested_query);
+                                Some(response)
+                            },
+                        )*
+                        _ => None,
                     }
                 }
             }
