@@ -102,10 +102,6 @@ where
     fn is_default(&self) -> bool {
         self.stable.is_default() && self.unstable.is_empty()
     }
-
-    // fn is_enabled(&self, op: &Self::Op) -> bool {
-    //     O::is_enabled(op, || O::eval(&self.stable, &self.unstable))
-    // }
 }
 
 impl<O, U> Default for POLog<O, U>

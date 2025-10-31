@@ -19,9 +19,16 @@ pub trait IsUnstableState<O> {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
     fn clear(&mut self);
+
+    // TODO: separate in another trait the graph-like operations
+
+    /// Returns the set of tagged operations that are predecessors of the given version (cut).
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>;
+    /// Returns the parents of the given event ID.
     fn parents(&self, event_id: &EventId) -> Vec<EventId>;
+    /// Returns the delivery order index of the given event ID.
     fn delivery_order(&self, event_id: &EventId) -> usize;
+    fn frontier(&self) -> Vec<TaggedOp<O>>;
 }
 
 impl<O> IsUnstableState<O> for Vec<TaggedOp<O>>
@@ -91,6 +98,10 @@ where
     fn delivery_order(&self, event_id: &EventId) -> usize {
         self.iter().position(|to| to.id() == event_id).unwrap()
     }
+
+    fn frontier(&self) -> Vec<TaggedOp<O>> {
+        unimplemented!()
+    }
 }
 
 impl<O> IsUnstableState<O> for HashMap<EventId, TaggedOp<O>>
@@ -153,6 +164,10 @@ where
     }
 
     fn delivery_order(&self, _event_id: &EventId) -> usize {
+        unimplemented!()
+    }
+
+    fn frontier(&self) -> Vec<TaggedOp<O>> {
         unimplemented!()
     }
 }

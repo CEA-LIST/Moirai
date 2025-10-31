@@ -161,7 +161,8 @@ where
         // The event should not come from the local replica
         if event.id().idx() == self.replica_idx {
             // println!("Event from local replica");
-            return false;
+            // return false;
+            panic!("Received event from local replica");
         }
 
         // The event should not be a duplicate, i.e. an event already received

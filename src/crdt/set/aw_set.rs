@@ -386,7 +386,7 @@ mod tests {
         //     vec![false, false, false, false, false, false, false, false],
         // ]);
 
-        let run = RunConfig::new(0.4, 8, 10_000, None, None);
+        let run = RunConfig::new(0.4, 16, 1_000_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config =
