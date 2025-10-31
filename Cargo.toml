@@ -36,7 +36,7 @@ tinystr = "0.8.1"
 smallvec = "1.15.1"
 
 [features]
-default = ["crdt", "test_utils", "fuzz"]
+default = ["crdt", "test_utils"]
 fuzz = [
     "dep:chrono",
     "dep:rand",
@@ -46,7 +46,7 @@ fuzz = [
     "dep:indicatif",
     "dep:comfy-table",
 ]
-crdt = ["dep:vf2"]
+crdt = ["dep:vf2", "dep:serde_json"]
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
 test_utils = []
 

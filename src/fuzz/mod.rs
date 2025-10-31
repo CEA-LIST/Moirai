@@ -18,7 +18,7 @@ use crate::{
         crdt::{eval::EvalNested, query::Read},
         membership::ReplicaIdx,
         replica::IsReplica,
-        state::log::IsLog,
+        state::log::{IsLog, IsLogFuzz},
     },
     HashMap,
 };
@@ -26,17 +26,16 @@ use crate::{
 // TODO: add information about the max number of events between two stabilizations
 
 pub mod config;
-pub mod convergence_checker;
 mod utils;
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + IsLogFuzz + EvalNested<Read<<L as IsLog>::Value>>,
 {
     for run_config in config.runs {
         runner::<L>(
             run_config,
-            &config.operations,
+            &config.op_config,
             config.final_merge,
             config.compare,
         );
@@ -44,12 +43,12 @@ where
 }
 
 pub fn runner<L>(
-    config: RunConfig,
-    operations: &OpConfig<L::Op>,
+    run_config: RunConfig,
+    op_config: &OpConfig,
     final_merge: bool,
     compare: fn(&L::Value, &L::Value) -> bool,
 ) where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + IsLogFuzz + EvalNested<Read<<L as IsLog>::Value>>,
 {
     // Afficher les informations de configuration avec comfy-table
     let mut config_table = Table::new();
@@ -66,21 +65,21 @@ pub fn runner<L>(
         Cell::new("Value").add_attribute(Attribute::Bold),
     ]);
 
-    config_table.add_row(vec!["Replicas", &format!("{}", config.num_replicas)]);
+    config_table.add_row(vec!["Replicas", &format!("{}", run_config.num_replicas)]);
 
     config_table.add_row(vec![
         "Operations",
-        &format_number(config.num_operations as f64),
+        &format_number(run_config.num_operations as f64),
     ]);
 
     config_table.add_row(vec![
         "Churn rate",
-        &format!("{:.1}%", config.churn_rate * 100.0),
+        &format!("{:.1}%", run_config.churn_rate * 100.0),
     ]);
 
     config_table.add_row(vec!["Final merge", if final_merge { "Yes" } else { "No" }]);
 
-    if let Some(seed) = config.seed {
+    if let Some(seed) = run_config.seed {
         config_table.add_row(vec![
             "Seed",
             &format!(
@@ -95,23 +94,23 @@ pub fn runner<L>(
     println!("{config_table}");
     println!();
 
-    let mut rng = if let Some(seed) = config.seed {
+    let mut rng = if let Some(seed) = run_config.seed {
         ChaCha8Rng::from_seed(seed)
     } else {
         ChaCha8Rng::from_os_rng()
     };
-    let mut replicas = bootstrap_n::<L, Tcsb<L::Op>>(config.num_replicas);
-    let reachability = config.reachability.unwrap_or_else(|| {
-        vec![vec![true; config.num_replicas.into()]; config.num_replicas.into()]
+    let mut replicas = bootstrap_n::<L, Tcsb<L::Op>>(run_config.num_replicas);
+    let reachability = run_config.reachability.unwrap_or_else(|| {
+        vec![vec![true; run_config.num_replicas.into()]; run_config.num_replicas.into()]
     });
-    let mut online = vec![true; config.num_replicas.into()];
+    let mut online = vec![true; run_config.num_replicas.into()];
     let mut count_ops = 0;
 
     let mut time_to_deliver: HashMap<ReplicaIdx, Duration> = HashMap::default();
     let mut _time_to_eval: HashMap<ReplicaIdx, Duration> = HashMap::default();
 
     // Créer une barre de progression avec indicatif
-    let pb = ProgressBar::new(config.num_operations as u64);
+    let pb = ProgressBar::new(run_config.num_operations as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -123,12 +122,12 @@ pub fn runner<L>(
     pb.set_message("Fuzzing in progress...");
 
     // Main loop
-    while count_ops < config.num_operations {
+    while count_ops < run_config.num_operations {
         // Randomly select a replica
-        let replica_idx = (0..config.num_replicas).choose(&mut rng).unwrap() as usize;
+        let replica_idx = (0..run_config.num_replicas).choose(&mut rng).unwrap() as usize;
         // If the replica is online, deliver any pending events from other replicas
         if online[replica_idx] {
-            for other_idx in 0..config.num_replicas.into() {
+            for other_idx in 0..run_config.num_replicas.into() {
                 if other_idx != replica_idx
                     && online[other_idx]
                     && reachability[replica_idx][other_idx]
@@ -147,7 +146,9 @@ pub fn runner<L>(
         }
 
         // Send the operation
-        let op = operations.choose(&mut rng);
+        let op = replicas[replica_idx]
+            .state()
+            .generate_op(&mut rng, &op_config);
         count_ops += 1;
 
         // Mettre à jour la barre de progression
@@ -175,7 +176,7 @@ pub fn runner<L>(
             .or_insert(duration);
 
         if online[replica_idx] {
-            for other_idx in 0..config.num_replicas.into() {
+            for other_idx in 0..run_config.num_replicas.into() {
                 if other_idx != replica_idx
                     && online[other_idx]
                     && reachability[replica_idx][other_idx]
@@ -193,7 +194,7 @@ pub fn runner<L>(
 
         // Randomly decide whether the replicas go offline or not
         for online_flag in &mut online {
-            *online_flag = rng.random_bool(1.0 - config.churn_rate);
+            *online_flag = rng.random_bool(1.0 - run_config.churn_rate);
         }
     }
 
@@ -202,7 +203,8 @@ pub fn runner<L>(
 
     // Final convergence phase
     if final_merge {
-        let total_merges = (config.num_replicas as usize) * (config.num_replicas as usize - 1);
+        let total_merges =
+            (run_config.num_replicas as usize) * (run_config.num_replicas as usize - 1);
         let merge_pb = ProgressBar::new(total_merges as u64);
         merge_pb.set_style(
             ProgressStyle::default_bar()
@@ -214,8 +216,8 @@ pub fn runner<L>(
         );
         merge_pb.set_message("Final convergence...");
 
-        for i in 0..config.num_replicas.into() {
-            for j in 0..config.num_replicas.into() {
+        for i in 0..run_config.num_replicas.into() {
+            for j in 0..run_config.num_replicas.into() {
                 if i != j {
                     let since = replicas[i].since();
                     let batch = replicas[j].pull(since);
@@ -234,7 +236,7 @@ pub fn runner<L>(
     }
 
     // Check convergence
-    let check_pb = ProgressBar::new((config.num_replicas as usize - 1) as u64);
+    let check_pb = ProgressBar::new((run_config.num_replicas as usize - 1) as u64);
     check_pb.set_style(
         ProgressStyle::default_bar()
             .template(

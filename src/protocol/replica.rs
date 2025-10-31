@@ -9,7 +9,7 @@ use crate::{
         crdt::{eval::EvalNested, query::QueryOperation},
         event::Event,
         membership::{ReplicaId, ReplicaIdOwned},
-        state::log::{IsLog, IsLogTest},
+        state::log::IsLog,
     },
     utils::intern_str::Interner,
 };
@@ -131,10 +131,10 @@ where
 
 impl<L, T> Replica<L, T>
 where
-    L: IsLogTest,
+    L: IsLog,
     T: IsTcsb<L::Op>,
 {
-    #[cfg(feature = "test_utils")]
+    #[cfg(any(feature = "fuzz", feature = "test_utils"))]
     pub fn state(&self) -> &L {
         &self.state
     }

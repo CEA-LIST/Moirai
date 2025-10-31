@@ -1,5 +1,10 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::OpConfig;
 #[cfg(feature = "test_utils")]
 use crate::protocol::state::{stable_state::IsStableState, unstable_state::IsUnstableState};
 use crate::protocol::{
@@ -36,4 +41,9 @@ pub trait IsLog: Default + Debug {
 pub trait IsLogTest: IsLog {
     fn stable(&self) -> &impl IsStableState<Self::Op>;
     fn unstable(&self) -> &impl IsUnstableState<Self::Op>;
+}
+
+#[cfg(feature = "fuzz")]
+pub trait IsLogFuzz: IsLog {
+    fn generate_op(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op;
 }

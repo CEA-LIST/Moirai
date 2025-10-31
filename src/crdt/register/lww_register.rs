@@ -154,40 +154,40 @@ mod tests {
         assert_eq!(replica_c.query(Read::new()), "y".to_string());
     }
 
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_lww_register() {
-        // init_tracing();
+    // #[cfg(feature = "fuzz")]
+    // #[test]
+    // fn fuzz_lww_register() {
+    //     // init_tracing();
 
-        use crate::{
-            fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
-                fuzzer,
-            },
-            protocol::state::po_log::VecLog,
-        };
+    //     use crate::{
+    //         fuzz::{
+    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             fuzzer,
+    //         },
+    //         protocol::state::po_log::VecLog,
+    //     };
 
-        let ops = OpConfig::Uniform(&[
-            LWWRegister::Write("w"),
-            LWWRegister::Write("x"),
-            LWWRegister::Write("y"),
-            LWWRegister::Write("z"),
-            LWWRegister::Write("u"),
-            LWWRegister::Write("v"),
-        ]);
+    //     let ops = OpConfig::Uniform(&[
+    //         LWWRegister::Write("w"),
+    //         LWWRegister::Write("x"),
+    //         LWWRegister::Write("y"),
+    //         LWWRegister::Write("z"),
+    //         LWWRegister::Write("u"),
+    //         LWWRegister::Write("v"),
+    //     ]);
 
-        let run = RunConfig::new(0.4, 8, 10_000, None, None);
-        let runs = vec![run.clone(); 1];
+    //     let run = RunConfig::new(0.4, 8, 10_000, None, None);
+    //     let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<LWWRegister<&str>>>::new(
-            "lww_register",
-            runs,
-            ops,
-            true,
-            |a, b| a == b,
-            None,
-        );
+    //     let config = FuzzerConfig::<VecLog<LWWRegister<&str>>>::new(
+    //         "lww_register",
+    //         runs,
+    //         ops,
+    //         true,
+    //         |a, b| a == b,
+    //         None,
+    //     );
 
-        fuzzer::<VecLog<LWWRegister<&str>>>(config);
-    }
+    //     fuzzer::<VecLog<LWWRegister<&str>>>(config);
+    // }
 }

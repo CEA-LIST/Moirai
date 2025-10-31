@@ -511,121 +511,62 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "op_weaver")]
+    // #[cfg(feature = "fuzz")]
     // #[test]
-    // fn op_weaver_uw_multidigraph() {
+    // fn fuzz_uw_multidigraph() {
     //     use crate::{
-    //         crdt::graph::uw_multidigraph::Content,
-    //         utils::op_weaver::{op_weaver, EventGraphConfig},
+    //         // crdt::test_util::init_tracing,
+    //         fuzz::{
+    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             fuzzer,
+    //         },
     //     };
 
-    //     let ops = vec![
-    //         UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
-    //         UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
-    //         UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
-    //         UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
-    //         UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
-    //         UWGraph::RemoveVertex("a"),
-    //         UWGraph::RemoveVertex("b"),
-    //         UWGraph::RemoveVertex("c"),
-    //         UWGraph::RemoveVertex("d"),
-    //         UWGraph::RemoveVertex("e"),
-    //         UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
-    //         UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
-    //         UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
-    //         UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
-    //         UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
-    //         UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
-    //         UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
-    //         UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
-    //         UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
-    //         UWGraph::RemoveArc("a", "b", 1),
-    //         UWGraph::RemoveArc("a", "b", 2),
-    //         UWGraph::RemoveArc("b", "c", 1),
-    //         UWGraph::RemoveArc("c", "d", 1),
-    //         UWGraph::RemoveArc("d", "e", 1),
-    //         UWGraph::RemoveArc("e", "a", 1),
-    //     ];
+    //     // init_tracing();
 
-    //     type GraphValue<'a> =
-    //         DiGraph<Content<&'a str, &'a str>, Content<(&'a str, &'a str, u8), i32>>;
+    //     let ops: OpConfig<UWGraph<&str, u8, LWWRegister<&str>, Counter<i32>>> =
+    //         OpConfig::Uniform(&[
+    //             UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
+    //             UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
+    //             UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
+    //             UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
+    //             UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
+    //             UWGraph::RemoveVertex("a"),
+    //             UWGraph::RemoveVertex("b"),
+    //             UWGraph::RemoveVertex("c"),
+    //             UWGraph::RemoveVertex("d"),
+    //             UWGraph::RemoveVertex("e"),
+    //             UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
+    //             UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
+    //             UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
+    //             UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
+    //             UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
+    //             UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
+    //             UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
+    //             UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
+    //             UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
+    //             UWGraph::RemoveArc("a", "b", 1),
+    //             UWGraph::RemoveArc("a", "b", 2),
+    //             UWGraph::RemoveArc("b", "c", 1),
+    //             UWGraph::RemoveArc("c", "d", 1),
+    //             UWGraph::RemoveArc("d", "e", 1),
+    //             UWGraph::RemoveArc("e", "a", 1),
+    //         ]);
 
-    //     let config = EventGraphConfig {
-    //         name: "multidigraph",
-    //         num_replicas: 8,
-    //         num_operations: 10_000,
-    //         operations: &ops,
-    //         final_sync: true,
-    //         churn_rate: 0.3,
-    //         reachability: None,
-    //         compare: |a: &GraphValue, b: &GraphValue| vf2::isomorphisms(a, b).first().is_some(),
-    //         record_results: true,
-    //         seed: None,
-    //         witness_graph: false,
-    //         concurrency_score: false,
-    //     };
+    //     let run = RunConfig::new(0.4, 8, 100_000, None, None);
+    //     let runs = vec![run.clone(); 1];
 
-    //     op_weaver::<UWGraphLog<&str, u8, EventGraph<LWWRegister<&str>>, EventGraph<Counter<i32>>>>(
-    //         config,
+    //     let config = FuzzerConfig::<
+    //         UWGraphLog<&str, u8, VecLog<LWWRegister<&str>>, VecLog<Counter<i32>>>,
+    //     >::new(
+    //         "uw_multidigraph",
+    //         runs,
+    //         ops,
+    //         true,
+    //         |a, b| vf2::isomorphisms(a, b).first().is_some(),
+    //         None,
     //     );
+
+    //     fuzzer::<UWGraphLog<&str, u8, VecLog<LWWRegister<&str>>, VecLog<Counter<i32>>>>(config);
     // }
-
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_uw_multidigraph() {
-        use crate::{
-            // crdt::test_util::init_tracing,
-            fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
-                fuzzer,
-            },
-        };
-
-        // init_tracing();
-
-        let ops: OpConfig<UWGraph<&str, u8, LWWRegister<&str>, Counter<i32>>> =
-            OpConfig::Uniform(&[
-                UWGraph::UpdateVertex("a", LWWRegister::Write("vertex_a")),
-                UWGraph::UpdateVertex("b", LWWRegister::Write("vertex_b")),
-                UWGraph::UpdateVertex("c", LWWRegister::Write("vertex_c")),
-                UWGraph::UpdateVertex("d", LWWRegister::Write("vertex_d")),
-                UWGraph::UpdateVertex("e", LWWRegister::Write("vertex_e")),
-                UWGraph::RemoveVertex("a"),
-                UWGraph::RemoveVertex("b"),
-                UWGraph::RemoveVertex("c"),
-                UWGraph::RemoveVertex("d"),
-                UWGraph::RemoveVertex("e"),
-                UWGraph::UpdateArc("a", "b", 1, Counter::Inc(1)),
-                UWGraph::UpdateArc("a", "a", 1, Counter::Inc(13)),
-                UWGraph::UpdateArc("a", "a", 1, Counter::Dec(3)),
-                UWGraph::UpdateArc("a", "b", 2, Counter::Dec(2)),
-                UWGraph::UpdateArc("a", "b", 2, Counter::Inc(7)),
-                UWGraph::UpdateArc("b", "c", 1, Counter::Dec(5)),
-                UWGraph::UpdateArc("c", "d", 1, Counter::Inc(3)),
-                UWGraph::UpdateArc("d", "e", 1, Counter::Dec(2)),
-                UWGraph::UpdateArc("e", "a", 1, Counter::Inc(4)),
-                UWGraph::RemoveArc("a", "b", 1),
-                UWGraph::RemoveArc("a", "b", 2),
-                UWGraph::RemoveArc("b", "c", 1),
-                UWGraph::RemoveArc("c", "d", 1),
-                UWGraph::RemoveArc("d", "e", 1),
-                UWGraph::RemoveArc("e", "a", 1),
-            ]);
-
-        let run = RunConfig::new(0.4, 8, 100_000, None, None);
-        let runs = vec![run.clone(); 1];
-
-        let config = FuzzerConfig::<
-            UWGraphLog<&str, u8, VecLog<LWWRegister<&str>>, VecLog<Counter<i32>>>,
-        >::new(
-            "uw_multidigraph",
-            runs,
-            ops,
-            true,
-            |a, b| vf2::isomorphisms(a, b).first().is_some(),
-            None,
-        );
-
-        fuzzer::<UWGraphLog<&str, u8, VecLog<LWWRegister<&str>>, VecLog<Counter<i32>>>>(config);
-    }
 }

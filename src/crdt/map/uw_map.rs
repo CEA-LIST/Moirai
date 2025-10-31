@@ -1,5 +1,10 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::{fuzz::config::OpConfig, protocol::state::log::IsLogFuzz};
 use crate::{
     protocol::{
         clock::version_vector::Version,
@@ -144,6 +149,34 @@ where
             Some(child.execute_query(q.nested_query))
         } else {
             None
+        }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> IsLogFuzz for UWMapLog<String, L>
+where
+    L: IsLogFuzz,
+{
+    fn generate_op(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op {
+        let choice =
+            rand::seq::IteratorRandom::choose(["Update", "Remove", "Clear"].iter(), rng).unwrap();
+        match choice.as_ref() {
+            "Update" => {
+                let key = format!("{}", rng.next_u64() % (config.max_elements as u64));
+                let child_op = if let Some(child) = self.children.get(&key) {
+                    child.generate_op(rng, config)
+                } else {
+                    L::new().generate_op(rng, config)
+                };
+                UWMap::Update(key, child_op)
+            }
+            "Remove" => {
+                let key = format!("{}", rng.next_u64() % (config.max_elements as u64));
+                UWMap::Remove(key)
+            }
+            "Clear" => UWMap::Clear,
+            _ => unreachable!(),
         }
     }
 }
@@ -437,26 +470,6 @@ mod tests {
         assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
     }
 
-    // #[cfg(feature = "utils")]
-    // #[test]
-    // fn convergence_check() {
-    //     use crate::utils::convergence_checker::convergence_checker;
-
-    //     let mut result = HashMap::new();
-    //     result.insert("a".to_string(), 5);
-    //     result.insert("b".to_string(), -5);
-    //     convergence_checker::<UWMapLog<String, EventGraph<Counter<i32>>>>(
-    //         &[
-    //             UWMap::Update("a".to_string(), Counter::Inc(5)),
-    //             UWMap::Update("b".to_string(), Counter::Dec(5)),
-    //             UWMap::Remove("a".to_string()),
-    //             UWMap::Remove("b".to_string()),
-    //         ],
-    //         result,
-    //         HashMap::eq,
-    //     );
-    // }
-
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_uw_map() {
@@ -470,41 +483,17 @@ mod tests {
             protocol::state::po_log::VecLog,
         };
 
-        type UWMapNested = UWMapLog<String, UWMapLog<i32, VecLog<Counter<i32>>>>;
-
-        let binding = [
-            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Inc(2))),
-            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Dec(3))),
-            UWMap::Update("a".to_string(), UWMap::Update(1, Counter::Reset)),
-            UWMap::Update("a".to_string(), UWMap::Remove(1)),
-            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Inc(5))),
-            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Dec(1))),
-            UWMap::Update("b".to_string(), UWMap::Update(2, Counter::Reset)),
-            UWMap::Update("b".to_string(), UWMap::Remove(2)),
-            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Inc(10))),
-            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Dec(2))),
-            UWMap::Update("c".to_string(), UWMap::Update(3, Counter::Reset)),
-            UWMap::Update("c".to_string(), UWMap::Remove(3)),
-            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Inc(7))),
-            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Dec(4))),
-            UWMap::Update("d".to_string(), UWMap::Update(4, Counter::Reset)),
-            UWMap::Update("d".to_string(), UWMap::Remove(4)),
-            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Inc(3))),
-            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Dec(1))),
-            UWMap::Update("e".to_string(), UWMap::Update(5, Counter::Reset)),
-            UWMap::Update("e".to_string(), UWMap::Remove(5)),
-            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Inc(2))),
-            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Dec(2))),
-            UWMap::Update("a".to_string(), UWMap::Update(6, Counter::Reset)),
-            UWMap::Update("a".to_string(), UWMap::Remove(6)),
-        ];
-        let ops = OpConfig::Uniform(&binding);
+        type UWMapNested = UWMapLog<String, UWMapLog<String, VecLog<Counter<i32>>>>;
 
         let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
+        let op_config = OpConfig {
+            max_elements: 10_000,
+        };
+
         let config =
-            FuzzerConfig::<UWMapNested>::new("uw_map", runs, ops, true, |a, b| a == b, None);
+            FuzzerConfig::<UWMapNested>::new("uw_map", runs, op_config, true, |a, b| a == b, None);
 
         fuzzer::<UWMapNested>(config);
     }

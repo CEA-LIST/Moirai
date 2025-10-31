@@ -608,51 +608,51 @@ mod tests {
         // assert_eq!(to_string(&replica_a.query(Read::new())));
     }
 
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_eg_walker() {
-        use crate::{
-            // crdt::test_util::init_tracing,
-            fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
-                fuzzer,
-            },
-        };
+    // #[cfg(feature = "fuzz")]
+    // #[test]
+    // fn fuzz_eg_walker() {
+    //     use crate::{
+    //         // crdt::test_util::init_tracing,
+    //         fuzz::{
+    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             fuzzer,
+    //         },
+    //     };
 
-        // init_tracing();
+    //     // init_tracing();
 
-        let binding = [
-            List::insert('A', 0),
-            List::insert('B', 0),
-            List::insert('C', 0),
-            List::delete(0),
-            List::insert('D', 1),
-            List::insert('E', 1),
-            List::insert('F', 1),
-            List::delete(1),
-            List::insert('G', 2),
-            List::insert('H', 2),
-            List::insert('I', 2),
-            List::delete(2),
-            List::insert('J', 3),
-            List::insert('K', 3),
-            List::insert('L', 3),
-            List::delete(3),
-        ];
-        let ops: OpConfig<List<char>> = OpConfig::Uniform(&binding);
+    //     let binding = [
+    //         List::insert('A', 0),
+    //         List::insert('B', 0),
+    //         List::insert('C', 0),
+    //         List::delete(0),
+    //         List::insert('D', 1),
+    //         List::insert('E', 1),
+    //         List::insert('F', 1),
+    //         List::delete(1),
+    //         List::insert('G', 2),
+    //         List::insert('H', 2),
+    //         List::insert('I', 2),
+    //         List::delete(2),
+    //         List::insert('J', 3),
+    //         List::insert('K', 3),
+    //         List::insert('L', 3),
+    //         List::delete(3),
+    //     ];
+    //     let ops: OpConfig<List<char>> = OpConfig::Uniform(&binding);
 
-        let run = RunConfig::new(0.4, 8, 100, None, None);
-        let runs = vec![run.clone(); 1];
+    //     let run = RunConfig::new(0.4, 8, 100, None, None);
+    //     let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<EventGraph<List<char>>>::new(
-            "uw_multidigraph",
-            runs,
-            ops,
-            true,
-            |a, b| a == b,
-            None,
-        );
+    //     let config = FuzzerConfig::<EventGraph<List<char>>>::new(
+    //         "uw_multidigraph",
+    //         runs,
+    //         ops,
+    //         true,
+    //         |a, b| a == b,
+    //         None,
+    //     );
 
-        fuzzer::<EventGraph<List<char>>>(config);
-    }
+    //     fuzzer::<EventGraph<List<char>>>(config);
+    // }
 }

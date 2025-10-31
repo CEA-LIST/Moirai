@@ -1,5 +1,12 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use rand::Rng;
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpConfig, OpGeneratorNested};
 use crate::{
     crdt::{
         flag::ew_flag::EWFlag,
@@ -16,9 +23,9 @@ use crate::{
 };
 
 pub type EWFlagSet<K> = UWMapLog<K, VecLog<EWFlag>>;
-pub struct Map<K>(UWMap<K, EWFlag>);
+pub struct Set<K>(UWMap<K, EWFlag>);
 
-impl<K> Map<K>
+impl<K> Set<K>
 where
     K: Clone + Hash + Debug + Eq,
 {
@@ -50,6 +57,18 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGeneratorNested for EWFlagSet<usize> {
+    fn generate(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op {
+        let choice = rng.random_range(0..config.max_elements);
+        if rng.next_u32() % 2 == 0 {
+            Set::add(choice)
+        } else {
+            Set::remove(choice)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,14 +80,14 @@ mod tests {
     #[test]
     fn test_ewflag_set() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
-        let event_a = replica_a.send(Map::<&str>::add("a")).unwrap();
-        let event_b = replica_b.send(Map::<&str>::add("b")).unwrap();
+        let event_a = replica_a.send(Set::<&str>::add("a")).unwrap();
+        let event_b = replica_b.send(Set::<&str>::add("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(Map::<&str>::remove("a")).unwrap();
-        let event_b = replica_b.send(Map::<&str>::add("c")).unwrap();
+        let event_a = replica_a.send(Set::<&str>::remove("a")).unwrap();
+        let event_b = replica_b.send(Set::<&str>::add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -89,24 +108,9 @@ mod tests {
         // init_tracing();
 
         use crate::fuzz::{
-            config::{FuzzerConfig, OpConfig, RunConfig},
+            config::{FuzzerConfig, RunConfig},
             fuzzer,
         };
-
-        // Génération de 20 000 opérations : 10 000 Add et 10 000 Remove
-        let mut ops_vec = Vec::with_capacity(20_000);
-
-        // 10 000 opérations Add (valeurs de 1 à 10 000)
-        for i in 1..=10_000 {
-            ops_vec.push(Map::add(i));
-        }
-
-        // 10 000 opérations Remove (valeurs de 1 à 10 000)
-        for i in 1..=10_000 {
-            ops_vec.push(Map::remove(i));
-        }
-
-        let ops = OpConfig::Uniform(&ops_vec);
 
         // One replica is inaccessible to every other replica
         let reachability = Some(vec![
@@ -123,15 +127,19 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 10_000, reachability, None);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<EWFlagSet<i32>>::new(
+        let op_config = OpConfig {
+            max_elements: 10_000,
+        };
+
+        let config = FuzzerConfig::<EWFlagSet<String>>::new(
             "ew_flag_set",
             runs,
-            ops,
+            op_config,
             true,
             |a, b| a == b,
             None,
         );
 
-        fuzzer::<EWFlagSet<i32>>(config);
+        fuzzer::<EWFlagSet<String>>(config);
     }
 }

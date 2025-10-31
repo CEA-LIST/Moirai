@@ -1,10 +1,14 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpConfig, OpGenerator};
 use crate::protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -99,6 +103,23 @@ impl Eval<Read<<Self as PureCRDT>::Value>> for EWFlag {
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGenerator for EWFlag {
+    fn generate(
+        rng: &mut impl RngCore,
+        _config: &OpConfig,
+        _stable: &<Self as PureCRDT>::StableState,
+        _unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        let choice = rand::seq::IteratorRandom::choose(
+            [EWFlag::Enable, EWFlag::Disable, EWFlag::Clear].iter(),
+            rng,
+        )
+        .unwrap();
+        choice.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -137,31 +158,6 @@ mod tests {
         assert_eq!(replica_b.query(Read::new()), true);
     }
 
-    // #[cfg(feature = "op_weaver")]
-    // #[test]
-    // fn op_weaver_ew_flag() {
-    //     use crate::utils::op_weaver::{op_weaver, EventGraphConfig};
-
-    //     let ops = vec![EWFlag::Enable, EWFlag::Disable, EWFlag::Clear];
-
-    //     let config = EventGraphConfig {
-    //         name: "ewflag",
-    //         num_replicas: 8,
-    //         num_operations: 10_000,
-    //         operations: &ops,
-    //         final_sync: true,
-    //         churn_rate: 0.3,
-    //         reachability: None,
-    //         compare: |a: &bool, b: &bool| a == b,
-    //         record_results: true,
-    //         seed: None,
-    //         witness_graph: false,
-    //         concurrency_score: false,
-    //     };
-
-    //     op_weaver::<EventGraph<EWFlag>>(config);
-    // }
-
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_ew_flag() {
@@ -176,13 +172,17 @@ mod tests {
 
         // init_tracing();
 
-        let ops = OpConfig::Uniform(&[EWFlag::Enable, EWFlag::Disable, EWFlag::Clear]);
-
         let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<VecLog<EWFlag>>::new("ew_flag", runs, ops, true, |a, b| a == b, None);
+        let config = FuzzerConfig::<VecLog<EWFlag>>::new(
+            "ew_flag",
+            runs,
+            OpConfig { max_elements: 0 },
+            true,
+            |a, b| a == b,
+            None,
+        );
 
         fuzzer::<VecLog<EWFlag>>(config);
     }
