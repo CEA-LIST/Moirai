@@ -1,5 +1,12 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::OpConfig;
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::OpGenerator;
 use crate::{
     protocol::{
         crdt::{
@@ -134,6 +141,26 @@ where
                     false
                 }
             })
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl OpGenerator for AWSet<usize> {
+    fn generate(
+        rng: &mut impl RngCore,
+        config: &OpConfig,
+        _stable: &<Self as PureCRDT>::StableState,
+        _unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        let letters: Vec<usize> = (0..config.max_elements).collect();
+        let choice = rand::seq::IteratorRandom::choose(letters.iter(), rng)
+            .unwrap()
+            .clone();
+        if rng.next_u32() % 2 == 0 {
+            AWSet::Add(choice)
+        } else {
+            AWSet::Remove(choice)
+        }
     }
 }
 
@@ -359,21 +386,6 @@ mod tests {
 
         // init_tracing();
 
-        // Génération de 20 000 opérations : 10 000 Add et 10 000 Remove
-        let mut ops_vec = Vec::with_capacity(20_000);
-
-        // 10 000 opérations Add (valeurs de 1 à 10 000)
-        for i in 1..=10_000 {
-            ops_vec.push(AWSet::Add(i));
-        }
-
-        // 10 000 opérations Remove (valeurs de 1 à 10 000)
-        for i in 1..=10_000 {
-            ops_vec.push(AWSet::Remove(i));
-        }
-
-        let ops = OpConfig::Uniform(&ops_vec);
-
         // One replica is inaccessible to every other replica
         // let reachability = Some(vec![
         //     vec![true, true, true, true, true, true, true, false],
@@ -389,9 +401,19 @@ mod tests {
         let run = RunConfig::new(0.4, 16, 1_000_000, None, None);
         let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<VecLog<AWSet<i32>>>::new("aw_set", runs, ops, true, |a, b| a == b, None);
+        let op_config = OpConfig {
+            max_elements: 10_000,
+        };
 
-        fuzzer::<VecLog<AWSet<i32>>>(config);
+        let config = FuzzerConfig::<VecLog<AWSet<usize>>>::new(
+            "aw_set",
+            runs,
+            op_config,
+            true,
+            |a, b| a == b,
+            None,
+        );
+
+        fuzzer::<VecLog<AWSet<usize>>>(config);
     }
 }

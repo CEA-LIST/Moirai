@@ -3,11 +3,15 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpConfig, OpGenerator};
 use crate::protocol::{
     crdt::{
         eval::Eval,
@@ -96,6 +100,23 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGenerator for Counter<i32> {
+    fn generate(
+        rng: &mut impl RngCore,
+        _config: &OpConfig,
+        _stable: &<Self as PureCRDT>::StableState,
+        _unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        let choice = ["Inc", "Dec"][rng.next_u32() as usize % 2];
+        match choice {
+            "Inc" => Counter::Inc(rng.next_u32() as i32),
+            "Dec" => Counter::Dec(rng.next_u32() as i32),
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -150,15 +171,13 @@ mod tests {
 
         // init_tracing();
 
-        let ops = OpConfig::Uniform(&[Counter::Inc(1), Counter::Dec(1)]);
-
         let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
             "counter",
             runs,
-            ops,
+            OpConfig { max_elements: 0 },
             true,
             |a, b| a == b,
             None,

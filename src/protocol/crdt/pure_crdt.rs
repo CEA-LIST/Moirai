@@ -1,8 +1,5 @@
 use std::fmt::Debug;
 
-#[cfg(feature = "fuzz")]
-use rand::RngCore;
-
 use crate::protocol::{
     crdt::{eval::Eval, query::QueryOperation},
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -75,14 +72,4 @@ pub trait PureCRDT: Debug + Sized {
     ) -> bool {
         true
     }
-}
-
-#[cfg(feature = "fuzz")]
-pub trait OpGenerator: PureCRDT {
-    fn generate(
-        &self,
-        rng: &mut impl RngCore,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Self;
 }

@@ -305,105 +305,80 @@ mod tests {
         );
     }
 
-    //     #[cfg(feature = "utils")]
-    //     #[test]
-    //     fn convergence_check() {
-    //         use crate::{
-    //             protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
-    //         };
+    // #[cfg(feature = "fuzz")]
+    // #[test]
+    // fn fuzz_aw_multidigraph() {
+    //     use crate::{
+    //         // crdt::test_util::init_tracing,
+    //         fuzz::{
+    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             fuzzer,
+    //         },
+    //         protocol::state::po_log::VecLog,
+    //     };
 
-    //         let mut graph = DiGraph::new();
-    //         let idx_a = graph.add_node("A");
-    //         let idx_b = graph.add_node("B");
-    //         graph.add_edge(idx_a, idx_b, "arc1");
-    //         convergence_checker::<EventGraph<Graph<&str, &str>>>(
-    //             &[
-    //                 Graph::AddVertex("A"),
-    //                 Graph::AddVertex("B"),
-    //                 Graph::RemoveVertex("B"),
-    //                 Graph::RemoveVertex("A"),
-    //                 Graph::AddArc("A", "B", "arc1"),
-    //                 Graph::RemoveArc("A", "B", "arc1"),
-    //             ],
-    //             graph,
-    //             |g1, g2| vf2::isomorphisms(g1, g2).first().is_some(),
-    //         );
+    //     // init_tracing();
+
+    //     let alphabet = ['a', 'b', 'c', 'd', 'e', 'f'];
+    //     let mut names = Vec::new();
+
+    //     // Generate combinations like "aa", "ab", ..., "ff" (36 total), then "aaa", ...
+    //     for &c1 in &alphabet {
+    //         for &c2 in &alphabet {
+    //             names.push(format!("{}{}", c1, c2));
+    //         }
+    //     }
+    //     for &c1 in &alphabet {
+    //         for &c2 in &alphabet {
+    //             for &c3 in &alphabet {
+    //                 names.push(format!("{}{}{}", c1, c2, c3));
+    //             }
+    //         }
     //     }
 
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_aw_multidigraph() {
-        use crate::{
-            // crdt::test_util::init_tracing,
-            fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
-                fuzzer,
-            },
-            protocol::state::po_log::VecLog,
-        };
+    //     let mut ops: Vec<Graph<String, usize>> = Vec::new();
+    //     let mut index = 0;
 
-        // init_tracing();
+    //     // AddVertex and RemoveVertex: 15,000 of each
+    //     while ops.len() < 15000 {
+    //         let name = &names[index % names.len()];
+    //         ops.push(Graph::AddVertex(name.clone()));
+    //         ops.push(Graph::RemoveVertex(name.clone()));
+    //         index += 1;
+    //     }
 
-        let alphabet = ['a', 'b', 'c', 'd', 'e', 'f'];
-        let mut names = Vec::new();
+    //     // AddArc and RemoveArc: 7,500 of each
+    //     index = 0;
+    //     while ops.len() < 30000 {
+    //         let from = &names[index % names.len()];
+    //         let to = &names[(index + 1) % names.len()];
+    //         let weight1 = (index % 10) + 1;
+    //         let weight2 = ((index + 5) % 10) + 1;
 
-        // Generate combinations like "aa", "ab", ..., "ff" (36 total), then "aaa", ...
-        for &c1 in &alphabet {
-            for &c2 in &alphabet {
-                names.push(format!("{}{}", c1, c2));
-            }
-        }
-        for &c1 in &alphabet {
-            for &c2 in &alphabet {
-                for &c3 in &alphabet {
-                    names.push(format!("{}{}{}", c1, c2, c3));
-                }
-            }
-        }
+    //         ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
+    //         ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
+    //         ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
+    //         ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
 
-        let mut ops: Vec<Graph<String, usize>> = Vec::new();
-        let mut index = 0;
+    //         index += 1;
+    //     }
 
-        // AddVertex and RemoveVertex: 15,000 of each
-        while ops.len() < 15000 {
-            let name = &names[index % names.len()];
-            ops.push(Graph::AddVertex(name.clone()));
-            ops.push(Graph::RemoveVertex(name.clone()));
-            index += 1;
-        }
+    //     let ops = OpConfig::Uniform(ops.as_slice());
 
-        // AddArc and RemoveArc: 7,500 of each
-        index = 0;
-        while ops.len() < 30000 {
-            let from = &names[index % names.len()];
-            let to = &names[(index + 1) % names.len()];
-            let weight1 = (index % 10) + 1;
-            let weight2 = ((index + 5) % 10) + 1;
+    //     let run = RunConfig::new(0.4, 8, 10_000, None, None);
+    //     let runs = vec![run.clone(); 1];
 
-            ops.push(Graph::AddArc(from.clone(), to.clone(), weight1));
-            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight1));
-            ops.push(Graph::AddArc(from.clone(), to.clone(), weight2));
-            ops.push(Graph::RemoveArc(from.clone(), to.clone(), weight2));
+    //     let config = FuzzerConfig::<VecLog<Graph<String, usize>>>::new(
+    //         "aw_multidigraph",
+    //         runs,
+    //         ops,
+    //         true,
+    //         |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+    //         None,
+    //     );
 
-            index += 1;
-        }
-
-        let ops = OpConfig::Uniform(ops.as_slice());
-
-        let run = RunConfig::new(0.4, 8, 10_000, None, None);
-        let runs = vec![run.clone(); 1];
-
-        let config = FuzzerConfig::<VecLog<Graph<String, usize>>>::new(
-            "aw_multidigraph",
-            runs,
-            ops,
-            true,
-            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
-            None,
-        );
-
-        fuzzer::<VecLog<Graph<String, usize>>>(config);
-    }
+    //     fuzzer::<VecLog<Graph<String, usize>>>(config);
+    // }
 
     // impl<V, E> Graph<V, E>
     // where

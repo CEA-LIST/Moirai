@@ -1,10 +1,14 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use tsify::Tsify;
 
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpConfig, OpGenerator};
 use crate::protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -110,6 +114,23 @@ impl Eval<Read<<Self as PureCRDT>::Value>> for DWFlag {
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGenerator for DWFlag {
+    fn generate(
+        rng: &mut impl RngCore,
+        _config: &OpConfig,
+        _stable: &<Self as PureCRDT>::StableState,
+        _unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        let choice = rand::seq::IteratorRandom::choose(
+            [DWFlag::Enable, DWFlag::Disable, DWFlag::Clear].iter(),
+            rng,
+        )
+        .unwrap();
+        choice.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -173,13 +194,17 @@ mod tests {
 
         // init_tracing();
 
-        let ops = OpConfig::Uniform(&[DWFlag::Enable, DWFlag::Disable, DWFlag::Clear]);
-
         let run = RunConfig::new(0.4, 8, 100_000, None, None);
         let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<VecLog<DWFlag>>::new("dw_flag", runs, ops, true, |a, b| a == b, None);
+        let config = FuzzerConfig::<VecLog<DWFlag>>::new(
+            "dw_flag",
+            runs,
+            OpConfig { max_elements: 0 },
+            true,
+            |a, b| a == b,
+            None,
+        );
 
         fuzzer::<VecLog<DWFlag>>(config);
     }

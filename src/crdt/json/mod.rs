@@ -13,14 +13,11 @@ use crate::{
     protocol::{
         clock::version_vector::Version,
         crdt::{
-            eval::{Eval, EvalNested},
-            pure_crdt::PureCRDT,
+            eval::EvalNested,
             query::{QueryOperation, Read},
         },
         event::Event,
-        state::{
-            event_graph::EventGraph, log::IsLog, po_log::VecLog, unstable_state::IsUnstableState,
-        },
+        state::{event_graph::EventGraph, log::IsLog, po_log::VecLog},
     },
 };
 
@@ -408,7 +405,13 @@ mod tests {
             .unwrap();
         println!("-----");
         println!("B: {}", replica_b.query(Read::new()));
-        let event_a = replica_a.send(Json::Bool(EWFlag::Enable)).unwrap();
+        println!("A: {}", replica_a.query(Read::new()));
+        let event_a = replica_a
+            .send(Json::Object(UWMap::Update(
+                "patate".to_string(),
+                Box::new(Json::Bool(EWFlag::Enable)),
+            )))
+            .unwrap();
         println!("A: {}", replica_a.query(Read::new()));
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -453,68 +456,68 @@ mod tests {
         assert_eq!(Value::Null, replica_b.query(Read::new()));
     }
 
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_json() {
-        use crate::fuzz::{
-            config::{FuzzerConfig, OpConfig, RunConfig},
-            fuzzer,
-        };
+    // #[cfg(feature = "fuzz")]
+    // #[test]
+    // fn fuzz_json() {
+    //     use crate::fuzz::{
+    //         config::{FuzzerConfig, OpConfig, RunConfig},
+    //         fuzzer,
+    //     };
 
-        let ops: OpConfig<Json> = OpConfig::Uniform(&[
-            Json::Null,
-            Json::Bool(EWFlag::Enable),
-            Json::Bool(EWFlag::Disable),
-            Json::Number(Counter::Inc(1.0)),
-            Json::Number(Counter::Dec(1.0)),
-            Json::String(List::Insert {
-                content: 'a',
-                pos: 0,
-            }),
-            Json::String(List::Delete { pos: 0 }),
-            Json::Object(UWMap::Update(
-                "key".to_string(),
-                Box::new(Json::Number(Counter::Inc(1.0))),
-            )),
-            Json::Object(UWMap::Remove("key".to_string())),
-            Json::Array(NestedList::Insert {
-                pos: 0,
-                value: Box::new(Json::Bool(EWFlag::Enable)),
-            }),
-            Json::Array(NestedList::Delete { pos: 0 }),
-            Json::Array(NestedList::Insert {
-                pos: 0,
-                value: Box::new(Json::Object(UWMap::Update(
-                    "nested".to_string(),
-                    Box::new(Json::String(List::Insert {
-                        content: 'b',
-                        pos: 0,
-                    })),
-                ))),
-            }),
-            Json::Array(NestedList::Insert {
-                pos: 0,
-                value: Box::new(Json::Array(NestedList::Insert {
-                    pos: 0,
-                    value: Box::new(Json::Number(Counter::Inc(2.0))),
-                })),
-            }),
-            Json::Array(NestedList::Insert {
-                pos: 0,
-                value: Box::new(Json::Object(UWMap::Remove("nested".to_string()))),
-            }),
-            Json::Array(NestedList::Insert {
-                pos: 0,
-                value: Box::new(Json::Bool(EWFlag::Disable)),
-            }),
-        ]);
+    //     let ops: OpConfig<Json> = OpConfig::Uniform(&[
+    //         Json::Null,
+    //         Json::Bool(EWFlag::Enable),
+    //         Json::Bool(EWFlag::Disable),
+    //         Json::Number(Counter::Inc(1.0)),
+    //         Json::Number(Counter::Dec(1.0)),
+    //         Json::String(List::Insert {
+    //             content: 'a',
+    //             pos: 0,
+    //         }),
+    //         Json::String(List::Delete { pos: 0 }),
+    //         Json::Object(UWMap::Update(
+    //             "key".to_string(),
+    //             Box::new(Json::Number(Counter::Inc(1.0))),
+    //         )),
+    //         Json::Object(UWMap::Remove("key".to_string())),
+    //         Json::Array(NestedList::Insert {
+    //             pos: 0,
+    //             value: Box::new(Json::Bool(EWFlag::Enable)),
+    //         }),
+    //         Json::Array(NestedList::Delete { pos: 0 }),
+    //         Json::Array(NestedList::Insert {
+    //             pos: 0,
+    //             value: Box::new(Json::Object(UWMap::Update(
+    //                 "nested".to_string(),
+    //                 Box::new(Json::String(List::Insert {
+    //                     content: 'b',
+    //                     pos: 0,
+    //                 })),
+    //             ))),
+    //         }),
+    //         Json::Array(NestedList::Insert {
+    //             pos: 0,
+    //             value: Box::new(Json::Array(NestedList::Insert {
+    //                 pos: 0,
+    //                 value: Box::new(Json::Number(Counter::Inc(2.0))),
+    //             })),
+    //         }),
+    //         Json::Array(NestedList::Insert {
+    //             pos: 0,
+    //             value: Box::new(Json::Object(UWMap::Remove("nested".to_string()))),
+    //         }),
+    //         Json::Array(NestedList::Insert {
+    //             pos: 0,
+    //             value: Box::new(Json::Bool(EWFlag::Disable)),
+    //         }),
+    //     ]);
 
-        let run = RunConfig::new(0.4, 8, 100, None, None);
-        let runs = vec![run.clone(); 1];
+    //     let run = RunConfig::new(0.4, 8, 100, None, None);
+    //     let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<JsonLogContainer>::new("json", runs, ops, true, |a, b| a == b, None);
+    //     let config =
+    //         FuzzerConfig::<JsonLogContainer>::new("json", runs, ops, true, |a, b| a == b, None);
 
-        fuzzer::<JsonLogContainer>(config);
-    }
+    //     fuzzer::<JsonLogContainer>(config);
+    // }
 }

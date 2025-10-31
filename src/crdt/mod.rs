@@ -33,51 +33,6 @@ pub mod test_util {
         Replica<L, Tcsb<O>>,
     );
 
-    // pub fn membership_2() -> Membership {
-    //     let mut mapping = HashMap::new();
-    //     let mut view_a = View::new(&"a".to_string());
-    //     view_a.add(&"b".to_string());
-    //     let mut view_b = View::new(&"b".to_string());
-    //     view_b.add(&"a".to_string());
-    //     mapping.insert("a".to_string(), MutOwner::new(view_a));
-    //     mapping.insert("b".to_string(), MutOwner::new(view_b));
-    //     Membership::build(mapping)
-    // }
-
-    // pub fn membership_3() -> Membership {
-    //     let mut mapping = HashMap::new();
-    //     let mut view_a = View::new(&"a".to_string());
-    //     view_a.add(&"b".to_string());
-    //     view_a.add(&"c".to_string());
-    //     let mut view_b = View::new(&"b".to_string());
-    //     view_b.add(&"a".to_string());
-    //     view_b.add(&"c".to_string());
-    //     let mut view_c = View::new(&"c".to_string());
-    //     view_c.add(&"a".to_string());
-    //     view_c.add(&"b".to_string());
-    //     mapping.insert("a".to_string(), MutOwner::new(view_a));
-    //     mapping.insert("b".to_string(), MutOwner::new(view_b));
-    //     mapping.insert("c".to_string(), MutOwner::new(view_c));
-    //     Membership::build(mapping)
-    // }
-
-    // fn membership_n(n: u8) -> Membership {
-    //     assert!(n > 1 && n <= 26, "n must be between 2 and 26");
-    //     let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
-    //     let mut mapping = HashMap::new();
-    //     for i in 0..n {
-    //         let id = alphabet[i as usize].to_string();
-    //         let mut view = View::new(&id);
-    //         for j in 0..n {
-    //             if i != j {
-    //                 view.add(&alphabet[j as usize].to_string());
-    //             }
-    //         }
-    //         mapping.insert(id, MutOwner::new(view));
-    //     }
-    //     Membership::build(mapping)
-    // }
-
     pub fn bootstrap_n<L, T>(n: u8) -> Vec<Replica<L, T>>
     where
         L: IsLog,
@@ -155,64 +110,4 @@ pub mod test_util {
             )
             .try_init();
     }
-
-    //     pub fn twins_graph<O: PureCRDT>() -> Twins<EventGraph<O>> {
-    //         twins()
-    //     }
-
-    //     pub fn triplet_graph<O: PureCRDT>() -> Triplet<EventGraph<O>> {
-    //         triplet()
-    //     }
-
-    //     pub fn quadruplet_graph<O: PureCRDT>() -> Quadruplet<EventGraph<O>> {
-    //         quadruplet()
-    //     }
-
-    //     pub fn n_members<L: Log>(n: usize) -> Vec<Tcsb<L>> {
-    //         let mut tcsbs = Vec::new();
-    //         let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
-    //         let alpha_len = alphabet.len();
-
-    //         // Determine the minimum number of chars needed for unique ids
-    //         let mut chars_needed = 1;
-    //         let mut max_ids = alpha_len;
-    //         while n > max_ids {
-    //             chars_needed += 1;
-    //             max_ids *= alpha_len;
-    //         }
-
-    //         for idx in 0..n {
-    //             // Generate id with the required number of chars
-    //             let mut id_chars = Vec::with_capacity(chars_needed);
-    //             let mut rem = idx;
-    //             for _ in 0..chars_needed {
-    //                 id_chars.push(alphabet[rem % alpha_len]);
-    //                 rem /= alpha_len;
-    //             }
-    //             id_chars.reverse();
-    //             let id: String = id_chars.into_iter().collect();
-
-    //             let tcsb = Tcsb::<L>::new(&id);
-    //             tcsbs.push(tcsb);
-    //         }
-
-    //         let view_content = tcsbs
-    //             .iter()
-    //             .map(|tcsb| tcsb.id.clone())
-    //             .collect::<Vec<String>>();
-    //         for tcsb in tcsbs.iter_mut() {
-    //             tcsb.add_pending_view(view_content.clone());
-    //             tcsb.start_installing_view();
-    //             tcsb.mark_view_installed();
-    //         }
-    //         for i in 0..n {
-    //             assert_eq!(tcsbs[i].ltm.members(), &view_content);
-    //             if i == n - 1 {
-    //                 break;
-    //             }
-    //             assert_eq!(tcsbs[i].view_id(), tcsbs[i + 1].view_id());
-    //             assert_eq!(tcsbs[i].ltm.clock(), tcsbs[i + 1].ltm.clock());
-    //         }
-    //         tcsbs
-    //     }
 }

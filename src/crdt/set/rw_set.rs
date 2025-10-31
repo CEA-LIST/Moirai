@@ -1,5 +1,10 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpConfig, OpGenerator};
 use crate::{
     protocol::{
         crdt::{
@@ -210,6 +215,26 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGenerator for RWSet<String> {
+    fn generate(
+        rng: &mut impl RngCore,
+        config: &OpConfig,
+        _stable: &<Self as PureCRDT>::StableState,
+        _unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        let letters: Vec<String> = (0..config.max_elements).map(|i| format!("{}", i)).collect();
+        let choice = rand::seq::IteratorRandom::choose(letters.iter(), rng)
+            .unwrap()
+            .clone();
+        if rng.next_u32() % 2 == 0 {
+            RWSet::Add(choice)
+        } else {
+            RWSet::Remove(choice)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -344,20 +369,6 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a"]));
     }
 
-    //     #[cfg(feature = "utils")]
-    //     #[test]
-    //     fn convergence_check() {
-    //         use crate::{
-    //             protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
-    //         };
-
-    //         convergence_checker::<EventGraph<RWSet<&str>>>(
-    //             &[RWSet::Add("a"), RWSet::Remove("a"), RWSet::Clear],
-    //             HashSet::default(),
-    //             HashSet::eq,
-    //         );
-    //     }
-
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_rw_set() {
@@ -371,30 +382,22 @@ mod tests {
             protocol::state::po_log::VecLog,
         };
 
-        let ops = OpConfig::Uniform(&[
-            RWSet::Add("a"),
-            RWSet::Add("b"),
-            RWSet::Add("c"),
-            RWSet::Add("d"),
-            RWSet::Remove("a"),
-            RWSet::Remove("b"),
-            RWSet::Remove("c"),
-            RWSet::Remove("d"),
-            RWSet::Clear,
-        ]);
-
         let run = RunConfig::new(0.4, 8, 10_000, None, None);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<RWSet<&str>>>::new(
+        let op_config = OpConfig {
+            max_elements: 10_000,
+        };
+
+        let config = FuzzerConfig::<VecLog<RWSet<String>>>::new(
             "rw_set",
             runs,
-            ops,
+            op_config,
             true,
             |a, b| a == b,
             None,
         );
 
-        fuzzer::<VecLog<RWSet<&str>>>(config);
+        fuzzer::<VecLog<RWSet<String>>>(config);
     }
 }

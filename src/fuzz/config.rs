@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use rand::{
-    distr::{weighted::WeightedIndex, Distribution},
-    seq::IteratorRandom,
-};
+use rand::RngCore;
 
-use crate::protocol::state::log::IsLog;
+use crate::protocol::{
+    crdt::pure_crdt::PureCRDT,
+    state::{log::IsLog, unstable_state::IsUnstableState},
+};
 
 pub struct FuzzerConfig<'a, L>
 where
@@ -15,7 +15,7 @@ where
     pub name: &'a str,
     pub runs: Vec<RunConfig>,
     /// Set of operations to be performed by the replicas
-    pub operations: OpConfig<'a, L::Op>,
+    pub op_config: OpConfig,
     /// Whether to perform a final merge after all operations are issued
     pub final_merge: bool,
     /// Comparison function to check if the replicas converge
@@ -31,7 +31,7 @@ where
     pub fn new(
         name: &'a str,
         runs: Vec<RunConfig>,
-        operations: OpConfig<'a, L::Op>,
+        op_config: OpConfig,
         final_merge: bool,
         compare: fn(&L::Value, &L::Value) -> bool,
         record_results: Option<RecorderConfig<'a>>,
@@ -43,7 +43,7 @@ where
         Self {
             name,
             runs,
-            operations,
+            op_config,
             final_merge,
             compare,
             record_results,
@@ -51,41 +51,58 @@ where
     }
 }
 
-pub enum OpConfig<'a, O> {
-    Uniform(&'a [O]),
-    Probabilistic(&'a [(O, f64)]),
+// pub enum OpConfig<'a, O> {
+//     Uniform(&'a [O]),
+//     Probabilistic(&'a [(O, f64)]),
+// }
+
+// impl<'a, O> OpConfig<'a, O> {
+//     pub fn random(ops: &'a [O]) -> Self {
+//         assert!(!ops.is_empty(), "Operation list cannot be empty");
+//         Self::Uniform(ops)
+//     }
+
+//     pub fn probabilistic(ops: &'a [(O, f64)]) -> Self {
+//         assert!(!ops.is_empty(), "Operation list cannot be empty");
+//         let total_prob: f64 = ops.iter().map(|(_, p)| p).sum();
+//         assert!(
+//             (total_prob - 1.0).abs() < f64::EPSILON,
+//             "Total probability must sum to 1.0"
+//         );
+//         Self::Probabilistic(ops)
+//     }
+
+//     pub fn choose(&self, rng: &mut impl rand::Rng) -> O
+//     where
+//         O: Clone,
+//     {
+//         match self {
+//             OpConfig::Uniform(ops) => ops.iter().choose(rng).unwrap().clone(),
+//             OpConfig::Probabilistic(ops) => {
+//                 let weights: Vec<f64> = ops.iter().map(|(_, p)| *p).collect();
+//                 let dist = WeightedIndex::new(&weights).ok().unwrap(); // returns None if weights are invalid
+//                 let index = dist.sample(rng);
+//                 ops[index].0.clone()
+//             }
+//         }
+//     }
+// }
+
+pub struct OpConfig {
+    pub max_elements: usize,
 }
 
-impl<'a, O> OpConfig<'a, O> {
-    pub fn random(ops: &'a [O]) -> Self {
-        assert!(!ops.is_empty(), "Operation list cannot be empty");
-        Self::Uniform(ops)
-    }
+pub trait OpGenerator: PureCRDT {
+    fn generate(
+        rng: &mut impl RngCore,
+        config: &OpConfig,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> Self;
+}
 
-    pub fn probabilistic(ops: &'a [(O, f64)]) -> Self {
-        assert!(!ops.is_empty(), "Operation list cannot be empty");
-        let total_prob: f64 = ops.iter().map(|(_, p)| p).sum();
-        assert!(
-            (total_prob - 1.0).abs() < f64::EPSILON,
-            "Total probability must sum to 1.0"
-        );
-        Self::Probabilistic(ops)
-    }
-
-    pub fn choose(&self, rng: &mut impl rand::Rng) -> O
-    where
-        O: Clone,
-    {
-        match self {
-            OpConfig::Uniform(ops) => ops.iter().choose(rng).unwrap().clone(),
-            OpConfig::Probabilistic(ops) => {
-                let weights: Vec<f64> = ops.iter().map(|(_, p)| *p).collect();
-                let dist = WeightedIndex::new(&weights).ok().unwrap(); // returns None if weights are invalid
-                let index = dist.sample(rng);
-                ops[index].0.clone()
-            }
-        }
-    }
+pub trait OpGeneratorNested: IsLog {
+    fn generate(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op;
 }
 
 #[derive(Clone)]
