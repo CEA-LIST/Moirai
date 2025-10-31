@@ -179,6 +179,15 @@ where
         }
     }
 
+    fn frontier(&self) -> Vec<TaggedOp<O>> {
+        self.heads
+            .iter()
+            .filter_map(|id| self.get(id).cloned())
+            .collect()
+    }
+
+    /// # Complexity
+    /// $O(1)$
     fn delivery_order(&self, event_id: &EventId) -> usize {
         let node_idx = self.map.get_by_right(event_id).unwrap();
         node_idx.index()

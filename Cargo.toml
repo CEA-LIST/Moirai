@@ -36,7 +36,7 @@ tinystr = "0.8.1"
 smallvec = "1.15.1"
 
 [features]
-default = ["crdt", "test_utils"]
+default = ["crdt", "test_utils", "fuzz"]
 fuzz = [
     "dep:chrono",
     "dep:rand",

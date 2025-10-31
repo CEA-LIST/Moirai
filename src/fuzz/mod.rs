@@ -23,6 +23,8 @@ use crate::{
     HashMap,
 };
 
+// TODO: add information about the max number of events between two stabilizations
+
 pub mod config;
 pub mod convergence_checker;
 mod utils;
