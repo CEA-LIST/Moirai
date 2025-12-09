@@ -1,7 +1,9 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::OpGeneratorNested;
 use crate::{
-    crdt::list::eg_walker::List as SimpleList,
+    crdt::list::eg_walker::{List as SimpleList, MutationTarget},
     protocol::{
         clock::version_vector::Version,
         crdt::{
@@ -11,35 +13,61 @@ use crate::{
         event::{id::EventId, Event},
         state::{event_graph::EventGraph, log::IsLog},
     },
+    utils::unboxer::Unboxer,
     HashMap,
 };
 
 #[derive(Clone, Debug)]
 pub enum List<O> {
+    /// Insert a new child CRDT at the given position
     Insert { pos: usize, value: O },
-    Set { pos: usize, value: O },
+    /// Update the child at the given position
+    Update { pos: usize, value: O },
+    /// Delete the child at the given position
     Delete { pos: usize },
 }
 
-impl<O> List<Box<O>> {
-    pub fn boxed(op: List<O>) -> List<Box<O>> {
-        match op {
+// impl<K, O> Unboxer<UWMap<K, O>> for UWMap<K, Box<O>> {
+//     fn unbox(self) -> UWMap<K, O> {
+//         match self {
+//             UWMap::Update(k, v) => UWMap::Update(k, *v),
+//             UWMap::Remove(k) => UWMap::Remove(k),
+//             UWMap::Clear => UWMap::Clear,
+//         }
+//     }
+// }
+
+// impl<K, O> Unboxer<UWMap<K, Box<O>>> for UWMap<K, O> {
+//     fn unbox(self) -> UWMap<K, Box<O>> {
+//         match self {
+//             UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
+//             UWMap::Remove(k) => UWMap::Remove(k),
+//             UWMap::Clear => UWMap::Clear,
+//         }
+//     }
+// }
+
+impl<O> Unboxer<List<O>> for List<Box<O>> {
+    fn unbox(self) -> List<O> {
+        match self {
+            List::Insert { pos, value } => List::Insert { pos, value: *value },
+            List::Update { pos, value } => List::Update { pos, value: *value },
+            List::Delete { pos } => List::Delete { pos },
+        }
+    }
+}
+
+impl<O> Unboxer<List<Box<O>>> for List<O> {
+    fn unbox(self) -> List<Box<O>> {
+        match self {
             List::Insert { pos, value } => List::Insert {
                 pos,
                 value: Box::new(value),
             },
-            List::Set { pos, value } => List::Set {
+            List::Update { pos, value } => List::Update {
                 pos,
                 value: Box::new(value),
             },
-            List::Delete { pos } => List::Delete { pos },
-        }
-    }
-
-    pub fn unboxed(self) -> List<O> {
-        match self {
-            List::Insert { pos, value } => List::Insert { pos, value: *value },
-            List::Set { pos, value } => List::Set { pos, value: *value },
             List::Delete { pos } => List::Delete { pos },
         }
     }
@@ -54,33 +82,21 @@ impl<O> List<O> {
         Self::Delete { pos }
     }
 
-    pub fn set(pos: usize, value: O) -> Self {
-        Self::Set { pos, value }
+    pub fn update(pos: usize, value: O) -> Self {
+        Self::Update { pos, value }
     }
 }
 
+/// Internal state of a nested list CRDT
+///
+/// Maintains both the logical ordering of children (via EgWalker) and the
+/// actual child CRDT instances.
 #[derive(Debug, Clone)]
 pub struct ListLog<L> {
+    /// EgWalker list tracking the logical positions of children
     position: EventGraph<SimpleList<EventId>>,
+    /// Map from EventId to child CRDT instance
     children: HashMap<EventId, L>,
-}
-
-impl<L> ListLog<L>
-where
-    L: IsLog,
-{
-    pub(crate) fn incorporate(&mut self, event: Event<L::Op>, log: L) {
-        let id = event.id().clone();
-        let event = Event::unfold(
-            event,
-            SimpleList::Insert {
-                content: id.clone(),
-                pos: 0,
-            },
-        );
-        self.position.effect(event);
-        self.children.insert(id, log);
-    }
 }
 
 impl<L> Default for ListLog<L> {
@@ -122,18 +138,16 @@ where
                     .or_default()
                     .effect(child_event);
             }
-            List::Set { pos, value } => {
-                let positions = self.position.eval(Read::new());
-                let target_id = &positions[pos];
-                let child_event = Event::unfold(event.clone(), value);
-                self.children
-                    .get_mut(target_id)
-                    .unwrap()
-                    .effect(child_event);
-            }
             List::Delete { pos } => {
                 let list_event = Event::unfold(event, SimpleList::Delete { pos });
                 self.position.effect(list_event);
+            }
+            List::Update { pos, value } => {
+                let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
+                self.position.effect(list_event);
+                let target = self.position.eval(MutationTarget::new(event.id().clone()));
+                let child_event = Event::unfold(event, value);
+                self.children.get_mut(&target).unwrap().effect(child_event);
             }
         }
     }
@@ -162,7 +176,7 @@ where
         let positions = self.position.eval(Read::new());
         match op {
             List::Insert { pos, .. } => *pos <= positions.len(),
-            List::Set { pos, .. } => *pos < positions.len(),
+            List::Update { pos, .. } => *pos < positions.len(),
             List::Delete { pos } => *pos < positions.len(),
         }
     }
@@ -183,6 +197,54 @@ where
             list.push(child.execute_query(Read::new()));
         }
         list
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> OpGeneratorNested for ListLog<L>
+where
+    L: OpGeneratorNested,
+{
+    fn generate(&self, rng: &mut impl rand::RngCore) -> Self::Op {
+        use rand::Rng;
+
+        enum Choice {
+            Insert,
+            Update,
+            Delete,
+        }
+        let positions = self.position.eval(Read::new());
+        let choice = if positions.is_empty() {
+            &Choice::Insert
+        } else {
+            rand::seq::IteratorRandom::choose(
+                [Choice::Insert, Choice::Update, Choice::Delete].iter(),
+                rng,
+            )
+            .unwrap()
+        };
+
+        let op = match choice {
+            Choice::Insert => {
+                let pos = rng.random_range(0..=positions.len());
+                let default_child = L::new();
+                let value = <L as OpGeneratorNested>::generate(&default_child, rng);
+                List::Insert { pos, value }
+            }
+            Choice::Update => {
+                let pos = rng.random_range(0..positions.len());
+                let target_id = &positions[pos];
+                let child = self.children.get(target_id).unwrap();
+                let value = <L as OpGeneratorNested>::generate(child, rng);
+                List::Update { pos, value }
+            }
+            Choice::Delete => {
+                let pos = rng.random_range(0..positions.len());
+                List::Delete { pos }
+            }
+        };
+        assert!(self.is_enabled(&op));
+        op
     }
 }
 
@@ -207,7 +269,7 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), vec![10]);
         assert_eq!(replica_b.query(Read::new()), vec![10]);
 
-        let event = replica_b.send(List::set(0, Counter::Dec(5))).unwrap();
+        let event = replica_b.send(List::update(0, Counter::Dec(5))).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![5]);
@@ -219,7 +281,7 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), vec![5, 10]);
         assert_eq!(replica_b.query(Read::new()), vec![5, 10]);
 
-        let event = replica_a.send(List::set(0, Counter::Inc(1))).unwrap();
+        let event = replica_a.send(List::update(0, Counter::Inc(1))).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![6, 10]);
@@ -252,5 +314,81 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
         assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
+    }
+
+    #[test]
+    fn scenario_1() {
+        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a.send(List::insert(0, Counter::Reset)).unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b.send(List::insert(0, Counter::Dec(64))).unwrap();
+        let event_a = replica_a.send(List::insert(0, Counter::Dec(23))).unwrap();
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+
+        let event_b = replica_b.send(List::delete(1)).unwrap();
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn scenario_2() {
+        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a.send(List::insert(0, Counter::Dec(22))).unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b.send(List::update(0, Counter::Reset)).unwrap();
+        replica_a.receive(event_b);
+
+        let event_a = replica_a.send(List::update(0, Counter::Inc(40))).unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b.send(List::insert(0, Counter::Inc(47))).unwrap();
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn scenario_3() {
+        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a.send(List::insert(0, Counter::Dec(22))).unwrap();
+        replica_b.receive(event_a);
+        let event_b = replica_b.send(List::insert(1, Counter::Inc(30))).unwrap();
+        replica_a.receive(event_b);
+
+        let event_b = replica_b.send(List::delete(0)).unwrap();
+        let event_a = replica_a.send(List::update(1, Counter::Inc(40))).unwrap();
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_nested_list() {
+        use crate::fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer,
+        };
+
+        let run = RunConfig::new(0.8, 8, 10, None, None, true);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<ListLog<VecLog<Counter<i32>>>>::new(
+            "nested_list",
+            runs,
+            true,
+            |a, b| a == b,
+            false,
+        );
+
+        fuzzer::<ListLog<VecLog<Counter<i32>>>>(config);
     }
 }

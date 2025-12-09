@@ -4,7 +4,7 @@ use std::{fmt::Debug, hash::Hash};
 use rand::RngCore;
 
 #[cfg(feature = "fuzz")]
-use crate::{fuzz::config::OpConfig, protocol::state::log::IsLogFuzz};
+use crate::fuzz::{config::OpGeneratorNested, value_generator::ValueGenerator};
 use crate::{
     protocol::{
         clock::version_vector::Version,
@@ -15,6 +15,7 @@ use crate::{
         event::Event,
         state::log::IsLog,
     },
+    utils::unboxer::Unboxer,
     HashMap,
 };
 
@@ -25,18 +26,20 @@ pub enum UWMap<K, O> {
     Clear,
 }
 
-impl<K, O> UWMap<K, Box<O>> {
-    pub fn boxed(op: UWMap<K, O>) -> UWMap<K, Box<O>> {
-        match op {
-            UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
+impl<K, O> Unboxer<UWMap<K, O>> for UWMap<K, Box<O>> {
+    fn unbox(self) -> UWMap<K, O> {
+        match self {
+            UWMap::Update(k, v) => UWMap::Update(k, *v),
             UWMap::Remove(k) => UWMap::Remove(k),
             UWMap::Clear => UWMap::Clear,
         }
     }
+}
 
-    pub fn unboxed(self) -> UWMap<K, O> {
+impl<K, O> Unboxer<UWMap<K, Box<O>>> for UWMap<K, O> {
+    fn unbox(self) -> UWMap<K, Box<O>> {
         match self {
-            UWMap::Update(k, v) => UWMap::Update(k, *v),
+            UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
             UWMap::Remove(k) => UWMap::Remove(k),
             UWMap::Clear => UWMap::Clear,
         }
@@ -154,29 +157,34 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> IsLogFuzz for UWMapLog<String, L>
+impl<K, L> OpGeneratorNested for UWMapLog<K, L>
 where
-    L: IsLogFuzz,
+    L: OpGeneratorNested,
+    K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
-    fn generate_op(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op {
-        let choice =
-            rand::seq::IteratorRandom::choose(["Update", "Remove", "Clear"].iter(), rng).unwrap();
-        match choice.as_ref() {
-            "Update" => {
-                let key = format!("{}", rng.next_u64() % (config.max_elements as u64));
+    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+        enum Choice {
+            Update,
+            Remove,
+            Clear,
+        }
+        let choice = rand::seq::IteratorRandom::choose(
+            [Choice::Update, Choice::Remove, Choice::Clear].iter(),
+            rng,
+        )
+        .unwrap();
+        let key = K::generate(rng, &<K as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Update => {
                 let child_op = if let Some(child) = self.children.get(&key) {
-                    child.generate_op(rng, config)
+                    child.generate(rng)
                 } else {
-                    L::new().generate_op(rng, config)
+                    L::new().generate(rng)
                 };
                 UWMap::Update(key, child_op)
             }
-            "Remove" => {
-                let key = format!("{}", rng.next_u64() % (config.max_elements as u64));
-                UWMap::Remove(key)
-            }
-            "Clear" => UWMap::Clear,
-            _ => unreachable!(),
+            Choice::Remove => UWMap::Remove(key),
+            Choice::Clear => UWMap::Clear,
         }
     }
 }
@@ -186,6 +194,7 @@ mod tests {
     use crate::{
         crdt::{
             counter::resettable_counter::Counter,
+            list::eg_walker::List,
             map::uw_map::{UWMap, UWMapLog},
             set::aw_set::AWSet,
             test_util::{triplet_log, twins_log},
@@ -194,7 +203,10 @@ mod tests {
             crdt::query::{Contains, Get, Read},
             event::tagged_op::TaggedOp,
             replica::IsReplica,
-            state::po_log::{POLog, VecLog},
+            state::{
+                event_graph::EventGraph,
+                po_log::{POLog, VecLog},
+            },
         },
         record, HashMap,
     };
@@ -470,30 +482,108 @@ mod tests {
         assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
     }
 
+    #[test]
+    fn map_nested_eg_walker() {
+        let (mut replica_a, mut replica_b) =
+            twins_log::<UWMapLog<String, EventGraph<List<char>>>>();
+
+        let event_a = replica_a
+            .send(UWMap::Update(
+                "doc".to_string(),
+                List::Insert {
+                    content: 'A',
+                    pos: 0,
+                },
+            ))
+            .unwrap();
+        let event_b = replica_b.send(UWMap::Clear).unwrap();
+
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        // println!("Replica B state: {:?}", replica_b.query(Read::new()));
+        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
+
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn map_nested_eg_walker_2() {
+        let (mut replica_a, _) = twins_log::<UWMapLog<String, EventGraph<List<char>>>>();
+
+        let _ = replica_a
+            .send(UWMap::Update(
+                "doc".to_string(),
+                List::Insert {
+                    content: 'A',
+                    pos: 0,
+                },
+            ))
+            .unwrap();
+        let _ = replica_a.send(UWMap::Remove("patate".to_string())).unwrap();
+        let _ = replica_a.send(UWMap::Clear).unwrap();
+
+        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
+
+        assert_eq!(replica_a.query(Read::new()), HashMap::default());
+    }
+
+    #[test]
+    fn map_nested_eg_walker_3() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<UWMapLog<String, EventGraph<List<char>>>>();
+
+        let event_a = replica_a.send(UWMap::Clear).unwrap();
+        let event_b = replica_b
+            .send(UWMap::Update(
+                "doc".to_string(),
+                List::Insert {
+                    content: 'A',
+                    pos: 0,
+                },
+            ))
+            .unwrap();
+        let event_c = replica_c.send(UWMap::Clear).unwrap();
+
+        replica_c.receive(event_a.clone());
+        replica_c.receive(event_b.clone());
+
+        replica_a.receive(event_b);
+        replica_a.receive(event_c.clone());
+
+        replica_b.receive(event_a);
+        replica_b.receive(event_c);
+
+        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
+        // println!("Replica C state: {:?}", replica_c.query(Read::new()));
+        // println!("Replica B state: {:?}", replica_b.query(Read::new()));
+
+        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
+    }
+
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_uw_map() {
         // init_tracing();
 
         use crate::{
+            crdt::list::eg_walker::List,
             fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
+                config::{FuzzerConfig, RunConfig},
                 fuzzer,
             },
-            protocol::state::po_log::VecLog,
+            protocol::state::event_graph::EventGraph,
+            // protocol::state::{po_log::VecLog},
         };
 
-        type UWMapNested = UWMapLog<String, UWMapLog<String, VecLog<Counter<i32>>>>;
+        // type UWMapNested = UWMapLog<String, UWMapLog<String, VecLog<Counter<i32>>>>;
+        type UWMapNested = UWMapLog<String, EventGraph<List<char>>>;
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None);
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(0.4, 8, 25, None, None, false);
+        let runs = vec![run.clone(); 1_000];
 
-        let op_config = OpConfig {
-            max_elements: 10_000,
-        };
-
-        let config =
-            FuzzerConfig::<UWMapNested>::new("uw_map", runs, op_config, true, |a, b| a == b, None);
+        let config = FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false);
 
         fuzzer::<UWMapNested>(config);
     }

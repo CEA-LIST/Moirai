@@ -1,12 +1,5 @@
 use std::{fmt::Debug, hash::Hash};
 
-#[cfg(feature = "fuzz")]
-use rand::Rng;
-#[cfg(feature = "fuzz")]
-use rand::RngCore;
-
-#[cfg(feature = "fuzz")]
-use crate::fuzz::config::{OpConfig, OpGeneratorNested};
 use crate::{
     crdt::{
         flag::ew_flag::EWFlag,
@@ -54,18 +47,6 @@ where
             }
         }
         set
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl OpGeneratorNested for EWFlagSet<usize> {
-    fn generate(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op {
-        let choice = rng.random_range(0..config.max_elements);
-        if rng.next_u32() % 2 == 0 {
-            Set::add(choice)
-        } else {
-            Set::remove(choice)
-        }
     }
 }
 
@@ -124,21 +105,11 @@ mod tests {
             vec![false, false, false, false, false, false, false, false],
         ]);
 
-        let run = RunConfig::new(0.4, 8, 10_000, reachability, None);
+        let run = RunConfig::new(0.4, 8, 10_000, reachability, None, false);
         let runs = vec![run.clone(); 1];
 
-        let op_config = OpConfig {
-            max_elements: 10_000,
-        };
-
-        let config = FuzzerConfig::<EWFlagSet<String>>::new(
-            "ew_flag_set",
-            runs,
-            op_config,
-            true,
-            |a, b| a == b,
-            None,
-        );
+        let config =
+            FuzzerConfig::<EWFlagSet<String>>::new("ew_flag_set", runs, true, |a, b| a == b, true);
 
         fuzzer::<EWFlagSet<String>>(config);
     }

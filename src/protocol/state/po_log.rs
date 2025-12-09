@@ -4,9 +4,7 @@ use std::fmt::Debug;
 use rand::RngCore;
 
 #[cfg(feature = "fuzz")]
-use crate::fuzz::config::{OpConfig, OpGenerator};
-#[cfg(feature = "fuzz")]
-use crate::protocol::state::log::IsLogFuzz;
+use crate::fuzz::config::{OpGenerator, OpGeneratorNested};
 #[cfg(feature = "test_utils")]
 use crate::protocol::state::log::IsLogTest;
 use crate::{
@@ -167,7 +165,7 @@ where
     O: PureCRDT + Clone,
     U: IsUnstableState<O> + Default + Debug,
 {
-    fn stable(&self) -> &impl IsStableState<<Self as IsLog>::Op> {
+    fn stable(&self) -> &<O as PureCRDT>::StableState {
         &self.stable
     }
 
@@ -177,12 +175,17 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<O, U> IsLogFuzz for POLog<O, U>
+impl<O, U> OpGeneratorNested for POLog<O, U>
 where
     O: PureCRDT + Clone + OpGenerator,
     U: IsUnstableState<O> + Default + Debug,
 {
-    fn generate_op(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op {
-        O::generate(rng, config, &self.stable, &self.unstable)
+    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+        O::generate(
+            rng,
+            &<O as OpGenerator>::Config::default(),
+            &self.stable,
+            &self.unstable,
+        )
     }
 }

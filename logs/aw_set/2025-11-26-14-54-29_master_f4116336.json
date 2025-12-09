@@ -1,0 +1,49 @@
+{
+  "name": "aw_set",
+  "timestamp": "2025-11-26T14:54:29.868371+01:00",
+  "git_commit": "f4116336883518504e8f9b21dba34f11f4381155",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 10,
+    "total_time_ms": 0,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": null,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.0,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10,
+        "churn_rate": 0.4,
+        "seed": "0x91D8AC8C1D084E02",
+        "generate_execution_graph": true
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{46, 10, 80, 63}",
+        "delivered_events": 10,
+        "total_operations": 10,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "7": 0,
+          "3": 0,
+          "6": 0,
+          "2": 0,
+          "5": 0,
+          "1": 0,
+          "4": 0
+        },
+        "execution_graph_dot": "digraph {  0 [ label = \"TaggedOp { op: Remove(23), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 2, 1 => 0, 2 => 1, 3 => 3, 4 => 4, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(1) } }\" ]  1 [ label = \"TaggedOp { op: Add(78), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 4, 1 => 0, 2 => 1, 3 => 2, 4 => 3, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(2) } }\" ]  2 [ label = \"TaggedOp { op: Add(63), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 2, resolver: 0 => 2, 1 => 0, 2 => 1, 3 => 3, 4 => 4, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(3) } }\" ]  3 [ label = \"TaggedOp { op: Add(10), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 7, 1 => 0, 2 => 1, 3 => 2, 4 => 3, 5 => 4, 6 => 5, 7 => 6 }, lamport: Lamport(4) } }\" ]  4 [ label = \"TaggedOp { op: Remove(24), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 2, resolver: 0 => 7, 1 => 0, 2 => 1, 3 => 2, 4 => 3, 5 => 4, 6 => 5, 7 => 6 }, lamport: Lamport(5) } }\" ]  5 [ label = \"TaggedOp { op: Remove(45), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 3, 1 => 0, 2 => 1, 3 => 2, 4 => 4, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(6) } }\" ]  6 [ label = \"TaggedOp { op: Add(46), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 2, resolver: 0 => 3, 1 => 0, 2 => 1, 3 => 2, 4 => 4, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(7) } }\" ]  7 [ label = \"TaggedOp { op: Remove(78), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 3, resolver: 0 => 2, 1 => 0, 2 => 1, 3 => 3, 4 => 4, 5 => 5, 6 => 6, 7 => 7 }, lamport: Lamport(8) } }\" ]  8 [ label = \"TaggedOp { op: Add(80), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 5, 1 => 0, 2 => 1, 3 => 2, 4 => 3, 5 => 4, 6 => 6, 7 => 7 }, lamport: Lamport(2) } }\" ]  9 [ label = \"TaggedOp { op: Remove(95), tag: Tag { id: EventId { idx: ReplicaIdx(0), seq: 1, resolver: 0 => 6, 1 => 0, 2 => 1, 3 => 2, 4 => 3, 5 => 4, 6 => 5, 7 => 7 }, lamport: Lamport(4) } }\" ]  1 -> 0 [ ]  2 -> 1 [ ]  3 -> 1 [ ]  4 -> 3 [ ]  4 -> 2 [ ]  5 -> 3 [ ]  6 -> 5 [ ]  6 -> 4 [ ]  7 -> 6 [ ]  8 -> 5 [ ]  9 -> 8 [ ]}"
+      }
+    }
+  ]
+}

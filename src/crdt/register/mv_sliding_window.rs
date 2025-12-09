@@ -125,12 +125,12 @@ mod tests {
 
     use crate::{
         crdt::{register::mv_sliding_window::MVSlidingWindow, test_util::twins_log},
-        protocol::{crdt::query::Read, replica::IsReplica, state::event_graph::EventGraph},
+        protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog},
     };
 
     #[test]
     fn simple_mv_sliding_window() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<MVSlidingWindow<&str>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<VecLog<MVSlidingWindow<&str>>>();
 
         let e1 = replica_a.send(MVSlidingWindow::Write("A1")).unwrap();
         let e2 = replica_b.send(MVSlidingWindow::Write("A2")).unwrap();

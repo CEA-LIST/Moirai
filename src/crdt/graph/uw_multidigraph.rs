@@ -517,7 +517,7 @@ mod tests {
     //     use crate::{
     //         // crdt::test_util::init_tracing,
     //         fuzz::{
-    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             config::{FuzzerConfig, RunConfig},
     //             fuzzer,
     //         },
     //     };

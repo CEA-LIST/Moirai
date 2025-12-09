@@ -33,22 +33,6 @@ where
     type Response = bool;
 }
 
-// /// A query operation to get the value associated with a key.
-// /// # Type Parameters
-// /// - `K`: The type of the key.
-// /// - `V`: The type of the returned value.
-// pub struct Get<K, V>(pub K, std::marker::PhantomData<V>);
-
-// impl<K, V> Get<K, V> {
-//     pub fn new(key: K) -> Self {
-//         Self(key, std::marker::PhantomData)
-//     }
-// }
-
-// impl<K, V> QueryOperation for Get<K, V> {
-//     type Response = Option<V>;
-// }
-
 pub struct Get<K, Q> {
     pub key: K,
     pub nested_query: Q,

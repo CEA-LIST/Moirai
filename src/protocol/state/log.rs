@@ -1,20 +1,19 @@
 use std::fmt::Debug;
 
-#[cfg(feature = "fuzz")]
-use rand::RngCore;
-
-#[cfg(feature = "fuzz")]
-use crate::fuzz::config::OpConfig;
-#[cfg(feature = "test_utils")]
-use crate::protocol::state::{stable_state::IsStableState, unstable_state::IsUnstableState};
 use crate::protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
 };
+#[cfg(feature = "test_utils")]
+use crate::protocol::{
+    crdt::pure_crdt::PureCRDT,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+};
 
 /// Define the interface of a log structure for CRDTs that store events.
 pub trait IsLog: Default + Debug {
+    // TODO: is Value really needed?
     type Value: Default + Debug;
     type Op: Debug + Clone;
 
@@ -23,6 +22,7 @@ pub trait IsLog: Default + Debug {
     fn prepare(op: Self::Op) -> Self::Op {
         op
     }
+    // TODO replace by Result
     fn is_enabled(&self, op: &Self::Op) -> bool;
     fn effect(&mut self, event: Event<Self::Op>);
     fn eval<Q>(&self, q: Q) -> Q::Response
@@ -38,12 +38,12 @@ pub trait IsLog: Default + Debug {
 }
 
 #[cfg(feature = "test_utils")]
-pub trait IsLogTest: IsLog {
-    fn stable(&self) -> &impl IsStableState<Self::Op>;
+pub trait IsLogTest
+where
+    Self: IsLog,
+    Self::Op: PureCRDT,
+    <Self::Op as PureCRDT>::StableState: IsStableState<Self::Op>,
+{
+    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState;
     fn unstable(&self) -> &impl IsUnstableState<Self::Op>;
-}
-
-#[cfg(feature = "fuzz")]
-pub trait IsLogFuzz: IsLog {
-    fn generate_op(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op;
 }

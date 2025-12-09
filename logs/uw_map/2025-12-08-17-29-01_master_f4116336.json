@@ -1,0 +1,2419 @@
+{
+  "name": "uw_map",
+  "timestamp": "2025-12-08T17:29:01.939536+01:00",
+  "git_commit": "f4116336883518504e8f9b21dba34f11f4381155",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 100,
+    "total_operations": 300,
+    "total_time_ms": 3,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": 1500.0,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.01,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF93BCE187228B66D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 1,
+        "avg_time_per_op_ms": 0.3333333333333333,
+        "throughput_ops_per_sec": 3000.0,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 1
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x8F5B5F7B7756F2B1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"m\": ['u'], \"bS7Qo\": ['V'], \"8wVAQsBoL\": ['l']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x75C37F715FFCD683",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF289621DAD3DED6F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"vkM\": ['F']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x094F797B7D49F217",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"MY1BAC4NO\": ['J']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 6,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x16E0E44974CECD35",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"bwFK\": ['C']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 7,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x6AA02CE6D0B2C04A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 8,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x8883EFE40522FBC9",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"b\": ['n']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 9,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xD39F3B442B27AC96",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"CUCs1gBB5\": ['x'], \"8HQ6FTBOu\": ['j']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 10,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xC0BF890CABE9EF50",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 11,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xBDC6141840F7CD11",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"R\": ['N']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 12,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x28C8F2D681EFD96F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 13,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x2F61E9E4374BB913",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"h\": ['Z'], \"TJO\": ['2']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 14,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF6CE039F054910E4",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"eV5auSN\": ['p']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 15,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xB72426AD54EA9DC8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"ie4aCNnbF6\": ['x']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 16,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x20C274D987A8CB5F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 17,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x5B649CAD38BEA31D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 18,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x440A34D40113F4DF",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 19,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xA1CF7B9BF421B084",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 20,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x3A6A3C9C7E29744F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"HAsBugQCE\": ['c'], \"u\": ['5'], \"0dDm\": ['W']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 21,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x9695A30FA64E4D3B",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"45VVeb1\": ['Z']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 22,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF5A1AECD7036A727",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"BnypOu1mmM\": ['3']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 23,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1F5E507B78D41E75",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"HpJHE7tM\": ['c']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 2,
+        "avg_time_per_op_ms": 0.6666666666666666,
+        "throughput_ops_per_sec": 1500.0,
+        "replica_times_ms": {
+          "0": 2,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 24,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x17708A523215F6E0",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 25,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1D883C9A24652649",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 26,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x4C2A6ECF9A57E2E8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"1ODZwRqO5\": ['2']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 27,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xFCF18499CD72F649",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"pV4d\": ['w'], \"uoqGn\": ['H']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 28,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x19CA7F3CC3EF3F3B",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 29,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x7367B0E5C4A364BC",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"LaNAxwGW\": ['B']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 30,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xDB3FC3E9B2F8494E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 31,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xE2BDA4A8FA07DE31",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 32,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x19C9EC34C1F42D90",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 33,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xA156F2536B890B0A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"WspCkIeJ2q\": ['5']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 34,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1C57F360BBB0E002",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['l'], \"BqHWoy4yh6\": ['v']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 35,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1B4B0CB12367607C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"zFJNf\": ['M'], \"uYsssLxc\": ['y']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 36,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x241AF5B017FC4E01",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"b\": ['q']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 37,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xA50A22D6D0F8AF76",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"SfZTHIBi\": ['Y'], \"pjx0YW4TDq\": ['s']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 38,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xD87D5F5E31D589D6",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"XBJl\": ['e'], \"LM1\": ['T']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 39,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x103E1AD9B0F1D564",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 40,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x155F88264D89563E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 41,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF962590879C83D1D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 42,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x631AC96E05100CAE",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"GluORf9ip\": ['2'], \"tL\": ['y'], \"7qxKipppGW\": ['w']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 43,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x8FADDB353648E5BB",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['i', 'r']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 44,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xBC6EB077157F21B1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['Y']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 45,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x96EF9055C4157409",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"8KkAK\": ['q']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 46,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x577E0A6AA596C0EF",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 47,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x63DAF5268500CECF",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 48,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x9574DB2C8E6A48F8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 49,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF53BDFD5D98EE6B1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"EqvFWQ\": ['b']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 50,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x183A054347C53A82",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"Uino\": ['g'], \"Q\": ['G'], \"JIPWRkG\": ['A']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 51,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x8042C110FF4C2806",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 52,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x3479F54D45649FD0",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 53,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x149344C9CCB3ED1A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"Lg\": ['Z'], \"zdK\": ['K'], \"o7bB8sFYL\": ['W']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 54,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x47333A473CC93C7B",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 55,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x23BE21DDA36EC6A9",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"qw0Im\": ['G']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 56,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xDFA2ECB430FB728E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['C'], \"HsImjjWQp\": ['T']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 57,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x62776608A4BE8CDD",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"ryN6bzoCX\": ['E'], \"\": ['i'], \"vXR\": ['Q']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 58,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x3971BD3688E08C7F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"54o1u8I\": ['w']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 59,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x8B7920ABBD60E491",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['q']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 60,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x72C6233566962781",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 61,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x38B9652A92EF17E3",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 62,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xF05B277A1B6A6539",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"RW5cLeM\": ['V']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 63,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xFD1C6696BC1F220E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['q'], \"eHyUk0z\": ['b']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 64,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x76D6C7B6CBBEC1C8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"Dt\": ['W']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 65,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x115C14CCB77EEB7C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 66,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xB52E1E3D2F62EB73",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"A9EoeNk\": ['l']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 67,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xEB973CDD8699B67F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 68,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x2FDB61849A9D0D38",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"XX9wwFcmQK\": ['K']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 69,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xFE973D6C3F57EFF3",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 70,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x253277CA1D4D4622",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 71,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xB94A5AD062BC312C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"VSyd\": ['L']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 72,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x99C61275AC0C9CA1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"T0rLu5\": ['5']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 73,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1F54BD42FB06DA08",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"FJ33NAacr7\": ['r'], \"Cn6lKk\": ['M'], \"QTi\": ['5']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 74,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x75ED275F54039C04",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 75,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xC7B291BEDDF95E80",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"DbCFWvJNe\": ['y']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 76,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xFBFC47DD6AFAF792",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"6\": ['c']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 77,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x377007FE53173815",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 78,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x563B7EACD4F287F2",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 79,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x3ABDB7747C705FD4",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"lc6TUm43e\": ['u']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 80,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x5626BC2C2A4DB194",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"BdMWigY\": ['s'], \"jfVUcR\": ['g'], \"eT7rNR\": ['E']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 81,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xAE14A885EE82662D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 82,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x55C2843E526F369E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"8lt\": ['u'], \"hwa\": ['7']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 83,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x2B6BBD5F97699FDC",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 84,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x4CA8947928C78014",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 85,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xDFA823C68913A007",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"NNiS\": ['j']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 86,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x583C2379C306E0FD",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"d\": ['8'], \"kvaBjsBjO\": ['K']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 87,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x191B851DC74C047E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"ajd\": ['8']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 88,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xE79C6C43076FBBBD",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"sNDr\": ['s']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 89,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xB7211C51593F9213",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"\": ['3'], \"JbDkUNa\": ['d']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 90,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x1617E50B23CE936D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"Qw\": ['Z']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 91,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xFA65299F353811AD",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"N\": ['m']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 92,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x337FB08F8ED48D68",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"Ut0CPajMB\": ['f']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 93,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x5182D6953D369928",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"YWTdSAb\": ['G'], \"Nzm\": ['n']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 94,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0xA1495B5F8823E2A1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"I\": ['3'], \"lEX5lq\": ['U']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 95,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x7F0632A0A5D8763F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 96,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x85148626A79C3D29",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"fZ7cn\": ['z'], \"uk0HP8IO4D\": ['2']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 97,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x670A40FD4A14FEE2",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"seVN\": ['6']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 98,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x6BB4C74E052C36E4",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{\"cAJ\": ['C'], \"CjHO0C2\": ['Z']}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 99,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x4059203733D2E923",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 100,
+      "parameters": {
+        "num_replicas": 2,
+        "num_operations": 3,
+        "churn_rate": 0.4,
+        "seed": "0x9BD5ABC8A3012120",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{}",
+        "delivered_events": 3,
+        "total_operations": 3,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "1": 0
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

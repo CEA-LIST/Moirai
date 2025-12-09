@@ -1,0 +1,49 @@
+{
+  "test_name": "aw_set",
+  "timestamp": "2025-11-06T17:19:19.184080+01:00",
+  "git_commit": "f4116336883518504e8f9b21dba34f11f4381155",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 10,
+    "total_time_ms": 0,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": null,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.0,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10,
+        "churn_rate": 0.4,
+        "seed": "0xEE17425E5FA82E36",
+        "generate_execution_graph": true
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{3693, 6977, 3230, 4442, 6016, 5505}",
+        "delivered_events": 10,
+        "total_operations": 10,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "5": 0,
+          "1": 0,
+          "6": 0,
+          "3": 0,
+          "4": 0,
+          "2": 0,
+          "0": 0,
+          "7": 0
+        },
+        "execution_graph_dot": "digraph {  0 [ label = \"Remove(4263) @ 6:1\" ]  1 [ label = \"Remove(6110) @ 3:1\" ]  2 [ label = \"Add(3230) @ 0:1\" ]  3 [ label = \"Add(3693) @ 4:1\" ]  4 [ label = \"Remove(7120) @ 5:1\" ]  5 [ label = \"Add(6016) @ 6:2\" ]  6 [ label = \"Remove(8459) @ 4:2\" ]  7 [ label = \"Add(5505) @ 5:2\" ]  8 [ label = \"Add(6977) @ 0:2\" ]  9 [ label = \"Add(4442) @ 3:2\" ]  0 -> 0 [ ]  1 -> 1 [ ]  2 -> 2 [ ]  3 -> 3 [ ]  4 -> 4 [ ]  5 -> 5 [ ]  6 -> 6 [ ]  7 -> 7 [ ]  8 -> 8 [ ]  9 -> 9 [ ]}"
+      }
+    }
+  ]
+}

@@ -1,11 +1,12 @@
-use std::path::Path;
-
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
     state::{log::IsLog, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "fuzz")]
+use crate::HashMap;
 
 pub struct FuzzerConfig<'a, L>
 where
@@ -14,14 +15,12 @@ where
     /// Name of the simulation, used for logging
     pub name: &'a str,
     pub runs: Vec<RunConfig>,
-    /// Set of operations to be performed by the replicas
-    pub op_config: OpConfig,
     /// Whether to perform a final merge after all operations are issued
     pub final_merge: bool,
     /// Comparison function to check if the replicas converge
     pub compare: fn(&L::Value, &L::Value) -> bool,
-    /// Whether to log the results to a file
-    pub record_results: Option<RecorderConfig<'a>>,
+    /// Whether to save the execution results to a JSON file in logs/
+    pub save_execution: bool,
 }
 
 impl<'a, L> FuzzerConfig<'a, L>
@@ -31,10 +30,9 @@ where
     pub fn new(
         name: &'a str,
         runs: Vec<RunConfig>,
-        op_config: OpConfig,
         final_merge: bool,
         compare: fn(&L::Value, &L::Value) -> bool,
-        record_results: Option<RecorderConfig<'a>>,
+        save_execution: bool,
     ) -> Self {
         assert!(
             !runs.is_empty(),
@@ -43,66 +41,26 @@ where
         Self {
             name,
             runs,
-            op_config,
             final_merge,
             compare,
-            record_results,
+            save_execution,
         }
     }
 }
 
-// pub enum OpConfig<'a, O> {
-//     Uniform(&'a [O]),
-//     Probabilistic(&'a [(O, f64)]),
-// }
-
-// impl<'a, O> OpConfig<'a, O> {
-//     pub fn random(ops: &'a [O]) -> Self {
-//         assert!(!ops.is_empty(), "Operation list cannot be empty");
-//         Self::Uniform(ops)
-//     }
-
-//     pub fn probabilistic(ops: &'a [(O, f64)]) -> Self {
-//         assert!(!ops.is_empty(), "Operation list cannot be empty");
-//         let total_prob: f64 = ops.iter().map(|(_, p)| p).sum();
-//         assert!(
-//             (total_prob - 1.0).abs() < f64::EPSILON,
-//             "Total probability must sum to 1.0"
-//         );
-//         Self::Probabilistic(ops)
-//     }
-
-//     pub fn choose(&self, rng: &mut impl rand::Rng) -> O
-//     where
-//         O: Clone,
-//     {
-//         match self {
-//             OpConfig::Uniform(ops) => ops.iter().choose(rng).unwrap().clone(),
-//             OpConfig::Probabilistic(ops) => {
-//                 let weights: Vec<f64> = ops.iter().map(|(_, p)| *p).collect();
-//                 let dist = WeightedIndex::new(&weights).ok().unwrap(); // returns None if weights are invalid
-//                 let index = dist.sample(rng);
-//                 ops[index].0.clone()
-//             }
-//         }
-//     }
-// }
-
-pub struct OpConfig {
-    pub max_elements: usize,
-}
-
 pub trait OpGenerator: PureCRDT {
+    type Config: Default;
+
     fn generate(
         rng: &mut impl RngCore,
-        config: &OpConfig,
+        config: &Self::Config,
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> Self;
 }
 
 pub trait OpGeneratorNested: IsLog {
-    fn generate(&self, rng: &mut impl RngCore, config: &OpConfig) -> Self::Op;
+    fn generate(&self, rng: &mut impl RngCore) -> Self::Op;
 }
 
 #[derive(Clone)]
@@ -117,6 +75,8 @@ pub struct RunConfig {
     pub reachability: Option<Vec<Vec<bool>>>,
     /// Seed for the random number generator
     pub seed: Option<[u8; 32]>,
+    /// Whether to generate an execution graph in GraphViz format
+    pub generate_execution_graph: bool,
 }
 
 impl RunConfig {
@@ -126,6 +86,7 @@ impl RunConfig {
         num_operations: usize,
         reachability: Option<Vec<Vec<bool>>>,
         seed: Option<[u8; 32]>,
+        generate_execution_graph: bool,
     ) -> Self {
         assert!(
             (0.0..=1.0).contains(&churn_rate),
@@ -157,32 +118,78 @@ impl RunConfig {
             num_operations,
             reachability,
             seed,
+            generate_execution_graph,
         }
     }
 }
 
-pub struct RecorderConfig<'a> {
-    #[allow(dead_code)]
-    file_path: &'a Path,
-    #[allow(dead_code)]
-    execution_graph: Option<ExecutionGraphConfig>,
+/// Structure to save execution results to JSON (contains all runs)
+#[cfg(feature = "fuzz")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExecutionRecord {
+    /// Name of the test
+    pub name: String,
+    /// Date and time of execution start (ISO 8601 format)
+    pub timestamp: String,
+    /// Git commit hash (if available)
+    pub git_commit: Option<String>,
+    /// Git branch name (if available)
+    pub git_branch: Option<String>,
+    /// Whether final merge was performed
+    pub final_merge: bool,
+    /// Aggregated summary statistics across all runs
+    pub summary: ExecutionSummary,
+    /// Results from all runs
+    pub runs: Vec<RunRecord>,
 }
 
-impl<'a> RecorderConfig<'a> {
-    pub fn new(file_path: &'a Path, execution_graph: Option<ExecutionGraphConfig>) -> Self {
-        Self {
-            file_path,
-            execution_graph,
-        }
-    }
+/// Aggregated statistics across all runs
+#[cfg(feature = "fuzz")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExecutionSummary {
+    pub total_runs: usize,
+    pub total_operations: usize,
+    pub total_time_ms: u128,
+    pub mean_throughput_ops_per_sec: f64,
+    pub min_throughput_ops_per_sec: f64,
+    pub max_throughput_ops_per_sec: f64,
+    pub mean_time_per_op_ms: f64,
+    pub all_converged: bool,
 }
 
-pub struct ExecutionGraphConfig {
-    pub concurrency_score: bool,
+/// Record for a single run within an execution
+#[cfg(feature = "fuzz")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RunRecord {
+    /// Run number (1-indexed)
+    pub run_number: usize,
+    /// Input parameters for this run
+    pub parameters: RunParameters,
+    /// Execution results for this run
+    pub results: RunResults,
 }
 
-impl ExecutionGraphConfig {
-    pub fn new(concurrency_score: bool) -> Self {
-        Self { concurrency_score }
-    }
+#[cfg(feature = "fuzz")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RunParameters {
+    pub num_replicas: u8,
+    pub num_operations: usize,
+    pub churn_rate: f64,
+    pub seed: String,
+    pub generate_execution_graph: bool,
+}
+
+#[cfg(feature = "fuzz")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RunResults {
+    pub convergence: bool,
+    pub final_state: String,
+    pub delivered_events: usize,
+    pub total_operations: usize,
+    pub total_time_ms: u128,
+    pub avg_time_per_op_ms: f64,
+    pub throughput_ops_per_sec: f64,
+    pub replica_times_ms: HashMap<usize, u128>,
+    /// Execution graph in GraphViz DOT format (if generated)
+    pub execution_graph_dot: Option<String>,
 }

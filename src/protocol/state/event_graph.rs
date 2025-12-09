@@ -5,11 +5,16 @@ use petgraph::{
     algo::has_path_connecting,
     graph::NodeIndex,
     prelude::StableDiGraph,
-    visit::{Dfs, Visitable},
+    visit::{Dfs, VisitMap, Visitable},
     Direction,
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 
+#[cfg(feature = "fuzz")]
+use crate::fuzz::config::{OpGenerator, OpGeneratorNested};
 use crate::{
+    crdt::list::eg_walker::{List, ReadAt},
     protocol::{
         clock::version_vector::Version,
         crdt::{
@@ -17,7 +22,7 @@ use crate::{
             pure_crdt::PureCRDT,
             query::QueryOperation,
         },
-        event::{id::EventId, tagged_op::TaggedOp, Event},
+        event::{id::EventId, lamport::Lamport, tagged_op::TaggedOp, Event},
         state::{log::IsLog, unstable_state::IsUnstableState},
     },
     HashMap, HashSet,
@@ -31,15 +36,21 @@ pub struct EventGraph<O> {
     heads: HashSet<EventId>,
 }
 
-impl<O> IsLog for EventGraph<O>
+impl<V> IsLog for EventGraph<List<V>>
 where
-    O: PureCRDT + Clone,
+    V: Debug + Clone,
 {
-    type Value = O::Value;
-    type Op = O;
+    type Value = <List<V> as PureCRDT>::Value;
+    type Op = List<V>;
 
     fn new() -> Self {
-        assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R && O::DISABLE_STABILIZE);
+        const {
+            debug_assert!(
+                List::<V>::DISABLE_R_WHEN_NOT_R
+                    && List::<V>::DISABLE_R_WHEN_R
+                    && List::<V>::DISABLE_STABILIZE
+            );
+        }
         Default::default()
     }
 
@@ -50,13 +61,31 @@ where
     fn stabilize(&mut self, _version: &Version) {}
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        debug_assert!(self.graph.node_count() >= self.heads.len());
         if conservative {
-            let to_remove = self.collect(version);
-            for nx in to_remove {
-                self.graph.remove_node(nx);
+            let state = self.execute_query(ReadAt::new(version));
+            if state.is_empty() {
+                // println!(
+                //     "Redundant by parent: state is already empty, no need to add delete range"
+                // );
+                return;
             }
+            let event_id = EventId::from(version);
+            let lamport = Lamport::from(version);
+            let event = Event::new(
+                event_id,
+                lamport,
+                List::DeleteRange {
+                    start: 0,
+                    len: state.len(),
+                },
+                version.clone(),
+            );
+            // debug_assert!(self.is_enabled(&event.op()));
+            // println!("Is enabled? {}", self.is_enabled(event.op()));
+            self.append(event);
         } else {
-            *self = Self::default();
+            panic!("EventGraph::redundant_by_parent non-conservative is not implemented");
         }
     }
 
@@ -65,9 +94,13 @@ where
     }
 
     fn is_enabled(&self, op: &Self::Op) -> bool {
-        O::is_enabled(op, &O::StableState::default(), self)
+        List::<V>::is_enabled(op, &<List<V> as PureCRDT>::StableState::default(), self)
     }
 }
+
+// TODO: The Event Graph should never remove any operation from its graph.
+// However, we must preserve the effect of operations that remove other operations.
+// We need to ensure that querys do not read removed operations.
 
 impl<O> IsUnstableState<O> for EventGraph<O>
 where
@@ -87,9 +120,18 @@ where
         }
         self.heads.insert(event.id().clone());
 
+        // self.transitive_reduction();
+
         #[allow(clippy::mutable_key_type)] // false positive
         fn max_one_per_id(set: &HashSet<EventId>) -> bool {
             let mut seen = HashSet::default();
+            // println!(
+            //     "Checking max_one_per_id for set: {}",
+            //     set.iter()
+            //         .map(|e| e.to_string())
+            //         .collect::<Vec<_>>()
+            //         .join(", ")
+            // );
             for p in set {
                 if !seen.insert(p.origin_id()) {
                     return false; // duplicate name found
@@ -107,6 +149,7 @@ where
             neighbors_count == 0
         }));
         debug_assert!(max_one_per_id(&self.heads));
+        debug_assert!(self.graph.node_count() >= self.heads.len());
     }
 
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
@@ -115,11 +158,20 @@ where
             .and_then(|idx| self.graph.node_weight(*idx))
     }
 
-    fn remove(&mut self, event_id: &EventId) {
-        if let Some(idx) = self.map.get_by_right(event_id) {
-            self.graph.remove_node(*idx);
-            self.map.remove_by_right(event_id);
-        }
+    /// # Complexity
+    /// $O(e')$
+    fn remove(&mut self, _event_id: &EventId) {
+        // if let Some(idx) = self.map.get_by_right(event_id) {
+        //     if self.heads.contains(event_id) {
+        //         self.heads.remove(event_id);
+
+        //     }
+
+        //     self.graph.remove_node(*idx);
+        //     self.map.remove_by_right(event_id);
+        // }
+        // TODO: update heads, re-attach if needed
+        panic!("EventGraph::remove is not implemented");
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -129,21 +181,23 @@ where
         self.graph.node_weights()
     }
 
-    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-        let to_remove: Vec<NodeIndex> = self
-            .graph
-            .node_indices()
-            .filter(|nx| {
-                let tagged_op = self.graph.node_weight(*nx).unwrap();
-                !predicate(tagged_op)
-            })
-            .collect();
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, _predicate: T) {
+        // let to_remove: Vec<NodeIndex> = self
+        //     .graph
+        //     .node_indices()
+        //     .filter(|nx| {
+        //         let tagged_op = self.graph.node_weight(*nx).unwrap();
+        //         !predicate(tagged_op)
+        //     })
+        //     .collect();
 
-        for nx in to_remove {
-            let event_id = self.map.get_by_left(&nx).unwrap().clone();
-            self.graph.remove_node(nx);
-            self.map.remove_by_right(&event_id);
-        }
+        // for nx in to_remove {
+        //     let event_id = self.map.get_by_left(&nx).unwrap().clone();
+        //     self.graph.remove_node(nx);
+        //     self.map.remove_by_right(&event_id);
+        // }
+        // TODO: update heads, re-attach if needed
+        panic!("EventGraph::retain is not implemented");
     }
 
     fn len(&self) -> usize {
@@ -161,7 +215,7 @@ where
     }
 
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
-        self.collect(version)
+        self.collect_predecessors(version)
             .iter()
             .filter_map(|nx| self.graph.node_weight(*nx).cloned())
             .collect()
@@ -204,11 +258,14 @@ impl<O> Default for EventGraph<O> {
     }
 }
 
-impl<O> EventGraph<O> {
+impl<O> EventGraph<O>
+where
+    O: Debug,
+{
     /// Collect all the node indices that correspond to an event lower or equal to the given version.
     /// # Complexity
     /// O(n)
-    fn collect(&self, version: &Version) -> Vec<NodeIndex> {
+    fn collect_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
         let start_nodes: Vec<NodeIndex> = self
             .heads
             .iter()
@@ -220,12 +277,28 @@ impl<O> EventGraph<O> {
         let discovered = self.graph.visit_map();
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
 
+        debug_assert!(self.graph.node_count() >= self.heads.len());
+
+        // println!("Collecting predecessors for version: {}", version);
+        // println!(
+        //     "Heads: {}",
+        //     self.heads
+        //         .iter()
+        //         .map(|h| h.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        // println!("Graph nodes: {}", self.graph.node_count());
+        // println!("Dot representation:\n{}", self.to_dot());
+
         while let Some(nx) = dfs.next(&self.graph) {
             let event_id = self.map.get_by_left(&nx).unwrap();
             if event_id.is_predecessor_of(version) {
                 collected.push(nx);
             }
         }
+
+        // TODO: are node indices topologically sorted?
 
         collected
     }
@@ -283,14 +356,97 @@ impl<O> EventGraph<O> {
 
         collected.values().cloned().collect()
     }
+
+    // TODO: very inefficient, improve it
+    /// Perform transitive reduction on the event graph to remove redundant edges.
+    /// # Complexity
+    /// $O(∣V∣ * (∣V∣+∣E∣))$
+    pub fn transitive_reduction(&mut self) {
+        let edges: Vec<(NodeIndex, NodeIndex)> = self
+            .graph
+            .edge_indices()
+            .map(|eidx| {
+                let (u, v) = self.graph.edge_endpoints(eidx).unwrap();
+                (u, v)
+            })
+            .collect();
+
+        for (u, v) in edges {
+            if !self.graph.contains_edge(u, v) {
+                continue;
+            }
+
+            let mut redundant = false;
+            let mut stack = Vec::new();
+            let mut visited = self.graph.visit_map();
+
+            for w in self
+                .graph
+                .neighbors_directed(u, Direction::Outgoing)
+                .filter(|&nx| nx != v)
+            {
+                stack.push(w);
+                visited.visit(w);
+            }
+
+            while let Some(nx) = stack.pop() {
+                if nx == v {
+                    redundant = true;
+                    break;
+                }
+                for succ in self.graph.neighbors_directed(nx, Direction::Outgoing) {
+                    if visited.visit(succ) {
+                        stack.push(succ);
+                    }
+                }
+            }
+
+            if redundant {
+                if let Some(eidx) = self.graph.find_edge(u, v) {
+                    self.graph.remove_edge(eidx);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "test_utils", feature = "fuzz"))]
+impl<O> EventGraph<O>
+where
+    O: Debug,
+{
+    pub fn to_dot(&self) -> String {
+        use petgraph::dot::{Config, Dot};
+        format!(
+            "{:?}",
+            Dot::with_attr_getters(
+                &self.graph,
+                &[Config::EdgeNoLabel, Config::NodeNoLabel],
+                &|_, _| String::new(),
+                &|_, n| format!("label=\"{}\"", n.1),
+            )
+        )
+    }
 }
 
 impl<O, Q> EvalNested<Q> for EventGraph<O>
 where
     O: PureCRDT + Clone + Eval<Q>,
     Q: QueryOperation,
+    EventGraph<O>: IsLog,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &O::StableState::default(), self)
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<O> OpGeneratorNested for EventGraph<O>
+where
+    O: PureCRDT + Clone + OpGenerator,
+    EventGraph<O>: IsLog<Op = O>,
+{
+    fn generate(&self, rng: &mut impl RngCore) -> <EventGraph<O> as IsLog>::Op {
+        O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
     }
 }

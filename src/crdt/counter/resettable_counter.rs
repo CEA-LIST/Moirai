@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 #[cfg(feature = "fuzz")]
-use crate::fuzz::config::{OpConfig, OpGenerator};
+use crate::fuzz::{config::OpGenerator, value_generator::ValueGenerator};
 use crate::protocol::{
     crdt::{
         eval::Eval,
@@ -128,19 +128,40 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for Counter<i32> {
+impl<V> OpGenerator for Counter<V>
+where
+    V: Add<Output = V>
+        + AddAssign
+        + SubAssign
+        + Default
+        + Copy
+        + Debug
+        + PartialEq
+        + ValueGenerator,
+{
+    type Config = ();
+
     fn generate(
         rng: &mut impl RngCore,
-        _config: &OpConfig,
+        _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
     ) -> Self {
-        let choice = ["Inc", "Dec", "Reset"][rng.next_u32() as usize % 3];
+        enum Choice {
+            Inc,
+            Dec,
+            Reset,
+        }
+        let choice = rand::seq::IteratorRandom::choose(
+            [Choice::Inc, Choice::Dec, Choice::Reset].iter(),
+            rng,
+        )
+        .unwrap();
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
         match choice {
-            "Inc" => Counter::Inc(rng.next_u32() as i32),
-            "Dec" => Counter::Dec(rng.next_u32() as i32),
-            "Reset" => Counter::Reset,
-            _ => unreachable!(),
+            Choice::Inc => Counter::Inc(value),
+            Choice::Dec => Counter::Dec(value),
+            Choice::Reset => Counter::Reset,
         }
     }
 }
@@ -233,7 +254,7 @@ mod tests {
         use crate::{
             // crdt::test_util::init_tracing,
             fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
+                config::{FuzzerConfig, RunConfig},
                 fuzzer,
             },
             protocol::state::po_log::VecLog,
@@ -241,16 +262,15 @@ mod tests {
 
         // init_tracing();
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let run = RunConfig::new(0.4, 8, 100_000, None, None, false);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
             "resettable_counter",
             runs,
-            OpConfig { max_elements: 0 },
             true,
             |a, b| a == b,
-            None,
+            true,
         );
 
         fuzzer::<VecLog<Counter<i32>>>(config);
