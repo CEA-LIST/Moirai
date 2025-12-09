@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 #[cfg(feature = "fuzz")]
-use crate::fuzz::config::{OpConfig, OpGenerator};
+use crate::fuzz::config::OpGenerator;
 use crate::protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -105,9 +105,11 @@ impl Eval<Read<<Self as PureCRDT>::Value>> for EWFlag {
 
 #[cfg(feature = "fuzz")]
 impl OpGenerator for EWFlag {
+    type Config = ();
+
     fn generate(
         rng: &mut impl RngCore,
-        _config: &OpConfig,
+        _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
     ) -> Self {
@@ -164,7 +166,7 @@ mod tests {
         use crate::{
             // crdt::test_util::init_tracing,
             fuzz::{
-                config::{FuzzerConfig, OpConfig, RunConfig},
+                config::{FuzzerConfig, RunConfig},
                 fuzzer,
             },
             protocol::state::po_log::VecLog,
@@ -172,17 +174,11 @@ mod tests {
 
         // init_tracing();
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None);
+        let run = RunConfig::new(0.4, 8, 100_000, None, None, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<EWFlag>>::new(
-            "ew_flag",
-            runs,
-            OpConfig { max_elements: 0 },
-            true,
-            |a, b| a == b,
-            None,
-        );
+        let config =
+            FuzzerConfig::<VecLog<EWFlag>>::new("ew_flag", runs, true, |a, b| a == b, true);
 
         fuzzer::<VecLog<EWFlag>>(config);
     }

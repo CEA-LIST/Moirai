@@ -83,8 +83,7 @@ where
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> bool {
-        let state =
-            Eval::<Read<<Self as PureCRDT>::Value>>::execute_query(Read::new(), stable, unstable);
+        let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
             Graph::AddVertex(_) => true,
             // The vertex must exist to be removed.
@@ -311,7 +310,7 @@ mod tests {
     //     use crate::{
     //         // crdt::test_util::init_tracing,
     //         fuzz::{
-    //             config::{FuzzerConfig, OpConfig, RunConfig},
+    //             config::{FuzzerConfig, RunConfig},
     //             fuzzer,
     //         },
     //         protocol::state::po_log::VecLog,

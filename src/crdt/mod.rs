@@ -1,12 +1,13 @@
 pub mod counter;
 pub mod flag;
 pub mod graph;
-pub mod json;
+// pub mod json;
 pub mod list;
 pub mod map;
 pub mod model;
 pub mod register;
 pub mod set;
+pub mod union;
 
 pub mod test_util {
     use std::fmt::Debug;

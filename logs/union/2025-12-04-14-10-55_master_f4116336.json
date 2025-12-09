@@ -1,0 +1,49 @@
+{
+  "name": "union",
+  "timestamp": "2025-12-04T14:10:55.364776+01:00",
+  "git_commit": "f4116336883518504e8f9b21dba34f11f4381155",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 10,
+    "total_time_ms": 0,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": null,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.0,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10,
+        "churn_rate": 0.8,
+        "seed": "0x3BCDE55F406C1E22",
+        "generate_execution_graph": true
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Map({\"u8zM\": Some(Value(Map({\"kR8MIGRy\": Some(Value(Boolean(false)))}))), \"cTOW\": Some(Va ... )))",
+        "delivered_events": 10,
+        "total_operations": 10,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "7": 0,
+          "3": 0,
+          "6": 0,
+          "2": 0,
+          "5": 0,
+          "1": 0,
+          "4": 0
+        },
+        "execution_graph_dot": "digraph {  0 [ label=\"[Map(Update(\"8YUK\", Number(Inc(1))))@(6:1)]\"]  1 [ label=\"[Map(Update(\"cTOW\", Map(Clear)))@(2:1)]\"]  2 [ label=\"[Map(Clear)@(3:1)]\"]  3 [ label=\"[Map(Update(\"PH51D\", Number(Dec(66))))@(5:1)]\"]  4 [ label=\"[Map(Clear)@(1:1)]\"]  5 [ label=\"[Map(Clear)@(2:2)]\"]  6 [ label=\"[Map(Update(\"u8zM\", Map(Update(\"kR8MIGRy\", Boolean(Disable)))))@(1:2)]\"]  7 [ label=\"[Map(Remove(\"2l\"))@(7:1)]\"]  8 [ label=\"[Map(Clear)@(5:2)]\"]  9 [ label=\"[Map(Clear)@(3:2)]\"]  1 -> 0 [ ]  2 -> 1 [ ]  3 -> 2 [ ]  4 -> 3 [ ]  5 -> 4 [ ]  6 -> 5 [ ]  7 -> 4 [ ]  8 -> 6 [ ]  8 -> 7 [ ]  9 -> 8 [ ]}"
+      }
+    }
+  ]
+}

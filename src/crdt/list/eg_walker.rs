@@ -1,9 +1,15 @@
 use std::{
     collections::{BinaryHeap, HashMap},
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter, Result},
 };
 
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
+
+#[cfg(feature = "fuzz")]
+use crate::fuzz::{config::OpGenerator, value_generator::ValueGenerator};
 use crate::protocol::{
+    clock::version_vector::Version,
     crdt::{
         eval::Eval,
         pure_crdt::PureCRDT,
@@ -20,10 +26,12 @@ use crate::protocol::{
 pub enum List<V> {
     Insert { content: V, pos: usize },
     Delete { pos: usize },
+    DeleteRange { start: usize, len: usize },
+    Update { pos: usize },
 }
 
 #[derive(Clone, Debug)]
-enum State {
+enum PrepareState {
     /// \>0
     Deleted(u8), // number of deletes applied
     /// 0
@@ -32,29 +40,104 @@ enum State {
     NotYetInserted,
 }
 
+impl PrepareState {
+    fn advance_state(&self) -> Self {
+        match self {
+            PrepareState::Deleted(x) => PrepareState::Deleted(x + 1),
+            PrepareState::Inserted => PrepareState::Deleted(1),
+            PrepareState::NotYetInserted => PrepareState::Inserted,
+        }
+    }
+
+    fn retreat_state(&self) -> Self {
+        match self {
+            PrepareState::Deleted(x) if *x >= 2 => PrepareState::Deleted(x - 1),
+            PrepareState::Deleted(1) => PrepareState::Inserted,
+            PrepareState::Deleted(_) => unreachable!(),
+            PrepareState::Inserted => PrepareState::NotYetInserted,
+            PrepareState::NotYetInserted => PrepareState::NotYetInserted,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Item {
     id: EventId,
-    origin_left: Option<EventId>, // Event id of the character the user saw when inserting this new op
+    /// Event id of the character the user saw when inserting this new op.
+    /// The fields from the CRDT that determines insertion order.
+    origin_left: Option<EventId>,
     origin_right: Option<EventId>,
-    deleted: bool,
-    cur_state: State, // NOT_YET_INSERTED, INSERTED, >0 for number of deletes applied
+    /// State at effect version. Either inserted or inserted-and-subsequently-deleted.
+    ever_deleted: bool,
+    /// State at prepare version (affected by retreat / advance)
+    prepare_state: PrepareState, // NOT_YET_INSERTED, INSERTED, >0 for number of deletes applied
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug)]
+enum DeleteTarget {
+    Single(EventId),
+    Range(Vec<EventId>),
+}
+
+#[derive(Default, Debug)]
 struct Document {
     items: Vec<Item>,
     /// Last processed event
     current_version: Option<EventId>,
     /// Key = delete op id, Value = target insert op id
-    del_targets: HashMap<EventId, EventId>,
+    delete_targets: HashMap<EventId, DeleteTarget>,
     /// map of the event id to the current value position in vector of items
-    items_by_nx: HashMap<EventId, usize>,
+    items_by_idx: HashMap<EventId, usize>,
+    /// map of event id to the index of the mutate entry
+    mutations: HashMap<EventId, EventId>,
+}
+
+impl Display for Document {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        writeln!(
+            f,
+            "items by idx: {}",
+            self.items_by_idx
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+        writeln!(f, "items:")?;
+        for item in &self.items {
+            write!(f, "    - {}", item.id)?;
+            write!(f, " [")?;
+            if let Some(ol) = &item.origin_left {
+                write!(f, " L:{}", ol)?;
+            } else {
+                write!(f, " L:None")?;
+            }
+            if let Some(or) = &item.origin_right {
+                write!(f, " R:{}", or)?;
+            } else {
+                write!(f, " R:None")?;
+            }
+            write!(f, " | EverDeleted: {}", item.ever_deleted)?;
+            write!(f, " | State: {:?}", item.prepare_state)?;
+            writeln!(f, " ]")?;
+        }
+        // delete targets
+        writeln!(
+            f,
+            "delete targets: {}",
+            self.delete_targets
+                .iter()
+                .map(|(k, v)| format!("{}: {:?}", k, v))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+        Ok(())
+    }
 }
 
 impl<V> List<V>
 where
-    V: Clone,
+    V: Clone + Debug,
 {
     pub fn insert(content: V, pos: usize) -> Self {
         Self::Insert { content, pos }
@@ -64,8 +147,14 @@ where
         Self::Delete { pos }
     }
 
-    /// First: index in the document, second: index in the snapshot
+    pub fn delete_range(start: usize, len: usize) -> Self {
+        Self::DeleteRange { start, len }
+    }
+
     /// Where to insert the new item so that it appears at target_pos in the current visible document
+    /// # Returns
+    /// First: index in the document
+    /// Second: index in the snapshot
     fn find_by_current_pos(items: &[Item], target_pos: usize) -> (usize, usize) {
         let mut cur_pos = 0usize;
         let mut end_pos = 0usize;
@@ -77,10 +166,10 @@ where
             }
 
             let item = &items[idx];
-            if matches!(item.cur_state, State::Inserted) {
+            if matches!(item.prepare_state, PrepareState::Inserted) {
                 cur_pos += 1;
             }
-            if !item.deleted {
+            if !item.ever_deleted {
                 end_pos += 1;
             }
             idx += 1;
@@ -122,7 +211,7 @@ where
         while scan_idx < right {
             let other = &doc.items[scan_idx];
 
-            if !matches!(other.cur_state, State::NotYetInserted) {
+            if !matches!(other.prepare_state, PrepareState::NotYetInserted) {
                 break;
             }
 
@@ -145,7 +234,7 @@ where
                 scanning = oright < right;
             }
 
-            if !other.deleted {
+            if !other.ever_deleted {
                 scan_end_pos += 1;
             }
             scan_idx += 1;
@@ -161,7 +250,7 @@ where
         // Update items_by_nx mapping for all shifted items at and after idx
         for i in idx..doc.items.len() {
             let n = doc.items[i].id.clone();
-            doc.items_by_nx.insert(n, i);
+            doc.items_by_idx.insert(n, i);
         }
         // Update snapshot with content
         snapshot.insert(end_pos, content);
@@ -169,35 +258,54 @@ where
 
     fn retreat(doc: &mut Document, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
         // For inserts, target is the item itself; for deletes, target is the item which was deleted
-        let target = match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => event_id,
-            List::Delete { .. } => &doc.del_targets[event_id],
+        // println!("Retreating event_id: {}", event_id);
+        // println!(
+        // "Delete targets: {}",
+        //     doc.delete_targets
+        //         .iter()
+        //         .map(|(k, v)| format!("{}: {:?}", k, v))
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        let targets: Vec<&EventId> = match &state.get(event_id).unwrap().op() {
+            List::Insert { .. } => vec![event_id],
+            List::DeleteRange { .. } | List::Delete { .. } => doc
+                .delete_targets
+                .get(event_id)
+                .map(|t| match t {
+                    DeleteTarget::Single(eid) => vec![eid],
+                    DeleteTarget::Range(eids) => eids.iter().collect(),
+                })
+                .unwrap(),
+            List::Update { .. } => return,
         };
 
-        if let Some(&item_idx) = doc.items_by_nx.get(target) {
-            let item = &mut doc.items[item_idx];
-            item.cur_state = match item.cur_state {
-                State::Deleted(x) if x >= 2 => State::Deleted(x - 1),
-                State::Deleted(1) => State::Inserted,
-                State::Deleted(_) => unreachable!(),
-                State::Inserted => State::NotYetInserted,
-                State::NotYetInserted => State::NotYetInserted,
+        for target in targets {
+            if let Some(&item_idx) = doc.items_by_idx.get(target) {
+                let item = &mut doc.items[item_idx];
+                item.prepare_state = PrepareState::retreat_state(&item.prepare_state);
             }
         }
     }
 
     fn advance(doc: &mut Document, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
-        let target = match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => event_id,
-            List::Delete { .. } => &doc.del_targets[event_id],
+        let targets: Vec<&EventId> = match &state.get(event_id).unwrap().op() {
+            List::Insert { .. } => vec![event_id],
+            List::DeleteRange { .. } | List::Delete { .. } => doc
+                .delete_targets
+                .get(event_id)
+                .map(|t| match t {
+                    DeleteTarget::Single(eid) => vec![eid],
+                    DeleteTarget::Range(eids) => eids.iter().collect(),
+                })
+                .unwrap(),
+            List::Update { .. } => return,
         };
 
-        if let Some(&item_idx) = doc.items_by_nx.get(target) {
-            let item = &mut doc.items[item_idx];
-            item.cur_state = match item.cur_state {
-                State::Deleted(x) => State::Deleted(x + 1),
-                State::Inserted => State::Deleted(1),
-                State::NotYetInserted => State::Inserted,
+        for target in targets {
+            if let Some(&item_idx) = doc.items_by_idx.get(target) {
+                let item = &mut doc.items[item_idx];
+                item.prepare_state = PrepareState::advance_state(&item.prepare_state);
             }
         }
     }
@@ -209,38 +317,110 @@ where
 
                 while idx < doc.items.len()
                     && matches!(
-                        doc.items[idx].cur_state,
-                        State::NotYetInserted | State::Deleted(_)
+                        doc.items[idx].prepare_state,
+                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
                     )
                 {
-                    if !doc.items[idx].deleted {
+                    if !doc.items[idx].ever_deleted {
                         end_pos += 1;
                     }
                     idx += 1;
                 }
 
-                if idx >= doc.items.len() {
-                    panic!("No INSERTED item found at position {pos}");
-                }
+                debug_assert!(
+                    idx < doc.items.len(),
+                    "No `INSERTED` item found at position {pos}"
+                );
 
-                {
+                let item = &mut doc.items[idx];
+                if !item.ever_deleted {
+                    item.ever_deleted = true;
+                    // TODO: O(n)
+                    snapshot.remove(end_pos);
+                }
+                item.prepare_state = PrepareState::Deleted(1);
+                doc.delete_targets.insert(
+                    tagged_op.id().clone(),
+                    DeleteTarget::Single(item.id.clone()),
+                );
+            }
+            List::DeleteRange { start, len } => {
+                // println!("Applying DeleteRange: start {}, len {}", *start, *len);
+                // println!("Snapshot before delete: {:?}", snapshot);
+                // println!("Document before delete: {}", doc);
+                let (mut idx, mut end_pos) = Self::find_by_current_pos(&doc.items, *start);
+                let mut pos = 0usize;
+                let mut deleted_ids = Vec::new();
+
+                while pos < *len {
+                    // println!("Loop no. {}: idx {}, end_pos {}", pos, idx, end_pos);
+                    while idx < doc.items.len()
+                        && matches!(
+                            doc.items[idx].prepare_state,
+                            PrepareState::NotYetInserted | PrepareState::Deleted(_)
+                        )
+                    {
+                        if !doc.items[idx].ever_deleted {
+                            end_pos += 1;
+                        }
+                        idx += 1;
+                    }
+
+                    if idx >= doc.items.len() {
+                        // println!("No `INSERTED` item found at position {}", *start + pos);
+                        return;
+                    }
+
+                    // debug_assert!(
+                    //     idx < doc.items.len(),
+                    //     "No `INSERTED` item found at position {pos}.",
+                    // );
+
                     let item = &mut doc.items[idx];
-                    if !item.deleted {
-                        item.deleted = true;
+                    if !item.ever_deleted {
+                        item.ever_deleted = true;
+                        // TODO: O(n)
                         snapshot.remove(end_pos);
                     }
-                    item.cur_state = State::Deleted(1);
-                    doc.del_targets
-                        .insert(tagged_op.id().clone(), item.id.clone());
+                    item.prepare_state = PrepareState::Deleted(1);
+                    deleted_ids.push(item.id.clone());
+                    pos += 1;
                 }
+
+                // println!("Snapshot after delete: {:?}", snapshot);
+                // println!("Document after delete: {}", doc);
+                // println!("Deleted IDs: {:?}", deleted_ids);
+
+                doc.delete_targets
+                    .insert(tagged_op.id().clone(), DeleteTarget::Range(deleted_ids));
+            }
+            List::Update { pos } => {
+                let (mut idx, _) = Self::find_by_current_pos(&doc.items, *pos);
+
+                while idx < doc.items.len()
+                    && matches!(
+                        doc.items[idx].prepare_state,
+                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
+                    )
+                {
+                    idx += 1;
+                }
+
+                debug_assert!(
+                    idx < doc.items.len(),
+                    "No `INSERTED` item found at position {pos}"
+                );
+
+                doc.mutations
+                    .insert(tagged_op.id().clone(), doc.items[idx].id.clone());
             }
             List::Insert { content, pos } => {
                 let (idx, end_pos) = Self::find_by_current_pos(&doc.items, *pos);
 
                 if idx >= 1
                     && matches!(
-                        doc.items[idx - 1].cur_state,
-                        State::NotYetInserted | State::Deleted(_)
+                        doc.items[idx - 1].prepare_state,
+                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
                     )
                 {
                     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
@@ -254,7 +434,10 @@ where
 
                 let mut origin_right = None;
                 for i in idx..doc.items.len() {
-                    if matches!(doc.items[i].cur_state, State::Inserted | State::Deleted(_)) {
+                    if matches!(
+                        doc.items[i].prepare_state,
+                        PrepareState::Inserted | PrepareState::Deleted(_)
+                    ) {
                         origin_right = Some(doc.items[i].id.clone());
                         break;
                     }
@@ -264,8 +447,8 @@ where
                     id: tagged_op.id().clone(),
                     origin_left,
                     origin_right,
-                    deleted: false,
-                    cur_state: State::Inserted,
+                    ever_deleted: false,
+                    prepare_state: PrepareState::Inserted,
                 };
 
                 Self::integrate(doc, item, idx, end_pos, snapshot, content.clone())
@@ -287,7 +470,7 @@ where
 
         #[allow(clippy::mutable_key_type)]
         let mut flags: HashMap<EventId, DiffFlag> = HashMap::new();
-        // Match TS PriorityQueue<Lv> by prioritizing higher NodeIndex first
+        // PriorityQueue: prioritizing higher NodeIndex first
         let mut queue: BinaryHeap<(usize, EventId)> = BinaryHeap::new();
         let mut num_shared = 0usize;
 
@@ -388,14 +571,18 @@ where
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> bool {
-        let state = <Self as Eval<Read<<Self as PureCRDT>::Value>>>::execute_query(
-            Read::new(),
-            stable,
-            unstable,
-        );
+        let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
             List::Insert { pos, .. } => *pos <= state.len(),
             List::Delete { pos } => *pos < state.len(),
+            List::Update { pos } => *pos < state.len(),
+            List::DeleteRange { start, len } => {
+                // println!(
+                //     "Checking DeleteRange is_enabled: start {}, len {}, state {:?}",
+                //     *start, *len, state
+                // );
+                (*start + *len) <= state.len()
+            }
         }
     }
 }
@@ -408,7 +595,55 @@ where
         _q: Read<<Self as PureCRDT>::Value>,
         _stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> Vec<V> {
+        let mut document = Document::default();
+        let mut snapshot: Vec<V> = Vec::new();
+
+        for tagged_op in unstable.iter() {
+            let parents = unstable.parents(tagged_op.id());
+            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
+
+            // println!("Document before applying {}: {}", tagged_op.id(), document);
+            for event_id in a_only {
+                Self::retreat(&mut document, unstable, &event_id);
+            }
+
+            for event_id in b_only {
+                Self::advance(&mut document, unstable, &event_id);
+            }
+
+            Self::apply(&mut document, tagged_op, &mut snapshot);
+
+            document.current_version = Some(tagged_op.id().clone());
+        }
+
+        snapshot.into_iter().collect()
+    }
+}
+
+pub struct MutationTarget {
+    target: EventId,
+}
+
+impl MutationTarget {
+    pub fn new(target: EventId) -> Self {
+        Self { target }
+    }
+}
+
+impl QueryOperation for MutationTarget {
+    type Response = EventId;
+}
+
+impl<V> Eval<MutationTarget> for List<V>
+where
+    V: Debug + Clone,
+{
+    fn execute_query(
+        q: MutationTarget,
+        _stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> EventId {
         let mut document = Document::default();
         let mut snapshot: Vec<V> = Vec::new();
 
@@ -427,9 +662,127 @@ where
             Self::apply(&mut document, tagged_op, &mut snapshot);
 
             document.current_version = Some(tagged_op.id().clone());
+
+            if let Some(event_id) = document.mutations.get(&q.target) {
+                return event_id.clone();
+            }
+        }
+
+        panic!("Mutation target not found in document");
+    }
+}
+
+pub struct ReadAt<'a, V> {
+    version: &'a Version,
+    _marker: std::marker::PhantomData<V>,
+}
+
+impl<'a, V> ReadAt<'a, V> {
+    pub fn new(version: &'a Version) -> Self {
+        Self {
+            version,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, V> QueryOperation for ReadAt<'a, V> {
+    type Response = V;
+}
+
+impl<'a, V> Eval<ReadAt<'a, <Self as PureCRDT>::Value>> for List<V>
+where
+    V: Debug + Clone,
+{
+    fn execute_query(
+        q: ReadAt<<Self as PureCRDT>::Value>,
+        _stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> Vec<V> {
+        let mut document = Document::default();
+        let mut snapshot: Vec<V> = Vec::new();
+
+        for tagged_op in unstable.iter() {
+            // TODO: optimize by stopping when we pass the version
+            if !tagged_op.id().is_predecessor_of(q.version) {
+                continue;
+            }
+
+            let parents = unstable.parents(tagged_op.id());
+            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
+
+            // println!("Document before applying {}: {}", tagged_op.id(), document);
+            for event_id in a_only {
+                Self::retreat(&mut document, unstable, &event_id);
+            }
+
+            for event_id in b_only {
+                Self::advance(&mut document, unstable, &event_id);
+            }
+
+            Self::apply(&mut document, tagged_op, &mut snapshot);
+
+            document.current_version = Some(tagged_op.id().clone());
         }
 
         snapshot.into_iter().collect()
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> OpGenerator for List<V>
+where
+    V: ValueGenerator + Debug + Clone,
+{
+    type Config = ();
+
+    fn generate(
+        rng: &mut impl RngCore,
+        _config: &Self::Config,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        use rand::Rng;
+
+        enum Choice {
+            Insert,
+            Delete,
+            DeleteRange,
+        }
+
+        let list = Self::execute_query(Read::new(), stable, unstable);
+
+        let choice = if list.is_empty() {
+            &Choice::Insert
+        } else {
+            rand::seq::IteratorRandom::choose(
+                [Choice::Insert, Choice::Delete, Choice::DeleteRange].iter(),
+                rng,
+            )
+            .unwrap()
+        };
+
+        match choice {
+            Choice::Insert => {
+                let pos = rng.random_range(0..=list.len());
+                let c = V::generate(rng, &<V as ValueGenerator>::Config::default());
+                List::insert(c, pos)
+            }
+            Choice::Delete => {
+                let pos = rng.random_range(0..list.len());
+                List::delete(pos)
+            }
+            Choice::DeleteRange => {
+                let start = rng.random_range(0..list.len());
+                let max_len = list.len() - start;
+                let len = if max_len == 0 {
+                    0
+                } else {
+                    rng.random_range(1..=max_len)
+                };
+                List::delete_range(start, len)
+            }
+        }
     }
 }
 
@@ -437,7 +790,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        crdt::test_util::twins_log,
+        crdt::test_util::{triplet_log, twins_log},
         protocol::{replica::IsReplica, state::event_graph::EventGraph},
     };
 
@@ -578,6 +931,9 @@ mod tests {
         let e4 = replica_a.send(List::delete(1)).unwrap();
         // replica_b.receive(e4.clone());
 
+        let e4_version = e4.event().version();
+        assert_eq!(to_string(&replica_a.query(Read::new())), "Hi");
+
         // e5: Delete(1) (remove 'i') on other branch
         let e5 = replica_b.send(List::delete(1)).unwrap();
         // replica_a.receive(e5.clone());
@@ -604,55 +960,110 @@ mod tests {
         replica_a.receive(e8.clone());
 
         // Final result should be "Hey!"
+        assert_eq!(to_string(&replica_a.query(ReadAt::new(e4_version))), "Hi");
         assert_eq!(to_string(&replica_a.query(Read::new())), "Hey!");
-        // assert_eq!(to_string(&replica_a.query(Read::new())));
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
     }
 
-    // #[cfg(feature = "fuzz")]
-    // #[test]
-    // fn fuzz_eg_walker() {
-    //     use crate::{
-    //         // crdt::test_util::init_tracing,
-    //         fuzz::{
-    //             config::{FuzzerConfig, OpConfig, RunConfig},
-    //             fuzzer,
-    //         },
-    //     };
+    #[test]
+    fn delete_range_egwalker() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-    //     // init_tracing();
+        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+        let e2 = replica_a.send(List::insert('B', 1)).unwrap();
+        let e3 = replica_a.send(List::insert('C', 2)).unwrap();
+        replica_b.receive(e1);
+        replica_b.receive(e2);
+        replica_b.receive(e3);
+        assert_eq!(to_string(&replica_a.query(Read::new())), "ABC");
 
-    //     let binding = [
-    //         List::insert('A', 0),
-    //         List::insert('B', 0),
-    //         List::insert('C', 0),
-    //         List::delete(0),
-    //         List::insert('D', 1),
-    //         List::insert('E', 1),
-    //         List::insert('F', 1),
-    //         List::delete(1),
-    //         List::insert('G', 2),
-    //         List::insert('H', 2),
-    //         List::insert('I', 2),
-    //         List::delete(2),
-    //         List::insert('J', 3),
-    //         List::insert('K', 3),
-    //         List::insert('L', 3),
-    //         List::delete(3),
-    //     ];
-    //     let ops: OpConfig<List<char>> = OpConfig::Uniform(&binding);
+        let e4 = replica_a.send(List::delete_range(0, 2)).unwrap();
+        replica_b.receive(e4);
+        assert_eq!(to_string(&replica_a.query(Read::new())), "C");
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
+    }
 
-    //     let run = RunConfig::new(0.4, 8, 100, None, None);
-    //     let runs = vec![run.clone(); 1];
+    #[test]
+    fn delete_range_egwalker_2() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
 
-    //     let config = FuzzerConfig::<EventGraph<List<char>>>::new(
-    //         "uw_multidigraph",
-    //         runs,
-    //         ops,
-    //         true,
-    //         |a, b| a == b,
-    //         None,
-    //     );
+        let event_a = replica_a.send(List::insert('A', 0)).unwrap();
+        replica_b.receive(event_a);
 
-    //     fuzzer::<EventGraph<List<char>>>(config);
-    // }
+        assert_eq!(to_string(&replica_a.query(Read::new())), "A");
+        assert_eq!(to_string(&replica_b.query(Read::new())), "A");
+
+        let event_b = replica_b.send(List::insert('B', 0)).unwrap();
+        assert_eq!(to_string(&replica_b.query(Read::new())), "BA");
+        let event_b_2 = replica_b.send(List::delete_range(0, 2)).unwrap();
+
+        assert_eq!(to_string(&replica_b.query(Read::new())), "");
+
+        let event_a_2 = replica_a.send(List::delete_range(0, 1)).unwrap();
+
+        assert_eq!(to_string(&replica_a.query(Read::new())), "");
+
+        replica_a.receive(event_b);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
+        assert_eq!(to_string(&replica_a.query(Read::new())), "");
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
+    }
+
+    #[test]
+    fn delete_range_egwalker_3() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<EventGraph<List<char>>>();
+
+        let event_a = replica_a.send(List::insert('4', 0)).unwrap();
+        replica_c.receive(event_a.clone());
+
+        let event_c = replica_c.send(List::insert('U', 0)).unwrap();
+        let event_c_1 = replica_c.send(List::delete_range(0, 2)).unwrap();
+
+        replica_b.receive(event_c.clone());
+        replica_b.receive(event_a.clone());
+        let event_b = replica_b.send(List::insert('y', 1)).unwrap();
+
+        replica_a.receive(event_c);
+        replica_a.receive(event_b.clone());
+        replica_c.receive(event_b);
+        replica_b.receive(event_c_1.clone());
+        replica_a.receive(event_c_1);
+
+        assert_eq!(to_string(&replica_a.query(Read::new())), "y");
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_c.query(Read::new()))
+        );
+        assert_eq!(
+            to_string(&replica_a.query(Read::new())),
+            to_string(&replica_b.query(Read::new()))
+        );
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_list() {
+        use crate::fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer,
+        };
+
+        let run = RunConfig::new(0.4, 8, 25, None, None, true);
+        let runs = vec![run.clone(); 100];
+
+        let config =
+            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
+
+        fuzzer::<EventGraph<List<char>>>(config);
+    }
 }

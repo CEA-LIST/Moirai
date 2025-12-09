@@ -290,7 +290,7 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
         .iter()
         .map(|(k, v)| {
             let feature_name = k.clone();
-            let types: Vec<String> = v.typ.iter().cloned().map(|t| format!("{t:?}")).collect();
+            let types: Vec<String> = v.typ.iter().map(|t| format!("{t:?}")).collect();
             let feature_type = if types.is_empty() {
                 "Unknown".to_string()
             } else {
@@ -323,8 +323,7 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationVal
                 .parameters
                 .iter()
                 .map(|(p, t)| {
-                    let types: Vec<String> =
-                        t.iter().cloned().map(|ty| format!("{ty:?}")).collect();
+                    let types: Vec<String> = t.iter().map(|ty| format!("{ty:?}")).collect();
                     format!("{}: {}", p, types.join("/"))
                 })
                 .collect();

@@ -1,0 +1,49 @@
+{
+  "test_name": "aw_set",
+  "timestamp": "2025-11-06T17:15:42.013337+01:00",
+  "git_commit": "f4116336883518504e8f9b21dba34f11f4381155",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 10,
+    "total_time_ms": 0,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": null,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.0,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10,
+        "churn_rate": 0.4,
+        "seed": "0xA7C2C3ED46BC35D2",
+        "generate_execution_graph": true
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{9445, 1862, 1285, 5308, 6242}",
+        "delivered_events": 10,
+        "total_operations": 10,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "3": 0,
+          "7": 0,
+          "2": 0,
+          "4": 0,
+          "6": 0,
+          "5": 0,
+          "1": 0
+        },
+        "execution_graph_dot": "digraph {  0 [ label = \"\"Op: Remove(2244)nEventId: 5:1nReplica: 5\" ]  1 [ label = \"\"Op: Remove(6719)nEventId: 4:1nReplica: 4\" ]  2 [ label = \"\"Op: Add(6242)nEventId: 3:1nReplica: 3\" ]  3 [ label = \"\"Op: Remove(7179)nEventId: 1:1nReplica: 1\" ]  4 [ label = \"\"Op: Remove(4035)nEventId: 6:1nReplica: 6\" ]  5 [ label = \"\"Op: Add(1285)nEventId: 3:2nReplica: 3\" ]  6 [ label = \"\"Op: Add(9445)nEventId: 0:1nReplica: 0\" ]  7 [ label = \"\"Op: Add(5308)nEventId: 0:2nReplica: 0\" ]  8 [ label = \"\"Op: Add(1862)nEventId: 6:2nReplica: 6\" ]  9 [ label = \"\"Op: Remove(5398)nEventId: 6:3nReplica: 6\" ]  0 -> 0 [ ]  1 -> 1 [ ]  2 -> 2 [ ]  3 -> 3 [ ]  4 -> 4 [ ]  5 -> 5 [ ]  6 -> 6 [ ]  7 -> 7 [ ]  8 -> 8 [ ]  9 -> 9 [ ]}"
+      }
+    }
+  ]
+}
