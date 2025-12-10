@@ -178,14 +178,6 @@ where
         (idx, end_pos)
     }
 
-    /// Search for the item corresponding to the event_id
-    fn index_of_node(items: &[Item], event_id: &EventId) -> usize {
-        items
-            .iter()
-            .position(|it| it.id == *event_id)
-            .expect("Could not find item by NodeIndex")
-    }
-
     /// Add a new value to the snapshot
     fn integrate(
         doc: &mut Document,
@@ -200,8 +192,10 @@ where
 
         // If origin_left is None, we'll pretend there's an item at position -1 which we were inserted to the right of.
         let left = scan_idx as isize - 1;
-        let right = if let Some(r) = &new_item.origin_right {
-            Self::index_of_node(&doc.items, r)
+        let right = if let Some(e) = &new_item.origin_right {
+            *doc.items_by_idx
+                .get(e)
+                .expect("Could not find item by NodeIndex")
         } else {
             doc.items.len()
         };
@@ -216,13 +210,17 @@ where
             }
 
             let oleft = if let Some(ol) = &other.origin_left {
-                Self::index_of_node(&doc.items, ol) as isize
+                *doc.items_by_idx
+                    .get(ol)
+                    .expect("Could not find item by NodeIndex") as isize
             } else {
                 -1
             };
 
             let oright = if let Some(or) = &other.origin_right {
-                Self::index_of_node(&doc.items, or)
+                *doc.items_by_idx
+                    .get(or)
+                    .expect("Could not find item by NodeIndex")
             } else {
                 doc.items.len()
             };
@@ -258,15 +256,6 @@ where
 
     fn retreat(doc: &mut Document, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
         // For inserts, target is the item itself; for deletes, target is the item which was deleted
-        // println!("Retreating event_id: {}", event_id);
-        // println!(
-        // "Delete targets: {}",
-        //     doc.delete_targets
-        //         .iter()
-        //         .map(|(k, v)| format!("{}: {:?}", k, v))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
         let targets: Vec<&EventId> = match &state.get(event_id).unwrap().op() {
             List::Insert { .. } => vec![event_id],
             List::DeleteRange { .. } | List::Delete { .. } => doc
@@ -345,15 +334,11 @@ where
                 );
             }
             List::DeleteRange { start, len } => {
-                // println!("Applying DeleteRange: start {}, len {}", *start, *len);
-                // println!("Snapshot before delete: {:?}", snapshot);
-                // println!("Document before delete: {}", doc);
                 let (mut idx, mut end_pos) = Self::find_by_current_pos(&doc.items, *start);
                 let mut pos = 0usize;
                 let mut deleted_ids = Vec::new();
 
                 while pos < *len {
-                    // println!("Loop no. {}: idx {}, end_pos {}", pos, idx, end_pos);
                     while idx < doc.items.len()
                         && matches!(
                             doc.items[idx].prepare_state,
@@ -367,29 +352,19 @@ where
                     }
 
                     if idx >= doc.items.len() {
-                        // println!("No `INSERTED` item found at position {}", *start + pos);
                         return;
                     }
-
-                    // debug_assert!(
-                    //     idx < doc.items.len(),
-                    //     "No `INSERTED` item found at position {pos}.",
-                    // );
 
                     let item = &mut doc.items[idx];
                     if !item.ever_deleted {
                         item.ever_deleted = true;
-                        // TODO: O(n)
+                        // TODO: O(n). Optimize with drain
                         snapshot.remove(end_pos);
                     }
                     item.prepare_state = PrepareState::Deleted(1);
                     deleted_ids.push(item.id.clone());
                     pos += 1;
                 }
-
-                // println!("Snapshot after delete: {:?}", snapshot);
-                // println!("Document after delete: {}", doc);
-                // println!("Deleted IDs: {:?}", deleted_ids);
 
                 doc.delete_targets
                     .insert(tagged_op.id().clone(), DeleteTarget::Range(deleted_ids));
@@ -576,13 +551,7 @@ where
             List::Insert { pos, .. } => *pos <= state.len(),
             List::Delete { pos } => *pos < state.len(),
             List::Update { pos } => *pos < state.len(),
-            List::DeleteRange { start, len } => {
-                // println!(
-                //     "Checking DeleteRange is_enabled: start {}, len {}, state {:?}",
-                //     *start, *len, state
-                // );
-                (*start + *len) <= state.len()
-            }
+            List::DeleteRange { start, len } => (*start + *len) <= state.len(),
         }
     }
 }
@@ -742,7 +711,10 @@ where
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> Self {
-        use rand::Rng;
+        use rand::{
+            distr::{weighted::WeightedIndex, Distribution},
+            Rng,
+        };
 
         enum Choice {
             Insert,
@@ -754,12 +726,12 @@ where
 
         let choice = if list.is_empty() {
             &Choice::Insert
+        } else if list.len() < 3 {
+            let dist = WeightedIndex::new(&[3, 2]).unwrap();
+            &[Choice::Insert, Choice::Delete][dist.sample(rng)]
         } else {
-            rand::seq::IteratorRandom::choose(
-                [Choice::Insert, Choice::Delete, Choice::DeleteRange].iter(),
-                rng,
-            )
-            .unwrap()
+            let dist = WeightedIndex::new(&[7, 2, 1]).unwrap();
+            &[Choice::Insert, Choice::Delete, Choice::DeleteRange][dist.sample(rng)]
         };
 
         match choice {
@@ -925,22 +897,18 @@ mod tests {
         // Branch: Replica A will capitalize 'H', Replica B will change to 'hey'
         // e3: Insert(0, 'H') depends on e1,e2
         let e3 = replica_a.send(List::insert('H', 0)).unwrap();
-        // replica_b.receive(e3.clone());
 
         // e4: Delete(1) (remove lowercase 'h') depends on e3
         let e4 = replica_a.send(List::delete(1)).unwrap();
-        // replica_b.receive(e4.clone());
 
         let e4_version = e4.event().version();
         assert_eq!(to_string(&replica_a.query(Read::new())), "Hi");
 
         // e5: Delete(1) (remove 'i') on other branch
         let e5 = replica_b.send(List::delete(1)).unwrap();
-        // replica_a.receive(e5.clone());
 
         // e6: Insert(1, 'e')
         let e6 = replica_b.send(List::insert('e', 1)).unwrap();
-        // replica_a.receive(e6.clone());
 
         // e7: Insert(2, 'y')
         let e7 = replica_b.send(List::insert('y', 2)).unwrap();
@@ -952,8 +920,6 @@ mod tests {
         replica_a.receive(e7.clone());
         // Merge both replicas so they see all events before e8
         // At this point both should be "Hey"
-        // assert_eq!(replica_a.query(Read::new()), "Hey");
-        // assert_eq!(replica_a.query(Read::new()));
 
         // e8: Insert(3, '!')
         let e8 = replica_b.send(List::insert('!', 3)).unwrap();
@@ -1058,11 +1024,11 @@ mod tests {
             fuzzer,
         };
 
-        let run = RunConfig::new(0.4, 8, 25, None, None, true);
-        let runs = vec![run.clone(); 100];
+        let run = RunConfig::new(0.4, 4, 1_000, None, None, false);
+        let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, true);
 
         fuzzer::<EventGraph<List<char>>>(config);
     }

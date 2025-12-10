@@ -1,0 +1,279 @@
+{
+  "name": "union",
+  "timestamp": "2025-12-10T15:33:52.419421+01:00",
+  "git_commit": "04359aeb4c68a2df8ccf1e119a5e88012e8100cc",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 10,
+    "total_operations": 10000,
+    "total_time_ms": 25751,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": 163.71971185330713,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 2.5751,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xC044392F84899B40",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Number(52)))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 4,
+        "avg_time_per_op_ms": 0.004,
+        "throughput_ops_per_sec": 250000.0,
+        "replica_times_ms": {
+          "0": 1,
+          "3": 1,
+          "1": 1,
+          "2": 1
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x3E694DDC97A769BB",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(String(['4', '8', 'v', 'm', '9', 'S', 'W', 'r', 'H', 'f', 's', 'd', 'F', 'x', 'K', '1', ' ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 3635,
+        "avg_time_per_op_ms": 3.635,
+        "throughput_ops_per_sec": 275.1031636863824,
+        "replica_times_ms": {
+          "0": 903,
+          "3": 933,
+          "1": 893,
+          "2": 906
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x47BDC98B9286A10C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(String(['v', 'B', 'B', 'm', 'P', 'Y', 'y', 'R', 'b', 'W', 'u', 'd', 'q', 'w', 'T', 'V'])) ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 3570,
+        "avg_time_per_op_ms": 3.57,
+        "throughput_ops_per_sec": 280.1120448179272,
+        "replica_times_ms": {
+          "0": 898,
+          "3": 895,
+          "1": 883,
+          "2": 894
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x6A1456231AD5728D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Number(-46)))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "3": 0,
+          "1": 0,
+          "2": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xF30C199B4302F09C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Array([Some(Value(Number(-67))), Some(Value(Array([Some(Value(Array([Some(Value(Array([So ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6090,
+        "avg_time_per_op_ms": 6.09,
+        "throughput_ops_per_sec": 164.20361247947454,
+        "replica_times_ms": {
+          "0": 1523,
+          "3": 1508,
+          "1": 1507,
+          "2": 1552
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 6,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xEEAE16E260A5E585",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Object({\"zxk\": Some(Value(Boolean(false))), \"fwdd\": Some(Value(Number(0))), \"bbzc\": Some( ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 36,
+        "avg_time_per_op_ms": 0.036,
+        "throughput_ops_per_sec": 27777.777777777777,
+        "replica_times_ms": {
+          "0": 9,
+          "3": 9,
+          "1": 9,
+          "2": 9
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 7,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xF92B1B610F6BFB96",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Array([Some(Value(Boolean(true))), Some(Value(Number(72))), Some(Value(Number(0))), Some( ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6035,
+        "avg_time_per_op_ms": 6.035,
+        "throughput_ops_per_sec": 165.7000828500414,
+        "replica_times_ms": {
+          "0": 1494,
+          "3": 1515,
+          "1": 1508,
+          "2": 1518
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 8,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x79BE2D67626C34C3",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Conflict([Array([Some(Value(Array([Some(Value(Boolean(false)))]))), Some(Value(String(['q']))), ... ]))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 273,
+        "avg_time_per_op_ms": 0.273,
+        "throughput_ops_per_sec": 3663.003663003663,
+        "replica_times_ms": {
+          "0": 68,
+          "3": 69,
+          "1": 68,
+          "2": 68
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 9,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x8C1FBD237BA6B2B8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Number(-39)))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "3": 0,
+          "1": 0,
+          "2": 0
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 10,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xFCC61CF1900BDA59",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Value(Array([Some(Value(Array([Some(Value(Number(94)))]))), Some(Value(Boolean(true))), Some(Va ... )))",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6108,
+        "avg_time_per_op_ms": 6.108,
+        "throughput_ops_per_sec": 163.71971185330713,
+        "replica_times_ms": {
+          "0": 1531,
+          "3": 1523,
+          "1": 1502,
+          "2": 1552
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

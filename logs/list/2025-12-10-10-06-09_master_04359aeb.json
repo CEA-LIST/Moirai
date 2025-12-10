@@ -1,0 +1,149 @@
+{
+  "name": "list",
+  "timestamp": "2025-12-10T10:06:09.060192+01:00",
+  "git_commit": "04359aeb4c68a2df8ccf1e119a5e88012e8100cc",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "total_operations": 5000,
+    "total_time_ms": 28735,
+    "mean_throughput_ops_per_sec": 174.0170763496663,
+    "min_throughput_ops_per_sec": 171.49717029669011,
+    "max_throughput_ops_per_sec": 175.65431231336729,
+    "mean_time_per_op_ms": 5.747,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xF7982A14FD11FC70",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['y']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5831,
+        "avg_time_per_op_ms": 5.831,
+        "throughput_ops_per_sec": 171.49717029669011,
+        "replica_times_ms": {
+          "0": 1410,
+          "3": 1444,
+          "1": 1499,
+          "2": 1478
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x8E5F47D767421A7A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['g', 'n', 'y']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5774,
+        "avg_time_per_op_ms": 5.774,
+        "throughput_ops_per_sec": 173.19016279875302,
+        "replica_times_ms": {
+          "0": 1451,
+          "3": 1415,
+          "1": 1418,
+          "2": 1490
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x635D9650B88B094F",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['g', 'U', 'A', 'L']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5706,
+        "avg_time_per_op_ms": 5.706,
+        "throughput_ops_per_sec": 175.2541184717841,
+        "replica_times_ms": {
+          "0": 1450,
+          "3": 1412,
+          "1": 1432,
+          "2": 1412
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x8FE452C1E4DF71E8",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['m', 'A', 'S', 'E']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5693,
+        "avg_time_per_op_ms": 5.693,
+        "throughput_ops_per_sec": 175.65431231336729,
+        "replica_times_ms": {
+          "0": 1443,
+          "3": 1396,
+          "1": 1420,
+          "2": 1434
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x0C949ACDC154CD91",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['n']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5731,
+        "avg_time_per_op_ms": 5.731,
+        "throughput_ops_per_sec": 174.48961786773688,
+        "replica_times_ms": {
+          "0": 1456,
+          "3": 1392,
+          "1": 1419,
+          "2": 1464
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

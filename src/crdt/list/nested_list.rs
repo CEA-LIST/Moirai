@@ -13,7 +13,7 @@ use crate::{
         event::{id::EventId, Event},
         state::{event_graph::EventGraph, log::IsLog},
     },
-    utils::unboxer::Unboxer,
+    utils::boxer::Boxer,
     HashMap,
 };
 
@@ -47,8 +47,8 @@ pub enum List<O> {
 //     }
 // }
 
-impl<O> Unboxer<List<O>> for List<Box<O>> {
-    fn unbox(self) -> List<O> {
+impl<O> Boxer<List<O>> for List<Box<O>> {
+    fn boxer(self) -> List<O> {
         match self {
             List::Insert { pos, value } => List::Insert { pos, value: *value },
             List::Update { pos, value } => List::Update { pos, value: *value },
@@ -57,8 +57,8 @@ impl<O> Unboxer<List<O>> for List<Box<O>> {
     }
 }
 
-impl<O> Unboxer<List<Box<O>>> for List<O> {
-    fn unbox(self) -> List<Box<O>> {
+impl<O> Boxer<List<Box<O>>> for List<O> {
+    fn boxer(self) -> List<Box<O>> {
         match self {
             List::Insert { pos, value } => List::Insert {
                 pos,
@@ -94,9 +94,9 @@ impl<O> List<O> {
 #[derive(Debug, Clone)]
 pub struct ListLog<L> {
     /// EgWalker list tracking the logical positions of children
-    position: EventGraph<SimpleList<EventId>>,
+    pub(crate) position: EventGraph<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
-    children: HashMap<EventId, L>,
+    pub(crate) children: HashMap<EventId, L>,
 }
 
 impl<L> Default for ListLog<L> {
@@ -206,22 +206,23 @@ where
     L: OpGeneratorNested,
 {
     fn generate(&self, rng: &mut impl rand::RngCore) -> Self::Op {
-        use rand::Rng;
+        use rand::{
+            distr::{weighted::WeightedIndex, Distribution},
+            Rng,
+        };
 
         enum Choice {
             Insert,
             Update,
             Delete,
         }
+        let dist = WeightedIndex::new(&[2, 2, 1]).unwrap();
+
         let positions = self.position.eval(Read::new());
         let choice = if positions.is_empty() {
             &Choice::Insert
         } else {
-            rand::seq::IteratorRandom::choose(
-                [Choice::Insert, Choice::Update, Choice::Delete].iter(),
-                rng,
-            )
-            .unwrap()
+            &[Choice::Insert, Choice::Update, Choice::Delete][dist.sample(rng)]
         };
 
         let op = match choice {
