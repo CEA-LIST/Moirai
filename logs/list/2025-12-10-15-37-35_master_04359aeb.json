@@ -1,0 +1,279 @@
+{
+  "name": "list",
+  "timestamp": "2025-12-10T15:37:35.948986+01:00",
+  "git_commit": "04359aeb4c68a2df8ccf1e119a5e88012e8100cc",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 10,
+    "total_operations": 10000,
+    "total_time_ms": 60635,
+    "mean_throughput_ops_per_sec": 165.0936637641359,
+    "min_throughput_ops_per_sec": 157.952930026852,
+    "max_throughput_ops_per_sec": 175.1927119831815,
+    "mean_time_per_op_ms": 6.0635,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xF6C7CBF7BFCFF29A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['t', 'S', 'O', 'G', '6', '6', 't', 'l', 'c', '5', 'b', 'W']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5708,
+        "avg_time_per_op_ms": 5.708,
+        "throughput_ops_per_sec": 175.1927119831815,
+        "replica_times_ms": {
+          "0": 1459,
+          "3": 1431,
+          "1": 1462,
+          "2": 1356
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xDDCB1CCC1EF5BF9E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['6', 'd', 'O', 'S', 'G', 'J', 'v', 'I', 'G', 'V', 'U', 'o', 'p', '2', 'C', '8', 'Y', 'z', 'O', '3']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6331,
+        "avg_time_per_op_ms": 6.331,
+        "throughput_ops_per_sec": 157.952930026852,
+        "replica_times_ms": {
+          "0": 1583,
+          "3": 1565,
+          "1": 1592,
+          "2": 1591
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x33EE5C0CD2964D7D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['G', 'O', 'f', 'R', 'S', '7', 'Z', 'q', 'T', '0', '4', '6']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5979,
+        "avg_time_per_op_ms": 5.979,
+        "throughput_ops_per_sec": 167.25204883759827,
+        "replica_times_ms": {
+          "0": 1464,
+          "3": 1496,
+          "1": 1485,
+          "2": 1534
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x8638812DC6048CE2",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['6', 's', 'n', '9', '0', 'u', 'M', 'z', 'Q', 'o', 'D', 'P', 'b', 'x', '5', 'B', 'S', 'E']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6254,
+        "avg_time_per_op_ms": 6.254,
+        "throughput_ops_per_sec": 159.89766549408378,
+        "replica_times_ms": {
+          "0": 1625,
+          "3": 1552,
+          "1": 1521,
+          "2": 1556
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x989DC95B2C1347F6",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['s', 'p', '8', 'F']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6127,
+        "avg_time_per_op_ms": 6.127,
+        "throughput_ops_per_sec": 163.21201240411295,
+        "replica_times_ms": {
+          "0": 1518,
+          "3": 1572,
+          "1": 1546,
+          "2": 1491
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 6,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x1A475F9AFFF730D2",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['k', 'j', 'm', 'Z', 'Y', 'F', 'm', 'W', 'h', '4', 'b', 'M', 'S', 'n', 'U', 'B', 'v', 'O', 'k', 'Q', ... s']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6160,
+        "avg_time_per_op_ms": 6.16,
+        "throughput_ops_per_sec": 162.33766233766235,
+        "replica_times_ms": {
+          "0": 1513,
+          "3": 1600,
+          "1": 1503,
+          "2": 1544
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 7,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x5B3CAE1CF0DB5C59",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['b', 'w', '0', 'Q', 'g', 'x', 'R', 'S', 'w', 'u', 'T', 'G', 'u', 'A', 'T', 'm', '6', 'u', 'K', 'S', ... l']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6127,
+        "avg_time_per_op_ms": 6.127,
+        "throughput_ops_per_sec": 163.21201240411295,
+        "replica_times_ms": {
+          "0": 1544,
+          "3": 1482,
+          "1": 1511,
+          "2": 1590
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 8,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0xC654FCED408963E9",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['i', 'B', 'p', 'B', 'F', 'm', 'c', 'Z', '2', 'c', 'E', 'H', 'j', 's', 'I', 'M', 'Q', 'R', '3']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6117,
+        "avg_time_per_op_ms": 6.117,
+        "throughput_ops_per_sec": 163.47882949158085,
+        "replica_times_ms": {
+          "0": 1528,
+          "3": 1547,
+          "1": 1472,
+          "2": 1570
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 9,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x8619591B94571A8C",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['B', 'F', '1', 'E', 'q', 'u', 'P', 't', 'o']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 5730,
+        "avg_time_per_op_ms": 5.73,
+        "throughput_ops_per_sec": 174.52006980802793,
+        "replica_times_ms": {
+          "0": 1435,
+          "3": 1412,
+          "1": 1442,
+          "2": 1441
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 10,
+      "parameters": {
+        "num_replicas": 4,
+        "num_operations": 1000,
+        "churn_rate": 0.4,
+        "seed": "0x6446D89E524F16B3",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "['j', 'd', 'b', 'O', 'j', '5', 'g', 'C', 'I', '0', 'v', 'R', 'c', 'q', 'D', 'O', 'q', 'i', 'N', 'f']",
+        "delivered_events": 1000,
+        "total_operations": 1000,
+        "total_time_ms": 6102,
+        "avg_time_per_op_ms": 6.102,
+        "throughput_ops_per_sec": 163.88069485414618,
+        "replica_times_ms": {
+          "0": 1593,
+          "3": 1523,
+          "1": 1475,
+          "2": 1511
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

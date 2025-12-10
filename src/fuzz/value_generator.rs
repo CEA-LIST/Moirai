@@ -16,9 +16,9 @@ pub struct StringConfig {
 impl Default for StringConfig {
     fn default() -> Self {
         Self {
-            min_length: 0,
-            max_length: 10,
-            alphabet: ('a'..='z').chain('A'..='Z').chain('0'..='9').collect(),
+            min_length: 2,
+            max_length: 4,
+            alphabet: ('a'..='z').collect(),
         }
     }
 }

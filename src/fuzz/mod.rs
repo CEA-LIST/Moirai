@@ -484,21 +484,39 @@ fn display_summary(run_data_list: &[(usize, RunData)]) {
     let total_operations: usize = run_data_list.iter().map(|(_, d)| d.count_ops).sum();
     let total_time_ms: u128 = run_data_list.iter().map(|(_, d)| d.total_time_ms).sum();
 
-    let throughputs: Vec<f64> = run_data_list.iter().map(|(_, d)| d.ops_per_sec).collect();
-    let mean_throughput = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
+    // Filter out runs with aberrant timing (< 1ms total time or infinite/NaN throughput)
+    // to avoid skewing average throughput calculations
+    let valid_runs: Vec<&RunData> = run_data_list
+        .iter()
+        .map(|(_, d)| d)
+        .filter(|d| d.total_time_ms >= 1 && d.ops_per_sec.is_finite())
+        .collect();
+
+    let throughputs: Vec<f64> = valid_runs.iter().map(|d| d.ops_per_sec).collect();
+    let mean_throughput = if !throughputs.is_empty() {
+        throughputs.iter().sum::<f64>() / throughputs.len() as f64
+    } else {
+        0.0
+    };
     let min_throughput = throughputs.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_throughput = throughputs
         .iter()
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let time_per_ops: Vec<f64> = run_data_list
-        .iter()
-        .map(|(_, d)| d.avg_time_per_op)
-        .collect();
-    let mean_time_per_op = time_per_ops.iter().sum::<f64>() / time_per_ops.len() as f64;
+    let time_per_ops: Vec<f64> = valid_runs.iter().map(|d| d.avg_time_per_op).collect();
+    let mean_time_per_op = if !time_per_ops.is_empty() {
+        time_per_ops.iter().sum::<f64>() / time_per_ops.len() as f64
+    } else {
+        0.0
+    };
 
     summary_table.add_row(vec!["Total runs", &format_number(total_runs as f64)]);
+
+    summary_table.add_row(vec![
+        "Valid runs (for stats)",
+        &format!("{}/{}", valid_runs.len(), total_runs),
+    ]);
 
     summary_table.add_row(vec![
         "All converged",

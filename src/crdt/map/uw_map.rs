@@ -15,7 +15,7 @@ use crate::{
         event::Event,
         state::log::IsLog,
     },
-    utils::unboxer::Unboxer,
+    utils::boxer::Boxer,
     HashMap,
 };
 
@@ -26,8 +26,8 @@ pub enum UWMap<K, O> {
     Clear,
 }
 
-impl<K, O> Unboxer<UWMap<K, O>> for UWMap<K, Box<O>> {
-    fn unbox(self) -> UWMap<K, O> {
+impl<K, O> Boxer<UWMap<K, O>> for UWMap<K, Box<O>> {
+    fn boxer(self) -> UWMap<K, O> {
         match self {
             UWMap::Update(k, v) => UWMap::Update(k, *v),
             UWMap::Remove(k) => UWMap::Remove(k),
@@ -36,8 +36,8 @@ impl<K, O> Unboxer<UWMap<K, O>> for UWMap<K, Box<O>> {
     }
 }
 
-impl<K, O> Unboxer<UWMap<K, Box<O>>> for UWMap<K, O> {
-    fn unbox(self) -> UWMap<K, Box<O>> {
+impl<K, O> Boxer<UWMap<K, Box<O>>> for UWMap<K, O> {
+    fn boxer(self) -> UWMap<K, Box<O>> {
         match self {
             UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
             UWMap::Remove(k) => UWMap::Remove(k),
@@ -163,16 +163,16 @@ where
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
     fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+        use rand::distr::{weighted::WeightedIndex, Distribution};
+
         enum Choice {
             Update,
             Remove,
             Clear,
         }
-        let choice = rand::seq::IteratorRandom::choose(
-            [Choice::Update, Choice::Remove, Choice::Clear].iter(),
-            rng,
-        )
-        .unwrap();
+        let dist = WeightedIndex::new(&[3, 2, 1]).unwrap();
+
+        let choice = &[Choice::Update, Choice::Remove, Choice::Clear][dist.sample(rng)];
         let key = K::generate(rng, &<K as ValueGenerator>::Config::default());
         match choice {
             Choice::Update => {

@@ -1,0 +1,49 @@
+{
+  "name": "union",
+  "timestamp": "2025-12-10T15:17:28.776621+01:00",
+  "git_commit": "04359aeb4c68a2df8ccf1e119a5e88012e8100cc",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 4,
+    "total_time_ms": 0,
+    "mean_throughput_ops_per_sec": null,
+    "min_throughput_ops_per_sec": null,
+    "max_throughput_ops_per_sec": null,
+    "mean_time_per_op_ms": 0.0,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 4,
+        "churn_rate": 0.4,
+        "seed": "0xD7F8B2F0F52E68BD",
+        "generate_execution_graph": true
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "Some(Conflict([Number(0), Object({\"bn\": Some(Value(Number(0))), \"ndc\": Some(Value(Object({\"av\": Some ... ]))",
+        "delivered_events": 4,
+        "total_operations": 4,
+        "total_time_ms": 0,
+        "avg_time_per_op_ms": 0.0,
+        "throughput_ops_per_sec": null,
+        "replica_times_ms": {
+          "0": 0,
+          "7": 0,
+          "3": 0,
+          "6": 0,
+          "2": 0,
+          "5": 0,
+          "1": 0,
+          "4": 0
+        },
+        "execution_graph_dot": "digraph {  0 [ label=\"[Number(Reset)@(5:1)]\"]  1 [ label=\"[Object(Remove(\"onbx\"))@(2:1)]\"]  2 [ label=\"[Object(Update(\"bn\", Number(Reset)))@(2:2)]\"]  3 [ label=\"[Object(Update(\"ndc\", Object(Update(\"av\", Number(Inc(70))))))@(6:1)]\"]  1 -> 0 [ ]  2 -> 1 [ ]  3 -> 1 [ ]}"
+      }
+    }
+  ]
+}
