@@ -3,12 +3,9 @@ use std::{fmt::Debug, rc::Rc};
 use elsa::FrozenVec;
 
 use crate::{
-    protocol::membership::{ReplicaId, ReplicaIdOwned},
+    protocol::replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
     HashMap,
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ReplicaIdx(pub usize);
 
 #[derive(Clone)]
 pub struct Resolver {

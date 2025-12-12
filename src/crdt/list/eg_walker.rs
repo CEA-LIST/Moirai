@@ -1024,8 +1024,19 @@ mod tests {
             fuzzer,
         };
 
-        let run = RunConfig::new(0.4, 4, 1_000, None, None, false);
-        let runs = vec![run.clone(); 1];
+        let run_1 = RunConfig::new(0.4, 4, 1_000, None, None, false);
+        // let run_2 = RunConfig::new(0.4, 4, 200, None, None, false);
+        // let run_3 = RunConfig::new(0.4, 4, 300, None, None, false);
+        // let run_4 = RunConfig::new(0.4, 4, 400, None, None, false);
+        // let run_5 = RunConfig::new(0.4, 4, 500, None, None, false);
+        // let run_6 = RunConfig::new(0.4, 4, 600, None, None, false);
+        // let run_7 = RunConfig::new(0.4, 4, 700, None, None, false);
+        // let run_8 = RunConfig::new(0.4, 4, 800, None, None, false);
+        // let run_9 = RunConfig::new(0.4, 4, 900, None, None, false);
+        // let run_10 = RunConfig::new(0.4, 4, 1_000, None, None, false);
+        let runs = vec![
+            run_1, // run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, // run_10,
+        ];
 
         let config =
             FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, true);

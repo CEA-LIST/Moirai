@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::BTreeSet, fmt::Debug};
 
 use bimap::BiMap;
 use petgraph::{
@@ -16,13 +16,14 @@ use crate::fuzz::config::{OpGenerator, OpGeneratorNested};
 use crate::{
     crdt::list::eg_walker::{List, ReadAt},
     protocol::{
-        clock::version_vector::Version,
+        clock::version_vector::{Seq, Version},
         crdt::{
             eval::{Eval, EvalNested},
             pure_crdt::PureCRDT,
             query::QueryOperation,
         },
         event::{id::EventId, lamport::Lamport, tagged_op::TaggedOp, Event},
+        replica::ReplicaIdOwned,
         state::{log::IsLog, unstable_state::IsUnstableState},
     },
     HashMap, HashSet,
@@ -30,10 +31,12 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
-    // TODO: stable or not?
     graph: StableDiGraph<TaggedOp<O>, ()>,
     map: BiMap<NodeIndex, EventId>,
     heads: HashSet<EventId>,
+    /// Structure used to easily find the predecessors of a version in the graph.
+    // TODO: use Vec with replica idx
+    cutter: HashMap<ReplicaIdOwned, BTreeSet<Seq>>,
 }
 
 impl<V> IsLog for EventGraph<List<V>>
@@ -58,16 +61,24 @@ where
         IsUnstableState::append(self, event);
     }
 
-    fn stabilize(&mut self, _version: &Version) {}
+    fn stabilize(&mut self, version: &Version) {
+        // Remove all entries in the cutter that are predecessors of the given version, for each entry.
+        for (idx, seq) in version.iter() {
+            let replica_id = version.resolver().resolve(idx).unwrap();
+            if let Some(tree) = self.cutter.get_mut(replica_id) {
+                let to_remove: Vec<Seq> = tree.range(..seq).cloned().collect();
+                for s in to_remove {
+                    tree.remove(&s);
+                }
+            }
+        }
+    }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         debug_assert!(self.graph.node_count() >= self.heads.len());
         if conservative {
             let state = self.execute_query(ReadAt::new(version));
             if state.is_empty() {
-                // println!(
-                //     "Redundant by parent: state is already empty, no need to add delete range"
-                // );
                 return;
             }
             let event_id = EventId::from(version);
@@ -81,8 +92,6 @@ where
                 },
                 version.clone(),
             );
-            // debug_assert!(self.is_enabled(&event.op()));
-            // println!("Is enabled? {}", self.is_enabled(event.op()));
             self.append(event);
         } else {
             panic!("EventGraph::redundant_by_parent non-conservative is not implemented");
@@ -110,7 +119,9 @@ where
         let new_tagged_op = TaggedOp::from(&event);
         let child_idx = self.graph.add_node(new_tagged_op);
         self.map.insert(child_idx, event.id().clone());
-        let immediate_parents = self.find_immediate_predecessors(event.version());
+        // let immediate_parents = self.find_immediate_predecessors(event.version());
+        let immediate_parents = self.find_cut(event.version());
+        let immediate_parents = self.minimum_cut(immediate_parents);
         for parent_idx in immediate_parents {
             self.graph.add_edge(child_idx, parent_idx, ());
             let parent_id = self.map.get_by_left(&parent_idx).unwrap();
@@ -120,18 +131,17 @@ where
         }
         self.heads.insert(event.id().clone());
 
-        // self.transitive_reduction();
+        if let Some(tree) = self.cutter.get_mut(event.id().origin_id()) {
+            tree.insert(event.id().seq());
+        } else {
+            let mut tree = BTreeSet::new();
+            tree.insert(event.id().seq());
+            self.cutter.insert(event.id().origin_id().to_string(), tree);
+        }
 
         #[allow(clippy::mutable_key_type)] // false positive
         fn max_one_per_id(set: &HashSet<EventId>) -> bool {
             let mut seen = HashSet::default();
-            // println!(
-            //     "Checking max_one_per_id for set: {}",
-            //     set.iter()
-            //         .map(|e| e.to_string())
-            //         .collect::<Vec<_>>()
-            //         .join(", ")
-            // );
             for p in set {
                 if !seen.insert(p.origin_id()) {
                     return false; // duplicate name found
@@ -150,6 +160,22 @@ where
         }));
         debug_assert!(max_one_per_id(&self.heads));
         debug_assert!(self.graph.node_count() >= self.heads.len());
+
+        // if self.graph.node_count() > 999 {
+        //     println!(
+        //         "EventGraph: transitive reduction done (edges: {}, nodes: {}, heads: {})",
+        //         self.graph.edge_count(),
+        //         self.graph.node_count(),
+        //         self.heads.len()
+        //     );
+        //     println!(
+        //         "Event graph cutter: {:?}",
+        //         self.cutter
+        //             .iter()
+        //             .map(|(k, v)| (k, v.len()))
+        //             .collect::<Vec<_>>()
+        //     );
+        // }
     }
 
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
@@ -161,15 +187,6 @@ where
     /// # Complexity
     /// $O(e')$
     fn remove(&mut self, _event_id: &EventId) {
-        // if let Some(idx) = self.map.get_by_right(event_id) {
-        //     if self.heads.contains(event_id) {
-        //         self.heads.remove(event_id);
-
-        //     }
-
-        //     self.graph.remove_node(*idx);
-        //     self.map.remove_by_right(event_id);
-        // }
         // TODO: update heads, re-attach if needed
         panic!("EventGraph::remove is not implemented");
     }
@@ -182,20 +199,6 @@ where
     }
 
     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, _predicate: T) {
-        // let to_remove: Vec<NodeIndex> = self
-        //     .graph
-        //     .node_indices()
-        //     .filter(|nx| {
-        //         let tagged_op = self.graph.node_weight(*nx).unwrap();
-        //         !predicate(tagged_op)
-        //     })
-        //     .collect();
-
-        // for nx in to_remove {
-        //     let event_id = self.map.get_by_left(&nx).unwrap().clone();
-        //     self.graph.remove_node(nx);
-        //     self.map.remove_by_right(&event_id);
-        // }
         // TODO: update heads, re-attach if needed
         panic!("EventGraph::retain is not implemented");
     }
@@ -254,6 +257,7 @@ impl<O> Default for EventGraph<O> {
             graph: StableDiGraph::new(),
             heads: HashSet::default(),
             map: BiMap::new(),
+            cutter: HashMap::default(),
         }
     }
 }
@@ -262,6 +266,29 @@ impl<O> EventGraph<O>
 where
     O: Debug,
 {
+    /// # Complexity
+    /// O(n^2)
+    fn minimum_cut(&self, potential_cut: Vec<NodeIndex>) -> Vec<NodeIndex> {
+        potential_cut
+            .iter()
+            .filter_map(|nx| {
+                for other_nx in potential_cut.iter() {
+                    if other_nx == nx {
+                        continue;
+                    }
+                    if self
+                        .graph
+                        .neighbors_directed(*other_nx, Direction::Outgoing)
+                        .any(|pred_nx| pred_nx == *nx)
+                    {
+                        return None;
+                    }
+                }
+                Some(*nx)
+            })
+            .collect()
+    }
+
     /// Collect all the node indices that correspond to an event lower or equal to the given version.
     /// # Complexity
     /// O(n)
@@ -279,18 +306,6 @@ where
 
         debug_assert!(self.graph.node_count() >= self.heads.len());
 
-        // println!("Collecting predecessors for version: {}", version);
-        // println!(
-        //     "Heads: {}",
-        //     self.heads
-        //         .iter()
-        //         .map(|h| h.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
-        // println!("Graph nodes: {}", self.graph.node_count());
-        // println!("Dot representation:\n{}", self.to_dot());
-
         while let Some(nx) = dfs.next(&self.graph) {
             let event_id = self.map.get_by_left(&nx).unwrap();
             if event_id.is_predecessor_of(version) {
@@ -303,14 +318,41 @@ where
         collected
     }
 
+    fn find_cut(&self, version: &Version) -> Vec<NodeIndex> {
+        let mut predecessors = Vec::new();
+        for (replica_idx, seq) in version.iter() {
+            let id = version.resolver().resolve(replica_idx).unwrap();
+            if let Some(tree) = self.cutter.get(id) {
+                if let Some(nearest_seq) = tree.range(..=seq).next_back() {
+                    let event_id =
+                        EventId::new(replica_idx, *nearest_seq, version.resolver().clone());
+                    predecessors.push(*self.map.get_by_right(&event_id).unwrap());
+                }
+            }
+        }
+        // assert_eq!(
+        //     predecessors.len(),
+        //     version
+        //         .iter()
+        //         .filter(|(idx, seq)| {
+        //             if *idx == version.origin_idx() {
+        //                 *seq > 1
+        //             } else {
+        //                 *seq > 0
+        //             }
+        //         })
+        //         .count()
+        // );
+        predecessors
+    }
+
     /// Find the immediate predecessors of the given version in the DAG.
-    /// An immediate predecessor is a node that is an predecessor of the given version,
+    /// An immediate predecessor is a node that is a predecessor of the given version,
     /// and has no other predecessors that are also predecessors of the given version.
-    /// This is used to find the minimal set of events that need to be considered
-    /// when determining the state of the system at the given version.
+    /// This is used to find the minimal set of events to attach a new event to.
     ///
     /// # Complexity
-    /// O(n)
+    /// O(n^2)
     ///
     /// # Algorithm
     /// 1. DFS from the heads of the graph.
@@ -319,6 +361,8 @@ where
     ///    3.1 If there exist a node N' in the list that has N as an ancestor, remove N from the list.
     ///    3.2 If not, add it to the list of immediate predecessors.
     ///    3.3 If there exist a node N' in the list with the same origin id and a lower sequence number, remove N' from the list.
+    #[deprecated]
+    #[allow(dead_code)]
     fn find_immediate_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
         let start_nodes: Vec<NodeIndex> = self
             .heads
@@ -327,7 +371,7 @@ where
             .collect();
 
         #[allow(clippy::mutable_key_type)]
-        let mut collected = HashMap::<EventId, NodeIndex>::default();
+        let mut collected = Vec::<(EventId, NodeIndex)>::new();
         let discovered = self.graph.visit_map();
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
 
@@ -341,20 +385,15 @@ where
                     (event_id.origin_id() == id.origin_id() && id.seq() > event_id.seq())
                         || has_path_connecting(&self.graph, *nx, node_idx, None)
                 }) {
-                    let to_remove: Vec<EventId> = collected
-                        .iter()
-                        .filter(|(_, nx)| has_path_connecting(&self.graph, node_idx, **nx, None))
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    for id in to_remove {
-                        collected.remove(&id);
-                    }
-                    collected.insert(event_id.clone(), node_idx);
+                    collected
+                        .retain(|(_, nx)| !has_path_connecting(&self.graph, node_idx, *nx, None));
+
+                    collected.push((event_id.clone(), node_idx));
                 }
             }
         }
 
-        collected.values().cloned().collect()
+        collected.into_iter().map(|(_, nx)| nx).collect()
     }
 
     // TODO: very inefficient, improve it

@@ -7,9 +7,9 @@ use std::{
 use crate::{
     protocol::{
         clock::version_vector::{Seq, Version},
-        membership::ReplicaId,
+        replica::{ReplicaId, ReplicaIdx},
     },
-    utils::intern_str::{ReplicaIdx, Resolver},
+    utils::intern_str::Resolver,
 };
 
 /// Represents the unique identifier for an operation.

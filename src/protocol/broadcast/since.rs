@@ -1,5 +1,5 @@
 use crate::{
-    protocol::{clock::version_vector::Version, event::id::EventId, membership::ReplicaId},
+    protocol::{clock::version_vector::Version, event::id::EventId, replica::ReplicaId},
     HashSet,
 };
 

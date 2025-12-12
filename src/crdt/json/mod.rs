@@ -117,7 +117,7 @@ impl OpGeneratorNested for JsonLog {
             Object,
             Array,
         }
-        let dist = WeightedIndex::new(&[2, 2, 2, 3, 3]).unwrap();
+        let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
 
         fn generate_number(log: &VecLog<Counter<isize>>, rng: &mut impl RngCore) -> Json {
             let counter_op = <Counter<isize> as OpGenerator>::generate(
