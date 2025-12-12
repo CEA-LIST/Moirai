@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::protocol::{clock::version_vector::Version, event::Event, membership::ReplicaId};
+use crate::protocol::{clock::version_vector::Version, event::Event, replica::ReplicaId};
 
 #[derive(Debug, Clone)]
 pub struct Batch<O> {

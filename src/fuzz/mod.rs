@@ -24,8 +24,7 @@ use crate::{
             tcsb::Tcsb,
         },
         crdt::{eval::EvalNested, query::Read},
-        membership::ReplicaIdx,
-        replica::IsReplica,
+        replica::{IsReplica, ReplicaIdx},
         state::{event_graph::EventGraph, log::IsLog, unstable_state::IsUnstableState},
     },
     HashMap,
@@ -198,7 +197,7 @@ where
                     replicas[replica_idx].receive_batch(batch);
                     let duration = start.elapsed();
                     time_to_deliver
-                        .entry(replica_idx)
+                        .entry(ReplicaIdx(replica_idx))
                         .and_modify(|d| *d += duration)
                         .or_insert(duration);
                 }
@@ -245,7 +244,7 @@ where
         };
         let duration = start.elapsed();
         time_to_deliver
-            .entry(replica_idx)
+            .entry(ReplicaIdx(replica_idx))
             .and_modify(|d| *d += duration)
             .or_insert(duration);
 
@@ -265,7 +264,7 @@ where
                     replicas[other_idx].receive(msg.clone());
                     let duration = start.elapsed();
                     time_to_deliver
-                        .entry(other_idx)
+                        .entry(ReplicaIdx(other_idx))
                         .and_modify(|d| *d += duration)
                         .or_insert(duration);
                 }
@@ -300,7 +299,7 @@ where
                     replicas[i].receive_batch(batch);
                     let duration = start.elapsed();
                     time_to_deliver
-                        .entry(i)
+                        .entry(ReplicaIdx(i))
                         .and_modify(|d| *d += duration)
                         .or_insert(duration);
                     merge_pb.inc(1);
@@ -383,7 +382,7 @@ where
     for (idx, duration) in time_to_deliver.iter() {
         let percentage = (duration.as_millis() as f64 / total_time_ms as f64) * 100.0;
         replica_table.add_row(vec![
-            &format!("Replica {idx}"),
+            &format!("Replica {}", idx.0),
             &format_number(duration.as_millis() as f64),
             &format!("{percentage:.1}%"),
         ]);
@@ -611,7 +610,7 @@ fn save_execution_record(
             let replica_times: HashMap<usize, u128> = data
                 .time_to_deliver
                 .iter()
-                .map(|(idx, duration)| (*idx, duration.as_millis()))
+                .map(|(idx, duration)| (idx.0, duration.as_millis()))
                 .collect();
 
             RunRecord {

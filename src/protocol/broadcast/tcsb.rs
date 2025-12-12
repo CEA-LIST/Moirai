@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
-use crate::protocol::membership::ReplicaIdOwned;
+use crate::protocol::replica::ReplicaIdOwned;
 use crate::{
     protocol::{
         broadcast::{
@@ -11,8 +11,9 @@ use crate::{
         },
         clock::{matrix_clock::MatrixClock, version_vector::Version},
         event::{id::EventId, lamport::Lamport, Event},
+        replica::ReplicaIdx,
     },
-    utils::intern_str::{Interner, ReplicaIdx},
+    utils::intern_str::Interner,
     HashMap, HashSet,
 };
 

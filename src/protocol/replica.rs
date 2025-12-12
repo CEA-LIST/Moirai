@@ -8,11 +8,15 @@ use crate::{
         },
         crdt::{eval::EvalNested, query::QueryOperation},
         event::Event,
-        membership::{ReplicaId, ReplicaIdOwned},
         state::log::IsLog,
     },
     utils::intern_str::Interner,
 };
+
+pub type ReplicaId = str;
+pub type ReplicaIdOwned = String;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReplicaIdx(pub usize);
 
 pub trait IsReplica<L>
 where

@@ -9,8 +9,8 @@ use tracing::error;
 use tsify::Tsify;
 
 use crate::{
-    protocol::clock::version_vector::Version,
-    utils::intern_str::{ReplicaIdx, Resolver},
+    protocol::{clock::version_vector::Version, replica::ReplicaIdx},
+    utils::intern_str::Resolver,
 };
 
 #[derive(Debug, PartialEq)]
@@ -188,8 +188,11 @@ impl Display for MatrixClock {
 #[cfg(test)]
 mod tests {
     use crate::{
-        protocol::clock::{matrix_clock::MatrixClock, version_vector::Version},
-        utils::intern_str::{Interner, ReplicaIdx},
+        protocol::{
+            clock::{matrix_clock::MatrixClock, version_vector::Version},
+            replica::ReplicaIdx,
+        },
+        utils::intern_str::Interner,
     };
 
     #[test]

@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::{
-    protocol::{event::id::EventId, membership::ReplicaId},
-    utils::intern_str::{ReplicaIdx, Resolver},
+    protocol::{
+        event::id::EventId,
+        replica::{ReplicaId, ReplicaIdx},
+    },
+    utils::intern_str::Resolver,
 };
 
 /// Sequence number
@@ -161,6 +164,10 @@ impl Version {
 
     pub fn origin_seq(&self) -> Seq {
         self.seq_by_idx(self.origin_idx)
+    }
+
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
     }
 
     #[cfg(test)]
