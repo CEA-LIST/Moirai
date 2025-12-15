@@ -216,7 +216,7 @@ where
             Update,
             Delete,
         }
-        let dist = WeightedIndex::new(&[2, 2, 1]).unwrap();
+        let dist = WeightedIndex::new([2, 2, 1]).unwrap();
 
         let positions = self.position.eval(Read::new());
         let choice = if positions.is_empty() {

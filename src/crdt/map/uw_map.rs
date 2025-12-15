@@ -170,7 +170,7 @@ where
             Remove,
             Clear,
         }
-        let dist = WeightedIndex::new(&[3, 2, 1]).unwrap();
+        let dist = WeightedIndex::new([3, 2, 1]).unwrap();
 
         let choice = &[Choice::Update, Choice::Remove, Choice::Clear][dist.sample(rng)];
         let key = K::generate(rng, &<K as ValueGenerator>::Config::default());

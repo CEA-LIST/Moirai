@@ -727,10 +727,10 @@ where
         let choice = if list.is_empty() {
             &Choice::Insert
         } else if list.len() < 3 {
-            let dist = WeightedIndex::new(&[3, 2]).unwrap();
+            let dist = WeightedIndex::new([3, 2]).unwrap();
             &[Choice::Insert, Choice::Delete][dist.sample(rng)]
         } else {
-            let dist = WeightedIndex::new(&[7, 2, 1]).unwrap();
+            let dist = WeightedIndex::new([7, 2, 1]).unwrap();
             &[Choice::Insert, Choice::Delete, Choice::DeleteRange][dist.sample(rng)]
         };
 
