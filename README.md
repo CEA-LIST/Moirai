@@ -19,8 +19,6 @@
 
 **This project is under active development.** This project is currently under active development. The API and features are subject to change as we refine the framework.
 
----
-
 ## Overview
 
 Moirai is a Rust-based framework for building **pure operation-based Conflict-free Replicated Data Types (CRDTs)**. It provides a flexible, extensible architecture that enables developers to create custom CRDTs with sophisticated conflict resolution semantics, making it ideal for distributed collaborative applications.
@@ -32,9 +30,10 @@ Moirai is a Rust-based framework for building **pure operation-based Conflict-fr
 - **Extensible by Design**: Define new CRDTs by implementing simple traits
 - **Type-Safe Composition**: Macros for composing complex CRDTs from simpler primitives
 - **Built-in Fuzzing**: Comprehensive property-based testing infrastructure to verify CRDT correctness
-- **Fine-Grained Control**: Customizable conflict resolution policies and operation semantics -->
+- **Fine-Grained Control**: Customizable conflict resolution policies and operation semantics
 
 ---
+ -->
 
 ## Features
 
@@ -51,21 +50,10 @@ Moirai provides a comprehensive library of CRDT implementations:
 | **Maps**        | `UWMap`                                                                                | Update-wins map with nested CRDT values                                                                                                   |
 | **Graphs**      | `UWMultiDigraph`                                                                       | Directed multi-graphs with CRDT nodes and edges                                                                                           |
 | **Lists**       | `List` (EG-walker), `NestedList`                                                       | Collaborative text editing with nested structures                                                                                         |
-| **Composite**   | `Union`, `JSON`                                                                        | Sum types and product types CRDTs                                                                                                         |
+| **Composite**   | `Union`, `Record`                                                                      | Sum types and product types CRDTs                                                                                                         |
+| **Document**    | `JSON`                                                                                 | CRDT for JSON-like hierarchical documents with rich data types                                                                            |
 
 Most of these CRDTs implementations are based on specifications that have been formally verified using [VeriFX](https://github.com/verifx-prover/verifx).
-
-<!-- ### Advanced Features
-
-- **Event Graph**: First-class support for operation graphs with causal tracking
-- **Causal Broadcast**: Built-in protocol for causally ordered message delivery
-- **Version Vectors**: Efficient tracking of replica states
-- **Transitive Reduction**: Automatic DAG optimization for performance
-- **Nested Queries**: Query operations can be composed hierarchically
-- **Stabilization**: Automatic garbage collection based on causal stability
-- **Macros**: `record!` and `make_union!` for generating composite CRDTs -->
-
----
 
 ## Quick Start
 
