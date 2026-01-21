@@ -102,10 +102,10 @@ mod tests {
             vec![true, true, true, true, true, true, true, false],
             vec![true, true, true, true, true, true, true, false],
             vec![true, true, true, true, true, true, true, false],
-            vec![false, false, false, false, false, false, false, false],
+            vec![false, false, false, false, false, false, false, true],
         ]);
 
-        let run = RunConfig::new(0.4, 8, 10_000, reachability, None, false);
+        let run = RunConfig::new(0.4, 8, 100_000, reachability, None, false);
         let runs = vec![run.clone(); 1];
 
         let config =

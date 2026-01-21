@@ -1,0 +1,169 @@
+{
+  "name": "aw_set",
+  "timestamp": "2026-01-21T13:59:53.994428+01:00",
+  "git_commit": "d3ddcf5dc3c908a405a7d9dd4e60d57565fe65ea",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "total_operations": 50000,
+    "total_time_ms": 208,
+    "mean_throughput_ops_per_sec": 241666.6666666667,
+    "min_throughput_ops_per_sec": 208333.33333333334,
+    "max_throughput_ops_per_sec": 250000.0,
+    "mean_time_per_op_ms": 0.00416,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10000,
+        "churn_rate": 0.4,
+        "seed": "0x51FF9501ABA5AF5E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 88, 69, 50, 94, 31, 81, 68, 93, 55, 99, 80, 17, 61, 42, 86, 23, 4, 29, 73, 54, 98, 35, 16, 41, 8 ... 19}",
+        "delivered_events": 10000,
+        "total_operations": 10000,
+        "total_time_ms": 48,
+        "avg_time_per_op_ms": 0.0048,
+        "throughput_ops_per_sec": 208333.33333333334,
+        "replica_times_ms": {
+          "0": 6,
+          "7": 6,
+          "3": 6,
+          "6": 6,
+          "2": 6,
+          "5": 6,
+          "1": 6,
+          "4": 6
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10000,
+        "churn_rate": 0.4,
+        "seed": "0x35FDCBDB14CBB959",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{88, 69, 6, 50, 94, 31, 75, 37, 87, 68, 30, 74, 11, 55, 36, 80, 67, 4, 48, 92, 73, 35, 79, 16, 41, 2 ... 19}",
+        "delivered_events": 10000,
+        "total_operations": 10000,
+        "total_time_ms": 40,
+        "avg_time_per_op_ms": 0.004,
+        "throughput_ops_per_sec": 250000.0,
+        "replica_times_ms": {
+          "0": 5,
+          "7": 5,
+          "3": 5,
+          "6": 5,
+          "2": 5,
+          "5": 5,
+          "1": 5,
+          "4": 5
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10000,
+        "churn_rate": 0.4,
+        "seed": "0xD0E9FE356836DF47",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 6, 94, 31, 56, 37, 81, 18, 62, 43, 87, 24, 68, 93, 30, 74, 55, 99, 80, 42, 4, 48, 29, 10, 98, 79 ... 63}",
+        "delivered_events": 10000,
+        "total_operations": 10000,
+        "total_time_ms": 40,
+        "avg_time_per_op_ms": 0.004,
+        "throughput_ops_per_sec": 250000.0,
+        "replica_times_ms": {
+          "0": 5,
+          "7": 5,
+          "3": 5,
+          "6": 5,
+          "2": 5,
+          "5": 5,
+          "1": 5,
+          "4": 5
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10000,
+        "churn_rate": 0.4,
+        "seed": "0x1C90F75AF11F93C0",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{44, 88, 25, 69, 6, 94, 75, 81, 18, 62, 43, 24, 99, 36, 80, 17, 86, 67, 73, 35, 16, 60, 41, 22, 66,  ... 19}",
+        "delivered_events": 10000,
+        "total_operations": 10000,
+        "total_time_ms": 40,
+        "avg_time_per_op_ms": 0.004,
+        "throughput_ops_per_sec": 250000.0,
+        "replica_times_ms": {
+          "0": 5,
+          "7": 5,
+          "3": 5,
+          "6": 5,
+          "2": 5,
+          "5": 5,
+          "1": 5,
+          "4": 5
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 10000,
+        "churn_rate": 0.4,
+        "seed": "0x0C9458881A8AF48B",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 88, 25, 69, 6, 50, 75, 12, 37, 81, 43, 87, 24, 5, 93, 30, 36, 61, 42, 67, 4, 48, 92, 54, 35, 79, ... 19}",
+        "delivered_events": 10000,
+        "total_operations": 10000,
+        "total_time_ms": 40,
+        "avg_time_per_op_ms": 0.004,
+        "throughput_ops_per_sec": 250000.0,
+        "replica_times_ms": {
+          "0": 5,
+          "7": 5,
+          "3": 5,
+          "6": 5,
+          "2": 5,
+          "5": 5,
+          "1": 5,
+          "4": 5
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

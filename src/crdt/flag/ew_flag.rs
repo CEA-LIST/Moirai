@@ -174,6 +174,18 @@ mod tests {
 
         // init_tracing();
 
+        // Every process can reach every other process, except one that is isolated
+        // let reachability: Vec<Vec<bool>> = vec![
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![true, true, true, true, true, true, true, false],
+        //     vec![false, false, false, false, false, false, false, true],
+        // ];
+
         let run = RunConfig::new(0.4, 8, 100_000, None, None, false);
         let runs = vec![run.clone(); 1];
 

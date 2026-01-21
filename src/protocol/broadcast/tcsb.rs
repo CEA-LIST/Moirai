@@ -41,6 +41,8 @@ pub struct Tcsb<O> {
     last_stable_version: Version,
     replica_idx: ReplicaIdx,
     interner: Interner,
+    /// TEMPORARY: for testing purposes only
+    last_updated_columns: Vec<ReplicaIdx>,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
@@ -56,6 +58,8 @@ where
             last_stable_version: Version::new(replica_idx, resolver.clone()),
             interner,
             replica_idx,
+            // TEMPORARY: for testing purposes only
+            last_updated_columns: Vec::new(),
         }
     }
 
@@ -97,15 +101,20 @@ where
         if let Some(event) = maybe_event {
             self.inbox.remove(event.id()).unwrap();
             self.matrix_clock.origin_version_mut().join(event.version());
-            self.matrix_clock
-                .set_by_idx(event.id().idx(), event.version().clone());
+            // self.matrix_clock
+            //     .set_by_idx(event.id().idx(), event.version().clone());
+            self.last_updated_columns = self
+                .matrix_clock
+                .set_by_idx_incremental(event.id().idx(), event.version().clone());
             return Some(event);
         }
         None
     }
 
     fn is_stable(&mut self) -> Option<&Version> {
-        let lsv = self.matrix_clock.column_wise_min();
+        let lsv = self
+            .matrix_clock
+            .column_wise_min_incremental(&self.last_stable_version, &self.last_updated_columns);
         if lsv == self.last_stable_version {
             None
         } else {
