@@ -9,7 +9,10 @@ use tracing::error;
 use tsify::Tsify;
 
 use crate::{
-    protocol::{clock::version_vector::Version, replica::ReplicaIdx},
+    protocol::{
+        clock::version_vector::{Seq, Version},
+        replica::ReplicaIdx,
+    },
     utils::intern_str::Resolver,
 };
 
@@ -74,6 +77,18 @@ impl MatrixClock {
         *self.entries.get_mut(idx).unwrap() = version;
     }
 
+    pub fn set_by_idx_incremental(&mut self, idx: ReplicaIdx, version: Version) -> Vec<ReplicaIdx> {
+        let entry = self.entries.get_mut(idx).unwrap();
+        let mut updated_columns = Vec::new();
+        for (col_idx, seq) in version.iter() {
+            if seq > entry.seq_by_idx(col_idx) {
+                entry.set_by_idx(col_idx, seq);
+                updated_columns.push(col_idx);
+            }
+        }
+        updated_columns
+    }
+
     pub fn add_replica(&mut self, idx: ReplicaIdx) {
         if idx.0 == self.entries.0.len() {
             let version = Version::new(idx, self.resolver.clone());
@@ -84,7 +99,7 @@ impl MatrixClock {
     }
 
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
-    /// Each operation in the POLog that causally precedes (happend-before) the SVV is considered stable and removed
+    /// Each operation in the PO-Log that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
     ///
     /// # Complexity
@@ -98,6 +113,35 @@ impl MatrixClock {
         }
 
         min_clock
+    }
+
+    /// Incremental SVV recomputation that only rescans columns whose value can advance
+    /// relative to the provided `last_svv`. It stops a column scan early as soon as a value
+    /// less than or equal to the previous minimum is found, since the minimum then cannot grow.
+    pub fn column_wise_min_incremental(
+        &self,
+        last_svv: &Version,
+        updated_columns: &[ReplicaIdx],
+    ) -> Version {
+        let mut svv = last_svv.clone();
+
+        for col_idx in updated_columns {
+            let mut min_value = Seq::MAX;
+            for ver in self.entries.0.iter() {
+                let entry = ver.seq_by_idx(*col_idx);
+                if entry == svv.seq_by_idx(*col_idx) {
+                    // Cannot advance this column's minimum
+                    min_value = entry;
+                    break;
+                }
+                if entry < min_value {
+                    min_value = entry;
+                }
+            }
+            svv.set_by_idx(*col_idx, min_value);
+        }
+
+        svv
     }
 
     /// Check if the matrix clock is square
@@ -212,6 +256,46 @@ mod tests {
         assert_eq!(
             mc.column_wise_min(),
             Version::build(resolver.clone(), ReplicaIdx(0), &[8, 4, 3])
+        );
+    }
+
+    #[test]
+    fn column_wise_min_incremental_advances_only_changed_columns() {
+        let mut interner = Interner::new();
+        interner.intern("A");
+        interner.intern("B");
+        interner.intern("C");
+
+        let resolver = interner.resolver();
+
+        // Initial matrix and baseline SVV
+        let baseline_mc = MatrixClock::build(
+            resolver.clone(),
+            ReplicaIdx(0),
+            &[&[5, 11, 1], &[4, 11, 0], &[1, 8, 2]],
+        );
+        let baseline_svv = baseline_mc.column_wise_min();
+        assert_eq!(
+            baseline_svv,
+            Version::build(resolver.clone(), ReplicaIdx(0), &[1, 8, 0])
+        );
+
+        // Row 2 is updated
+        // Only columns 0, 1 are affected
+        let mut updated_mc = baseline_mc;
+        updated_mc.set_by_idx(
+            ReplicaIdx(2),
+            Version::build(resolver.clone(), ReplicaIdx(2), &[3, 10, 2]),
+        );
+
+        let incremental =
+            updated_mc.column_wise_min_incremental(&baseline_svv, &[ReplicaIdx(0), ReplicaIdx(1)]);
+        let full = updated_mc.column_wise_min();
+
+        assert_eq!(incremental, full);
+        assert_eq!(
+            incremental,
+            Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0])
         );
     }
 }

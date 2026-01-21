@@ -111,6 +111,13 @@ impl RunConfig {
                     "Each row in reachability matrix must have size equal to number of replicas"
                 );
             }
+            // Ensure that a process is always reachable to itself
+            for i in 0..num_replicas as usize {
+                assert!(
+                    matrix[i][i],
+                    "Each replica must be reachable to itself in the reachability matrix"
+                );
+            }
         }
         Self {
             churn_rate,

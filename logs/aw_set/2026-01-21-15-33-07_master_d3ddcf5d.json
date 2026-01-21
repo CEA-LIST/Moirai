@@ -1,0 +1,49 @@
+{
+  "name": "aw_set",
+  "timestamp": "2026-01-21T15:33:07.274959+01:00",
+  "git_commit": "d3ddcf5dc3c908a405a7d9dd4e60d57565fe65ea",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 100000,
+    "total_time_ms": 11529,
+    "mean_throughput_ops_per_sec": 8673.779165582444,
+    "min_throughput_ops_per_sec": 8673.779165582444,
+    "max_throughput_ops_per_sec": 8673.779165582444,
+    "mean_time_per_op_ms": 0.11529,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 100000,
+        "churn_rate": 0.4,
+        "seed": "0x7448E548C7FF16B9",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 88, 25, 69, 94, 31, 75, 56, 37, 18, 62, 43, 87, 24, 5, 49, 93, 74, 11, 99, 80, 17, 61, 42, 86, 2 ... 19}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 11529,
+        "avg_time_per_op_ms": 0.11529,
+        "throughput_ops_per_sec": 8673.779165582444,
+        "replica_times_ms": {
+          "0": 355,
+          "7": 9050,
+          "3": 373,
+          "6": 350,
+          "2": 351,
+          "5": 348,
+          "1": 354,
+          "4": 348
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

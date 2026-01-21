@@ -1,0 +1,49 @@
+{
+  "name": "dw_flag",
+  "timestamp": "2026-01-21T13:31:43.598127+01:00",
+  "git_commit": "d3ddcf5dc3c908a405a7d9dd4e60d57565fe65ea",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 100000,
+    "total_time_ms": 521,
+    "mean_throughput_ops_per_sec": 191938.57965451057,
+    "min_throughput_ops_per_sec": 191938.57965451057,
+    "max_throughput_ops_per_sec": 191938.57965451057,
+    "mean_time_per_op_ms": 0.00521,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 100000,
+        "churn_rate": 0.4,
+        "seed": "0x2747DB288C5C16BF",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "false",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 521,
+        "avg_time_per_op_ms": 0.00521,
+        "throughput_ops_per_sec": 191938.57965451057,
+        "replica_times_ms": {
+          "0": 66,
+          "7": 65,
+          "3": 65,
+          "6": 65,
+          "2": 65,
+          "5": 65,
+          "1": 65,
+          "4": 65
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

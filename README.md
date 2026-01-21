@@ -138,32 +138,6 @@ impl Eval<Read<i32>> for MyCounter {
 
 --- -->
 
-## Architecture
-
-Moirai's architecture separates concerns into distinct layers:
-
-```
-┌─────────────────────────────────────────────────┐
-│            Application Layer                    │
-│  (Your collaborative application logic)         │
-└─────────────────────────────────────────────────┘
-                      ▼
-┌─────────────────────────────────────────────────┐
-│         CRDT Layer (IsLog + PureCRDT)           │
-│  Counter │ Map │ Set │ List │ Graph │ ...       │
-└─────────────────────────────────────────────────┘
-                      ▼
-┌─────────────────────────────────────────────────┐
-│       State Management (EventGraph/POLog)       │
-│  Causal tracking │ Operation storage            │
-└─────────────────────────────────────────────────┘
-                      ▼
-┌─────────────────────────────────────────────────┐
-│     Protocol Layer (Replica + Broadcast)        │
-│  Version vectors │ Causal delivery              │
-└─────────────────────────────────────────────────┘
-```
-
 <!-- ### Key Abstractions
 
 - **`PureCRDT`**: Defines operation semantics and conflict resolution
