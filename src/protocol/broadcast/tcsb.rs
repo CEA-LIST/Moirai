@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use crate::protocol::replica::ReplicaIdOwned;
@@ -36,7 +36,8 @@ pub struct Tcsb<O> {
     inbox: HashMap<EventId, Event<O>>,
     /// Events waiting to be broadcast.
     /// It contains events from all replicas, including the local one.
-    outbox: HashMap<EventId, Event<O>>,
+    /// Organized by replica index and then by sequence number for efficient range queries.
+    outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
     matrix_clock: MatrixClock,
     last_stable_version: Version,
     replica_idx: ReplicaIdx,
@@ -68,7 +69,10 @@ where
         let event = self.internalize_event(message);
         if self.is_valid(&event) {
             self.inbox.insert(event.id().clone(), event.clone());
-            self.outbox.insert(event.id().clone(), event);
+            self.outbox
+                .entry(event.id().idx())
+                .or_default()
+                .insert(event.id().seq(), event);
         }
     }
 
@@ -77,7 +81,10 @@ where
         for event in batch.into_events() {
             if self.is_valid(&event) {
                 self.inbox.insert(event.id().clone(), event.clone());
-                self.outbox.insert(event.id().clone(), event);
+                self.outbox
+                    .entry(event.id().idx())
+                    .or_default()
+                    .insert(event.id().seq(), event);
             }
         }
     }
@@ -88,7 +95,10 @@ where
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
         let event = Event::new(event_id, lamport, op, version.clone());
-        self.outbox.insert(event.id().clone(), event.clone());
+        self.outbox
+            .entry(event.id().idx())
+            .or_default()
+            .insert(event.id().seq(), event.clone());
         EventMessage::new(event, self.interner.resolver().clone())
     }
 
@@ -131,23 +141,28 @@ where
     }
 
     /// # Performance
-    /// `Θ(n)` where `n` is the number of events in the outbox.
+    /// `O(m log m + k log k)` where `m` is the number of replicas and `k` is the number of events returned.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
         let since = self.internalize_since(since);
-        let events: Vec<Event<O>> = self
-            .outbox
-            .iter()
-            .filter(|(id, e)| {
-                !since.except().contains(id)
-                    && *id.origin_id() != *since.version().origin_id()
-                    && match e.version().partial_cmp(since.version()) {
-                        Some(Ordering::Greater) | Some(Ordering::Equal) | None => true,
-                        Some(Ordering::Less) => false,
+        let mut events = Vec::new();
+
+        // Iterate over replicas in the version vector and only fetch needed ranges
+        for (replica_idx, req_seq) in since.version().iter() {
+            // Skip events originating from the requesting replica itself
+            if replica_idx == since.version().origin_idx() {
+                continue;
+            }
+
+            if let Some(events_by_seq) = self.outbox.get(&replica_idx) {
+                // Range query: get all events with sequence > req_seq
+                for (_, event) in events_by_seq.range((req_seq + 1)..) {
+                    if !since.except().contains(event.id()) {
+                        events.push(event.clone());
                     }
-            })
-            .map(|(_, e)| e)
-            .cloned()
-            .collect();
+                }
+            }
+        }
+
         let batch = Batch::new(events, self.matrix_clock.origin_version().clone());
         BatchMessage::new(batch, self.interner.resolver().clone())
     }
@@ -228,8 +243,14 @@ where
 
     /// Remove events from the outbox that have been delivered by every replica.
     fn prune_outbox(&mut self, lsv: &Version) {
-        // Retain only the events that are not predecessors (including equal) to the last stable version
-        self.outbox.retain(|id, _| !id.is_predecessor_of(lsv));
+        // For each replica, retain only events with sequence greater than the replica's last stable seq
+        for (replica_idx, events_by_seq) in self.outbox.iter_mut() {
+            let lsv_seq = lsv.seq_by_idx(*replica_idx);
+            events_by_seq.retain(|seq, _| *seq > lsv_seq);
+        }
+        // Remove empty replica entries
+        self.outbox
+            .retain(|_, events_by_seq| !events_by_seq.is_empty());
     }
 
     /// Internalize an event by mapping its replica IDs to local indices.
@@ -399,10 +420,15 @@ where
     where
         O: 'a,
     {
-        self.outbox.values()
+        self.outbox
+            .values()
+            .flat_map(|events_by_seq| events_by_seq.values())
     }
 
     fn outbox_len(&self) -> usize {
-        self.outbox.len()
+        self.outbox
+            .values()
+            .map(|events_by_seq| events_by_seq.len())
+            .sum()
     }
 }

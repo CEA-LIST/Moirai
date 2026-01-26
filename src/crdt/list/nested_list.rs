@@ -27,26 +27,6 @@ pub enum List<O> {
     Delete { pos: usize },
 }
 
-// impl<K, O> Unboxer<UWMap<K, O>> for UWMap<K, Box<O>> {
-//     fn unbox(self) -> UWMap<K, O> {
-//         match self {
-//             UWMap::Update(k, v) => UWMap::Update(k, *v),
-//             UWMap::Remove(k) => UWMap::Remove(k),
-//             UWMap::Clear => UWMap::Clear,
-//         }
-//     }
-// }
-
-// impl<K, O> Unboxer<UWMap<K, Box<O>>> for UWMap<K, O> {
-//     fn unbox(self) -> UWMap<K, Box<O>> {
-//         match self {
-//             UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
-//             UWMap::Remove(k) => UWMap::Remove(k),
-//             UWMap::Clear => UWMap::Clear,
-//         }
-//     }
-// }
-
 impl<O> Boxer<List<O>> for List<Box<O>> {
     fn boxer(self) -> List<O> {
         match self {
@@ -376,7 +356,7 @@ mod tests {
     fn fuzz_nested_list() {
         use crate::fuzz::{
             config::{FuzzerConfig, RunConfig},
-            fuzzer,
+            fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.8, 8, 10, None, None, true);

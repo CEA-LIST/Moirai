@@ -29,6 +29,12 @@ cargo flamegraph --root --release --unit-test -- crdt::graph::aw_multidigraph::t
 cargo flamegraph --root --release --unit-test -- crdt::set::aw_set::tests::fuzz_aw_set
 ```
 
+### Samply
+
+```sh
+sudo cargo samply --profile release --test fuzz_aw_set
+```
+
 ### Expand Macros
 
 ```sh

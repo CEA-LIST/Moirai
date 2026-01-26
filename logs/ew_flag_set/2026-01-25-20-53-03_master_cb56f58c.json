@@ -1,0 +1,98 @@
+{
+  "name": "ew_flag_set",
+  "timestamp": "2026-01-25T20:53:03.735349+01:00",
+  "git_commit": "cb56f58c2bc5e9da789a22077e7a58fc770f00df",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 1,
+    "total_operations": 100000,
+    "total_time_ms": 12256,
+    "mean_throughput_ops_per_sec": 8159.268929503916,
+    "min_throughput_ops_per_sec": 8159.268929503916,
+    "max_throughput_ops_per_sec": 8159.268929503916,
+    "mean_time_per_op_ms": 0.12256,
+    "mean_effect_time_ms": 0.000061875,
+    "mean_effect_overhead_percentage": 0.8077676240208878,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0xFA57EDFF31243571A2330C4B5BBEBDA66397B68023E60A028CF3C2F1AAFC19B7",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{63: true, 29: true, 69: true, 6: true, 17: true, 21: true, 65: true, 53: true, 39: true, 38: true,  ... ue}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12256,
+        "avg_time_per_op_ms": 0.12256,
+        "throughput_ops_per_sec": 8159.268929503916,
+        "replica_times_ms": {
+          "11": 184,
+          "0": 186,
+          "3": 183,
+          "14": 182,
+          "6": 185,
+          "9": 184,
+          "1": 186,
+          "12": 185,
+          "4": 185,
+          "15": 9494,
+          "7": 181,
+          "10": 183,
+          "2": 184,
+          "13": 188,
+          "5": 184,
+          "8": 182
+        },
+        "replica_effect_times_ms": {
+          "0": 6,
+          "11": 6,
+          "3": 6,
+          "14": 6,
+          "6": 6,
+          "9": 6,
+          "1": 6,
+          "12": 6,
+          "4": 6,
+          "15": 9,
+          "7": 6,
+          "10": 6,
+          "2": 6,
+          "13": 6,
+          "5": 6,
+          "8": 6
+        },
+        "replica_effect_calls": {
+          "0": 100000,
+          "11": 100000,
+          "3": 100000,
+          "14": 100000,
+          "6": 100000,
+          "9": 100000,
+          "1": 100000,
+          "12": 100000,
+          "4": 100000,
+          "15": 100000,
+          "7": 100000,
+          "10": 100000,
+          "2": 100000,
+          "13": 100000,
+          "5": 100000,
+          "8": 100000
+        },
+        "total_effect_time_ms": 99,
+        "avg_effect_time_ms": 0.000061875,
+        "effect_overhead_percentage": 0.8077676240208878,
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

@@ -571,7 +571,7 @@ mod tests {
             crdt::list::eg_walker::List,
             fuzz::{
                 config::{FuzzerConfig, RunConfig},
-                fuzzer,
+                fuzzer::fuzzer,
             },
             protocol::state::event_graph::EventGraph,
             // protocol::state::{po_log::VecLog},

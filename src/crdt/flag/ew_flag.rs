@@ -167,7 +167,7 @@ mod tests {
             // crdt::test_util::init_tracing,
             fuzz::{
                 config::{FuzzerConfig, RunConfig},
-                fuzzer,
+                fuzzer::fuzzer,
             },
             protocol::state::po_log::VecLog,
         };

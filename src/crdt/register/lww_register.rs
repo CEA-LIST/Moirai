@@ -162,7 +162,7 @@ mod tests {
     //     use crate::{
     //         fuzz::{
     //             config::{FuzzerConfig, RunConfig},
-    //             fuzzer,
+    //             fuzzer::fuzzer,
     //         },
     //         protocol::state::po_log::VecLog,
     //     };

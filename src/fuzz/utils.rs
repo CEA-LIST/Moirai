@@ -1,21 +1,5 @@
 use std::{fmt::Debug, process::Command};
 
-pub fn format_number(value: f64) -> String {
-    let rounded = value.ceil() as u64;
-
-    let s = rounded.to_string();
-    let mut result = String::new();
-
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(' ');
-        }
-        result.push(c);
-    }
-
-    result.chars().rev().collect::<String>().to_string()
-}
-
 pub fn format_string<V>(value: &V) -> String
 where
     V: Debug,
@@ -73,4 +57,14 @@ pub fn get_git_branch() -> Option<String> {
                 None
             }
         })
+}
+
+pub fn seed_to_hex(seed: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(66);
+    s.push_str("0x");
+    for b in seed {
+        use std::fmt::Write;
+        write!(&mut s, "{:02X}", b).unwrap();
+    }
+    s
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt::Debug};
+use std::{collections::BTreeSet, fmt::Debug, hash::Hash};
 
 use bimap::BiMap;
 use petgraph::{
@@ -14,7 +14,10 @@ use rand::RngCore;
 #[cfg(feature = "fuzz")]
 use crate::fuzz::config::{OpGenerator, OpGeneratorNested};
 use crate::{
-    crdt::list::eg_walker::{List, ReadAt},
+    crdt::{
+        list::eg_walker::{List, ReadAt},
+        register::mv_sliding_window::MVSlidingWindow,
+    },
     protocol::{
         clock::version_vector::{Seq, Version},
         crdt::{
@@ -110,6 +113,58 @@ where
 // TODO: The Event Graph should never remove any operation from its graph.
 // However, we must preserve the effect of operations that remove other operations.
 // We need to ensure that querys do not read removed operations.
+
+impl<V> IsLog for EventGraph<MVSlidingWindow<V>>
+where
+    V: Debug + Clone + Eq + Hash + Default,
+{
+    type Value = <MVSlidingWindow<V> as PureCRDT>::Value;
+    type Op = MVSlidingWindow<V>;
+
+    fn new() -> Self {
+        const {
+            debug_assert!(
+                MVSlidingWindow::<V>::DISABLE_R_WHEN_NOT_R
+                    && MVSlidingWindow::<V>::DISABLE_R_WHEN_R
+                    && MVSlidingWindow::<V>::DISABLE_STABILIZE
+            );
+        }
+        Default::default()
+    }
+
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        MVSlidingWindow::<V>::is_enabled(
+            op,
+            &<MVSlidingWindow<V> as PureCRDT>::StableState::default(),
+            self,
+        )
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>) {
+        IsUnstableState::append(self, event);
+    }
+
+    fn stabilize(&mut self, version: &Version) {
+        // Remove all entries in the cutter that are predecessors of the given version, for each entry.
+        for (idx, seq) in version.iter() {
+            let replica_id = version.resolver().resolve(idx).unwrap();
+            if let Some(tree) = self.cutter.get_mut(replica_id) {
+                let to_remove: Vec<Seq> = tree.range(..seq).cloned().collect();
+                for s in to_remove {
+                    tree.remove(&s);
+                }
+            }
+        }
+    }
+
+    fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {
+        todo!()
+    }
+
+    fn is_default(&self) -> bool {
+        self.graph.node_count() == 0
+    }
+}
 
 impl<O> IsUnstableState<O> for EventGraph<O>
 where

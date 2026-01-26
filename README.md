@@ -155,7 +155,7 @@ impl Eval<Read<i32>> for MyCounter {
 Moirai includes a sophisticated fuzzing framework for verifying CRDT properties:
 
 ```rust
-use moirai::fuzz::{fuzzer, config::{FuzzerConfig, RunConfig}};
+use moirai::fuzz::{fuzzer::fuzzer, config::{FuzzerConfig, RunConfig}};
 
 let config = FuzzerConfig::<MyLog>::new(
     "my_crdt",

@@ -78,6 +78,17 @@ impl EvalNested<ReadAsJson> for UWMapLog<String, JsonLog> {
     }
 }
 
+fn variant_rank(v: &Value) -> u8 {
+    match v {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
+    }
+}
+
 impl EvalNested<ReadAsJson> for JsonLog {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
         fn eval_child(child: &JsonChild) -> Value {
@@ -96,7 +107,9 @@ impl EvalNested<ReadAsJson> for JsonLog {
         match &self.child {
             JsonContainer::Value(child) => eval_child(child),
             JsonContainer::Conflicts(children) => {
-                Value::Array(children.iter().map(eval_child).collect())
+                let mut evaluated = children.iter().map(eval_child).collect::<Vec<Value>>();
+                evaluated.sort_by_key(variant_rank);
+                Value::Array(evaluated)
             }
             JsonContainer::Unset => Value::Null,
         }
@@ -408,13 +421,13 @@ mod tests {
     fn fuzz_union() {
         use crate::fuzz::{
             config::{FuzzerConfig, RunConfig},
-            fuzzer,
+            fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.4, 4, 1_000, None, None, false);
-        let runs = vec![run.clone(); 10];
+        let run = RunConfig::new(0.4, 4, 10, None, None, false);
+        let runs = vec![run.clone(); 100];
 
-        let config = FuzzerConfig::<JsonLog>::new("json", runs, true, |a, b| a == b, true);
+        let config = FuzzerConfig::<JsonLog>::new("json", runs, true, |a, b| a == b, false);
 
         fuzzer::<JsonLog>(config);
     }

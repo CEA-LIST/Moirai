@@ -1,5 +1,5 @@
 use std::{
-    collections::{BinaryHeap, HashMap},
+    collections::BinaryHeap,
     fmt::{Debug, Display, Formatter, Result},
 };
 
@@ -8,15 +8,18 @@ use rand::RngCore;
 
 #[cfg(feature = "fuzz")]
 use crate::fuzz::{config::OpGenerator, value_generator::ValueGenerator};
-use crate::protocol::{
-    clock::version_vector::Version,
-    crdt::{
-        eval::Eval,
-        pure_crdt::PureCRDT,
-        query::{QueryOperation, Read},
+use crate::{
+    protocol::{
+        clock::version_vector::Version,
+        crdt::{
+            eval::Eval,
+            pure_crdt::PureCRDT,
+            query::{QueryOperation, Read},
+        },
+        event::{id::EventId, tagged_op::TaggedOp},
+        state::unstable_state::IsUnstableState,
     },
-    event::{id::EventId, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    HashMap,
 };
 
 // TODO: use Fair Tag
@@ -444,7 +447,7 @@ where
         }
 
         #[allow(clippy::mutable_key_type)]
-        let mut flags: HashMap<EventId, DiffFlag> = HashMap::new();
+        let mut flags: HashMap<EventId, DiffFlag> = HashMap::default();
         // PriorityQueue: prioritizing higher NodeIndex first
         let mut queue: BinaryHeap<(usize, EventId)> = BinaryHeap::new();
         let mut num_shared = 0usize;
@@ -1021,7 +1024,7 @@ mod tests {
     fn fuzz_list() {
         use crate::fuzz::{
             config::{FuzzerConfig, RunConfig},
-            fuzzer,
+            fuzzer::fuzzer,
         };
 
         let run_1 = RunConfig::new(0.4, 4, 1_000, None, None, false);

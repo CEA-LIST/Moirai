@@ -90,27 +90,30 @@ mod tests {
 
         use crate::fuzz::{
             config::{FuzzerConfig, RunConfig},
-            fuzzer,
+            fuzzer::fuzzer,
         };
 
-        // One replica is inaccessible to every other replica
-        let reachability = Some(vec![
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![true, true, true, true, true, true, true, false],
-            vec![false, false, false, false, false, false, false, true],
-        ]);
+        let reachability = Some({
+            let mut v = vec![true; 16];
+            v[15] = false;
+            let mut matrix = vec![];
+            for _ in 0..15 {
+                matrix.push(v.clone());
+            }
+            let mut last_row = vec![false; 16];
+            last_row[15] = true;
+            matrix.push(last_row);
+            matrix
+        });
 
-        let run = RunConfig::new(0.4, 8, 100_000, reachability, None, false);
-        let runs = vec![run.clone(); 1];
+        let run_1 = RunConfig::new(0.7, 16, 100_000, reachability.clone(), None, false);
+        let run_2 = RunConfig::new(0.7, 16, 200_000, reachability.clone(), None, false);
+        let run_3 = RunConfig::new(0.7, 16, 300_000, reachability.clone(), None, false);
+        let runs = vec![run_1, run_2, run_3];
 
         let config =
-            FuzzerConfig::<EWFlagSet<String>>::new("ew_flag_set", runs, true, |a, b| a == b, true);
+            FuzzerConfig::<EWFlagSet<usize>>::new("ew_flag_set", runs, true, |a, b| a == b, true);
 
-        fuzzer::<EWFlagSet<String>>(config);
+        fuzzer::<EWFlagSet<usize>>(config);
     }
 }
