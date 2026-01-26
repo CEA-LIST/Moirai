@@ -900,33 +900,33 @@ mod tests {
 
         let event_b_1 = replica_b
             .send(UWGraph::UpdateArc {
-                id: "manufacturer",
+                id: "operates",
                 source: "energy_grid",
-                target: "operates",
+                target: "manufacturer",
                 child: Relation::Typ(TORegister::Write(RelationType::Associates)),
             })
             .unwrap();
         let event_b_2 = replica_b
             .send(UWGraph::UpdateArc {
-                id: "manufacturer",
+                id: "operates",
                 source: "energy_grid",
-                target: "operates",
+                target: "manufacturer",
                 child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
             })
             .unwrap();
         let event_b_3 = replica_b
             .send(UWGraph::UpdateArc {
-                id: "manufacturer",
+                id: "operates",
                 source: "energy_grid",
-                target: "operates",
+                target: "manufacturer",
                 child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
             })
             .unwrap();
         let event_b_4 = replica_b
             .send(UWGraph::UpdateArc {
-                id: "manufacturer",
+                id: "operates",
                 source: "energy_grid",
-                target: "operates",
+                target: "manufacturer",
                 child: Relation::Label(MVRegister::Write("operates".to_string())),
             })
             .unwrap();

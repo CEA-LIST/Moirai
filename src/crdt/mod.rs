@@ -110,4 +110,18 @@ pub mod test_util {
             )
             .try_init();
     }
+
+    #[cfg(feature = "fuzz")]
+    pub fn hex_to_seed(s: &str) -> Option<[u8; 32]> {
+        let s = s.strip_prefix("0x").unwrap_or(s);
+        if s.len() != 64 {
+            return None;
+        }
+
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
+        }
+        Some(out)
+    }
 }

@@ -377,30 +377,33 @@ mod tests {
             // crdt::test_util::init_tracing,
             fuzz::{
                 config::{FuzzerConfig, RunConfig},
-                fuzzer,
+                fuzzer::fuzzer,
             },
             protocol::state::po_log::VecLog,
         };
 
         // init_tracing();
 
-        // One replica is inaccessible to every other replica
-        // let reachability = Some(vec![
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![true, true, true, true, true, true, true, false],
-        //     vec![false, false, false, false, false, false, false, true],
-        // ]);
+        let reachability = Some({
+            let mut v = vec![true; 16];
+            v[15] = false;
+            let mut matrix = vec![];
+            for _ in 0..15 {
+                matrix.push(v.clone());
+            }
+            let mut last_row = vec![false; 16];
+            last_row[15] = true;
+            matrix.push(last_row);
+            matrix
+        });
 
-        let run = RunConfig::new(0.4, 32, 10_000, None, None, false);
-        let runs = vec![run.clone(); 1];
+        let run_1 = RunConfig::new(0.7, 16, 100_000, reachability.clone(), None, false);
+        let run_2 = RunConfig::new(0.7, 16, 200_000, reachability.clone(), None, false);
+        let run_3 = RunConfig::new(0.7, 16, 300_000, reachability.clone(), None, false);
+        let runs = vec![run_1, run_2, run_3];
 
         let config =
-            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, true);
 
         fuzzer::<VecLog<AWSet<usize>>>(config);
     }

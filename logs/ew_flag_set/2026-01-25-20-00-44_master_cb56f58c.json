@@ -1,0 +1,209 @@
+{
+  "name": "ew_flag_set",
+  "timestamp": "2026-01-25T20:00:44.924897+01:00",
+  "git_commit": "cb56f58c2bc5e9da789a22077e7a58fc770f00df",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "total_operations": 500000,
+    "total_time_ms": 61289,
+    "mean_throughput_ops_per_sec": 8158.209760073422,
+    "min_throughput_ops_per_sec": 8099.133392726978,
+    "max_throughput_ops_per_sec": 8195.377806916898,
+    "mean_time_per_op_ms": 0.122578,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x4E59B9E6DA49CC0EA09FDBECB4F806E4B1EC3F83656080829C580EBABB9C78E2",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{68: true, 72: true, 62: true, 99: true, 50: true, 61: true}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12347,
+        "avg_time_per_op_ms": 0.12347,
+        "throughput_ops_per_sec": 8099.133392726978,
+        "replica_times_ms": {
+          "11": 181,
+          "0": 181,
+          "3": 185,
+          "14": 179,
+          "6": 181,
+          "9": 182,
+          "1": 182,
+          "12": 182,
+          "15": 9620,
+          "4": 184,
+          "7": 184,
+          "10": 180,
+          "2": 180,
+          "13": 184,
+          "5": 182,
+          "8": 180
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x02192017AE748122455556B7766FB5D3CB62382904CE3E3089CEB73FCF5AA29D",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{59: true, 97: true, 24: true}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12218,
+        "avg_time_per_op_ms": 0.12218,
+        "throughput_ops_per_sec": 8184.64560484531,
+        "replica_times_ms": {
+          "0": 174,
+          "11": 187,
+          "3": 176,
+          "14": 178,
+          "6": 177,
+          "9": 175,
+          "12": 176,
+          "1": 179,
+          "4": 176,
+          "15": 9568,
+          "7": 176,
+          "10": 174,
+          "2": 178,
+          "13": 176,
+          "5": 173,
+          "8": 175
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x6DFF8DD0CEDA08CCBF35B59971505974C8C25DFC2BF2CA18465AB84F8C9B05D4",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{11: true, 59: true, 73: true, 94: true, 12: true, 71: true, 82: true, 48: true}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12252,
+        "avg_time_per_op_ms": 0.12252,
+        "throughput_ops_per_sec": 8161.932745674176,
+        "replica_times_ms": {
+          "0": 175,
+          "11": 179,
+          "3": 176,
+          "14": 179,
+          "6": 186,
+          "9": 175,
+          "1": 179,
+          "12": 176,
+          "4": 175,
+          "15": 9584,
+          "7": 183,
+          "10": 175,
+          "2": 177,
+          "13": 176,
+          "5": 179,
+          "8": 178
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x22DD6431FFD3499251F67AAC3F2F5832395B3D3A780A7B505B02DEBCF9F877A7",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{92: true, 33: true, 62: true, 51: true, 21: true, 83: true, 68: true, 42: true, 86: true, 57: true}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12270,
+        "avg_time_per_op_ms": 0.1227,
+        "throughput_ops_per_sec": 8149.959250203749,
+        "replica_times_ms": {
+          "0": 172,
+          "11": 177,
+          "3": 180,
+          "14": 178,
+          "6": 178,
+          "9": 177,
+          "1": 176,
+          "12": 175,
+          "4": 178,
+          "15": 9628,
+          "7": 175,
+          "10": 174,
+          "2": 178,
+          "13": 175,
+          "5": 174,
+          "8": 175
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0xED0B58B2D1AC79D2B892464E2E7115AF936435FD0814486A9EB65FB23919E948",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{81: true, 66: true, 62: true, 61: true, 35: true, 56: true, 93: true, 59: true}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12202,
+        "avg_time_per_op_ms": 0.12202,
+        "throughput_ops_per_sec": 8195.377806916898,
+        "replica_times_ms": {
+          "0": 178,
+          "11": 177,
+          "3": 177,
+          "14": 178,
+          "6": 176,
+          "9": 179,
+          "1": 177,
+          "12": 176,
+          "4": 177,
+          "15": 9540,
+          "7": 179,
+          "10": 176,
+          "2": 176,
+          "13": 179,
+          "5": 178,
+          "8": 179
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+{
+  "name": "aw_set",
+  "timestamp": "2026-01-25T19:59:36.554907+01:00",
+  "git_commit": "cb56f58c2bc5e9da789a22077e7a58fc770f00df",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "total_operations": 500000,
+    "total_time_ms": 63226,
+    "mean_throughput_ops_per_sec": 7908.56337898138,
+    "min_throughput_ops_per_sec": 7818.608287724785,
+    "max_throughput_ops_per_sec": 7995.522507395858,
+    "mean_time_per_op_ms": 0.126452,
+    "all_converged": true
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x20A1F1EE93EFB9CA0D7B76D90C8FFF58C78F286D3E3F93B78689CA04323FA2E9",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 88, 44, 25, 69, 6, 50, 94, 31, 75, 12, 56, 37, 81, 18, 62, 43, 87, 24, 68, 5, 49, 93, 30, 74, 55 ... 63}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12632,
+        "avg_time_per_op_ms": 0.12632,
+        "throughput_ops_per_sec": 7916.402786573781,
+        "replica_times_ms": {
+          "0": 195,
+          "11": 197,
+          "3": 198,
+          "14": 199,
+          "6": 197,
+          "9": 199,
+          "12": 205,
+          "1": 202,
+          "4": 199,
+          "15": 9637,
+          "7": 201,
+          "10": 200,
+          "2": 200,
+          "13": 206,
+          "5": 199,
+          "8": 198
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0xB6C38759A6282797D1461FD83ABC363D742FC176B7FAF7901E61F1BF0C5260A1",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 88, 44, 25, 69, 50, 94, 31, 75, 12, 56, 37, 81, 18, 43, 87, 68, 5, 49, 93, 74, 11, 55, 99, 36, 8 ... 63}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12685,
+        "avg_time_per_op_ms": 0.12685,
+        "throughput_ops_per_sec": 7883.3267638943635,
+        "replica_times_ms": {
+          "0": 197,
+          "11": 197,
+          "3": 199,
+          "14": 199,
+          "6": 198,
+          "9": 202,
+          "1": 200,
+          "12": 201,
+          "4": 205,
+          "15": 9689,
+          "7": 198,
+          "10": 199,
+          "2": 201,
+          "13": 199,
+          "5": 200,
+          "8": 201
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x0D9D072CC419E19791340C6614389189A5959A3CAB69F402BB1E6D778116C3AB",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{44, 25, 69, 6, 50, 94, 31, 75, 37, 81, 18, 62, 43, 87, 24, 68, 5, 49, 93, 30, 74, 55, 99, 36, 80, 1 ... 63}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12612,
+        "avg_time_per_op_ms": 0.12612,
+        "throughput_ops_per_sec": 7928.95654931811,
+        "replica_times_ms": {
+          "11": 200,
+          "0": 198,
+          "3": 201,
+          "14": 200,
+          "6": 200,
+          "9": 201,
+          "1": 199,
+          "12": 201,
+          "4": 198,
+          "15": 9618,
+          "7": 200,
+          "10": 199,
+          "2": 201,
+          "13": 199,
+          "5": 198,
+          "8": 199
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0xB8AB0A8298DCF1224B03C1C1D23B118F8B96888060BC2F46606EFA294A45BF0E",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{0, 44, 69, 6, 50, 94, 31, 75, 12, 56, 81, 62, 43, 87, 24, 49, 30, 74, 11, 55, 99, 36, 61, 42, 86, 2 ... 63}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12790,
+        "avg_time_per_op_ms": 0.1279,
+        "throughput_ops_per_sec": 7818.608287724785,
+        "replica_times_ms": {
+          "11": 195,
+          "0": 219,
+          "3": 196,
+          "14": 193,
+          "6": 192,
+          "9": 192,
+          "12": 192,
+          "1": 192,
+          "4": 198,
+          "15": 9863,
+          "7": 194,
+          "10": 193,
+          "2": 193,
+          "13": 194,
+          "5": 192,
+          "8": 192
+        },
+        "execution_graph_dot": null
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "seed": "0x347DC911200BC01D7652463CD689AD802D74CDD3E0BF9B1727F1985B9D1AB65A",
+        "generate_execution_graph": false
+      },
+      "results": {
+        "convergence": true,
+        "final_state": "{44, 88, 25, 69, 6, 50, 31, 12, 81, 18, 62, 43, 87, 68, 5, 30, 74, 11, 55, 99, 80, 17, 61, 42, 86, 2 ... 63}",
+        "delivered_events": 100000,
+        "total_operations": 100000,
+        "total_time_ms": 12507,
+        "avg_time_per_op_ms": 0.12507,
+        "throughput_ops_per_sec": 7995.522507395858,
+        "replica_times_ms": {
+          "0": 194,
+          "11": 191,
+          "3": 197,
+          "14": 192,
+          "6": 191,
+          "9": 191,
+          "1": 193,
+          "12": 191,
+          "4": 195,
+          "15": 9616,
+          "7": 192,
+          "10": 191,
+          "2": 193,
+          "13": 193,
+          "5": 191,
+          "8": 196
+        },
+        "execution_graph_dot": null
+      }
+    }
+  ]
+}

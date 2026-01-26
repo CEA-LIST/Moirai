@@ -121,16 +121,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use petgraph::dot::Config;
+    // use petgraph::dot::Config;
 
     use crate::{
         crdt::{register::mv_sliding_window::MVSlidingWindow, test_util::twins_log},
-        protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog},
+        protocol::{crdt::query::Read, replica::IsReplica, state::event_graph::EventGraph},
     };
 
     #[test]
     fn simple_mv_sliding_window() {
-        let (mut replica_a, mut replica_b) = twins_log::<VecLog<MVSlidingWindow<&str>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<MVSlidingWindow<&str>>>();
 
         let e1 = replica_a.send(MVSlidingWindow::Write("A1")).unwrap();
         let e2 = replica_b.send(MVSlidingWindow::Write("A2")).unwrap();
@@ -149,14 +149,14 @@ mod tests {
         replica_b.receive(e5);
         replica_a.receive(e6);
 
-        println!(
-            "Replica A: {:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[Config::EdgeNoLabel])
-        );
-        println!(
-            "Replica B: {:?}",
-            petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[Config::EdgeNoLabel])
-        );
+        // println!(
+        //     "Replica A: {:?}",
+        //     petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[Config::EdgeNoLabel])
+        // );
+        // println!(
+        //     "Replica B: {:?}",
+        //     petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[Config::EdgeNoLabel])
+        // );
         assert!(
             vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()

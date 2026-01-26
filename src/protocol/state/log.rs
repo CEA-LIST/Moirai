@@ -22,7 +22,7 @@ pub trait IsLog: Default + Debug {
     fn prepare(op: Self::Op) -> Self::Op {
         op
     }
-    // TODO replace by Result
+    // TODO: replace by Result
     fn is_enabled(&self, op: &Self::Op) -> bool;
     fn effect(&mut self, event: Event<Self::Op>);
     fn eval<Q>(&self, q: Q) -> Q::Response

@@ -1,12 +1,9 @@
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
 
 use crate::protocol::{
     crdt::pure_crdt::PureCRDT,
     state::{log::IsLog, unstable_state::IsUnstableState},
 };
-#[cfg(feature = "fuzz")]
-use crate::HashMap;
 
 pub struct FuzzerConfig<'a, L>
 where
@@ -63,7 +60,7 @@ pub trait OpGeneratorNested: IsLog {
     fn generate(&self, rng: &mut impl RngCore) -> Self::Op;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RunConfig {
     /// Churn rate defines the probability of a replica going offline after each operation
     pub churn_rate: f64,
@@ -112,9 +109,9 @@ impl RunConfig {
                 );
             }
             // Ensure that a process is always reachable to itself
-            for i in 0..num_replicas as usize {
+            for (i, item) in matrix.iter().enumerate().take(num_replicas as usize) {
                 assert!(
-                    matrix[i][i],
+                    item[i],
                     "Each replica must be reachable to itself in the reachability matrix"
                 );
             }
@@ -128,75 +125,4 @@ impl RunConfig {
             generate_execution_graph,
         }
     }
-}
-
-/// Structure to save execution results to JSON (contains all runs)
-#[cfg(feature = "fuzz")]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ExecutionRecord {
-    /// Name of the test
-    pub name: String,
-    /// Date and time of execution start (ISO 8601 format)
-    pub timestamp: String,
-    /// Git commit hash (if available)
-    pub git_commit: Option<String>,
-    /// Git branch name (if available)
-    pub git_branch: Option<String>,
-    /// Whether final merge was performed
-    pub final_merge: bool,
-    /// Aggregated summary statistics across all runs
-    pub summary: ExecutionSummary,
-    /// Results from all runs
-    pub runs: Vec<RunRecord>,
-}
-
-/// Aggregated statistics across all runs
-#[cfg(feature = "fuzz")]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ExecutionSummary {
-    pub total_runs: usize,
-    pub total_operations: usize,
-    pub total_time_ms: u128,
-    pub mean_throughput_ops_per_sec: f64,
-    pub min_throughput_ops_per_sec: f64,
-    pub max_throughput_ops_per_sec: f64,
-    pub mean_time_per_op_ms: f64,
-    pub all_converged: bool,
-}
-
-/// Record for a single run within an execution
-#[cfg(feature = "fuzz")]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RunRecord {
-    /// Run number (1-indexed)
-    pub run_number: usize,
-    /// Input parameters for this run
-    pub parameters: RunParameters,
-    /// Execution results for this run
-    pub results: RunResults,
-}
-
-#[cfg(feature = "fuzz")]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RunParameters {
-    pub num_replicas: u8,
-    pub num_operations: usize,
-    pub churn_rate: f64,
-    pub seed: String,
-    pub generate_execution_graph: bool,
-}
-
-#[cfg(feature = "fuzz")]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RunResults {
-    pub convergence: bool,
-    pub final_state: String,
-    pub delivered_events: usize,
-    pub total_operations: usize,
-    pub total_time_ms: u128,
-    pub avg_time_per_op_ms: f64,
-    pub throughput_ops_per_sec: f64,
-    pub replica_times_ms: HashMap<usize, u128>,
-    /// Execution graph in GraphViz DOT format (if generated)
-    pub execution_graph_dot: Option<String>,
 }
