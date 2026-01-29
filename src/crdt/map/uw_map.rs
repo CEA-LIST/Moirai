@@ -1,4 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+};
 
 #[cfg(feature = "fuzz")]
 use rand::RngCore;
@@ -49,7 +52,7 @@ impl<K, O> Boxer<UWMap<K, Box<O>>> for UWMap<K, O> {
 #[derive(Clone, Debug)]
 pub struct UWMapLog<K, L>
 where
-    K: Clone + Debug + Eq + Hash,
+    K: Clone + Eq + Hash,
 {
     pub(crate) children: HashMap<K, L>,
 }
@@ -79,16 +82,23 @@ where
             UWMap::Update(k, v) => {
                 let child_op = Event::unfold(event, v);
                 self.children.entry(k.clone()).or_default().effect(child_op);
+                if self.children.get(&k).unwrap().is_default() {
+                    self.children.remove(&k);
+                }
             }
             UWMap::Remove(k) => {
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
+                    if child.is_default() {
+                        self.children.remove(&k);
+                    }
                 }
             }
             UWMap::Clear => {
-                for child in self.children.values_mut() {
+                self.children.retain(|_, child| {
                     child.redundant_by_parent(event.version(), true);
-                }
+                    !child.is_default() // keep only non-default children
+                });
             }
         }
     }
@@ -170,7 +180,7 @@ where
             Remove,
             Clear,
         }
-        let dist = WeightedIndex::new([3, 2, 1]).unwrap();
+        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
 
         let choice = &[Choice::Update, Choice::Remove, Choice::Clear][dist.sample(rng)];
         let key = K::generate(rng, &<K as ValueGenerator>::Config::default());
@@ -186,6 +196,19 @@ where
             Choice::Remove => UWMap::Remove(key),
             Choice::Clear => UWMap::Clear,
         }
+    }
+}
+
+impl<K, L> Display for UWMapLog<K, L>
+where
+    K: Display + Clone + PartialEq + Eq + Hash,
+    L: Display,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (k, v) in &self.children {
+            write!(f, "{} => {}", k, v)?;
+        }
+        Ok(())
     }
 }
 
@@ -501,9 +524,6 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        // println!("Replica B state: {:?}", replica_b.query(Read::new()));
-        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
-
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
@@ -522,8 +542,6 @@ mod tests {
             .unwrap();
         let _ = replica_a.send(UWMap::Remove("patate".to_string())).unwrap();
         let _ = replica_a.send(UWMap::Clear).unwrap();
-
-        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
 
         assert_eq!(replica_a.query(Read::new()), HashMap::default());
     }
@@ -554,18 +572,59 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_c);
 
-        // println!("Replica A state: {:?}", replica_a.query(Read::new()));
-        // println!("Replica C state: {:?}", replica_c.query(Read::new()));
-        // println!("Replica B state: {:?}", replica_b.query(Read::new()));
-
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
         assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn map_nested_eg_walker_4() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<UWMapLog<String, EventGraph<List<char>>>>();
+
+        let event_a_1 = replica_a
+            .send(UWMap::Update(
+                "vfq".to_string(),
+                List::Insert {
+                    content: 'q',
+                    pos: 0,
+                },
+            ))
+            .unwrap();
+
+        let event_a_2 = replica_a
+            .send(UWMap::Update(
+                "tdx".to_string(),
+                List::Insert {
+                    content: 'W',
+                    pos: 0,
+                },
+            ))
+            .unwrap();
+
+        replica_c.receive(event_a_1.clone());
+        replica_c.receive(event_a_2.clone());
+        replica_b.receive(event_a_1);
+        replica_b.receive(event_a_2);
+
+        let event_c_1 = replica_c.send(UWMap::Remove("qeq".to_string())).unwrap();
+        let event_c_2 = replica_c.send(UWMap::Clear).unwrap();
+
+        replica_a.receive(event_c_1.clone());
+        replica_a.receive(event_c_2.clone());
+        replica_b.receive(event_c_1);
+        replica_b.receive(event_c_2);
+
+        let result = HashMap::default();
+
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_c.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_uw_map() {
-        // init_tracing();
+        crate::crdt::test_util::init_tracing();
 
         use crate::{
             crdt::list::eg_walker::List,
@@ -580,8 +639,8 @@ mod tests {
         // type UWMapNested = UWMapLog<String, UWMapLog<String, VecLog<Counter<i32>>>>;
         type UWMapNested = UWMapLog<String, EventGraph<List<char>>>;
 
-        let run = RunConfig::new(0.4, 8, 25, None, None, false);
-        let runs = vec![run.clone(); 1_000];
+        let run = RunConfig::new(0.9, 4, 5, None, None, true, false);
+        let runs = vec![run.clone(); 10_000];
 
         let config = FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false);
 

@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::{collections::BTreeSet, fmt::Debug, hash::Hash};
 
 use bimap::BiMap;
@@ -174,9 +175,9 @@ where
         let new_tagged_op = TaggedOp::from(&event);
         let child_idx = self.graph.add_node(new_tagged_op);
         self.map.insert(child_idx, event.id().clone());
-        // let immediate_parents = self.find_immediate_predecessors(event.version());
-        let immediate_parents = self.find_cut(event.version());
-        let immediate_parents = self.minimum_cut(immediate_parents);
+        let immediate_parents = self.find_immediate_predecessors(event.version());
+        // let immediate_parents = self.find_cut(event.version());
+        // let immediate_parents = self.minimum_cut(immediate_parents);
         for parent_idx in immediate_parents {
             self.graph.add_edge(child_idx, parent_idx, ());
             let parent_id = self.map.get_by_left(&parent_idx).unwrap();
@@ -243,7 +244,7 @@ where
     /// $O(e')$
     fn remove(&mut self, _event_id: &EventId) {
         // TODO: update heads, re-attach if needed
-        panic!("EventGraph::remove is not implemented");
+        unimplemented!("EventGraph::remove is not implemented");
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -255,7 +256,7 @@ where
 
     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, _predicate: T) {
         // TODO: update heads, re-attach if needed
-        panic!("EventGraph::retain is not implemented");
+        unimplemented!("EventGraph::retain is not implemented");
     }
 
     fn len(&self) -> usize {
@@ -323,6 +324,7 @@ where
 {
     /// # Complexity
     /// O(n^2)
+    #[allow(dead_code)]
     fn minimum_cut(&self, potential_cut: Vec<NodeIndex>) -> Vec<NodeIndex> {
         potential_cut
             .iter()
@@ -373,6 +375,8 @@ where
         collected
     }
 
+    // TODO: do not work correctly yet!
+    #[allow(dead_code)]
     fn find_cut(&self, version: &Version) -> Vec<NodeIndex> {
         let mut predecessors = Vec::new();
         for (replica_idx, seq) in version.iter() {
@@ -542,5 +546,25 @@ where
 {
     fn generate(&self, rng: &mut impl RngCore) -> <EventGraph<O> as IsLog>::Op {
         O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
+    }
+}
+
+impl Display for EventGraph<List<char>> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Head:")?;
+        for head in self.heads.iter() {
+            write!(f, "{}", head)?;
+        }
+        writeln!(f, "\nEvents:")?;
+        for (node_idx, tagged_op) in self.graph.node_indices().zip(self.graph.node_weights()) {
+            write!(f, "\t{} -> ", tagged_op)?;
+            let predecessors: Vec<String> = self
+                .graph
+                .neighbors_directed(node_idx, Direction::Outgoing)
+                .filter_map(|pred_idx| self.map.get_by_left(&pred_idx).map(|id| id.to_string()))
+                .collect();
+            writeln!(f, "{:?}", predecessors)?;
+        }
+        Ok(())
     }
 }

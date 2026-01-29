@@ -286,9 +286,10 @@ impl Version {
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.resolver != other.resolver {
-            panic!("Comparing versions with different views");
-        }
+        assert!(
+            self.resolver == other.resolver,
+            "Comparing versions with different views"
+        );
 
         // Optimisation 1: Même origine => comparaison directe des séquences
         if self.origin_idx == other.origin_idx {

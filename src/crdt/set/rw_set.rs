@@ -384,7 +384,7 @@ mod tests {
             protocol::state::po_log::VecLog,
         };
 
-        let run = RunConfig::new(0.4, 8, 10_000, None, None, false);
+        let run = RunConfig::new(0.4, 8, 10_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config =

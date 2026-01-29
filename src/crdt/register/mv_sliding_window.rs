@@ -149,14 +149,6 @@ mod tests {
         replica_b.receive(e5);
         replica_a.receive(e6);
 
-        // println!(
-        //     "Replica A: {:?}",
-        //     petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[Config::EdgeNoLabel])
-        // );
-        // println!(
-        //     "Replica B: {:?}",
-        //     petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[Config::EdgeNoLabel])
-        // );
         assert!(
             vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
                 .first()

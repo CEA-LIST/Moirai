@@ -152,12 +152,24 @@ impl OpGenerator for AWSet<usize> {
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
     ) -> Self {
-        let letters: Vec<usize> = (0..config.max_elements).collect();
-        let choice = rand::seq::IteratorRandom::choose(letters.iter(), rng).unwrap();
-        if rng.next_u32().is_multiple_of(2) {
-            AWSet::Add(*choice)
-        } else {
-            AWSet::Remove(*choice)
+        use rand::{
+            distr::{weighted::WeightedIndex, Distribution},
+            Rng,
+        };
+
+        enum Choice {
+            Add,
+            Remove,
+            Clear,
+        }
+        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
+
+        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
+        let value = rng.random_range(0..config.max_elements);
+        match choice {
+            Choice::Add => AWSet::Add(value),
+            Choice::Remove => AWSet::Remove(value),
+            Choice::Clear => AWSet::Clear,
         }
     }
 }
@@ -374,7 +386,6 @@ mod tests {
     #[test]
     fn fuzz_aw_set() {
         use crate::{
-            // crdt::test_util::init_tracing,
             fuzz::{
                 config::{FuzzerConfig, RunConfig},
                 fuzzer::fuzzer,
@@ -382,25 +393,15 @@ mod tests {
             protocol::state::po_log::VecLog,
         };
 
-        // init_tracing();
-
-        let reachability = Some({
-            let mut v = vec![true; 16];
-            v[15] = false;
-            let mut matrix = vec![];
-            for _ in 0..15 {
-                matrix.push(v.clone());
-            }
-            let mut last_row = vec![false; 16];
-            last_row[15] = true;
-            matrix.push(last_row);
-            matrix
-        });
-
-        let run_1 = RunConfig::new(0.7, 16, 100_000, reachability.clone(), None, false);
-        let run_2 = RunConfig::new(0.7, 16, 200_000, reachability.clone(), None, false);
-        let run_3 = RunConfig::new(0.7, 16, 300_000, reachability.clone(), None, false);
-        let runs = vec![run_1, run_2, run_3];
+        let run_1 = RunConfig::new(0.7, 16, 1_000, None, None, false, true);
+        let run_2 = RunConfig::new(0.7, 16, 3_000, None, None, false, true);
+        let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        let run_4 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
+        let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        let run_6 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
+        let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
+        let run_8 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
+        let runs = vec![run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8];
 
         let config =
             FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, true);

@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use chrono::Local;
+use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::fuzz::{
@@ -44,6 +45,8 @@ pub struct RunParameters {
     pub num_replicas: u8,
     pub num_operations: usize,
     pub churn_rate: f64,
+    pub disable_stability: bool,
+    pub reachability: Option<Vec<Vec<bool>>>,
 }
 
 /// Save execution record with multiple runs to JSON file in logs/ directory
@@ -94,6 +97,8 @@ pub fn save_execution_record(
                 num_replicas: data.1.num_replicas,
                 num_operations: data.1.num_operations,
                 churn_rate: data.1.churn_rate,
+                disable_stability: data.1.disable_stability,
+                reachability: data.1.reachability.clone(),
             },
             results: RunResults {
                 final_state: data.0.final_state,
@@ -123,7 +128,7 @@ pub fn save_execution_record(
     let json = serde_json::to_string_pretty(&record)?;
     fs::write(&filepath, json)?;
 
-    println!("\n✓ Execution saved to: {}", filepath.display());
+    info!("✓ Execution saved to: {}", filepath.display());
 
     Ok(())
 }

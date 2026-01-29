@@ -8,6 +8,8 @@ pub struct SetConfig {
 
 impl Default for SetConfig {
     fn default() -> Self {
-        Self { max_elements: 100 }
+        Self {
+            max_elements: 10_000,
+        }
     }
 }

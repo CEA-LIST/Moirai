@@ -359,7 +359,7 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.8, 8, 10, None, None, true);
+        let run = RunConfig::new(0.8, 8, 10, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<ListLog<VecLog<Counter<i32>>>>::new(

@@ -575,7 +575,6 @@ where
             let parents = unstable.parents(tagged_op.id());
             let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
 
-            // println!("Document before applying {}: {}", tagged_op.id(), document);
             for event_id in a_only {
                 Self::retreat(&mut document, unstable, &event_id);
             }
@@ -666,6 +665,7 @@ impl<'a, V> Eval<ReadAt<'a, <Self as PureCRDT>::Value>> for List<V>
 where
     V: Debug + Clone,
 {
+    // TODO: add a stable state containing the snapshot
     fn execute_query(
         q: ReadAt<<Self as PureCRDT>::Value>,
         _stable: &Self::StableState,
@@ -683,7 +683,6 @@ where
             let parents = unstable.parents(tagged_op.id());
             let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
 
-            // println!("Document before applying {}: {}", tagged_op.id(), document);
             for event_id in a_only {
                 Self::retreat(&mut document, unstable, &event_id);
             }
@@ -1027,16 +1026,16 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run_1 = RunConfig::new(0.4, 4, 1_000, None, None, false);
-        // let run_2 = RunConfig::new(0.4, 4, 200, None, None, false);
-        // let run_3 = RunConfig::new(0.4, 4, 300, None, None, false);
-        // let run_4 = RunConfig::new(0.4, 4, 400, None, None, false);
-        // let run_5 = RunConfig::new(0.4, 4, 500, None, None, false);
-        // let run_6 = RunConfig::new(0.4, 4, 600, None, None, false);
-        // let run_7 = RunConfig::new(0.4, 4, 700, None, None, false);
-        // let run_8 = RunConfig::new(0.4, 4, 800, None, None, false);
-        // let run_9 = RunConfig::new(0.4, 4, 900, None, None, false);
-        // let run_10 = RunConfig::new(0.4, 4, 1_000, None, None, false);
+        let run_1 = RunConfig::new(0.4, 4, 1_000, None, None, false, false);
+        // let run_2 = RunConfig::new(0.4, 4, 200, None, None, false, false);
+        // let run_3 = RunConfig::new(0.4, 4, 300, None, None, false, false);
+        // let run_4 = RunConfig::new(0.4, 4, 400, None, None, false, false);
+        // let run_5 = RunConfig::new(0.4, 4, 500, None, None, false, false);
+        // let run_6 = RunConfig::new(0.4, 4, 600, None, None, false, false);
+        // let run_7 = RunConfig::new(0.4, 4, 700, None, None, false, false);
+        // let run_8 = RunConfig::new(0.4, 4, 800, None, None, false, false);
+        // let run_9 = RunConfig::new(0.4, 4, 900, None, None, false, false);
+        // let run_10 = RunConfig::new(0.4, 4, 1_000, None, None, false, false);
         let runs = vec![
             run_1, // run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, // run_10,
         ];

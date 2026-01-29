@@ -29,6 +29,10 @@ where
     pub fn remove(key: K) -> UWMap<K, EWFlag> {
         UWMap::Update(key, EWFlag::Disable)
     }
+
+    pub fn clear() -> UWMap<K, EWFlag> {
+        UWMap::Clear
+    }
 }
 
 impl<K> EvalNested<Read<HashSet<K>>> for EWFlagSet<K>
@@ -59,6 +63,25 @@ mod tests {
     };
 
     #[test]
+    fn default_uw_map() {
+        let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
+        let event_a = replica_a.send(Set::<&str>::add("a")).unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b.send(Set::<&str>::remove("a")).unwrap();
+        replica_a.receive(event_b);
+
+        assert_eq!(
+            replica_a.query(Read::<HashSet<&str>>::new()),
+            HashSet::from_iter(vec![])
+        );
+        assert_eq!(
+            replica_b.query(Read::<HashSet<&str>>::new()),
+            HashSet::from_iter(vec![])
+        );
+    }
+
+    #[test]
     fn test_ewflag_set() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
         let event_a = replica_a.send(Set::<&str>::add("a")).unwrap();
@@ -86,30 +109,20 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_ewflag_set() {
-        // init_tracing();
-
         use crate::fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let reachability = Some({
-            let mut v = vec![true; 16];
-            v[15] = false;
-            let mut matrix = vec![];
-            for _ in 0..15 {
-                matrix.push(v.clone());
-            }
-            let mut last_row = vec![false; 16];
-            last_row[15] = true;
-            matrix.push(last_row);
-            matrix
-        });
-
-        let run_1 = RunConfig::new(0.7, 16, 100_000, reachability.clone(), None, false);
-        let run_2 = RunConfig::new(0.7, 16, 200_000, reachability.clone(), None, false);
-        let run_3 = RunConfig::new(0.7, 16, 300_000, reachability.clone(), None, false);
-        let runs = vec![run_1, run_2, run_3];
+        let run_1 = RunConfig::new(0.7, 16, 1_000, None, None, false, true);
+        let run_2 = RunConfig::new(0.7, 16, 3_000, None, None, false, true);
+        let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        let run_4 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
+        let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        let run_6 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
+        let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
+        let run_8 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
+        let runs = vec![run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8];
 
         let config =
             FuzzerConfig::<EWFlagSet<usize>>::new("ew_flag_set", runs, true, |a, b| a == b, true);

@@ -262,7 +262,7 @@ mod tests {
 
         // init_tracing();
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None, false);
+        let run = RunConfig::new(0.4, 8, 100_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
