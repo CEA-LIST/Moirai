@@ -101,6 +101,7 @@ impl MatrixClock {
     ///
     /// # Complexity
     /// Runs in `O(n^2)` time complexity
+    #[deprecated]
     pub fn column_wise_min(&self) -> Version {
         let mut iter = self.entries.0.iter();
         let mut min_clock = iter.next().unwrap().clone();

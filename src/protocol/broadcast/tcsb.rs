@@ -1,3 +1,5 @@
+#[cfg(feature = "fuzz")]
+use std::time::Duration;
 use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
@@ -44,6 +46,12 @@ pub struct Tcsb<O> {
     interner: Interner,
     /// TEMPORARY: for testing purposes only
     last_updated_columns: Vec<ReplicaIdx>,
+    /// TEMPORARY: for testing purposes only
+    #[cfg(feature = "fuzz")]
+    time_matrix_clock_full: Duration,
+    /// TEMPORARY: for testing purposes only
+    #[cfg(feature = "fuzz")]
+    time_matrix_clock_incremental: Duration,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
@@ -61,6 +69,10 @@ where
             replica_idx,
             // TEMPORARY: for testing purposes only
             last_updated_columns: Vec::new(),
+            #[cfg(feature = "fuzz")]
+            time_matrix_clock_full: Duration::new(0, 0),
+            #[cfg(feature = "fuzz")]
+            time_matrix_clock_incremental: Duration::new(0, 0),
         }
     }
 
@@ -111,8 +123,6 @@ where
         if let Some(event) = maybe_event {
             self.inbox.remove(event.id()).unwrap();
             self.matrix_clock.origin_version_mut().join(event.version());
-            // self.matrix_clock
-            //     .set_by_idx(event.id().idx(), event.version().clone());
             self.last_updated_columns = self
                 .matrix_clock
                 .set_by_idx_incremental(event.id().idx(), event.version().clone());
@@ -122,9 +132,23 @@ where
     }
 
     fn is_stable(&mut self) -> Option<&Version> {
-        let lsv = self
+        let time = std::time::Instant::now();
+        let incr_lsv = self
             .matrix_clock
             .column_wise_min_incremental(&self.last_stable_version, &self.last_updated_columns);
+        let elapsed = time.elapsed();
+        #[cfg(feature = "fuzz")]
+        {
+            self.time_matrix_clock_incremental += elapsed;
+        }
+        let time = std::time::Instant::now();
+        let _ = self.matrix_clock.column_wise_min();
+        let elapsed = time.elapsed();
+        #[cfg(feature = "fuzz")]
+        {
+            self.time_matrix_clock_full += elapsed;
+        }
+        let lsv = incr_lsv;
         if lsv == self.last_stable_version {
             None
         } else {
@@ -430,5 +454,25 @@ where
             .values()
             .map(|events_by_seq| events_by_seq.len())
             .sum()
+    }
+}
+
+#[cfg(feature = "fuzz")]
+pub trait IsTcsbFuzz<O>: IsTcsb<O> {
+    fn time_matrix_clock_full(&self) -> Duration;
+    fn time_matrix_clock_incremental(&self) -> Duration;
+}
+
+#[cfg(feature = "fuzz")]
+impl<O> IsTcsbFuzz<O> for Tcsb<O>
+where
+    O: Debug + Clone,
+{
+    fn time_matrix_clock_full(&self) -> Duration {
+        self.time_matrix_clock_full
+    }
+
+    fn time_matrix_clock_incremental(&self) -> Duration {
+        self.time_matrix_clock_incremental
     }
 }
