@@ -1,6 +1,7 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,24 +22,30 @@ pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
 {
+    let _ = env_logger::builder()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "{}", record.args())
+        })
+        .try_init();
     let mut run_results_list: Vec<(usize, (RunResults, RunConfig))> = Vec::new();
 
     for (run_idx, run_config) in config.runs.into_iter().enumerate() {
-        println!("\n");
+        debug!("Starting run {}", run_idx + 1);
 
         // Run configuration display
         let config_table = display_config_table(&run_config, config.final_merge);
 
-        println!("{config_table}");
+        info!("{}", config_table);
 
         let run_data = runner::<L>(run_config, config.final_merge, config.compare);
         let results = run_results(&run_data);
 
-        println!("\n");
+        debug!("Run {} completed", run_idx + 1);
 
         let run_table = display_run_results(run_idx + 1, &results);
 
-        println!("{run_table}");
+        info!("{}", run_table);
 
         if config.save_execution {
             run_results_list.push((run_idx + 1, (results, run_data.config)));
@@ -50,7 +57,7 @@ where
     // Display summary across all runs
     if let Some(ref execution_summary) = maybe_summary {
         let summary_table = display_summary(execution_summary);
-        println!("{summary_table}");
+        info!("{}", summary_table);
     }
 
     // Save all runs at the end
@@ -61,7 +68,7 @@ where
             run_results_list,
             maybe_summary,
         ) {
-            eprintln!("Failed to save execution record: {e}");
+            warn!("Failed to save execution record: {e}");
         }
     }
 }
@@ -97,13 +104,7 @@ fn run_results(run_data: &RunData) -> RunResults {
     let avg_throughput_ops_per_sec = run_data
         .total_time_to_deliver_per_replica
         .values()
-        .map(|d| {
-            if d.as_secs_f64() > 0.0 {
-                run_data.config.num_operations as f64 / d.as_secs_f64()
-            } else {
-                0.0
-            }
-        })
+        .map(|duration| run_data.config.num_operations as f64 / (duration.as_secs_f64()))
         .sum::<f64>()
         / run_data.config.num_replicas as f64;
 

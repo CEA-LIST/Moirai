@@ -90,12 +90,9 @@ impl MatrixClock {
     }
 
     pub fn add_replica(&mut self, idx: ReplicaIdx) {
-        if idx.0 == self.entries.0.len() {
-            let version = Version::new(idx, self.resolver.clone());
-            self.entries.0.push(version);
-        } else {
-            panic!("Big issue");
-        }
+        debug_assert!(idx.0 == self.entries.0.len());
+        let version = Version::new(idx, self.resolver.clone());
+        self.entries.0.push(version);
     }
 
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.

@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     fmt::Debug,
     time::{Duration, Instant},
 };
@@ -10,10 +11,27 @@ use crate::protocol::{
     state::log::IsLog,
 };
 
+// Thread-local flag to control stability behavior during fuzzing
+thread_local! {
+    static DISABLE_STABILITY: RefCell<bool> = const { RefCell::new(false) };
+}
+
+/// Set whether stability should be disabled for replicas created in this thread
+pub fn set_disable_stability(disable: bool) {
+    DISABLE_STABILITY.with(|flag| {
+        *flag.borrow_mut() = disable;
+    });
+}
+
+/// Get the current stability disable flag
+fn get_disable_stability() -> bool {
+    DISABLE_STABILITY.with(|flag| *flag.borrow())
+}
+
 /// Wrapper autour d'un IsLog qui mesure le temps passé dans effect()
 #[derive(Debug)]
 pub struct MetricsLog<L: IsLog> {
-    inner: L,
+    pub inner: L,
     pub total_effect_time: Duration,
     pub effect_call_count: usize,
 }
@@ -58,7 +76,10 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.inner.stabilize(version);
+        // Only stabilize if stability is not disabled
+        if !get_disable_stability() {
+            self.inner.stabilize(version);
+        }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {

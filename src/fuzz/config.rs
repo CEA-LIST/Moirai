@@ -74,6 +74,8 @@ pub struct RunConfig {
     pub seed: Option<[u8; 32]>,
     /// Whether to generate an execution graph in GraphViz format
     pub generate_execution_graph: bool,
+    /// Whether to disable stability (stabilize() will never be called)
+    pub disable_stability: bool,
 }
 
 impl RunConfig {
@@ -84,6 +86,7 @@ impl RunConfig {
         reachability: Option<Vec<Vec<bool>>>,
         seed: Option<[u8; 32]>,
         generate_execution_graph: bool,
+        disable_stability: bool,
     ) -> Self {
         assert!(
             (0.0..=1.0).contains(&churn_rate),
@@ -123,6 +126,7 @@ impl RunConfig {
             reachability,
             seed,
             generate_execution_graph,
+            disable_stability,
         }
     }
 }

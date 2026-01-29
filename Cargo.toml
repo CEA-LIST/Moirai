@@ -32,6 +32,7 @@ elsa = "1.11.2"
 rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 readable = { version = "0.16.0", optional = true }
+env_logger = "0.11.8"
 
 [features]
 default = ["crdt", "test_utils", "fuzz"]
@@ -45,6 +46,7 @@ fuzz = [
     "dep:indicatif",
     "dep:comfy-table",
     "dep:readable",
+
 ]
 crdt = ["dep:vf2", "dep:serde_json"]
 serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]

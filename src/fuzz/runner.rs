@@ -1,6 +1,7 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use log::{debug, info, warn};
 use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -11,7 +12,7 @@ use crate::{
     crdt::test_util::bootstrap_n,
     fuzz::{
         config::{OpGeneratorNested, RunConfig},
-        metrics::MetricsLog,
+        metrics::{set_disable_stability, MetricsLog},
         utils::{clean_dot_output, format_string, seed_to_hex},
     },
     protocol::{
@@ -55,10 +56,10 @@ where
         seed
     });
 
-    println!(
-        "\x1b[1;34m🎲 Using seed: {:?}\x1b[0m",
-        seed_to_hex(&used_seed)
-    );
+    info!("🎲 Using seed: {}", seed_to_hex(&used_seed));
+
+    // Set disable_stability flag based on run configuration
+    set_disable_stability(config.disable_stability);
 
     let mut rng = ChaCha8Rng::from_seed(used_seed);
 
@@ -170,12 +171,12 @@ where
             for j in 0..config.num_replicas.into() {
                 if i != j {
                     let since = replicas[i].since();
-                    let batch = replicas[j].pull(since);
+                    let msg = replicas[j].pull(since);
 
                     timed(
                         ReplicaIdx(i),
                         &mut total_time_to_deliver_per_replica,
-                        || replicas[i].receive_batch(batch),
+                        || replicas[i].receive_batch(msg),
                     );
 
                     merge_pb.inc(1);
@@ -215,13 +216,10 @@ where
         if !compare(&first_value, &value) {
             check_pb.finish_and_clear();
             if let Some(ref graph) = execution_graph {
-                println!(
+                warn!(
                     "Execution graph at divergence:\n{}",
                     clean_dot_output(&graph.to_dot())
                 );
-            }
-            for (replica_idx, replica) in replicas.iter().enumerate() {
-                println!("Replica {} log: {:#?}", replica_idx, replica.state());
             }
             panic!("Replicas 0 and {idx} diverged: {val} vs {value:?}");
         }
@@ -229,7 +227,7 @@ where
     }
 
     check_pb.finish_with_message("Convergence verified ✓");
-    println!();
+    debug!("Run completed");
 
     let total_time_in_effect_per_replica: HashMap<ReplicaIdx, Duration> = replicas
         .iter()

@@ -424,7 +424,7 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.4, 4, 10, None, None, false);
+        let run = RunConfig::new(0.4, 4, 10, None, None, false, false);
         let runs = vec![run.clone(); 100];
 
         let config = FuzzerConfig::<JsonLog>::new("json", runs, true, |a, b| a == b, false);
