@@ -16,7 +16,7 @@ use crate::{
         utils::{clean_dot_output, format_string, seed_to_hex},
     },
     protocol::{
-        broadcast::tcsb::Tcsb,
+        broadcast::tcsb::{IsTcsbFuzz, Tcsb},
         crdt::{eval::EvalNested, query::Read},
         replica::{IsReplica, ReplicaIdx},
         state::{event_graph::EventGraph, log::IsLog, unstable_state::IsUnstableState},
@@ -241,6 +241,19 @@ where
     if let Some(graph) = execution_graph {
         let output = graph.to_dot();
         execution_graph_dot = Some(clean_dot_output(&output));
+    }
+
+    for replica in &replicas {
+        debug!(
+            "Replica {}: time_matrix_clock_full: {} ms",
+            replica.id(),
+            replica.tcsb().time_matrix_clock_full().as_millis()
+        );
+        debug!(
+            "Replica {}: time_matrix_clock_incremental: {} ms",
+            replica.id(),
+            replica.tcsb().time_matrix_clock_incremental().as_millis()
+        );
     }
 
     // Return the run data

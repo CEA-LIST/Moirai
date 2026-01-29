@@ -16,7 +16,7 @@ where
     pub final_merge: bool,
     /// Comparison function to check if the replicas converge
     pub compare: fn(&L::Value, &L::Value) -> bool,
-    /// Whether to save the execution results to a JSON file in logs/
+    /// Whether to save the execution results to a JSON file in bench-results/
     pub save_execution: bool,
 }
 

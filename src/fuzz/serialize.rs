@@ -49,7 +49,7 @@ pub struct RunParameters {
     pub reachability: Option<Vec<Vec<bool>>>,
 }
 
-/// Save execution record with multiple runs to JSON file in logs/ directory
+/// Save execution record with multiple runs to JSON file in bench-results/ directory
 pub fn save_execution_record(
     test_name: &str,
     final_merge: bool,
@@ -81,13 +81,12 @@ pub fn save_execution_record(
 
     let filename = format!("{}.json", filename_parts.join("_"));
 
-    // Create directory structure: logs/{test_name}/
-    let logs_dir = PathBuf::from("logs").join(test_name);
-    fs::create_dir_all(&logs_dir)?;
+    // Create directory structure: bench-results/{test_name}/
+    let results_dir = PathBuf::from("bench-results").join(test_name);
+    fs::create_dir_all(&results_dir)?;
 
     // Build the full path
-    let filepath = logs_dir.join(filename);
-
+    let filepath = results_dir.join(filename);
     // Convert each run data to RunRecord
     let runs: Vec<RunRecord> = run_data_list
         .into_iter()
