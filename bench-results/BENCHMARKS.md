@@ -136,6 +136,8 @@ For each run:
    method, and
 2. the reported value is the average across all replicas.
 
+Note that the results of this experiment were not collected automatically, despite the use of the fuzzer. This is due to a temporary technical limitation. The results were logged to a CSV file. They are not immediately reproducible without code modification.
+
 ### Raw Data
 
 The raw benchmark results for this experiment are available at:
