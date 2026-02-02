@@ -393,19 +393,23 @@ mod tests {
             protocol::state::po_log::VecLog,
         };
 
-        let run_1 = RunConfig::new(0.4, 64, 1_000_000, None, None, false, false);
-        // let run_2 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        // let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        // let run_4 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
-        // let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
-        // let run_6 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
-        // let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
-        // let run_8 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
-        // let runs = vec![run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8];
-        let runs = vec![run_1];
+        let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        let run_2 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
+        let run_3 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        let run_4 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
+        let run_5 = RunConfig::new(0.7, 16, 600_000, None, None, false, true);
+        let run_6 = RunConfig::new(0.7, 16, 900_000, None, None, false, true);
+        let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
+        let run_8 = RunConfig::new(0.7, 16, 1_300_000, None, None, false, true);
+        let run_9 = RunConfig::new(0.7, 16, 1_600_000, None, None, false, true);
+        let run_10 = RunConfig::new(0.7, 16, 2_000_000, None, None, false, true);
+        let run_11 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
+        let runs = vec![
+            run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, run_10, run_11,
+        ];
 
         let config =
-            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, true);
 
         fuzzer::<VecLog<AWSet<usize>>>(config);
     }

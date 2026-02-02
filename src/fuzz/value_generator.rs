@@ -96,7 +96,7 @@ impl Default for NumberConfig {
     fn default() -> Self {
         Self {
             min: 0,
-            max: 10_000,
+            max: 1_000_000,
         }
     }
 }
