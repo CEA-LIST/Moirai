@@ -9,13 +9,13 @@
 
 **A Rust Implementation of the Pure Operation-Based CRDT Framework, made for Building Collaborative Applications**
 
-[Features](#features) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Documentation](#documentation) • [Publications](#publications)
-
 </div>
 
 ---
 
-## <center>⚠️ Work in Progress — In Development ⚠️</center>
+<div align="center">
+  <h2>⚠️ Work in Progress — In Development ⚠️</h2>
+</div>
 
 **This project is under active development.** The API and features are subject to change as we refine the framework.
 
