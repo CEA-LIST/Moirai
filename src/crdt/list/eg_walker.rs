@@ -15,9 +15,10 @@ use crate::{
             eval::Eval,
             pure_crdt::PureCRDT,
             query::{QueryOperation, Read},
+            redundancy::RedundancyRelation,
         },
         event::{id::EventId, tagged_op::TaggedOp},
-        state::unstable_state::IsUnstableState,
+        state::{stable_state::IsStableState, unstable_state::IsUnstableState},
     },
     HashMap,
 };
@@ -533,12 +534,41 @@ where
     }
 }
 
+// TODO: implement the stable state for Eg-Walker.
+// Idea: compute the state at the stable version (ReadAtVersion)
+// Then flush this state (a Vec<V>) into the stable state.
+// Remove all causally stable updates from the unstable state (keep the nodes but remove the ops for updates that are parent of unstable updates).
+impl<V> IsStableState<List<V>> for Vec<V>
+where
+    V: Debug + Clone,
+{
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn apply(&mut self, value: List<V>) {
+        todo!()
+    }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
+
+    fn prune_redundant_ops(
+        &mut self,
+        _rdnt: RedundancyRelation<List<V>>,
+        _tagged_op: &TaggedOp<List<V>>,
+    ) {
+        unreachable!()
+    }
+}
+
 impl<V> PureCRDT for List<V>
 where
     V: Debug + Clone,
 {
     type Value = Vec<V>;
-    type StableState = Vec<Self>;
+    type StableState = Vec<V>;
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
@@ -565,11 +595,11 @@ where
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
-        _stable: &Self::StableState,
+        stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> Vec<V> {
         let mut document = Document::default();
-        let mut snapshot: Vec<V> = Vec::new();
+        let mut snapshot: Vec<V> = stable.clone();
 
         for tagged_op in unstable.iter() {
             let parents = unstable.parents(tagged_op.id());
