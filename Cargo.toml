@@ -1,56 +1,19 @@
-[package]
-name = "moirai"
-version = "0.1.0"
-edition = "2021"
-authors = [
-    "Léo Olivier <leo.olivier@cea.fr>",
-    "MORCOS Kirollos <Kirollos.MORCOS@cea.fr>",
-]
-description = "Moirai: An Extensible, Generic Operation-based CRDT Framework with Customizable Conflict Resolution"
+[workspace]
+resolver = "3"
+members = ["moirai-protocol", "moirai-crdt", "moirai-fuzz", "moirai-macros"]
+
+[workspace.package]
 license = "Apache-2.0"
+authors = ["Léo Olivier <leo.olivier@cea.fr>"]
 repository = "https://github.com/CEA-LIST/Moirai.git"
-
-[dependencies]
-deepsize2 = { version = "0.1.0", optional = true }
-bimap = { version = "0.6.3", features = ["serde"] }
-log = "0.4"
-paste = "1.0.15"
-petgraph = { version = "0.6.4", features = ["serde-1"] }
-rand = { version = "0.9.1", optional = true }
-serde = { version = "1.0", features = ["derive", "rc"], optional = true }
-serde_json = { version = "1.0.128", optional = true }
-tsify = { version = "0.5.5", optional = true }
-wasm-bindgen = { version = "0.2.100", optional = true }
-vf2 = { version = "1.0.1", optional = true }
-rand_chacha = { version = "0.9.0", optional = true }
-chrono = { version = "0.4.41", optional = true }
-indicatif = { version = "0.18.0", optional = true }
-comfy-table = { version = "7.2.0", optional = true }
-tracing = "0.1.41"
-tracing-subscriber = "0.3.20"
-elsa = "1.11.2"
-rustc-hash = "2.1.1"
-smallvec = "1.15.1"
-readable = { version = "0.16.0", optional = true }
-env_logger = "0.11.8"
-
-[features]
-default = ["crdt", "test_utils", "fuzz"]
-# TODO: should it be a feature or a separate crate?
-fuzz = [
-    "dep:chrono",
-    "dep:rand",
-    "dep:serde",
-    "dep:rand_chacha",
-    "dep:serde_json",
-    "dep:indicatif",
-    "dep:comfy-table",
-    "dep:readable",
-
+homepage = "https://github.com/CEA-LIST/Moirai"
+description = "Moirai: A Rust Implementation of the Pure Operation-Based CRDT Framework, made for Building Collaborative Applications"
+readme = "README.md"
+keywords = [
+    "crdt",
+    "conflict-free replicated data type",
+    "collaborative applications",
+    "distributed systems",
+    "rust",
 ]
-crdt = ["dep:vf2", "dep:serde_json"]
-serde = ["dep:serde_json", "dep:serde", "dep:tsify", "dep:wasm-bindgen"]
-test_utils = ["dep:deepsize2"]
-
-[profile.release]
-debug = true
+categories = []

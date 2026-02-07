@@ -1,0 +1,29 @@
+[package]
+name = "moirai-crdt"
+version = "0.1.0"
+edition = "2024"
+authors = [
+    "Léo Olivier <leo.olivier@cea.fr>",
+    "MORCOS Kirollos <Kirollos.MORCOS@cea.fr>",
+]
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "CRDT implementations for the Moirai"
+readme = "README.md"
+
+[dependencies]
+moirai-protocol = { path = "../moirai-protocol", features = ["test_utils"] }
+moirai-macros = { path = "../moirai-macros" }
+rustc-hash = "1.1.0"
+petgraph = { version = "0.6.4", features = ["serde-1"] }
+vf2 = { version = "1.0.1" }
+serde_json = { version = "1.0.128" }
+# SERDE FEATURES
+serde = { version = "1.0", features = ["derive", "rc"], optional = true }
+# MOIRAI-FUZZ
+moirai-fuzz = { path = "../moirai-fuzz", optional = true }
+
+[features]
+serde = ["dep:serde"]
+fuzz = ["dep:moirai-fuzz"]
