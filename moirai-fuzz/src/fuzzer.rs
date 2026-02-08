@@ -9,8 +9,9 @@ use moirai_protocol::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{FuzzerConfig, OpGeneratorNested, RunConfig},
+    config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
+    op_generator::OpGeneratorNested,
     runner::{RunData, runner},
     serialize::save_execution_record,
     utils::format::seed_to_hex,
@@ -59,15 +60,16 @@ where
     }
 
     // Save all runs at the end
-    if config.save_execution && !run_results_list.is_empty() {
-        if let Err(e) = save_execution_record(
+    if config.save_execution
+        && !run_results_list.is_empty()
+        && let Err(e) = save_execution_record(
             config.name,
             config.final_merge,
             run_results_list,
             maybe_summary,
-        ) {
-            warn!("Failed to save execution record: {e}");
-        }
+        )
+    {
+        warn!("Failed to save execution record: {e}");
     }
 }
 

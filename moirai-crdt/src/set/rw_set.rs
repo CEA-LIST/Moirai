@@ -193,7 +193,8 @@ where
         stable: &<RWSet<V> as PureCRDT>::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> <Contains<V> as QueryOperation>::Response {
-        let exist = stable.0.contains(&q.0)
+        
+        stable.0.contains(&q.0)
             && !stable
                 .1
                 .iter()
@@ -204,8 +205,7 @@ where
                 } else {
                     false
                 }
-            });
-        exist
+            })
     }
 }
 

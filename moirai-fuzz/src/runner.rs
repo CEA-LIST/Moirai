@@ -16,8 +16,9 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     HashMap,
-    config::{OpGeneratorNested, RunConfig},
+    config::RunConfig,
     metrics::{MetricsLog, set_disable_stability},
+    op_generator::OpGeneratorNested,
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, format_string, seed_to_hex},

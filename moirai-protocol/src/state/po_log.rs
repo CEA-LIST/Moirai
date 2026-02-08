@@ -128,13 +128,13 @@ where
         self.unstable.retain(|old_tagged_op| {
             // Note: the new operation is not in the log at this point.
             let is_conc = !old_tagged_op.id().is_predecessor_of(version);
-            let boo = !rdnt(
+
+            !rdnt(
                 old_tagged_op.op(),
                 Some(old_tagged_op.tag()),
                 is_conc,
                 new_tagged_op,
-            );
-            boo
+            )
         });
     }
 }
@@ -147,21 +147,5 @@ where
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<O, U> OpGeneratorNested for POLog<O, U>
-where
-    O: PureCRDT + Clone + OpGenerator,
-    U: IsUnstableState<O> + Default + Debug,
-{
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
-        O::generate(
-            rng,
-            &<O as OpGenerator>::Config::default(),
-            &self.stable,
-            &self.unstable,
-        )
     }
 }

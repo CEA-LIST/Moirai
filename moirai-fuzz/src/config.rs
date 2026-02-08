@@ -1,8 +1,4 @@
-use moirai_protocol::{
-    crdt::pure_crdt::PureCRDT,
-    state::{log::IsLog, unstable_state::IsUnstableState},
-};
-use rand::RngCore;
+use moirai_protocol::state::log::IsLog;
 
 pub struct FuzzerConfig<'a, L>
 where
@@ -42,21 +38,6 @@ where
             save_execution,
         }
     }
-}
-
-pub trait OpGenerator: PureCRDT {
-    type Config: Default;
-
-    fn generate(
-        rng: &mut impl RngCore,
-        config: &Self::Config,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Self;
-}
-
-pub trait OpGeneratorNested: IsLog {
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op;
 }
 
 #[derive(Clone, Debug)]

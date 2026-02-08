@@ -64,11 +64,10 @@ where
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut val = V::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
-            if let TORegister::Write(v) = o {
-                if v > &val {
+            if let TORegister::Write(v) = o
+                && v > &val {
                     val = v.clone();
                 }
-            }
         }
         val
     }

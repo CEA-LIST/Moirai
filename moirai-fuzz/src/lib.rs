@@ -2,6 +2,7 @@ pub mod config;
 mod display;
 pub mod fuzzer;
 mod metrics;
+pub mod op_generator;
 mod runner;
 mod serialize;
 mod utils;

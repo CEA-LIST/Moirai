@@ -11,7 +11,7 @@ use moirai_protocol::{
     state::log::IsLog,
 };
 
-use crate::config::OpGeneratorNested;
+use crate::op_generator::OpGeneratorNested;
 
 // Thread-local flag to control stability behavior during fuzzing
 thread_local! {

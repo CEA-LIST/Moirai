@@ -322,12 +322,11 @@ where
         let mut predecessors = Vec::new();
         for (replica_idx, seq) in version.iter() {
             let id = version.resolver().resolve(replica_idx).unwrap();
-            if let Some(tree) = self.cutter.get(id) {
-                if let Some(nearest_seq) = tree.range(..=seq).next_back() {
-                    let event_id =
-                        EventId::new(replica_idx, *nearest_seq, version.resolver().clone());
-                    predecessors.push(*self.map.get_by_right(&event_id).unwrap());
-                }
+            if let Some(tree) = self.cutter.get(id)
+                && let Some(nearest_seq) = tree.range(..=seq).next_back()
+            {
+                let event_id = EventId::new(replica_idx, *nearest_seq, version.resolver().clone());
+                predecessors.push(*self.map.get_by_right(&event_id).unwrap());
             }
         }
         // assert_eq!(
@@ -440,16 +439,25 @@ where
                 }
             }
 
-            if redundant {
-                if let Some(eidx) = self.graph.find_edge(u, v) {
-                    self.graph.remove_edge(eidx);
-                }
+            if redundant && let Some(eidx) = self.graph.find_edge(u, v) {
+                self.graph.remove_edge(eidx);
             }
         }
     }
 }
 
-#[cfg(any(feature = "test_utils"))]
+impl<O, Q> EvalNested<Q> for EventGraph<O>
+where
+    O: PureCRDT + Clone + Eval<Q>,
+    Q: QueryOperation,
+    EventGraph<O>: IsLog,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        O::execute_query(q, &O::StableState::default(), self)
+    }
+}
+
+#[cfg(feature = "test_utils")]
 impl<O> EventGraph<O>
 where
     O: Debug,
@@ -465,27 +473,5 @@ where
                 &|_, n| format!("label=\"{}\"", n.1),
             )
         )
-    }
-}
-
-impl<O, Q> EvalNested<Q> for EventGraph<O>
-where
-    O: PureCRDT + Clone + Eval<Q>,
-    Q: QueryOperation,
-    EventGraph<O>: IsLog,
-{
-    fn execute_query(&self, q: Q) -> Q::Response {
-        O::execute_query(q, &O::StableState::default(), self)
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<O> OpGeneratorNested for EventGraph<O>
-where
-    O: PureCRDT + Clone + OpGenerator,
-    EventGraph<O>: IsLog<Op = O>,
-{
-    fn generate(&self, rng: &mut impl RngCore) -> <EventGraph<O> as IsLog>::Op {
-        O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
     }
 }
