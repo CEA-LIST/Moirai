@@ -1,3 +1,10 @@
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+};
+
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -8,12 +15,10 @@ use moirai_protocol::{
     state::log::IsLog,
     utils::boxer::Boxer,
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 
 use crate::HashMap;
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-};
 
 #[derive(Clone, Debug)]
 pub enum UWMap<K, O> {
@@ -146,6 +151,7 @@ where
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
     fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+        use moirai_fuzz::value_generator::ValueGenerator;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -597,19 +603,11 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_uw_map() {
-        crate::crdt::test_util::init_tracing();
-
-        use crate::{
-            crdt::list::eg_walker::List,
-            fuzz::{
-                config::{FuzzerConfig, RunConfig},
-                fuzzer::fuzzer,
-            },
-            protocol::state::event_graph::EventGraph,
-            // protocol::state::{po_log::VecLog},
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
         };
 
-        // type UWMapNested = UWMapLog<String, UWMapLog<String, VecLog<Counter<i32>>>>;
         type UWMapNested = UWMapLog<String, EventGraph<List<char>>>;
 
         let run = RunConfig::new(0.9, 4, 5, None, None, true, false);

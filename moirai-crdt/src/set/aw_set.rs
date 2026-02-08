@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -10,8 +12,12 @@ use moirai_protocol::{
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 
 use crate::HashSet;
+#[cfg(feature = "fuzz")]
+use crate::set::SetConfig;
 
 #[derive(Clone, Debug)]
 pub enum AWSet<V> {
@@ -356,12 +362,9 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_aw_set() {
-        use crate::{
-            fuzz::{
-                config::{FuzzerConfig, RunConfig},
-                fuzzer::fuzzer,
-            },
-            protocol::state::po_log::VecLog,
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
         };
 
         let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);

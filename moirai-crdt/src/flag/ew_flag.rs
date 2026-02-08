@@ -1,10 +1,14 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -157,13 +161,11 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_ew_flag() {
-        use crate::{
-            fuzz::{
-                config::{FuzzerConfig, RunConfig},
-                fuzzer::fuzzer,
-            },
-            protocol::state::po_log::VecLog,
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
         };
+        use moirai_protocol::state::po_log::VecLog;
 
         let run = RunConfig::new(0.4, 8, 100_000, None, None, false, false);
         let runs = vec![run.clone(); 1];

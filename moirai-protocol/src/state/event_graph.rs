@@ -1,5 +1,7 @@
-use std::fmt::Display;
-use std::{collections::BTreeSet, fmt::Debug};
+use std::{
+    collections::BTreeSet,
+    fmt::{Debug, Display},
+};
 
 use bimap::BiMap;
 use petgraph::{
@@ -10,17 +12,15 @@ use petgraph::{
     visit::{Dfs, VisitMap, Visitable},
 };
 
-use crate::crdt::pure_crdt::CausalReset;
-use crate::event::lamport::Lamport;
 use crate::{
     HashMap, HashSet,
     clock::version_vector::{Seq, Version},
     crdt::{
         eval::{Eval, EvalNested},
-        pure_crdt::PureCRDT,
+        pure_crdt::{CausalReset, PureCRDT},
         query::QueryOperation,
     },
-    event::{Event, id::EventId, tagged_op::TaggedOp},
+    event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     replica::ReplicaIdOwned,
     state::{log::IsLog, unstable_state::IsUnstableState},
 };

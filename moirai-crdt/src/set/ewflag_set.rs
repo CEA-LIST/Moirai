@@ -58,9 +58,8 @@ where
 mod tests {
     use moirai_protocol::replica::IsReplica;
 
-    use crate::utils::membership::twins_log;
-
     use super::*;
+    use crate::utils::membership::twins_log;
 
     #[test]
     fn default_uw_map() {
@@ -109,7 +108,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_ewflag_set() {
-        use crate::fuzz::{
+        use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };

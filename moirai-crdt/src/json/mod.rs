@@ -1,3 +1,5 @@
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_macros::make_union;
 use moirai_protocol::{
     crdt::{
@@ -6,6 +8,8 @@ use moirai_protocol::{
     },
     state::{event_graph::EventGraph, po_log::VecLog},
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 use serde_json::{Map, Value};
 
 use crate::{
@@ -16,16 +20,6 @@ use crate::{
         nested_list::{List as NestedList, ListLog, ListLog as NestedListLog},
     },
     map::uw_map::{UWMap, UWMapLog},
-};
-
-#[cfg(feature = "fuzz")]
-use {
-    crate::{
-        fuzz::config::{OpGenerator, OpGeneratorNested},
-        protocol::state::log::IsLogTest,
-        utils::boxer::Boxer,
-    },
-    rand::RngCore,
 };
 
 make_union! {
@@ -119,9 +113,8 @@ impl EvalNested<ReadAsJson> for JsonLog {
 #[cfg(feature = "fuzz")]
 impl OpGeneratorNested for JsonLog {
     fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+        use moirai_protocol::state::log::IsLog;
         use rand::distr::{Distribution, weighted::WeightedIndex};
-
-        use crate::protocol::crdt::query::Read;
 
         enum Choice {
             Number,
@@ -133,6 +126,9 @@ impl OpGeneratorNested for JsonLog {
         let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
 
         fn generate_number(log: &VecLog<Counter<isize>>, rng: &mut impl RngCore) -> Json {
+            use moirai_fuzz::op_generator::OpGenerator;
+            use moirai_protocol::state::log::IsLogTest;
+
             let counter_op = <Counter<isize> as OpGenerator>::generate(
                 rng,
                 &<Counter<isize> as OpGenerator>::Config::default(),
@@ -143,6 +139,9 @@ impl OpGeneratorNested for JsonLog {
         }
 
         fn generate_boolean(log: &VecLog<EWFlag>, rng: &mut impl RngCore) -> Json {
+            use moirai_fuzz::op_generator::OpGenerator;
+            use moirai_protocol::state::log::IsLogTest;
+
             let flag_op = <EWFlag as OpGenerator>::generate(
                 rng,
                 &<EWFlag as OpGenerator>::Config::default(),
@@ -153,6 +152,8 @@ impl OpGeneratorNested for JsonLog {
         }
 
         fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl RngCore) -> Json {
+            use moirai_protocol::utils::boxer::Boxer;
+
             let map_op = <UWMapLog<String, JsonLog> as OpGeneratorNested>::generate(log, rng);
             let o = Boxer::<UWMap<String, Box<Json>>>::boxer(map_op);
             Json::Object(o)
@@ -164,6 +165,8 @@ impl OpGeneratorNested for JsonLog {
         }
 
         fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl RngCore) -> Json {
+            use moirai_protocol::utils::boxer::Boxer;
+
             let list_op = <NestedListLog<JsonLog> as OpGeneratorNested>::generate(log, rng);
             let o = Boxer::<NestedList<Box<Json>>>::boxer(list_op);
             Json::Array(o)
@@ -206,6 +209,8 @@ impl OpGeneratorNested for JsonLog {
                 _ => unreachable!(),
             },
             None => {
+                use moirai_protocol::state::log::IsLog;
+
                 let choice = &[
                     Choice::Number,
                     Choice::String,
@@ -417,7 +422,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_union() {
-        use crate::fuzz::{
+        use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };

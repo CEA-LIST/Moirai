@@ -500,6 +500,7 @@ dependencies = [
  "moirai-macros",
  "moirai-protocol",
  "petgraph",
+ "rand",
  "rustc-hash 1.1.0",
  "serde",
  "serde_json",

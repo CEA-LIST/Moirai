@@ -1,5 +1,6 @@
-use crate::{crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp};
 use std::fmt::Debug;
+
+use crate::{crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp};
 
 pub trait IsStableState<O>: Default + Debug {
     fn is_default(&self) -> bool;

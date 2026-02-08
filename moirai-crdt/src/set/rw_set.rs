@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -10,8 +12,12 @@ use moirai_protocol::{
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 
 use crate::HashSet;
+#[cfg(feature = "fuzz")]
+use crate::set::SetConfig;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RWSet<V> {
@@ -193,7 +199,6 @@ where
         stable: &<RWSet<V> as PureCRDT>::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> <Contains<V> as QueryOperation>::Response {
-        
         stable.0.contains(&q.0)
             && !stable
                 .1
@@ -368,15 +373,11 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_rw_set() {
-        // init_tracing();
-
-        use crate::{
-            fuzz::{
-                config::{FuzzerConfig, RunConfig},
-                fuzzer::fuzzer,
-            },
-            protocol::state::po_log::VecLog,
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
         };
+        use moirai_protocol::state::po_log::VecLog;
 
         let run = RunConfig::new(0.4, 8, 10_000, None, None, false, false);
         let runs = vec![run.clone(); 1];

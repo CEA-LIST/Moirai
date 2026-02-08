@@ -83,7 +83,6 @@ pub struct Fair<'a>(pub &'a Tag);
 
 impl<'a> Ord for Fair<'a> {
     fn cmp(&self, other: &Self) -> Ordering {
-        
         match self.0.lamport.cmp(&other.0.lamport) {
             Ordering::Equal => {
                 let val = self.0.lamport().val();

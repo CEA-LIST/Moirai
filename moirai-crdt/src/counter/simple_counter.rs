@@ -3,6 +3,8 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -11,6 +13,8 @@ use moirai_protocol::{
     },
     state::unstable_state::IsUnstableState,
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -129,16 +133,11 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_resettable_counter() {
-        use crate::{
-            // crdt::test_util::init_tracing,
-            fuzz::{
-                config::{FuzzerConfig, RunConfig},
-                fuzzer::fuzzer,
-            },
-            protocol::state::po_log::VecLog,
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
         };
-
-        // init_tracing();
+        use moirai_protocol::state::po_log::VecLog;
 
         let run = RunConfig::new(0.4, 8, 100_000, None, None, false, false);
         let runs = vec![run.clone(); 1];

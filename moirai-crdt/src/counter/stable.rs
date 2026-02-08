@@ -1,11 +1,16 @@
-use moirai_protocol::crdt::redundancy::RedundancyRelation;
-use moirai_protocol::event::tagged_op::TaggedOp;
-use moirai_protocol::state::stable_state::IsStableState;
-use std::fmt::Debug;
-use std::ops::{Add, AddAssign, SubAssign};
+use std::{
+    fmt::Debug,
+    ops::{Add, AddAssign, SubAssign},
+};
 
-use crate::counter::resettable_counter::Counter as ResettableCounter;
-use crate::counter::simple_counter::Counter as SimpleCounter;
+use moirai_protocol::{
+    crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp,
+    state::stable_state::IsStableState,
+};
+
+use crate::counter::{
+    resettable_counter::Counter as ResettableCounter, simple_counter::Counter as SimpleCounter,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CounterStable<V>(V);

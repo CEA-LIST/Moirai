@@ -1,14 +1,22 @@
 use std::fmt::Debug;
 
-use crate::list::eg_walker::MutationTarget;
-use crate::{HashMap, list::eg_walker::List as SimpleList};
-use moirai_protocol::clock::version_vector::Version;
-use moirai_protocol::crdt::eval::EvalNested;
-use moirai_protocol::crdt::query::{QueryOperation, Read};
-use moirai_protocol::event::Event;
-use moirai_protocol::state::log::IsLog;
-use moirai_protocol::utils::boxer::Boxer;
-use moirai_protocol::{event::id::EventId, state::event_graph::EventGraph};
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_protocol::{
+    clock::version_vector::Version,
+    crdt::{
+        eval::EvalNested,
+        query::{QueryOperation, Read},
+    },
+    event::{Event, id::EventId},
+    state::{event_graph::EventGraph, log::IsLog},
+    utils::boxer::Boxer,
+};
+
+use crate::{
+    HashMap,
+    list::eg_walker::{List as SimpleList, MutationTarget},
+};
 
 #[derive(Clone, Debug)]
 pub enum List<O> {
@@ -320,7 +328,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_nested_list() {
-        use crate::fuzz::{
+        use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };

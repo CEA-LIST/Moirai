@@ -1,4 +1,3 @@
-use crate::HashMap;
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
@@ -14,6 +13,8 @@ use moirai_protocol::{
     state::log::IsLog,
 };
 use petgraph::graph::DiGraph;
+
+use crate::HashMap;
 
 #[derive(Clone, Debug)]
 pub enum UWGraph<V, E, No, Lo> {

@@ -1,6 +1,9 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use std::time::{Duration, Instant};
+
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
@@ -8,9 +11,6 @@ use moirai_protocol::{
     replica::{IsReplica, ReplicaIdx},
     state::{event_graph::EventGraph, log::IsLog, unstable_state::IsUnstableState},
 };
-use std::time::{Duration, Instant};
-
-use indicatif::{ProgressBar, ProgressStyle};
 use rand::{Rng, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
 

@@ -119,8 +119,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{register::mv_sliding_window::MVSlidingWindow, utils::membership::twins_log};
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::event_graph::EventGraph};
+
+    use crate::{register::mv_sliding_window::MVSlidingWindow, utils::membership::twins_log};
 
     #[test]
     fn simple_mv_sliding_window() {

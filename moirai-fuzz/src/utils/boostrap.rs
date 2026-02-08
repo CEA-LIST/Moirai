@@ -1,9 +1,10 @@
+use std::fmt::Debug;
+
 use moirai_protocol::{
     broadcast::tcsb::IsTcsb,
     replica::{IsReplica, Replica},
     state::log::IsLog,
 };
-use std::fmt::Debug;
 
 pub fn bootstrap_n<L, T>(n: u8) -> Vec<Replica<L, T>>
 where

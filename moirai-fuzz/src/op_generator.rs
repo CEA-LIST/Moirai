@@ -1,10 +1,15 @@
-use moirai_protocol::state::log::IsLogTest;
+use std::fmt::Debug;
+
 use moirai_protocol::{
     crdt::pure_crdt::PureCRDT,
-    state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
+    state::{
+        event_graph::EventGraph,
+        log::{IsLog, IsLogTest},
+        po_log::POLog,
+        unstable_state::IsUnstableState,
+    },
 };
 use rand::RngCore;
-use std::fmt::Debug;
 
 pub trait OpGenerator: PureCRDT {
     type Config: Default;

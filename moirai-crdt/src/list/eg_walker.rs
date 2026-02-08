@@ -3,6 +3,8 @@ use std::{
     fmt::{Debug, Display, Formatter, Result},
 };
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -14,6 +16,8 @@ use moirai_protocol::{
     event::{id::EventId, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "fuzz")]
+use rand::RngCore;
 
 use crate::HashMap;
 
@@ -779,6 +783,8 @@ where
 
         match choice {
             Choice::Insert => {
+                use moirai_fuzz::value_generator::ValueGenerator;
+
                 let pos = rng.random_range(0..=list.len());
                 let c = V::generate(rng, &<V as ValueGenerator>::Config::default());
                 List::insert(c, pos)
@@ -803,10 +809,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::membership::{triplet_log, twins_log};
     use moirai_protocol::{replica::IsReplica, state::event_graph::EventGraph};
 
     use super::*;
+    use crate::utils::membership::{triplet_log, twins_log};
 
     fn to_string(vec: &[char]) -> String {
         vec.iter().collect()
@@ -1061,7 +1067,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     fn fuzz_list() {
-        use crate::fuzz::{
+        use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
