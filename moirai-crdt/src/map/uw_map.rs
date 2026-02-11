@@ -214,8 +214,8 @@ mod tests {
     };
 
     record!(Duet {
-        first: POLog::<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>,
-        second: POLog::<Counter<i32>, Vec<TaggedOp<Counter<i32>>>>,
+        first: VecLog<Counter<i32>>,
+        second: VecLog<Counter<i32>>,
     });
 
     #[test]

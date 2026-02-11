@@ -12,7 +12,7 @@ macro_rules! record {
                 )*
             }
 
-            #[derive(Debug, Default, PartialEq)]
+            #[derive(Debug, Clone, Default, PartialEq, Eq)]
             pub struct [<$name Value>] {
                 $(
                     pub $field: <$T as $crate::moirai_protocol::state::log::IsLog>::Value,

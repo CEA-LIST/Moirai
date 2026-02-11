@@ -1,6 +1,6 @@
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
-use moirai_macros::make_union;
+use moirai_macros::union;
 use moirai_protocol::{
     crdt::{
         eval::EvalNested,
@@ -22,12 +22,17 @@ use crate::{
     map::uw_map::{UWMap, UWMapLog},
 };
 
-make_union! {
+// record!(Patate {
+//     first: VecLog<Counter<i32>>,
+// });
+
+union! {
     Json = Number(Counter<isize>, VecLog::<Counter<isize>>)
         | Boolean(EWFlag, VecLog::<EWFlag>)
         | String(List<char>, EventGraph::<List<char>>)
         | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog>)
         | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog>)
+        // | Patate(Patate, PatateLog)
 }
 
 #[derive(Debug)]

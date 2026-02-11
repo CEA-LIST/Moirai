@@ -1,5 +1,5 @@
 #[macro_export]
-macro_rules! make_union {
+macro_rules! union {
     (
         $union:ident = $($variant:ident ($ty:ty, $log:ty))|+ $(,)?
     ) => {
