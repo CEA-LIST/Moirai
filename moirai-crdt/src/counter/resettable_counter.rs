@@ -189,13 +189,13 @@ mod tests {
 
     #[test]
     pub fn concurrent_counter() {
-        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<isize>>();
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Counter<f64>>();
 
-        let event_a_1 = replica_a.send(Counter::Dec(1)).unwrap();
+        let event_a_1 = replica_a.send(Counter::Dec(1.0)).unwrap();
         replica_b.receive(event_a_1.clone());
 
         let event_b_1 = replica_b.send(Counter::Reset).unwrap();
-        let event_c_1 = replica_c.send(Counter::Inc(18)).unwrap();
+        let event_c_1 = replica_c.send(Counter::Inc(18.0)).unwrap();
 
         replica_a.receive(event_b_1.clone());
         replica_a.receive(event_c_1.clone());
@@ -205,7 +205,7 @@ mod tests {
         replica_c.receive(event_b_1);
         replica_c.receive(event_a_1);
 
-        let result = 18;
+        let result = 18.0;
         assert_eq!(replica_a.query(Read::new()), result);
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
         assert_eq!(replica_a.query(Read::new()), replica_c.query(Read::new()));

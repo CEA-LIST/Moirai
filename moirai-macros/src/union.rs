@@ -29,26 +29,37 @@ macro_rules! union {
                 )*
             }
 
-            #[derive(Clone, Debug, PartialEq, Eq)]
+            #[derive(Clone, Debug)]
             pub enum [<$union ChildValue>] {
                 $(
                     $variant(<$log as $crate::moirai_protocol::state::log::IsLog>::Value),
                 )*
             }
 
+            #[repr(usize)]
+            enum [<$union ChildValueRank>] {
+                $(
+                    $variant,
+                )*
+            }
+
             impl [<$union ChildValue>] {
-                fn key(&self) -> &'static str {
+                fn rank(&self) -> usize {
                     match self {
-                        $(Self::$variant { .. } => stringify!($variant)),*
+                        $(
+                            Self::$variant(_) => [<$union ChildValueRank>]::$variant as usize,
+                        )*
                     }
                 }
             }
 
-            impl Ord for [<$union ChildValue>] {
-                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                    self.key().cmp(other.key())
+            impl PartialEq for [<$union ChildValue>] {
+                fn eq(&self, other: &Self) -> bool {
+                    self.rank() == other.rank()
                 }
             }
+
+            impl Eq for [<$union ChildValue>] {}
 
             impl PartialOrd for [<$union ChildValue>] {
                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -56,7 +67,13 @@ macro_rules! union {
                 }
             }
 
-            #[derive(Clone, Debug, PartialEq, Eq)]
+            impl Ord for [<$union ChildValue>] {
+                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                    self.rank().cmp(&other.rank())
+                }
+            }
+
+            #[derive(Clone, Debug, PartialEq)]
             pub enum [<$union Value>] {
                 Value([<$union ChildValue>]),
                 Conflict(Vec<[<$union ChildValue>]>),

@@ -12,7 +12,7 @@ macro_rules! record {
                 )*
             }
 
-            #[derive(Debug, Clone, Default, PartialEq, Eq)]
+            #[derive(Debug, Clone, Default, PartialEq)]
             pub struct [<$name Value>] {
                 $(
                     pub $field: <$T as $crate::moirai_protocol::state::log::IsLog>::Value,
@@ -75,6 +75,7 @@ macro_rules! record {
                         $(
                             $name::[<$field:camel>](o) => self.$field.is_enabled(o),
                         )*
+                        _ => unreachable!(),
                     }
                 }
             }

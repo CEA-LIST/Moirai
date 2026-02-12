@@ -64,7 +64,7 @@ Developed at [CEA LIST](https://list.cea.fr/en/), the French Alternative Energie
 
 <div align="center">
   <blockquote cite="https://www.huxley.net/bnw/four.html">
-    <p style="font-style:italic">Equal laws the Sisters make, <br /> Kings' and peasants' threads they take, <br /> And one weapon cuts them all.</p>
+    <p style="font-style:italic">Equal laws the Moirai make, <br /> Kings' and peasants' threads they take, <br /> And one weapon cuts them all.</p>
   </blockquote>
   <p>— Marquis de Racan</p>
 </div>

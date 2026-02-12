@@ -196,12 +196,8 @@ mod tests {
     use moirai_macros::record;
     use moirai_protocol::{
         crdt::query::{Contains, Get, Read},
-        event::tagged_op::TaggedOp,
         replica::IsReplica,
-        state::{
-            event_graph::EventGraph,
-            po_log::{POLog, VecLog},
-        },
+        state::{event_graph::EventGraph, po_log::VecLog},
     };
 
     use crate::{

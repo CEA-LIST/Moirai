@@ -22,17 +22,12 @@ use crate::{
     map::uw_map::{UWMap, UWMapLog},
 };
 
-// record!(Patate {
-//     first: VecLog<Counter<i32>>,
-// });
-
 union! {
     Json = Number(Counter<isize>, VecLog::<Counter<isize>>)
         | Boolean(EWFlag, VecLog::<EWFlag>)
         | String(List<char>, EventGraph::<List<char>>)
         | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog>)
         | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog>)
-        // | Patate(Patate, PatateLog)
 }
 
 #[derive(Debug)]
