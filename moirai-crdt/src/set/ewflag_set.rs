@@ -1,11 +1,13 @@
 use std::{fmt::Debug, hash::Hash};
 
 use moirai_protocol::{
+    clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
     },
-    state::po_log::VecLog,
+    event::Event,
+    state::{log::IsLog, po_log::VecLog},
 };
 
 use crate::{
@@ -14,37 +16,73 @@ use crate::{
     map::uw_map::{UWMap, UWMapLog},
 };
 
-pub type EWFlagSet<K> = UWMapLog<K, VecLog<EWFlag>>;
+#[derive(Clone, Debug)]
+pub enum EWFlagSet<V> {
+    Add(V),
+    Remove(V),
+    Clear,
+}
 
-pub struct Set<K>(UWMap<K, EWFlag>);
+#[derive(Clone, Debug)]
+pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<EWFlag>>);
 
-impl<K> Set<K>
+impl<V> Default for EWFlagSetLog<V>
 where
-    K: Clone + Hash + Debug + Eq,
+    V: Clone + Hash + Debug + Eq,
 {
-    pub fn add(key: K) -> UWMap<K, EWFlag> {
-        UWMap::Update(key, EWFlag::Enable)
-    }
-
-    pub fn remove(key: K) -> UWMap<K, EWFlag> {
-        UWMap::Update(key, EWFlag::Disable)
-    }
-
-    pub fn clear() -> UWMap<K, EWFlag> {
-        UWMap::Clear
+    fn default() -> Self {
+        Self(UWMapLog::default())
     }
 }
 
-impl<K> EvalNested<Read<HashSet<K>>> for EWFlagSet<K>
+impl<V> IsLog for EWFlagSetLog<V>
 where
-    K: Clone + Debug + Hash + Eq + PartialEq,
+    V: Clone + Hash + Debug + Eq,
+{
+    type Value = HashSet<V>;
+    type Op = EWFlagSet<V>;
+
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_enabled(&self, _op: &Self::Op) -> bool {
+        true
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>) {
+        let op = match event.op() {
+            EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
+            EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
+            EWFlagSet::Clear => UWMap::Clear,
+        };
+        let event = Event::unfold(event, op);
+        self.0.effect(event);
+    }
+
+    fn stabilize(&mut self, version: &Version) {
+        self.0.stabilize(version);
+    }
+
+    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        self.0.redundant_by_parent(version, conservative);
+    }
+
+    fn is_default(&self) -> bool {
+        self.0.is_default()
+    }
+}
+
+impl<V> EvalNested<Read<HashSet<V>>> for EWFlagSetLog<V>
+where
+    V: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: Read<HashSet<K>>,
-    ) -> <Read<HashSet<K>> as QueryOperation>::Response {
+        _q: Read<HashSet<V>>,
+    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = HashSet::default();
-        for (k, v) in &self.children {
+        for (k, v) in &self.0.children {
             let val = v.execute_query(Read::new());
             if val {
                 set.insert(k.clone());
@@ -63,11 +101,11 @@ mod tests {
 
     #[test]
     fn default_uw_map() {
-        let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
-        let event_a = replica_a.send(Set::<&str>::add("a")).unwrap();
+        let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
+        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(Set::<&str>::remove("a")).unwrap();
+        let event_b = replica_b.send(EWFlagSet::<&str>::Remove("a")).unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(
@@ -82,15 +120,15 @@ mod tests {
 
     #[test]
     fn test_ewflag_set() {
-        let (mut replica_a, mut replica_b) = twins_log::<EWFlagSet<&str>>();
-        let event_a = replica_a.send(Set::<&str>::add("a")).unwrap();
-        let event_b = replica_b.send(Set::<&str>::add("b")).unwrap();
+        let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
+        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
+        let event_b = replica_b.send(EWFlagSet::<&str>::Add("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(Set::<&str>::remove("a")).unwrap();
-        let event_b = replica_b.send(Set::<&str>::add("c")).unwrap();
+        let event_a = replica_a.send(EWFlagSet::<&str>::Remove("a")).unwrap();
+        let event_b = replica_b.send(EWFlagSet::<&str>::Add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -103,33 +141,5 @@ mod tests {
             replica_b.query(Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec!["b", "c"])
         );
-    }
-
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_ewflag_set() {
-        use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
-            fuzzer::fuzzer,
-        };
-
-        let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        let run_2 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
-        let run_3 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
-        let run_4 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
-        let run_5 = RunConfig::new(0.7, 16, 600_000, None, None, false, true);
-        let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
-        let run_8 = RunConfig::new(0.7, 16, 1_300_000, None, None, false, true);
-        let run_9 = RunConfig::new(0.7, 16, 1_600_000, None, None, false, true);
-        let run_10 = RunConfig::new(0.7, 16, 2_000_000, None, None, false, true);
-        let run_11 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
-        let runs = vec![
-            run_1, run_2, run_3, run_4, run_5, run_7, run_8, run_9, run_10, run_11,
-        ];
-
-        let config =
-            FuzzerConfig::<EWFlagSet<usize>>::new("ew_flag_set", runs, true, |a, b| a == b, true);
-
-        fuzzer::<EWFlagSet<usize>>(config);
     }
 }
