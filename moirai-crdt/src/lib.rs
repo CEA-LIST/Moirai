@@ -5,6 +5,7 @@ pub mod json;
 pub mod list;
 pub mod map;
 pub mod model;
+pub mod option;
 pub mod register;
 pub mod set;
 pub mod utils;
