@@ -6,8 +6,12 @@ use crate::clock::version_vector::Version;
 pub struct Lamport(usize);
 
 impl Lamport {
-    pub(super) fn val(&self) -> usize {
+    pub fn val(&self) -> usize {
         self.0
+    }
+
+    pub fn new(val: usize) -> Self {
+        Lamport(val)
     }
 }
 

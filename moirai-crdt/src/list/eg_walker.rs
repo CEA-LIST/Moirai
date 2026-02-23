@@ -24,7 +24,7 @@ use crate::HashMap;
 // TODO: use Fair Tag
 
 // Single-character, position-based, pure op-based CRDT operations
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub enum List<V> {
     Insert { content: V, pos: usize },
     Delete { pos: usize },

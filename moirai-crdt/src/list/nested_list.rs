@@ -111,12 +111,16 @@ where
         for child in self.children.values_mut() {
             child.stabilize(version);
         }
+        // TODO: Check this works
+        self.position.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         for child in self.children.values_mut() {
             child.redundant_by_parent(version, conservative);
         }
+        // TODO: Check this works
+        self.position.redundant_by_parent(version, conservative);
     }
 
     fn is_default(&self) -> bool {
@@ -209,8 +213,10 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
+        HashMap,
         counter::resettable_counter::Counter,
         list::nested_list::{List, ListLog},
+        map::uw_map::{UWMap, UWMapLog},
         utils::membership::twins_log,
     };
 
@@ -323,6 +329,44 @@ mod tests {
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn map_of_list() {
+        let (mut replica_a, mut replica_b) =
+            twins_log::<UWMapLog<&str, ListLog<VecLog<Counter<i32>>>>>();
+
+        let event_a = replica_a
+            .send(UWMap::Update("a", List::insert(0, Counter::Inc(10))))
+            .unwrap();
+        let event_a_2 = replica_a
+            .send(UWMap::Update("a", List::insert(1, Counter::Inc(5))))
+            .unwrap();
+        let event_a_3 = replica_a
+            .send(UWMap::Update("a", List::update(0, Counter::Inc(1))))
+            .unwrap();
+
+        let mut result = HashMap::default();
+        result.insert("a", vec![11, 5]);
+        assert_eq!(replica_a.query(Read::new()), result);
+
+        replica_b.receive(event_a);
+        replica_b.receive(event_a_2);
+        replica_b.receive(event_a_3);
+
+        assert_eq!(replica_b.query(Read::new()), result);
+
+        let event_b = replica_b.send(UWMap::Remove("a")).unwrap();
+        let event_a = replica_a
+            .send(UWMap::Update("a", List::insert(0, Counter::Inc(100))))
+            .unwrap();
+        replica_b.receive(event_a);
+        replica_a.receive(event_b);
+
+        let mut result = HashMap::default();
+        result.insert("a", vec![100]);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]

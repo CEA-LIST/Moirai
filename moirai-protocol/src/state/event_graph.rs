@@ -74,6 +74,7 @@ where
             &<O as PureCRDT>::StableState::default(),
             self,
         ) {
+            // Note: inject with its own event id!
             CausalReset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);

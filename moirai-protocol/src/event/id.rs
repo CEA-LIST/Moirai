@@ -43,7 +43,7 @@ impl EventId {
         ver_seq >= self.seq
     }
 
-    pub(crate) fn resolver(&self) -> &Resolver {
+    pub fn resolver(&self) -> &Resolver {
         &self.resolver
     }
 }

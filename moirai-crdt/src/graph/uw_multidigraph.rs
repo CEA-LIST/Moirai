@@ -265,11 +265,11 @@ mod tests {
     use crate::{
         counter::resettable_counter::Counter,
         graph::uw_multidigraph::{UWGraph, UWGraphLog},
-        register::lww_register::LWWRegister,
+        register::{policy::LwwPolicy, unique_register::Register},
         utils::membership::{triplet_log, twins_log},
     };
 
-    type Lww = VecLog<LWWRegister<i32>>;
+    type Lww = VecLog<Register<i32, LwwPolicy>>;
     type Cntr = VecLog<Counter<i32>>;
 
     #[test]
@@ -279,7 +279,7 @@ mod tests {
         let event = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         replica_b.receive(event);
@@ -287,7 +287,7 @@ mod tests {
         let event = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(2),
+                child: Register::Write(2),
             })
             .unwrap();
         replica_a.receive(event);
@@ -324,19 +324,19 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(5),
+                child: Register::Write(5),
             })
             .unwrap();
         let event_b = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(10),
+                child: Register::Write(10),
             })
             .unwrap();
         let event_b_2 = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(8),
+                child: Register::Write(8),
             })
             .unwrap();
 
@@ -356,7 +356,7 @@ mod tests {
         let event = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(3),
+                child: Register::Write(3),
             })
             .unwrap();
         replica_b.receive(event);
@@ -364,7 +364,7 @@ mod tests {
         let event = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(4),
+                child: Register::Write(4),
             })
             .unwrap();
         replica_a.receive(event);
@@ -393,13 +393,13 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         let event_b = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(2),
+                child: Register::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -425,7 +425,7 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
@@ -443,14 +443,14 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
         let event_b = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(2),
+                child: Register::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -479,7 +479,7 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(3),
+                child: Register::Write(3),
             })
             .unwrap();
         replica_b.receive(event_a);
@@ -502,13 +502,13 @@ mod tests {
         let event_a_1 = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(4),
+                child: Register::Write(4),
             })
             .unwrap();
         let event_a_2 = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(3),
+                child: Register::Write(3),
             })
             .unwrap();
         let event_a_3 = replica_a
@@ -530,14 +530,14 @@ mod tests {
         let event_b_1 = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         replica_c.receive(event_b_1.clone());
         let event_c_1 = replica_c
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         let event_c_2 = replica_c
@@ -598,14 +598,14 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "A",
-                child: LWWRegister::Write(1),
+                child: Register::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
         let event_b = replica_b
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(2),
+                child: Register::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -644,7 +644,7 @@ mod tests {
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
                 id: "B",
-                child: LWWRegister::Write(3),
+                child: Register::Write(3),
             })
             .unwrap();
         replica_b.receive(event_a);
