@@ -90,7 +90,7 @@ impl EvalNested<ReadAsJson> for JsonLog {
                 JsonChild::Number(log) => Value::Number(log.execute_query(Read::new()).into()),
                 JsonChild::Boolean(log) => Value::Bool(log.execute_query(Read::new())),
                 JsonChild::String(log) => {
-                    let chars: String = log.execute_query(Read::new()).into_iter().collect();
+                    let chars: String = log.execute_query(Read::<String>::new());
                     Value::String(chars)
                 }
                 JsonChild::Object(log) => log.execute_query(ReadAsJson::new()),

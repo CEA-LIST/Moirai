@@ -1,5 +1,4 @@
-use std::cmp::Ordering;
-use std::fmt::Debug;
+use std::{cmp::Ordering, fmt::Debug};
 
 use moirai_protocol::event::tag::Tag;
 
@@ -55,51 +54,6 @@ impl Ord for Lww<'_> {
 }
 
 impl PartialOrd for Lww<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, other))
-    }
-}
-
-/// First-Writer-Wins
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FwwPolicy;
-
-impl Policy for FwwPolicy {
-    fn compare(a: &Tag, b: &Tag) -> Ordering {
-        // First, compare Lamport timestamps
-        match a.lamport().cmp(b.lamport()) {
-            Ordering::Equal => {
-                // Tie-break using origin id
-                b.id().origin_id().cmp(a.id().origin_id())
-            }
-            other_order => other_order,
-        }
-    }
-}
-
-impl Ord for FwwPolicy {
-    fn cmp(&self, _other: &Self) -> Ordering {
-        Ordering::Equal
-    }
-}
-
-impl PartialOrd for FwwPolicy {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, other))
-    }
-}
-
-/// Wrapper with reference for convenient comparison
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fww<'a>(pub &'a Tag);
-
-impl Ord for Fww<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        FwwPolicy::compare(self.0, other.0)
-    }
-}
-
-impl PartialOrd for Fww<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(Ord::cmp(self, other))
     }

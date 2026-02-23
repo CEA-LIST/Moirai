@@ -10,7 +10,10 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
 };
 
-use crate::register::policy::Policy;
+use crate::register::policy::{FairPolicy, LwwPolicy, Policy};
+
+pub type LwwRegister<V> = Register<V, LwwPolicy>;
+pub type FairRegister<V> = Register<V, FairPolicy>;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(
