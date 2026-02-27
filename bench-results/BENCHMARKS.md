@@ -82,11 +82,14 @@ runs exhibit comparable levels of concurrency.
 
 ### Raw Data
 
-- AW-Set:  
-  [/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json](/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json)
-
-- EWFlag-Set:  
-  [/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json](/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json)
+- **AW-Set**:
+  - Test results: [/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json](/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json)
+  - Test file: [/src/crdt/set/aw_set.rs#L387](/src/crdt/set/aw_set.rs#L387)
+  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
+- EWFlag-Set: 
+  - Test results: [/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json](/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json)
+  - Test file: [/src/crdt/set/ewflag_set.rs#L111](/src/crdt/set/ewflag_set.rs#L111)
+  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
 
 ---
 
