@@ -28,6 +28,7 @@ unnecessary overhead.
 
 The EWFlag-Set addresses this issue by exploiting **nested Pure CRDTs**.
 It is composed of:
+
 - an **Update-Wins Map**, whose keys are set elements, and
 - **Enable-Wins Flags** as values.
 
@@ -62,6 +63,7 @@ standard Set CRDT specification.
 Each replica has an equal probability of being selected to issue an update.
 Offline replicas continue to generate updates but do not exchange messages.
 When selected and online, a replica:
+
 1. pulls missing updates from all other online replicas, and
 2. broadcasts its newly issued update to all online replicas.
 
@@ -80,11 +82,14 @@ runs exhibit comparable levels of concurrency.
 
 ### Raw Data
 
-- AW-Set:  
-  [/bench-results/aw_set/2026-01-30-11-18-48_master_f35232df.json](/bench-results/aw_set/2026-01-30-11-18-48_master_f35232df.json)
-
-- EWFlag-Set:  
-  [/bench-results/ew_flag_set/2026-01-30-11-25-32_master_f35232df.json](/bench-results/ew_flag_set/2026-01-30-11-25-32_master_f35232df.json)
+- **AW-Set**:
+  - Test results: [/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json](/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json)
+  - Test file: [/src/crdt/set/aw_set.rs#L387](/src/crdt/set/aw_set.rs#L387)
+  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
+- EWFlag-Set: 
+  - Test results: [/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json](/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json)
+  - Test file: [/src/crdt/set/ewflag_set.rs#L111](/src/crdt/set/ewflag_set.rs#L111)
+  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
 
 ---
 
@@ -99,6 +104,7 @@ new minimum is impossible.
 ### Experimental Conditions
 
 This experiment compares:
+
 - `column_wise_min()` (full recomputation), and
 - `column_wise_min_incremental()` (incremental computation)
 
@@ -109,6 +115,7 @@ on an AW-Set. Upon each update delivery, both LSV computation methods are
 executed, and their execution times are measured.
 
 For each run:
+
 1. each replica records the total time spent computing the LSV using each
    method, and
 2. the reported value is the average across all replicas.
@@ -117,6 +124,4 @@ Note that the results of this experiment were not collected automatically, despi
 
 ### Raw Data
 
-The raw benchmark results for this experiment are available at:
-
-[/bench-results/stability_computation/](/bench-results/stability_computation/)
+The raw benchmark results for this experiment are available at: [/bench-results/stability_computation/](/bench-results/stability_computation/).

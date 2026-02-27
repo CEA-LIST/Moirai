@@ -25,6 +25,7 @@ use crate::{
     state::{log::IsLog, unstable_state::IsUnstableState},
 };
 
+// TODO: use Daggy?
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
     graph: StableDiGraph<TaggedOp<O>, ()>,
