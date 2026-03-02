@@ -143,16 +143,15 @@ where
                     node_index.insert(v, idx);
                 }
                 Graph::AddArc(v1, v2, e) => {
-                    // if edge_index.contains(&(v1, v2, e)) {
-                    //     continue; // Skip if the edge already exists
-                    // }
+                    if edge_index.contains(&(v1, v2, e)) {
+                        continue; // Skip if the edge already exists
+                    }
                     if let (Some(a), Some(b)) = (node_index.get(v1), node_index.get(v2)) {
                         graph.add_edge(*a, *b, e.clone());
                         edge_index.insert((v1, v2, e));
                     }
                 }
-                Graph::RemoveVertex(_) => unreachable!(),
-                Graph::RemoveArc(_, _, _) => unreachable!(),
+                Graph::RemoveVertex(_) | Graph::RemoveArc(_, _, _) => unreachable!(),
             }
         }
         graph
