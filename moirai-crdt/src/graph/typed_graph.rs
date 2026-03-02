@@ -6,36 +6,35 @@ use moirai_protocol::{
 use petgraph::graph::DiGraph;
 use std::fmt::Debug;
 
-// pub trait NodeKind: Debug {}
-// pub trait EdgeKind: Debug {}
+pub trait NodeKind: Debug {}
+pub trait EdgeKind: Debug {}
 
-// pub trait CanConnectTo<Target: NodeKind, Edge: EdgeKind> {
-//     const MIN: usize = 0;
-//     const MAX: Option<usize> = None;
-// }
+pub trait CanConnectTo<Target: NodeKind, Edge: EdgeKind> {
+    const MIN: usize = 0;
+    const MAX: Option<usize> = None;
+}
 
-// pub trait TypedGraphSchema {
-//     type Vertex: Debug + Clone;
-//     type Edge: Debug + Clone;
-// }
-
-pub trait Schema<V, E> {
-    fn can_connect(source: &V, target: &V, edge: &E) -> bool;
+pub enum Patate {
+    A(Box<dyn NodeKind + Debug>),
 }
 
 #[derive(Clone, Debug)]
-pub enum TypedGraph<V, E> {
-    AddVertex { id: V },
-    RemoveVertex { id: V },
-    AddArc { source: V, target: V, kind: E },
-    RemoveArc { source: V, target: V, kind: E },
+pub enum TypedGraph<S, T, E>
+where
+    S: NodeKind + CanConnectTo<T, E>,
+    T: NodeKind,
+    E: EdgeKind,
+{
+    AddVertex { id: S },
+    RemoveVertex { id: S },
+    AddArc { source: S, target: T, kind: E },
+    RemoveArc { source: S, target: T, kind: E },
 }
 
-impl<V, E, S> PureCRDT for TypedGraph<V, E>
+impl<V, E> PureCRDT for TypedGraph<V, V, E>
 where
-    V: Debug + Clone,
-    E: Debug + Clone,
-    S: Schema<V, E>,
+    V: NodeKind + CanConnectTo<V, E>,
+    E: EdgeKind,
 {
     type Value = DiGraph<V, E>;
     type StableState = Vec<Self>;
@@ -101,74 +100,50 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::{CanConnectTo, EdgeKind, NodeKind, TypedGraph, TypedGraphSchema};
+#[cfg(test)]
+mod tests {
+    use crate::{
+        graph::typed_graph::{CanConnectTo, EdgeKind, NodeKind, TypedGraph},
+        utils::membership::twins_log,
+    };
 
-//     #[derive(Clone, Debug)]
-//     struct BehaviorTree(u8);
-//     impl NodeKind for BehaviorTree {}
+    #[derive(Clone, Debug)]
+    struct BehaviorTree(u8);
+    impl NodeKind for BehaviorTree {}
 
-//     #[derive(Clone, Debug)]
-//     struct SubTree(u8);
-//     impl NodeKind for SubTree {}
+    #[derive(Clone, Debug)]
+    struct SubTree(u8);
+    impl NodeKind for SubTree {}
 
-//     #[derive(Clone, Debug)]
-//     struct Tree;
-//     impl EdgeKind for Tree {}
+    #[derive(Clone, Debug)]
+    struct BlackBoard(u8);
+    impl NodeKind for BlackBoard {}
 
-//     impl CanConnectTo<BehaviorTree, Tree> for SubTree {
-//         const MAX: Option<usize> = Some(1);
-//         const MIN: usize = 1;
-//     }
+    #[derive(Clone, Debug)]
+    struct BlackBoardEntry(u8);
+    impl NodeKind for BlackBoardEntry {}
 
-//     #[derive(Clone, Debug)]
-//     enum Vertex {
-//         BehaviorTree(BehaviorTree),
-//         SubTree(SubTree),
-//     }
+    #[derive(Clone, Debug)]
+    struct Entries;
+    impl EdgeKind for Entries {}
 
-//     #[derive(Clone, Debug)]
-//     enum Edge {
-//         Tree(Tree),
-//     }
+    #[derive(Clone, Debug)]
+    struct Tree;
+    impl EdgeKind for Tree {}
 
-//     impl From<BehaviorTree> for Vertex {
-//         fn from(value: BehaviorTree) -> Self {
-//             Self::BehaviorTree(value)
-//         }
-//     }
+    impl CanConnectTo<BehaviorTree, Tree> for SubTree {
+        const MAX: Option<usize> = Some(1);
+        const MIN: usize = 1;
+    }
 
-//     impl From<SubTree> for Vertex {
-//         fn from(value: SubTree) -> Self {
-//             Self::SubTree(value)
-//         }
-//     }
+    impl CanConnectTo<BlackBoardEntry, Entries> for BlackBoard {
+        const MAX: Option<usize> = None;
+        const MIN: usize = 0;
+    }
 
-//     impl From<Tree> for Edge {
-//         fn from(value: Tree) -> Self {
-//             Self::Tree(value)
-//         }
-//     }
-
-//     struct BtSchema;
-
-//     impl TypedGraphSchema for BtSchema {
-//         type Vertex = Vertex;
-//         type Edge = Edge;
-//     }
-
-//     #[test]
-//     fn add_arc_checked_enforces_schema_and_connectivity_at_compile_time() {
-//         let op = TypedGraph::<Vertex, Edge>::add_arc_checked::<BtSchema, _, _, _>(
-//             SubTree(1),
-//             BehaviorTree(2),
-//             Tree,
-//         );
-
-//         match op {
-//             TypedGraph::AddArc { .. } => {}
-//             _ => panic!("expected AddArc"),
-//         }
-//     }
-// }
+    // #[test]
+    // fn new_typed_graph() {
+    //     type Test = dyn NodeKind + CanConnectTo<dyn NodeKind, dyn EdgeKind>;
+    //     let (mut replica_a, mut replica_b) = twins_log::<TypedGraph>();
+    // }
+}
