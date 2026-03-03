@@ -265,7 +265,8 @@ mod tests {
     use crate::{
         counter::resettable_counter::Counter,
         graph::uw_multidigraph::{UWGraph, UWGraphLog},
-        register::{policy::LwwPolicy, unique_register::Register},
+        policy::LwwPolicy,
+        register::unique_register::Register,
         utils::membership::{triplet_log, twins_log},
     };
 

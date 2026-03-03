@@ -131,7 +131,7 @@ mod tests {
         utils::intern_str::Interner,
     };
 
-    use crate::register::policy::Fair;
+    use crate::policy::Fair;
 
     #[test]
     fn test_fair() {

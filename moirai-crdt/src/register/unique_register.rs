@@ -10,7 +10,7 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
 };
 
-use crate::register::policy::{FairPolicy, LwwPolicy, Policy};
+use crate::policy::{FairPolicy, LwwPolicy, Policy};
 
 pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
@@ -88,7 +88,8 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        register::{policy::LwwPolicy, unique_register::Register},
+        policy::LwwPolicy,
+        register::unique_register::Register,
         utils::membership::{triplet, twins},
     };
 

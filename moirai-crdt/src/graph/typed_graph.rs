@@ -11,7 +11,10 @@ use petgraph::graph::DiGraph;
 use std::hash::Hash;
 use std::{cmp::Ordering, fmt::Debug};
 
-use crate::{HashMap, HashSet};
+use crate::{
+    HashMap, HashSet,
+    policy::{LwwPolicy, Policy},
+};
 
 pub trait Connectable<Target, Edge> {
     const MIN: usize;
@@ -162,34 +165,89 @@ impl PureCRDT for MyTypedGraph {
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        stable: &Self::StableState,
+        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
     ) -> bool
     where
         Self: 'a,
     {
-        matches!(
-            new_tagged_op.op(),
-            MyTypedGraph::RemoveVertex { .. } | MyTypedGraph::RemoveArc(_)
-        )
+        match new_tagged_op.op() {
+            MyTypedGraph::AddVertex { .. } => false,
+            MyTypedGraph::RemoveVertex { .. } | MyTypedGraph::RemoveArc(_) => true,
+            MyTypedGraph::AddArc(arc) => {
+                let count_stable = stable
+                    .iter()
+                    .filter(|op| match op {
+                        MyTypedGraph::AddArc(a) => {
+                            a.source() == arc.source() && a.kind() == arc.kind()
+                        }
+                        _ => false,
+                    })
+                    .count();
+                let unstable_ops: Vec<_> = unstable.collect();
+                let count_unstable = unstable_ops
+                    .iter()
+                    .filter(|op| match op.op() {
+                        MyTypedGraph::AddArc(a) => {
+                            a.source() == arc.source() && a.kind() == arc.kind()
+                        }
+                        _ => false,
+                    })
+                    .count();
+
+                if count_stable + count_unstable < arc.max() {
+                    false
+                } else {
+                    // The new arc can't loose against a stable one
+                    unstable_ops
+                        .iter()
+                        .any(|old_tagged_op| match old_tagged_op.op() {
+                            MyTypedGraph::AddArc(a) => {
+                                a.source() == arc.source()
+                                    && a.kind() == arc.kind()
+                                    && LwwPolicy::compare(new_tagged_op.tag(), old_tagged_op.tag())
+                                        == std::cmp::Ordering::Less
+                            }
+                            _ => false,
+                        })
+                }
+            }
+        }
     }
 
     fn redundant_by_when_redundant(
-        _old_op: &Self,
+        old_op: &Self,
         _old_tag: Option<&Tag>,
-        _is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
-        false
+        // old_op = addVertex, addArc only
+        !is_conc
+            && match (old_op, new_tagged_op.op()) {
+                (MyTypedGraph::AddArc(arc), MyTypedGraph::RemoveVertex { id: v3 }) => {
+                    arc.source() == *v3 || arc.target() == *v3
+                }
+                (MyTypedGraph::AddArc(arc1), MyTypedGraph::AddArc(arc2))
+                | (MyTypedGraph::AddArc(arc1), MyTypedGraph::RemoveArc(arc2)) => {
+                    arc1.source() == arc2.source()
+                        && arc1.target() == arc2.target()
+                        && arc1.kind() == arc2.kind()
+                }
+                (MyTypedGraph::AddVertex { id: v1 }, MyTypedGraph::AddVertex { id: v2 })
+                | (MyTypedGraph::AddVertex { id: v1 }, MyTypedGraph::RemoveVertex { id: v2 }) => {
+                    v1 == v2
+                }
+                _ => false,
+            }
     }
 
     fn redundant_by_when_not_redundant(
-        _old_op: &Self,
-        _old_tag: Option<&Tag>,
-        _is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        old_op: &Self,
+        old_tag: Option<&Tag>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
-        false
+        Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
     fn stabilize(
@@ -231,13 +289,12 @@ impl PureCRDT for MyTypedGraph {
                 let idx_2 = graph
                     .node_indices()
                     .find(|&idx| graph.node_weight(idx) == Some(&target));
-                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
-                    if !graph
+                if let (Some(i1), Some(i2)) = (idx_1, idx_2)
+                    && !graph
                         .edges_connecting(i1, i2)
                         .any(|edge| edge.weight() == &kind)
-                    {
-                        return false;
-                    }
+                {
+                    return false;
                 }
 
                 let count = graph
@@ -261,6 +318,7 @@ impl PureCRDT for MyTypedGraph {
                     return false;
                 }
 
+                // `kind` must be unique per source-target pair, so we only need to check the count of existing edges with the same source and kind
                 let count = graph
                     .edges_directed(
                         graph.node_indices().find(|&i| graph[i] == source).unwrap(),
@@ -348,9 +406,7 @@ mod tests {
 
     #[test]
     fn my_application() {
-        let (mut replica_a, _) = twins::<MyTypedGraph>();
-
-        println!("Replica a read: {:?}", replica_a.query(Read::new()));
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph>();
 
         let event_a_1 = replica_a
             .send(MyTypedGraph::AddVertex {
@@ -372,22 +428,91 @@ mod tests {
             })))
             .unwrap();
 
-        let event_a_2 = replica_a
+        let event_a_4 = replica_a
             .send(MyTypedGraph::AddVertex {
                 id: MyTypedGraphVertex::Server(Server(2)),
             })
             .unwrap();
 
-        let event_a_2 = replica_a
-            .send(MyTypedGraph::RemoveArc(MyTypedGraphArcs::UserToServer(
-                Arc {
-                    source: User(1),
-                    target: Server(1),
-                    kind: NetworkConnection,
-                },
-            )))
+        let event_a_5 = replica_a.send(MyTypedGraph::RemoveArc(MyTypedGraphArcs::UserToServer(
+            Arc {
+                source: User(1),
+                target: Server(1),
+                kind: NetworkConnection,
+            },
+        )));
+        assert!(event_a_5.is_none());
+
+        replica_b.receive(event_a_1);
+        replica_b.receive(event_a_2);
+        replica_b.receive(event_a_3);
+        replica_b.receive(event_a_4);
+
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn arcs() {
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph>();
+
+        let event_a_1 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyTypedGraphVertex::User(User(1)),
+            })
             .unwrap();
 
-        println!("Replica a read: {:?}", replica_a.query(Read::new()));
+        let event_a_2 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyTypedGraphVertex::Server(Server(1)),
+            })
+            .unwrap();
+
+        let event_a_3 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyTypedGraphVertex::Server(Server(2)),
+            })
+            .unwrap();
+
+        replica_b.receive(event_a_1);
+        replica_b.receive(event_a_2);
+        replica_b.receive(event_a_3);
+
+        let event_a_4 = replica_a
+            .send(MyTypedGraph::AddArc(MyTypedGraphArcs::UserToServer(Arc {
+                source: User(1),
+                target: Server(1),
+                kind: NetworkConnection,
+            })))
+            .unwrap();
+
+        let event_b_1 = replica_b
+            .send(MyTypedGraph::AddArc(MyTypedGraphArcs::UserToServer(Arc {
+                source: User(1),
+                target: Server(2),
+                kind: NetworkConnection,
+            })))
+            .unwrap();
+
+        replica_a.receive(event_b_1);
+        replica_b.receive(event_a_4);
+
+        println!(
+            "Graph A: {:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[])
+        );
+        println!(
+            "Graph B: {:?}",
+            petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[])
+        );
+
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
     }
 }

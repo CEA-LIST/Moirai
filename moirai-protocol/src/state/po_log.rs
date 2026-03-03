@@ -47,6 +47,7 @@ where
     fn effect(&mut self, event: Event<Self::Op>) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
+            println!("Redundant by itself: {}", new_tagged_op);
             if !O::DISABLE_R_WHEN_R {
                 self.prune_redundant_ops(
                     O::redundant_by_when_redundant,
