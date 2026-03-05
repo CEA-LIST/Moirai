@@ -9,7 +9,7 @@ use moirai_protocol::{
     broadcast::tcsb::Tcsb,
     crdt::{eval::EvalNested, query::Read},
     replica::{IsReplica, ReplicaIdx},
-    state::{event_graph::EventGraph, log::IsLog, unstable_state::IsUnstableState},
+    state::log::IsLog,
 };
 use rand::{Rng, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
@@ -17,6 +17,7 @@ use rand_chacha::ChaCha8Rng;
 use crate::{
     HashMap,
     config::RunConfig,
+    execution_graph::ExecutionGraph,
     metrics::{MetricsLog, set_disable_stability},
     op_generator::OpGeneratorNested,
     utils::{
@@ -74,8 +75,8 @@ where
     let mut total_time_to_deliver_per_replica: HashMap<ReplicaIdx, Duration> = HashMap::default();
 
     // Create execution graph if requested
-    let mut execution_graph: Option<EventGraph<L::Op>> = if config.generate_execution_graph {
-        Some(EventGraph::default())
+    let mut execution_graph: Option<ExecutionGraph<L::Op>> = if config.generate_execution_graph {
+        Some(ExecutionGraph::new())
     } else {
         None
     };
@@ -133,7 +134,7 @@ where
         // Add event to execution graph if enabled
         if let Some(ref mut graph) = execution_graph {
             let event = msg.event().clone();
-            graph.append(event);
+            graph.append(&event);
         }
 
         if online[replica_idx] {

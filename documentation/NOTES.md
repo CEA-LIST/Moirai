@@ -7,10 +7,8 @@ relevant, but they are preserved for reference and historical context.
 ## Issues
 
 - Cloning the `origin_id` is expensive.
-- Computing the column-wise minimum of a matrix clock is expensive.
 - Merging two vector clocks is expensive.
 - Logging
-- `is_enabled`?
 
 ## To-Do
 

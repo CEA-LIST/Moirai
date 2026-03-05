@@ -47,7 +47,7 @@ where
     fn effect(&mut self, event: Event<Self::Op>) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
-            println!("Redundant by itself: {}", new_tagged_op);
+            // println!("      Redundant by itself: {}", new_tagged_op);
             if !O::DISABLE_R_WHEN_R {
                 self.prune_redundant_ops(
                     O::redundant_by_when_redundant,
@@ -64,6 +64,7 @@ where
                 );
             }
             self.unstable.append(event);
+            O::post_effect(&new_tagged_op, &mut self.stable, &mut self.unstable);
         }
     }
 
@@ -78,6 +79,7 @@ where
         let candidates = self.unstable.predecessors(version);
 
         for tagged_op in candidates {
+            // println!("Stabilizing op {} with version {}", tagged_op, version);
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
             if self.unstable.get(tagged_op.id()).is_some() {
                 self.stable.apply(tagged_op.op().clone());
@@ -130,12 +132,19 @@ where
             // Note: the new operation is not in the log at this point.
             let is_conc = !old_tagged_op.id().is_predecessor_of(version);
 
-            !rdnt(
+            let not_redundant = !rdnt(
                 old_tagged_op.op(),
                 Some(old_tagged_op.tag()),
                 is_conc,
                 new_tagged_op,
-            )
+            );
+            // if !not_redundant {
+            //     println!(
+            //         "       Op {} is redundant by {}, removing it",
+            //         old_tagged_op, new_tagged_op
+            //     );
+            // }
+            not_redundant
         });
     }
 }

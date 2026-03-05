@@ -9,7 +9,7 @@ specific design choices in Pure Operation-based CRDTs.
 
 ## Benchmark Results Overview
 
-All benchmarks were executed on a **MacBook Air M2 (2022)**.
+All benchmarks were executed on a **MacBook Air M2 (2022)** in release mode.
 
 Benchmarks are grouped by data type. Each benchmark run produces a JSON
 report containing raw timing measurements and metadata. Because the project

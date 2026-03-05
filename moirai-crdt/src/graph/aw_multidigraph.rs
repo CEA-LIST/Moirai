@@ -1,5 +1,8 @@
 use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
+use moirai_fuzz::op_generator::OpGenerator;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -10,6 +13,10 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
 };
 use petgraph::graph::DiGraph;
+#[cfg(feature = "fuzz")]
+use petgraph::visit::EdgeRef;
+#[cfg(feature = "fuzz")]
+use rand::seq::IteratorRandom;
 
 use crate::{HashMap, HashSet};
 
@@ -158,6 +165,77 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<V, E> OpGenerator for Graph<V, E>
+where
+    V: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
+    E: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
+{
+    type Config = ();
+
+    fn generate(
+        rng: &mut impl rand::RngCore,
+        _config: &Self::Config,
+        stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> Self {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            AddVertex,
+            RemoveVertex,
+            AddArc,
+            RemoveArc,
+        }
+
+        let graph = Self::execute_query(Read::new(), stable, unstable);
+
+        let choice = if graph.node_count() < 2 {
+            &Choice::AddVertex
+        } else if graph.edge_count() == 0 {
+            let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+            &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
+        } else {
+            let dist = WeightedIndex::new([2, 1, 2, 1]).unwrap();
+            &[
+                Choice::AddVertex,
+                Choice::RemoveVertex,
+                Choice::AddArc,
+                Choice::RemoveArc,
+            ][dist.sample(rng)]
+        };
+
+        match choice {
+            Choice::AddVertex => {
+                use moirai_fuzz::value_generator::ValueGenerator;
+
+                let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
+                Graph::AddVertex(v)
+            }
+            Choice::RemoveVertex => {
+                let idx = graph.node_indices().choose(rng).unwrap();
+                let v = graph.node_weight(idx).unwrap().clone();
+                Graph::RemoveVertex(v)
+            }
+            Choice::AddArc => {
+                let idx1 = graph.node_indices().choose(rng).unwrap();
+                let idx2 = graph.node_indices().choose(rng).unwrap();
+                let v1 = graph.node_weight(idx1).unwrap().clone();
+                let v2 = graph.node_weight(idx2).unwrap().clone();
+                let e = E::generate(rng, &<E as ValueGenerator>::Config::default());
+                Graph::AddArc(v1, v2, e)
+            }
+            Choice::RemoveArc => {
+                let edge = graph.edge_references().choose(rng).unwrap();
+                let v1 = graph.node_weight(edge.source()).unwrap().clone();
+                let v2 = graph.node_weight(edge.target()).unwrap().clone();
+                let e = edge.weight().clone();
+                Graph::RemoveArc(v1, v2, e)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
@@ -300,5 +378,27 @@ mod tests {
         );
     }
 
-    // TODO: Fuzzer test
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_aw_graph() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        let run_1 = RunConfig::new(0.4, 4, 100, None, None, false, false);
+        let runs = vec![run_1; 1_000];
+
+        let config = FuzzerConfig::<VecLog<Graph<String, u8>>>::new(
+            "aw_graph",
+            runs,
+            true,
+            // |a, b| vf2::isomorphisms(a, b).first().is_some(),
+            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            false,
+        );
+
+        fuzzer::<VecLog<Graph<String, u8>>>(config);
+    }
 }

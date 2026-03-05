@@ -421,7 +421,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
-    fn fuzz_union() {
+    fn fuzz_json() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,

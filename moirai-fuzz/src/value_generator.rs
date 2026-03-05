@@ -193,3 +193,15 @@ impl ValueGenerator for isize {
         (config.min + random_offset) as isize
     }
 }
+
+impl ValueGenerator for u8 {
+    type Config = NumberConfig;
+
+    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+        config.validate().expect("Invalid NumberConfig");
+
+        let range = config.range_size();
+        let random_offset = rng.next_u32() % (range as u32);
+        (config.min as u8) + (random_offset as u8)
+    }
+}

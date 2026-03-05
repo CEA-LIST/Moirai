@@ -6,7 +6,7 @@ use crate::{
     event::{Event, id::EventId, tagged_op::TaggedOp},
 };
 
-pub trait IsUnstableState<O> {
+pub trait IsUnstableState<O>: Debug {
     fn append(&mut self, event: Event<O>);
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
     fn remove(&mut self, event_id: &EventId);

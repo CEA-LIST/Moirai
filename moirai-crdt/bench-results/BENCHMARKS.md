@@ -1,4 +1,4 @@
-## PaPoC ’26 Submission Experiments
+# PaPoC ’26 Submission Experiments
 
 The PaPoC ’26 submission reports results from two independent experiments:
 

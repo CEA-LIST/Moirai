@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, fmt::Display, hash::Hash};
+use std::{
+    cmp::Ordering,
+    fmt::Display,
+    hash::{Hash, Hasher},
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -79,7 +83,7 @@ pub struct Version {
 }
 
 impl Hash for Version {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.origin_idx.hash(state);
         self.entries.0.hash(state);
     }
@@ -125,6 +129,17 @@ impl Version {
             .iter()
             .enumerate()
             .map(|(i, v)| (ReplicaIdx(i), *v))
+    }
+
+    pub fn dependencies<'a>(&'a self) -> impl Iterator<Item = EventId> + 'a {
+        self.iter().filter_map(|(idx, seq)| {
+            if seq > 0 {
+                let seq = if idx == self.origin_idx { seq - 1 } else { seq };
+                Some(EventId::new(idx, seq, self.resolver.clone()))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn meet(&mut self, other: &Self) {
