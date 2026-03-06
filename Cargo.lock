@@ -564,6 +564,7 @@ version = "0.1.0"
 dependencies = [
  "moirai-protocol",
  "paste",
+ "rustc-hash 1.1.0",
 ]
 
 [[package]]

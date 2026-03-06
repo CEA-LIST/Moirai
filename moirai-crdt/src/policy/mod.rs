@@ -1,12 +1,6 @@
 use std::{cmp::Ordering, fmt::Debug};
 
-use moirai_protocol::event::tag::Tag;
-
-pub trait Policy: Ord + Clone + Debug {
-    fn compare(a: &Tag, b: &Tag) -> Ordering
-    where
-        Self: Sized;
-}
+use moirai_protocol::{crdt::policy::Policy, event::tag::Tag};
 
 /// # Last-Writer-Wins (LWW)
 ///

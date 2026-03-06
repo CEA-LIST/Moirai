@@ -3,6 +3,7 @@ use std::{fmt::Debug, marker::PhantomData};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
+        policy::Policy,
         pure_crdt::PureCRDT,
         query::{QueryOperation, Read},
     },
@@ -10,7 +11,7 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
 };
 
-use crate::policy::{FairPolicy, LwwPolicy, Policy};
+use crate::policy::{FairPolicy, LwwPolicy};
 
 pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;

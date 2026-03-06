@@ -11,3 +11,4 @@ description = "Macros for the Moirai CRDT framework implementation"
 [dependencies]
 moirai-protocol = { path = "../moirai-protocol" }
 paste = "1.0.15"
+rustc-hash = "1.1.0"
