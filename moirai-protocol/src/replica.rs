@@ -73,9 +73,7 @@ where
     }
 
     fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>> {
-        // println!("Replica {} sending op {:?}", self.id, op);
         if !self.state.is_enabled(&op) {
-            // println!("Op {:?} is not enabled, not sending it", op);
             return None;
         }
         let op = L::prepare(op);
@@ -127,8 +125,6 @@ where
     T: IsTcsb<L::Op>,
 {
     fn deliver(&mut self, event: Event<L::Op>) {
-        // println!("-------");
-        // println!("Replica {} delivering event {}", self.id, event);
         self.state.effect(event);
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {

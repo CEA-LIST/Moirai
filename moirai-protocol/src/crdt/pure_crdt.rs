@@ -78,15 +78,6 @@ pub trait PureCRDT: Debug + Sized {
         CausalReset::Prune
     }
 
-    /// Called after a non-redundant operation has been inserted into the unstable state.
-    /// Has access to the full state, allowing global invariant enforcement (e.g., multiplicity constraints).
-    fn post_effect(
-        _new_tagged_op: &TaggedOp<Self>,
-        _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstableState<Self>,
-    ) {
-    }
-
     /// `is_enabled` can inspect the state to determine if the operation violates any precondition.
     fn is_enabled(
         _op: &Self,

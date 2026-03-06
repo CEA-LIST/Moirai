@@ -19,6 +19,22 @@ use std::{hash::Hash, marker::PhantomData};
 
 use crate::{HashMap, HashSet, policy::Policy};
 
+// Macro syntax
+// typed_graph! {
+//     vertices: {
+//         User(u32),
+//         Server(u32),
+//         Database(u32),
+//         LoadBalancer(u32),
+//     },
+//     edges: {
+//         UserToServer: User -> Server (NetworkConnection) [MIN=1, MAX=1],
+//         UserToDb: User -> Database (UserToDbConnection) [MIN=0, MAX=1],
+//         ServerToDb: Server -> Database (DbConnection) [MIN=0, MAX=1],
+//         LoadBalancerToServer: LoadBalancer -> Server (ProxyConnection) [MIN=0, MAX=3],
+//     }
+// }
+
 pub trait Connectable<Target, Edge> {
     const MIN: usize;
     const MAX: usize;
@@ -550,15 +566,15 @@ pub fn validate_schema(
                     }
                 });
 
-            if let Some(max) = max {
-                if *count > max {
-                    violations.push(SchemaViolation::ExceedsMax {
-                        source: source.clone(),
-                        edge_kind: kind.clone(),
-                        count: *count,
-                        max,
-                    });
-                }
+            if let Some(max) = max
+                && *count > max
+            {
+                violations.push(SchemaViolation::ExceedsMax {
+                    source: source.clone(),
+                    edge_kind: kind.clone(),
+                    count: *count,
+                    max,
+                });
             }
         }
 
@@ -671,6 +687,25 @@ fn arc_from_vertices_and_edge(
     }
 }
 
+/// Returns the MAX cardinality constraint for a given (source vertex type, edge kind) pair.
+fn max_edges_for(source: &MyTypedGraphVertex, kind: &MyTypedGraphEdge) -> usize {
+    match (source, kind) {
+        (MyTypedGraphVertex::User(_), MyTypedGraphEdge::UserToServer(_)) => {
+            <User as Connectable<Server, NetworkConnection>>::MAX
+        }
+        (MyTypedGraphVertex::User(_), MyTypedGraphEdge::UserToDb(_)) => {
+            <User as Connectable<Database, UserToDbConnection>>::MAX
+        }
+        (MyTypedGraphVertex::Server(_), MyTypedGraphEdge::ServerToDb(_)) => {
+            <Server as Connectable<Database, DbConnection>>::MAX
+        }
+        (MyTypedGraphVertex::LoadBalancer(_), MyTypedGraphEdge::LoadBalancerToServer(_)) => {
+            <LoadBalancer as Connectable<Server, ProxyConnection>>::MAX
+        }
+        _ => usize::MAX,
+    }
+}
+
 impl<P> PureCRDT for MyTypedGraph<P>
 where
     P: Policy,
@@ -684,8 +719,8 @@ where
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
-        stable: &Self::StableState,
-        unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        _stable: &Self::StableState,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
     ) -> bool
     where
         Self: 'a,
@@ -693,43 +728,6 @@ where
         match new_tagged_op.op() {
             MyTypedGraph::AddVertex { .. } | MyTypedGraph::AddArc(_) => false,
             MyTypedGraph::RemoveVertex { .. } | MyTypedGraph::RemoveArc(_) => true,
-            // MyTypedGraph::AddArc(arc) => {
-            //     let count_stable = stable
-            //         .iter()
-            //         .filter(|op| match op {
-            //             MyTypedGraph::AddArc(a) => {
-            //                 a.source() == arc.source() && a.kind() == arc.kind()
-            //             }
-            //             _ => false,
-            //         })
-            //         .count();
-            //     let unstable_ops: Vec<_> = unstable.collect();
-            //     let count_unstable = unstable_ops
-            //         .iter()
-            //         .filter(|op| match op.op() {
-            //             MyTypedGraph::AddArc(a) => {
-            //                 a.source() == arc.source() && a.kind() == arc.kind()
-            //             }
-            //             _ => false,
-            //         })
-            //         .count();
-
-            //     if count_stable + count_unstable < arc.max() {
-            //         false
-            //     } else {
-            //         unstable_ops
-            //             .iter()
-            //             .any(|old_tagged_op| match old_tagged_op.op() {
-            //                 MyTypedGraph::AddArc(a) => {
-            //                     a.source() == arc.source()
-            //                         && a.kind() == arc.kind()
-            //                         && P::compare(new_tagged_op.tag(), old_tagged_op.tag())
-            //                             == std::cmp::Ordering::Less
-            //                 }
-            //                 _ => false,
-            //             })
-            //     }
-            // }
             MyTypedGraph::__Marker(_, _) => unreachable!(),
         }
     }
@@ -766,118 +764,6 @@ where
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
-    }
-
-    fn post_effect(
-        new_tagged_op: &TaggedOp<Self>,
-        stable: &mut Self::StableState,
-        unstable: &mut impl IsUnstableState<Self>,
-    ) {
-        if let MyTypedGraph::AddArc(arc) = new_tagged_op.op() {
-            let source = arc.source();
-            let kind = arc.kind();
-            let target = arc.target();
-            let max = arc.max();
-
-            // Count how many existing arcs of the same (source, kind) we have in stable and unstable.
-            // Do not account for duplicates because if the same arc already exists, the new one is redundant and will be pruned later.
-
-            println!("Stable state before pruning:");
-            for op in stable.iter() {
-                println!("  {:?}", op);
-            }
-            println!("Unstable state before pruning:");
-            for op in unstable.iter() {
-                println!("  {}", op);
-            }
-
-            let graph = Self::execute_query(Read::new(), stable, unstable);
-            if let Some(idx) = graph.node_indices().find(|&i| graph[i] == source) {
-                let count = graph
-                    .edges_directed(idx, petgraph::Direction::Outgoing)
-                    .filter(|edge| edge.weight() == &kind && graph[edge.target()] != target)
-                    .count()
-                    + 1;
-
-                // let mut stable_candidates = Vec::new();
-                // for op in stable.iter() {
-                //     if let MyTypedGraph::AddArc(a) = op {
-                //         if a.source() == source && a.kind() == kind {
-                //             stable_candidates.push(a);
-                //         }
-                //     }
-                // }
-                // let unique_stable_candidates: HashSet<_> = stable_candidates.iter().collect();
-
-                // let mut unstable_candidates: Vec<_> = Vec::new();
-                // for op in unstable.iter() {
-                //     if let MyTypedGraph::AddArc(a) = op.op() {
-                //         if a.source() == source && a.kind() == kind {
-                //             unstable_candidates.push(op);
-                //         }
-                //     }
-                // }
-                // let unique_unstable_candidates: Vec<_> = Vec::new();
-                // for candidate in unstable_candidates.iter() {
-                //     if unique_unstable_candidates.
-                // }
-
-                // let total = unique_stable_candidates.len() + unique_unstable_candidates.len();
-                // println!("       Total count is currently {}, max is {}", total, max);
-                // println!(
-                //     "      Candidates for pruning: {:?}",
-                //     unique_unstable_candidates
-                // );
-                // +1 because the count does not include the new arc being added, which will also contribute to the count and potentially cause it to exceed the max.
-                if count > max {
-                    let mut candidates = Vec::new();
-                    // Collect all candidate arcs for pruning
-                    for op in unstable.iter() {
-                        if let MyTypedGraph::AddArc(a) = op.op() {
-                            if a.source() == source && a.kind() == kind {
-                                candidates.push(op.clone());
-                            }
-                        }
-                    }
-
-                    candidates.sort_by(|a, b| P::compare(a.tag(), b.tag()));
-
-                    let to_remove = count - max;
-                    for loser in candidates.iter().take(to_remove) {
-                        // TODO: not removing if exactly the same arc because idempotent
-                        // println!(
-                        //     "       Pruning redundant op {} due to new op {}",
-                        //     loser, new_tagged_op
-                        // );
-                        unstable.remove(loser.id());
-                    }
-                }
-
-                // println!(
-                //     "       Final graph:\n{:?}",
-                //     Self::execute_query(Read::new(), stable, unstable)
-                // );
-            }
-        }
-    }
-
-    fn stabilize(
-        _tagged_op: &TaggedOp<Self>,
-        _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstableState<Self>,
-    ) {
-    }
-
-    fn eval<Q>(
-        q: Q,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Q::Response
-    where
-        Q: QueryOperation,
-        Self: Eval<Q>,
-    {
-        Self::execute_query(q, stable, unstable)
     }
 
     fn is_enabled(
@@ -937,20 +823,6 @@ where
                     .filter(|edge| edge.weight() == &kind)
                     .count();
 
-                // println!(
-                //     "Current graph:\n{:?}",
-                //     petgraph::dot::Dot::with_config(&graph, &[])
-                // );
-
-                // println!(
-                //     "Checking if can add arc {:?} -> {:?} of kind {:?}: currently {} outgoing, max is {}",
-                //     source,
-                //     target,
-                //     kind,
-                //     count,
-                //     arc.max()
-                // );
-
                 count < arc.max()
             }
             MyTypedGraph::__Marker(_, _) => unreachable!(),
@@ -967,54 +839,94 @@ where
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
-        let mut ops: Vec<&Self> = stable
+        let tagged_ops: Vec<(&Self, Option<&Tag>)> = stable
             .iter()
-            .chain(unstable.iter().map(|t| t.op()))
+            .map(|op| (op, None))
+            .chain(unstable.iter().map(|t| (t.op(), Some(t.tag()))))
             .collect();
 
-        ops.sort_by(|a, b| match (a, b) {
-            (
-                MyTypedGraph::AddVertex { .. } | MyTypedGraph::RemoveVertex { .. },
-                MyTypedGraph::AddArc(_) | MyTypedGraph::RemoveArc(_),
-            ) => Ordering::Less,
-            (
-                MyTypedGraph::AddArc(_) | MyTypedGraph::RemoveArc(_),
-                MyTypedGraph::AddVertex { .. } | MyTypedGraph::RemoveVertex { .. },
-            ) => Ordering::Greater,
-            _ => Ordering::Equal,
-        });
         let mut graph = DiGraph::new();
-        let mut node_index = HashMap::default();
-        let mut edge_index: HashSet<(MyTypedGraphVertex, MyTypedGraphVertex, MyTypedGraphEdge)> =
-            HashSet::default();
-        for o in ops {
-            match o {
-                MyTypedGraph::AddVertex { id } => {
-                    if node_index.contains_key(id) {
-                        continue;
-                    }
-                    let idx = graph.add_node(id.clone());
-                    node_index.insert(id.clone(), idx);
-                }
-                MyTypedGraph::AddArc(arcs) => {
-                    let v1 = arcs.source();
-                    let v2 = arcs.target();
-                    let e = arcs.kind();
-                    let tuple = (v1, v2, e);
-                    if edge_index.contains(&tuple) {
-                        continue;
-                    }
-                    let (v1, v2, e) = tuple;
-                    if let (Some(a), Some(b)) = (node_index.get(&v1), node_index.get(&v2)) {
-                        graph.add_edge(*a, *b, e.clone());
-                        edge_index.insert((v1, v2, e));
-                    }
-                }
-                MyTypedGraph::RemoveVertex { .. }
-                | MyTypedGraph::RemoveArc(_)
-                | MyTypedGraph::__Marker(_, _) => unreachable!(),
+        let mut node_index: HashMap<MyTypedGraphVertex, _> = HashMap::default();
+
+        for (op, _) in &tagged_ops {
+            if let MyTypedGraph::AddVertex { id } = op
+                && !node_index.contains_key(id)
+            {
+                let idx = graph.add_node(id.clone());
+                node_index.insert(id.clone(), idx);
             }
         }
+
+        // Collect deduplicated arc candidates
+        let mut arc_entries: Vec<(
+            MyTypedGraphVertex,
+            MyTypedGraphVertex,
+            MyTypedGraphEdge,
+            Option<&Tag>,
+        )> = Vec::new();
+        let mut seen_arcs: HashSet<(MyTypedGraphVertex, MyTypedGraphVertex, MyTypedGraphEdge)> =
+            HashSet::default();
+
+        for (op, tag) in &tagged_ops {
+            if let MyTypedGraph::AddArc(arcs) = op {
+                let v1 = arcs.source();
+                let v2 = arcs.target();
+                let e = arcs.kind();
+                let key = (v1.clone(), v2.clone(), e.clone());
+                if seen_arcs.contains(&key) {
+                    continue;
+                }
+                if node_index.contains_key(&v1) && node_index.contains_key(&v2) {
+                    seen_arcs.insert(key);
+                    arc_entries.push((v1, v2, e, *tag));
+                }
+            }
+        }
+
+        // MAX enforcement per (source, edge_kind) group
+        let mut groups: HashMap<(MyTypedGraphVertex, MyTypedGraphEdge), Vec<usize>> =
+            HashMap::default();
+        for (i, (source, _target, kind, _tag)) in arc_entries.iter().enumerate() {
+            groups
+                .entry((source.clone(), kind.clone()))
+                .or_default()
+                .push(i);
+        }
+
+        let mut surviving = vec![true; arc_entries.len()];
+
+        for ((_, kind), indices) in &groups {
+            if indices.is_empty() {
+                continue;
+            }
+            let max = max_edges_for(&arc_entries[indices[0]].0, kind);
+            if indices.len() > max {
+                // Sort ascending by tag priority (lowest = loser first).
+                // Stable ops (tag = None) are treated as lowest priority.
+                let mut sorted_indices = indices.clone();
+                sorted_indices.sort_by(|&a, &b| match (&arc_entries[a].3, &arc_entries[b].3) {
+                    (None, None) => Ordering::Equal,
+                    (None, Some(_)) => Ordering::Less,
+                    (Some(_), None) => Ordering::Greater,
+                    (Some(ta), Some(tb)) => P::compare(ta, tb),
+                });
+                // The first (len - max) entries are losers.
+                let losers = sorted_indices.len() - max;
+                for &idx in sorted_indices.iter().take(losers) {
+                    surviving[idx] = false;
+                }
+            }
+        }
+
+        // Add surviving arcs to the graph
+        for (i, (v1, v2, e, _)) in arc_entries.iter().enumerate() {
+            if surviving[i]
+                && let (Some(&a), Some(&b)) = (node_index.get(v1), node_index.get(v2))
+            {
+                graph.add_edge(a, b, e.clone());
+            }
+        }
+
         graph
     }
 }
@@ -1106,7 +1018,6 @@ mod tests {
     use crate::utils::membership::twins;
     use moirai_protocol::replica::IsReplica;
     use moirai_protocol::state::po_log::VecLog;
-    use petgraph::graph;
 
     use super::*;
 
@@ -1331,25 +1242,8 @@ mod tests {
             .unwrap();
 
         replica_b.receive(e_a_2);
-
-        // println!("- - - - - - - - - - - - -");
-        // println!("1. Stable A: {:?}", replica_a.state().stable());
-        // println!("1. Unstable A: {:?}", replica_a.state().unstable());
-
         replica_a.receive(e_b_3);
-
-        // println!("2. Stable A: {:?}", replica_a.state().stable());
-        // println!("2. Unstable A: {:?}", replica_a.state().unstable());
-
         replica_a.receive(e_b_4);
-
-        // println!("3. Stable A: {:?}", replica_a.state().stable());
-        // println!("3. Unstable A: {:?}", replica_a.state().unstable());
-        // let graph_a = replica_a.query(Read::new());
-        // println!(
-        //     "Graph A after receiving concurrent add arc:\n{:?}",
-        //     petgraph::dot::Dot::with_config(&graph_a, &[])
-        // );
 
         let graph_a = replica_a.query(Read::new());
         let graph_b = replica_b.query(Read::new());
@@ -1489,18 +1383,33 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run_1 = RunConfig::new(0.4, 2, 6, None, None, true, false);
+        let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
         let runs = vec![run_1; 10_000];
 
         let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
             "typed_graph",
             runs,
             true,
-            // |a, b| vf2::isomorphisms(a, b).first().is_some(),
             |a, b| {
-                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
-                // && validate_schema(&a).is_ok()
-                // && validate_schema(&b).is_ok()
+                let node = a.node_count() == b.node_count();
+                let edge = a.edge_count() == b.edge_count();
+                let is_valid = validate_schema(&a);
+
+                let is_valid = match is_valid {
+                    Ok(_) => true,
+                    Err(violations) => {
+                        if violations
+                            .iter()
+                            .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+                        {
+                            true
+                        } else {
+                            println!("Schema violations: {:?}", violations);
+                            false
+                        }
+                    }
+                };
+                node && edge && is_valid
             },
             false,
         );
