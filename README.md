@@ -27,15 +27,10 @@ Moirai serves as a research platform for developing novel CRDTs tailored for Col
 
 ## Project Organization
 
-- `src/`: Implementation of the Pure Op framework
-  - `crdt/`: A collection of CRDT implementations built with Moirai
-  - `fuzz/`: A fuzzer tool to verify the correctness and performance of implementations
-  - `macros/`: Specialized Rust macros for specific CRDTs
-  - `protocol/`: Implementation of the Pure Op framework's replication protocol
-  - `utils/`: Programming helper modules
-- `documentation/`: An (unordered) collection of development notes about the framework
-- `tests/`: Integration tests
-- `bench-results/`: Contains execution reports from the fuzzer tool
+- `moirai-protocol`: Implementation of the Pure Op framework's replication protocol.
+- `moirai-crdt`: A collection of CRDT implementations built with Moirai.
+- `mirai-macros`: Rust macros for specific CRDTs.
+- `moirai-fuzz`: A fuzzer tool to verify the correctness and performance of implementations.
 
 ## Publications
 
