@@ -7,16 +7,20 @@ relevant, but they are preserved for reference and historical context.
 ## Issues
 
 - Cloning the `origin_id` is expensive.
-- Computing the column-wise minimum of a matrix clock is expensive.
 - Merging two vector clocks is expensive.
 - Logging
-- `is_enabled`?
+
+## To-Do
+
+*See TODO in comment for fine-grain issues*
+
+- [ ] Implement the `Deepsize` trait.
 
 ## Batch Structure
 
-Batch { id: <proc_id>, events: Vec<Event>, }
+`Batch { id: <proc_id>, events: Vec<Event>, }`
 
-Event { ... resolver: Resolver (diff), }
+`Event { ... resolver: Resolver (diff), }`
 
 Each process keep a translation of its indices to the one of the other (matrix).
 Indices of the Vec = other process mapping

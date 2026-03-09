@@ -1,0 +1,14 @@
+[package]
+name = "moirai-macros"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Macros for the Moirai CRDT framework implementation"
+
+[dependencies]
+moirai-protocol = { path = "../moirai-protocol" }
+paste = "1.0.15"
+rustc-hash = "1.1.0"
