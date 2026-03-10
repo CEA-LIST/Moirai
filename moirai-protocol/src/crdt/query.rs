@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use crate::event::id::EventId;
+
 pub trait QueryOperation {
     type Response;
 }
@@ -20,6 +22,18 @@ impl<V> Read<V> {
 impl<V> Default for Read<V> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct ReadId;
+
+impl QueryOperation for ReadId {
+    type Response = Option<EventId>;
+}
+
+impl Default for ReadId {
+    fn default() -> Self {
+        Self
     }
 }
 

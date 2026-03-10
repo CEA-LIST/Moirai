@@ -1,0 +1,48 @@
+{
+  "name": "resettable_counter",
+  "timestamp": "2026-03-09T17:07:08.468145+01:00",
+  "git_commit": "c994fae8d46ae45269835595218fc1dc9916452e",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": null,
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 100000,
+        "churn_rate": 0.4,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "3481722",
+        "avg_time_per_op_ms": 0.011597500000000002,
+        "avg_throughput_ops_per_sec": 86214.21157610357,
+        "total_deliver_ms_per_replica": [
+          1174,
+          1184,
+          1156,
+          1161,
+          1169,
+          1148,
+          1148,
+          1138
+        ],
+        "total_effect_ms_per_replica": [
+          33,
+          31,
+          29,
+          30,
+          30,
+          30,
+          30,
+          32
+        ],
+        "avg_effect_ms": 30.625,
+        "execution_graph_dot": null,
+        "used_seed": "0xDD3419D9B968BF4C91A36F0C94F16E8234047009B554C4AF20E36FECD050C45B"
+      }
+    }
+  ]
+}

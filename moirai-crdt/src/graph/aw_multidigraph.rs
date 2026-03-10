@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::value_generator::ValueGenerator;

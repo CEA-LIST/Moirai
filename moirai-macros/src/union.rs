@@ -75,7 +75,7 @@ macro_rules! union {
 
             #[derive(Clone, Debug, PartialEq)]
             pub enum [<$union Value>] {
-                Value([<$union ChildValue>]),
+                Value(Box<[<$union ChildValue>]>),
                 Conflict(Vec<[<$union ChildValue>]>),
             }
 
@@ -207,7 +207,7 @@ macro_rules! union {
                             $(
                                 [<$union Child>]::$variant(log) => {
                                     let value = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
-                                    [<$union Value>]::Value([<$union ChildValue>]::$variant(value))
+                                    [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
                                 }
                             )*
                         }),

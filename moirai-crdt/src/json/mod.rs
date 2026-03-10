@@ -187,7 +187,7 @@ impl OpGeneratorNested for JsonLog {
         match value {
             Some(val) => match (val, &self.child) {
                 (JsonValue::Value(v), JsonContainer::Value(child_log)) => {
-                    generate_value(&v, child_log, rng)
+                    generate_value(&*v, child_log, rng)
                 }
                 (JsonValue::Conflict(v), JsonContainer::Conflicts(child_logs)) => {
                     let choice = rand::seq::IteratorRandom::choose(v.iter(), rng).unwrap();

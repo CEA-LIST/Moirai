@@ -48,8 +48,9 @@ impl<O> List<O> {
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
 pub struct ListLog<L> {
+    // TODO: should be pub(crate), or private. Made public for testing
     /// EgWalker list tracking the logical positions of children
-    pub(crate) position: EventGraph<SimpleList<EventId>>,
+    pub position: EventGraph<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
     pub(crate) children: HashMap<EventId, L>,
 }
@@ -134,8 +135,16 @@ where
     fn is_enabled(&self, op: &Self::Op) -> bool {
         let positions = self.position.eval(Read::new());
         match op {
-            List::Insert { pos, .. } => *pos <= positions.len(),
-            List::Update { pos, .. } => *pos < positions.len(),
+            List::Insert { pos, value } => {
+                *pos <= positions.len() && L::default().is_enabled(value)
+            }
+            List::Update { pos, value } => {
+                *pos < positions.len()
+                    && self
+                        .children
+                        .get(&positions[*pos])
+                        .is_some_and(|c| c.is_enabled(value))
+            }
             List::Delete { pos } => *pos < positions.len(),
         }
     }

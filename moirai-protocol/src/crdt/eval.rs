@@ -22,3 +22,13 @@ where
 {
     fn execute_query(&self, q: Q) -> Q::Response;
 }
+
+impl<L, Q> EvalNested<Q> for Box<L>
+where
+    Q: QueryOperation,
+    L: IsLog + EvalNested<Q>,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        (**self).execute_query(q)
+    }
+}

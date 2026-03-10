@@ -1,0 +1,48 @@
+{
+  "name": "dw_flag",
+  "timestamp": "2026-03-09T17:07:08.130524+01:00",
+  "git_commit": "c994fae8d46ae45269835595218fc1dc9916452e",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": null,
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 100000,
+        "churn_rate": 0.4,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "false",
+        "avg_time_per_op_ms": 0.01128375,
+        "avg_throughput_ops_per_sec": 88597.48500438772,
+        "total_deliver_ms_per_replica": [
+          1102,
+          1139,
+          1134,
+          1142,
+          1152,
+          1134,
+          1115,
+          1109
+        ],
+        "total_effect_ms_per_replica": [
+          34,
+          35,
+          35,
+          36,
+          36,
+          35,
+          35,
+          35
+        ],
+        "avg_effect_ms": 35.125,
+        "execution_graph_dot": null,
+        "used_seed": "0x8554753080D6DA01443DA83C87F0857CAD36118FD991B838642BFBDD81D72859"
+      }
+    }
+  ]
+}

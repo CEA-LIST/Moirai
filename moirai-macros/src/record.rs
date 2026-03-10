@@ -3,13 +3,14 @@
 
 #[macro_export]
 macro_rules! record {
-    ($name:ident { $($field:ident : $T:path),* $(,)? }) => {
+    ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
             #[derive(Clone, Debug)]
             pub enum $name {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),
                 )*
+                New,
             }
 
             #[derive(Debug, Clone, Default, PartialEq)]
@@ -21,6 +22,7 @@ macro_rules! record {
 
             #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
+                __id: Option<$crate::moirai_protocol::event::id::EventId>,
                 $(
                     pub $field: $T,
                 )*
@@ -32,6 +34,7 @@ macro_rules! record {
 
                 fn new() -> Self {
                     Self {
+                        __id: None,
                         $(
                             $field: <$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                         )*
@@ -39,6 +42,10 @@ macro_rules! record {
                 }
 
                 fn effect(&mut self, event: $crate::moirai_protocol::event::Event<Self::Op>) {
+                    if self.__id.is_none() {
+                        self.__id = Some(event.id().clone());
+                    }
+
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
@@ -46,6 +53,7 @@ macro_rules! record {
                                 self.$field.effect(child_op);
                             }
                         )*
+                        $name::New => {}
                     }
                 }
 
@@ -75,6 +83,7 @@ macro_rules! record {
                         $(
                             $name::[<$field:camel>](o) => self.$field.is_enabled(o),
                         )*
+                        $name::New => self.__id.is_none(),
                         _ => unreachable!(),
                     }
                 }
@@ -87,6 +96,12 @@ macro_rules! record {
                             $field: self.$field.execute_query($crate::moirai_protocol::crdt::query::Read::new()),
                         )*
                     }
+                }
+            }
+
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::ReadId> for [<$name Log>] {
+                fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::ReadId) -> Option<$crate::moirai_protocol::event::id::EventId> {
+                    self.__id.clone()
                 }
             }
 

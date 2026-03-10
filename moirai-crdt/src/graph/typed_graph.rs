@@ -1,12 +1,15 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
 use moirai_fuzz::value_generator::{NumberConfig, ValueGenerator};
 use moirai_macros::typed_graph;
+#[cfg(feature = "fuzz")]
 use rand::Rng;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Foo(u32);
 
+#[cfg(feature = "fuzz")]
 impl ValueGenerator for Foo {
     type Config = ();
 
@@ -21,6 +24,7 @@ impl ValueGenerator for Foo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Bar(u32);
 
+#[cfg(feature = "fuzz")]
 impl ValueGenerator for Bar {
     type Config = ();
 
@@ -35,6 +39,7 @@ impl ValueGenerator for Bar {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Baz(u32);
 
+#[cfg(feature = "fuzz")]
 impl ValueGenerator for Baz {
     type Config = ();
 

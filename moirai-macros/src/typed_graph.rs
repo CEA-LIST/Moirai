@@ -637,95 +637,99 @@ macro_rules! typed_graph {
             }
         }
 
-        impl moirai_fuzz::value_generator::ValueGenerator for $vertex {
-            type Config = ();
+        // TODO: implement ValueGenerator for each vertex type, not just the wrapper enum
 
-            fn generate(rng: &mut impl rand::RngCore, _config: &Self::Config) -> Self {
-                use rand::prelude::IndexedRandom;
+        // #[cfg(feature = "fuzz")]
+        // impl moirai_fuzz::value_generator::ValueGenerator for $vertex {
+        //     type Config = ();
 
-                let choices = [$(stringify!($v)),*];
-                let choice = choices.choose(rng).unwrap();
-                match *choice {
-                    $( stringify!($v) => $vertex::$v($v::generate(rng, &())), )*
-                    _ => unreachable!(),
-                }
-            }
-        }
+        //     fn generate(rng: &mut impl rand::RngCore, _config: &Self::Config) -> Self {
+        //         use rand::prelude::IndexedRandom;
 
-        #[cfg(feature = "fuzz")]
-        impl<P> moirai_fuzz::op_generator::OpGenerator for $graph<P>
-        where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
-        {
-            type Config = ();
+        //         let choices = [$(stringify!($v)),*];
+        //         let choice = choices.choose(rng).unwrap();
+        //         match *choice {
+        //             // TODO: allow configuring the vertex value generation strategy
+        //             $( stringify!($v) => $vertex::$v($v::generate(rng, &())), )*
+        //             _ => unreachable!(),
+        //         }
+        //     }
+        // }
 
-            fn generate(
-                rng: &mut impl rand::RngCore,
-                _config: &Self::Config,
-                stable: &Self::StableState,
-                unstable: &impl $crate::moirai_protocol::state::unstable_state::IsUnstableState<Self>,
-            ) -> Self {
-                use $crate::moirai_protocol::crdt::eval::Eval;
-                use $crate::moirai_protocol::crdt::query::Read;
-                use rand::distr::{Distribution, weighted::WeightedIndex};
-                use rand::seq::IndexedRandom;
+        // #[cfg(feature = "fuzz")]
+        // impl<P> moirai_fuzz::op_generator::OpGenerator for $graph<P>
+        // where
+        //     P: $crate::moirai_protocol::crdt::policy::Policy,
+        // {
+        //     type Config = ();
 
-                enum Choice {
-                    AddVertex,
-                    RemoveVertex,
-                    AddArc,
-                    RemoveArc,
-                }
+        //     fn generate(
+        //         rng: &mut impl rand::RngCore,
+        //         _config: &Self::Config,
+        //         stable: &Self::StableState,
+        //         unstable: &impl $crate::moirai_protocol::state::unstable_state::IsUnstableState<Self>,
+        //     ) -> Self {
+        //         use $crate::moirai_protocol::crdt::eval::Eval;
+        //         use $crate::moirai_protocol::crdt::query::Read;
+        //         use rand::distr::{Distribution, weighted::WeightedIndex};
+        //         use rand::seq::IndexedRandom;
 
-                let graph = Self::execute_query(Read::new(), stable, unstable);
-                let constraints = compute_arc_constraints(&graph);
-                let existing_vertices: Vec<_> = graph.node_weights().cloned().collect();
+        //         enum Choice {
+        //             AddVertex,
+        //             RemoveVertex,
+        //             AddArc,
+        //             RemoveArc,
+        //         }
 
-                let choice = if graph.node_count() < 2 {
-                    &Choice::AddVertex
-                } else if graph.edge_count() == 0 {
-                    if constraints.addable.is_empty() {
-                        let dist = WeightedIndex::new([2, 1]).unwrap();
-                        &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
-                    } else {
-                        let dist = WeightedIndex::new([2, 1, 3]).unwrap();
-                        &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
-                    }
-                } else if constraints.removable.is_empty() && constraints.addable.is_empty() {
-                    let dist = WeightedIndex::new([2, 1]).unwrap();
-                    &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
-                } else if !constraints.removable.is_empty() && constraints.addable.is_empty() {
-                    let dist = WeightedIndex::new([2, 1, 2]).unwrap();
-                    &[Choice::AddVertex, Choice::RemoveVertex, Choice::RemoveArc][dist.sample(rng)]
-                } else if constraints.removable.is_empty() && !constraints.addable.is_empty() {
-                    let dist = WeightedIndex::new([2, 1, 3]).unwrap();
-                    &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
-                } else {
-                    let dist = WeightedIndex::new([2, 1, 3, 2]).unwrap();
-                    &[
-                        Choice::AddVertex,
-                        Choice::RemoveVertex,
-                        Choice::AddArc,
-                        Choice::RemoveArc,
-                    ][dist.sample(rng)]
-                };
+        //         let graph = Self::execute_query(Read::new(), stable, unstable);
+        //         let constraints = compute_arc_constraints(&graph);
+        //         let existing_vertices: Vec<_> = graph.node_weights().cloned().collect();
 
-                match choice {
-                    Choice::AddVertex => $graph::AddVertex {
-                        id: <$vertex as moirai_fuzz::value_generator::ValueGenerator>::generate(rng, &()),
-                    },
-                    Choice::RemoveVertex => {
-                        let vertex = existing_vertices.choose(rng).unwrap().clone();
-                        $graph::RemoveVertex { id: vertex }
-                    }
-                    Choice::AddArc => {
-                        $graph::AddArc(constraints.addable.choose(rng).unwrap().clone())
-                    }
-                    Choice::RemoveArc => {
-                        $graph::RemoveArc(constraints.removable.choose(rng).unwrap().clone())
-                    }
-                }
-            }
-        }
+        //         let choice = if graph.node_count() < 2 {
+        //             &Choice::AddVertex
+        //         } else if graph.edge_count() == 0 {
+        //             if constraints.addable.is_empty() {
+        //                 let dist = WeightedIndex::new([2, 1]).unwrap();
+        //                 &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
+        //             } else {
+        //                 let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+        //                 &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
+        //             }
+        //         } else if constraints.removable.is_empty() && constraints.addable.is_empty() {
+        //             let dist = WeightedIndex::new([2, 1]).unwrap();
+        //             &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
+        //         } else if !constraints.removable.is_empty() && constraints.addable.is_empty() {
+        //             let dist = WeightedIndex::new([2, 1, 2]).unwrap();
+        //             &[Choice::AddVertex, Choice::RemoveVertex, Choice::RemoveArc][dist.sample(rng)]
+        //         } else if constraints.removable.is_empty() && !constraints.addable.is_empty() {
+        //             let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+        //             &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
+        //         } else {
+        //             let dist = WeightedIndex::new([2, 1, 3, 2]).unwrap();
+        //             &[
+        //                 Choice::AddVertex,
+        //                 Choice::RemoveVertex,
+        //                 Choice::AddArc,
+        //                 Choice::RemoveArc,
+        //             ][dist.sample(rng)]
+        //         };
+
+        //         match choice {
+        //             Choice::AddVertex => $graph::AddVertex {
+        //                 id: <$vertex as moirai_fuzz::value_generator::ValueGenerator>::generate(rng, &()),
+        //             },
+        //             Choice::RemoveVertex => {
+        //                 let vertex = existing_vertices.choose(rng).unwrap().clone();
+        //                 $graph::RemoveVertex { id: vertex }
+        //             }
+        //             Choice::AddArc => {
+        //                 $graph::AddArc(constraints.addable.choose(rng).unwrap().clone())
+        //             }
+        //             Choice::RemoveArc => {
+        //                 $graph::RemoveArc(constraints.removable.choose(rng).unwrap().clone())
+        //             }
+        //         }
+        //     }
+        // }
     };
 }

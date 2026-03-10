@@ -17,7 +17,9 @@ pub trait IsLog: Default + Debug {
     type Value: Default + Debug;
     type Op: Debug + Clone;
 
-    fn new() -> Self;
+    fn new() -> Self {
+        Self::default()
+    }
     /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters).
     fn prepare(op: Self::Op) -> Self::Op {
         op
@@ -60,5 +62,40 @@ where
 
     fn unstable(&self) -> &impl IsUnstableState<<Self as IsLog>::Op> {
         &self.unstable
+    }
+}
+
+/// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`.
+/// This allows wrapping a log type in `Box` to break recursive type cycles
+/// without changing the macro infrastructure. Use `Box<SomeLog>` only where
+/// needed (recursive fields); plain `SomeLog` everywhere else.
+impl<L: IsLog> IsLog for Box<L> {
+    type Value = L::Value;
+    type Op = Box<L::Op>;
+
+    fn new() -> Self {
+        Box::new(L::new())
+    }
+
+    fn is_enabled(&self, op: &Self::Op) -> bool {
+        (**self).is_enabled(op)
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>) {
+        let inner_op = *event.op().clone();
+        let inner_event = event.unfold(inner_op);
+        (**self).effect(inner_event);
+    }
+
+    fn stabilize(&mut self, version: &Version) {
+        (**self).stabilize(version);
+    }
+
+    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        (**self).redundant_by_parent(version, conservative);
+    }
+
+    fn is_default(&self) -> bool {
+        (**self).is_default()
     }
 }

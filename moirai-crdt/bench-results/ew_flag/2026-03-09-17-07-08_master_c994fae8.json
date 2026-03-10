@@ -1,0 +1,48 @@
+{
+  "name": "ew_flag",
+  "timestamp": "2026-03-09T17:07:08.206719+01:00",
+  "git_commit": "c994fae8d46ae45269835595218fc1dc9916452e",
+  "git_branch": "master",
+  "final_merge": true,
+  "summary": null,
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 100000,
+        "churn_rate": 0.4,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "false",
+        "avg_time_per_op_ms": 0.011352499999999998,
+        "avg_throughput_ops_per_sec": 88113.95279136667,
+        "total_deliver_ms_per_replica": [
+          1093,
+          1151,
+          1120,
+          1137,
+          1165,
+          1177,
+          1091,
+          1148
+        ],
+        "total_effect_ms_per_replica": [
+          29,
+          27,
+          29,
+          30,
+          29,
+          28,
+          29,
+          28
+        ],
+        "avg_effect_ms": 28.625,
+        "execution_graph_dot": null,
+        "used_seed": "0x4BA209589D0DBECCD3D9881D9419B06F42E0507394D072F2318B4EA385DE164E"
+      }
+    }
+  ]
+}
