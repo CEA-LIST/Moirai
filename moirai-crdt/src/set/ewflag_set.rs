@@ -82,7 +82,7 @@ where
         _q: Read<HashSet<V>>,
     ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = HashSet::default();
-        for (k, v) in &self.0.children {
+        for (k, v) in self.0.children() {
             let val = v.execute_query(Read::new());
             if val {
                 set.insert(k.clone());

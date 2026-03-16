@@ -77,22 +77,32 @@ where
 
 #[macro_export]
 macro_rules! typed_graph {
-    (
+    (@max *) => {
+        usize::MAX
+    };
+    (@max $e:expr) => {
+        $e
+    };
+
+    // Internal arm: normalised form used by both public arms.
+    // `$src [$src_ty]` separates the variant name (ident, used in patterns)
+    // from the actual type path (used in trait impls and generic parameters).
+    (@generate
         graph: $graph:ident,
         vertex: $vertex:ident,
         edge: $edge:ident,
         arcs_type: $arcs:ident,
 
-        vertices { $( $v:ident ),* $(,)? },
+        vertices { $( $v:ident ),* },
 
         connections {
-            $( $conn:ident : $src:ident -> $tgt:ident ( $ety:ident ) [ $min:expr , $max:expr ] ),* $(,)?
+            $( $conn:ident : $src:ident [$src_ty:path] -> $tgt:ident [$tgt_ty:path] ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
         } $(,)?
     ) => {
         $(
-            impl $crate::typed_graph::Connectable<$tgt, $ety> for $src {
+            impl $crate::typed_graph::Connectable<$tgt_ty, $ety> for $src_ty {
                 const MIN: usize = $min;
-                const MAX: usize = $max;
+                const MAX: usize = $crate::typed_graph!(@max $max);
             }
         )*
 
@@ -111,7 +121,7 @@ macro_rules! typed_graph {
         // Arcs enum
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $arcs {
-            $( $conn($crate::typed_graph::Arc<$src, $tgt, $ety>) ),*
+            $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
 
         impl $arcs {
@@ -195,7 +205,7 @@ macro_rules! typed_graph {
         fn max_edges_for(source: &$vertex, kind: &$edge) -> usize {
             match (source, kind) {
                 $(
-                    ($vertex::$src(_), $edge::$conn(_)) => $max,
+                    ($vertex::$src(_), $edge::$conn(_)) => $crate::typed_graph!(@max $max),
                 )*
                 _ => usize::MAX,
             }
@@ -208,7 +218,9 @@ macro_rules! typed_graph {
         ) -> Option<(usize, usize)> {
             match (source, target, edge) {
                 $(
-                    ($vertex::$src(_), $vertex::$tgt(_), $edge::$conn(_)) => Some(($min, $max)),
+                    ($vertex::$src(_), $vertex::$tgt(_), $edge::$conn(_)) => {
+                        Some(($min, $crate::typed_graph!(@max $max)))
+                    },
                 )*
                 _ => None,
             }
@@ -218,7 +230,7 @@ macro_rules! typed_graph {
             let mut constraints = Vec::new();
             $(
                 if let $vertex::$src(_) = vertex {
-                    constraints.push(($edge::$conn($ety), $min, $max));
+                    constraints.push(($edge::$conn($ety), $min, $crate::typed_graph!(@max $max)));
                 }
             )*
             constraints
@@ -732,4 +744,75 @@ macro_rules! typed_graph {
         //     }
         // }
     };
-}
+    // --- ARM 1: plain ident syntax (all vertex types are bare idents) ---
+    //
+    // typed_graph! {
+    //     connections {
+    //         FooToBar: Foo -> Bar (FooBarEdge) [0, 1],
+    //         FooToBaz: Foo -> Baz (my_mod::FooBarEdge) [0, *],  // edge type may be a path
+    //     }
+    // }
+    (
+        graph: $graph:ident,
+        vertex: $vertex:ident,
+        edge: $edge:ident,
+        arcs_type: $arcs:ident,
+
+        vertices { $( $v:ident ),* $(,)? },
+
+        connections {
+            $( $conn:ident : $src:ident -> $tgt:ident ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
+        } $(,)?
+    ) => {
+        $crate::typed_graph!(@generate
+            graph: $graph,
+            vertex: $vertex,
+            edge: $edge,
+            arcs_type: $arcs,
+            vertices { $( $v ),* },
+            connections {
+                // Normalise: variant name and type path are the same ident.
+                $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) [ $min, $max ] ),*
+            }
+        );
+    };
+
+    // --- ARM 2: explicit type-path syntax for vertex types ---
+    //
+    // Use `[full::path::Type] VariantName` when the concrete type lives in
+    // a different module and you do not want to import it.  The ident after
+    // the brackets is the enum-variant name (must match `vertices { ... }`);
+    // the path inside the brackets is the concrete Rust type used in
+    // `Connectable` impls and `Arc<…>` generics.
+    //
+    // typed_graph! {
+    //     connections {
+    //         FooToBar: [my_mod::Foo] Foo -> [my_mod::Bar] Bar (my_mod::FooBarEdge) [0, 1],
+    //     }
+    // }
+    //
+    // Note: all connections in a single invocation must use the same arm
+    // (either all bare idents or all bracketed paths).
+    (
+        graph: $graph:ident,
+        vertex: $vertex:ident,
+        edge: $edge:ident,
+        arcs_type: $arcs:ident,
+
+        vertices { $( $v:ident ),* $(,)? },
+
+        connections {
+            $( $conn:ident : [$src_ty:path] $src:ident -> [$tgt_ty:path] $tgt:ident ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
+        } $(,)?
+    ) => {
+        $crate::typed_graph!(@generate
+            graph: $graph,
+            vertex: $vertex,
+            edge: $edge,
+            arcs_type: $arcs,
+            vertices { $( $v ),* },
+            connections {
+                $( $conn : $src [$src_ty] -> $tgt [$tgt_ty] ( $ety ) [ $min, $max ] ),*
+            }
+        );
+    };}

@@ -8,6 +8,7 @@ pub mod map;
 pub mod model;
 pub mod option;
 pub mod policy;
+pub mod query;
 pub mod register;
 pub mod set;
 pub mod utils;

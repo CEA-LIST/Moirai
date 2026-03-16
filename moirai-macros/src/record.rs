@@ -22,9 +22,16 @@ macro_rules! record {
 
             #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
-                __id: Option<$crate::moirai_protocol::event::id::EventId>,
                 $(
-                    pub $field: $T,
+                    $field: $T,
+                )*
+            }
+
+            impl [<$name Log>] {
+                $(
+                        pub fn $field(&self) -> &$T {
+                        &self.$field
+                    }
                 )*
             }
 
@@ -34,7 +41,6 @@ macro_rules! record {
 
                 fn new() -> Self {
                     Self {
-                        __id: None,
                         $(
                             $field: <$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                         )*
@@ -42,10 +48,6 @@ macro_rules! record {
                 }
 
                 fn effect(&mut self, event: $crate::moirai_protocol::event::Event<Self::Op>) {
-                    if self.__id.is_none() {
-                        self.__id = Some(event.id().clone());
-                    }
-
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
@@ -83,7 +85,7 @@ macro_rules! record {
                         $(
                             $name::[<$field:camel>](o) => self.$field.is_enabled(o),
                         )*
-                        $name::New => self.__id.is_none(),
+                        $name::New => self.is_default(),
                         _ => unreachable!(),
                     }
                 }
@@ -99,22 +101,16 @@ macro_rules! record {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::ReadId> for [<$name Log>] {
-                fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::ReadId) -> Option<$crate::moirai_protocol::event::id::EventId> {
-                    self.__id.clone()
-                }
-            }
-
             /// Evaluate a particular field of the record.
             // TODO: this impl is too strong, as it requires all fields to implement EvalNested<Q>
-            impl<Q> $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Get<String, Q>> for [<$name Log>]
+            impl<Q> $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>> for [<$name Log>]
             where
                 Q: $crate::moirai_protocol::crdt::query::QueryOperation,
                 $(
                     $T: $crate::moirai_protocol::crdt::eval::EvalNested<Q>,
                 )*
             {
-                fn execute_query(&self, q: $crate::moirai_protocol::crdt::query::Get<String, Q>) -> <$crate::moirai_protocol::crdt::query::Get<String, Q> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
+                fn execute_query(&self, q: $crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>) -> <$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
                     match q.key.as_str() {
                         $(
                             stringify!($field) => {

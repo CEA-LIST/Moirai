@@ -32,7 +32,7 @@ pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,
 {
-    pub(crate) children: HashMap<K, L>,
+    children: HashMap<K, L>,
 }
 
 impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
@@ -40,6 +40,19 @@ impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
         Self {
             children: Default::default(),
         }
+    }
+}
+
+impl<K, L> UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn children(&self) -> &HashMap<K, L> {
+        &self.children
     }
 }
 

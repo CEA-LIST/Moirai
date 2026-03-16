@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub enum List<O> {
+pub enum NestedList<O> {
     /// Insert a new child CRDT at the given position
     Insert { pos: usize, value: O },
     /// Update the child at the given position
@@ -28,7 +28,7 @@ pub enum List<O> {
     Delete { pos: usize },
 }
 
-impl<O> List<O> {
+impl<O> NestedList<O> {
     pub fn insert(pos: usize, value: O) -> Self {
         Self::Insert { pos, value }
     }
@@ -47,28 +47,41 @@ impl<O> List<O> {
 /// Maintains both the logical ordering of children (via EgWalker) and the
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
-pub struct ListLog<L> {
-    // TODO: should be pub(crate), or private. Made public for testing
+pub struct NestedListLog<L> {
     /// EgWalker list tracking the logical positions of children
-    pub position: EventGraph<SimpleList<EventId>>,
+    positions: EventGraph<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
-    pub(crate) children: HashMap<EventId, L>,
+    children: HashMap<EventId, L>,
 }
 
-impl<L> Default for ListLog<L> {
+impl<L> Default for NestedListLog<L> {
     fn default() -> Self {
         Self {
-            position: EventGraph::default(),
+            positions: EventGraph::default(),
             children: Default::default(),
         }
     }
 }
 
-impl<L> IsLog for ListLog<L>
+impl<L> NestedListLog<L> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn positions(&self) -> &EventGraph<SimpleList<EventId>> {
+        &self.positions
+    }
+
+    pub fn children(&self) -> &HashMap<EventId, L> {
+        &self.children
+    }
+}
+
+impl<L> IsLog for NestedListLog<L>
 where
     L: IsLog,
 {
-    type Op = List<L::Op>;
+    type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
 
     fn new() -> Self {
@@ -77,7 +90,7 @@ where
 
     fn effect(&mut self, event: Event<Self::Op>) {
         match event.op().clone() {
-            List::Insert { pos, value } => {
+            NestedList::Insert { pos, value } => {
                 let list_event = Event::new(
                     event.id().clone(),
                     event.lamport().clone(),
@@ -87,21 +100,21 @@ where
                     },
                     event.version().clone(),
                 );
-                self.position.effect(list_event);
+                self.positions.effect(list_event);
                 let child_event = Event::unfold(event.clone(), value);
                 self.children
                     .entry(event.id().clone())
                     .or_default()
                     .effect(child_event);
             }
-            List::Delete { pos } => {
+            NestedList::Delete { pos } => {
                 let list_event = Event::unfold(event, SimpleList::Delete { pos });
-                self.position.effect(list_event);
+                self.positions.effect(list_event);
             }
-            List::Update { pos, value } => {
+            NestedList::Update { pos, value } => {
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
-                self.position.effect(list_event);
-                let target = self.position.eval(MutationTarget::new(event.id().clone()));
+                self.positions.effect(list_event);
+                let target = self.positions.eval(MutationTarget::new(event.id().clone()));
                 let child_event = Event::unfold(event, value);
                 self.children.get_mut(&target).unwrap().effect(child_event);
             }
@@ -113,7 +126,7 @@ where
             child.stabilize(version);
         }
         // TODO: Check this works
-        self.position.stabilize(version);
+        self.positions.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -121,11 +134,11 @@ where
             child.redundant_by_parent(version, conservative);
         }
         // TODO: Check this works
-        self.position.redundant_by_parent(version, conservative);
+        self.positions.redundant_by_parent(version, conservative);
     }
 
     fn is_default(&self) -> bool {
-        self.position.is_default() && self.children.is_empty()
+        self.positions.is_default() && self.children.is_empty()
     }
 
     fn prepare(op: Self::Op) -> Self::Op {
@@ -133,24 +146,24 @@ where
     }
 
     fn is_enabled(&self, op: &Self::Op) -> bool {
-        let positions = self.position.eval(Read::new());
+        let positions = self.positions.eval(Read::new());
         match op {
-            List::Insert { pos, value } => {
+            NestedList::Insert { pos, value } => {
                 *pos <= positions.len() && L::default().is_enabled(value)
             }
-            List::Update { pos, value } => {
+            NestedList::Update { pos, value } => {
                 *pos < positions.len()
                     && self
                         .children
                         .get(&positions[*pos])
                         .is_some_and(|c| c.is_enabled(value))
             }
-            List::Delete { pos } => *pos < positions.len(),
+            NestedList::Delete { pos } => *pos < positions.len(),
         }
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for ListLog<L>
+impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
 {
@@ -159,7 +172,7 @@ where
         _q: Read<<Self as IsLog>::Value>,
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
         let mut list = Vec::new();
-        let positions = self.position.execute_query(Read::new());
+        let positions = self.positions.execute_query(Read::new());
         for id in positions.iter() {
             let child = self.children.get(id).unwrap();
             list.push(child.execute_query(Read::new()));
@@ -224,47 +237,57 @@ mod tests {
     use crate::{
         HashMap,
         counter::resettable_counter::Counter,
-        list::nested_list::{List, ListLog},
+        list::nested_list::{NestedList, NestedListLog},
         map::uw_map::{UWMap, UWMapLog},
         utils::membership::twins_log,
     };
 
     #[test]
     fn simple_nested_list() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
 
-        let event = replica_a.send(List::insert(0, Counter::Inc(10))).unwrap();
+        let event = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![10]);
         assert_eq!(replica_b.query(Read::new()), vec![10]);
 
-        let event = replica_b.send(List::update(0, Counter::Dec(5))).unwrap();
+        let event = replica_b
+            .send(NestedList::update(0, Counter::Dec(5)))
+            .unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![5]);
         assert_eq!(replica_b.query(Read::new()), vec![5]);
 
-        let event = replica_a.send(List::insert(1, Counter::Inc(10))).unwrap();
+        let event = replica_a
+            .send(NestedList::insert(1, Counter::Inc(10)))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![5, 10]);
         assert_eq!(replica_b.query(Read::new()), vec![5, 10]);
 
-        let event = replica_a.send(List::update(0, Counter::Inc(1))).unwrap();
+        let event = replica_a
+            .send(NestedList::update(0, Counter::Inc(1)))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![6, 10]);
         assert_eq!(replica_b.query(Read::new()), vec![6, 10]);
 
-        let event = replica_a.send(List::delete(0)).unwrap();
+        let event = replica_a.send(NestedList::delete(0)).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(Read::new()), vec![10]);
         assert_eq!(replica_b.query(Read::new()), vec![10]);
 
-        let event_a = replica_a.send(List::insert(1, Counter::Inc(21))).unwrap();
-        let event_b = replica_b.send(List::delete(0)).unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(1, Counter::Inc(21)))
+            .unwrap();
+        let event_b = replica_b.send(NestedList::delete(0)).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -275,10 +298,14 @@ mod tests {
 
     #[test]
     fn concurrent_insert() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(List::insert(0, Counter::Inc(10))).unwrap();
-        let event_b = replica_b.send(List::insert(0, Counter::Inc(20))).unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
+        let event_b = replica_b
+            .send(NestedList::insert(0, Counter::Inc(20)))
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -288,17 +315,23 @@ mod tests {
 
     #[test]
     fn scenario_1() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(List::insert(0, Counter::Reset)).unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Reset))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(List::insert(0, Counter::Dec(64))).unwrap();
-        let event_a = replica_a.send(List::insert(0, Counter::Dec(23))).unwrap();
+        let event_b = replica_b
+            .send(NestedList::insert(0, Counter::Dec(64)))
+            .unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Dec(23)))
+            .unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let event_b = replica_b.send(List::delete(1)).unwrap();
+        let event_b = replica_b.send(NestedList::delete(1)).unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
@@ -306,18 +339,26 @@ mod tests {
 
     #[test]
     fn scenario_2() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(List::insert(0, Counter::Dec(22))).unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Dec(22)))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(List::update(0, Counter::Reset)).unwrap();
+        let event_b = replica_b
+            .send(NestedList::update(0, Counter::Reset))
+            .unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(List::update(0, Counter::Inc(40))).unwrap();
+        let event_a = replica_a
+            .send(NestedList::update(0, Counter::Inc(40)))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(List::insert(0, Counter::Inc(47))).unwrap();
+        let event_b = replica_b
+            .send(NestedList::insert(0, Counter::Inc(47)))
+            .unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
@@ -325,15 +366,21 @@ mod tests {
 
     #[test]
     fn scenario_3() {
-        let (mut replica_a, mut replica_b) = twins_log::<ListLog<VecLog<Counter<i32>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(List::insert(0, Counter::Dec(22))).unwrap();
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Dec(22)))
+            .unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(List::insert(1, Counter::Inc(30))).unwrap();
+        let event_b = replica_b
+            .send(NestedList::insert(1, Counter::Inc(30)))
+            .unwrap();
         replica_a.receive(event_b);
 
-        let event_b = replica_b.send(List::delete(0)).unwrap();
-        let event_a = replica_a.send(List::update(1, Counter::Inc(40))).unwrap();
+        let event_b = replica_b.send(NestedList::delete(0)).unwrap();
+        let event_a = replica_a
+            .send(NestedList::update(1, Counter::Inc(40)))
+            .unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -343,16 +390,16 @@ mod tests {
     #[test]
     fn map_of_list() {
         let (mut replica_a, mut replica_b) =
-            twins_log::<UWMapLog<&str, ListLog<VecLog<Counter<i32>>>>>();
+            twins_log::<UWMapLog<&str, NestedListLog<VecLog<Counter<i32>>>>>();
 
         let event_a = replica_a
-            .send(UWMap::Update("a", List::insert(0, Counter::Inc(10))))
+            .send(UWMap::Update("a", NestedList::insert(0, Counter::Inc(10))))
             .unwrap();
         let event_a_2 = replica_a
-            .send(UWMap::Update("a", List::insert(1, Counter::Inc(5))))
+            .send(UWMap::Update("a", NestedList::insert(1, Counter::Inc(5))))
             .unwrap();
         let event_a_3 = replica_a
-            .send(UWMap::Update("a", List::update(0, Counter::Inc(1))))
+            .send(UWMap::Update("a", NestedList::update(0, Counter::Inc(1))))
             .unwrap();
 
         let mut result = HashMap::default();
@@ -367,7 +414,7 @@ mod tests {
 
         let event_b = replica_b.send(UWMap::Remove("a")).unwrap();
         let event_a = replica_a
-            .send(UWMap::Update("a", List::insert(0, Counter::Inc(100))))
+            .send(UWMap::Update("a", NestedList::insert(0, Counter::Inc(100))))
             .unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -401,28 +448,28 @@ mod tests {
     }
 }
 
-impl<O> Boxer<List<O>> for List<Box<O>> {
-    fn boxer(self) -> List<O> {
+impl<O> Boxer<NestedList<O>> for NestedList<Box<O>> {
+    fn boxer(self) -> NestedList<O> {
         match self {
-            List::Insert { pos, value } => List::Insert { pos, value: *value },
-            List::Update { pos, value } => List::Update { pos, value: *value },
-            List::Delete { pos } => List::Delete { pos },
+            NestedList::Insert { pos, value } => NestedList::Insert { pos, value: *value },
+            NestedList::Update { pos, value } => NestedList::Update { pos, value: *value },
+            NestedList::Delete { pos } => NestedList::Delete { pos },
         }
     }
 }
 
-impl<O> Boxer<List<Box<O>>> for List<O> {
-    fn boxer(self) -> List<Box<O>> {
+impl<O> Boxer<NestedList<Box<O>>> for NestedList<O> {
+    fn boxer(self) -> NestedList<Box<O>> {
         match self {
-            List::Insert { pos, value } => List::Insert {
+            NestedList::Insert { pos, value } => NestedList::Insert {
                 pos,
                 value: Box::new(value),
             },
-            List::Update { pos, value } => List::Update {
+            NestedList::Update { pos, value } => NestedList::Update {
                 pos,
                 value: Box::new(value),
             },
-            List::Delete { pos } => List::Delete { pos },
+            NestedList::Delete { pos } => NestedList::Delete { pos },
         }
     }
 }

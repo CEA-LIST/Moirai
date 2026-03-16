@@ -73,8 +73,10 @@ macro_rules! union {
                 }
             }
 
-            #[derive(Clone, Debug, PartialEq)]
+            #[derive(Clone, Debug, Default, PartialEq)]
             pub enum [<$union Value>] {
+                #[default]
+                Unset,
                 Value(Box<[<$union ChildValue>]>),
                 Conflict(Vec<[<$union ChildValue>]>),
             }
@@ -89,11 +91,11 @@ macro_rules! union {
 
             #[derive(Clone, Debug, Default)]
             pub struct [<$union Log>] {
-                child: [<$union Container>],
+                pub child: [<$union Container>],
             }
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
-                type Value = Option<[<$union Value>]>;
+                type Value = [<$union Value>];
                 type Op = [<$union>];
 
                 fn new() -> Self {
@@ -103,10 +105,34 @@ macro_rules! union {
                 fn is_enabled(&self, op: &Self::Op) -> bool {
                     match &self.child {
                         [<$union Container>]::Unset => true,
-                        [<$union Container>]::Value(child) => op.is_match_log(child),
+                        [<$union Container>]::Value(child) => match (op, child.as_ref()) {
+                            $(
+                                (
+                                    $union::$variant(o),
+                                    [<$union Child>]::$variant(log),
+                                ) => {
+                                    let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
+                                    log.is_enabled(&child_op)
+                                }
+                            )*
+                            _ => false,
+                        },
                         [<$union Container>]::Conflicts(children) => children
                             .iter()
-                            .any(|child| op.is_match_log(child)),
+                            .any(|child| match (op, child) {
+                                $(
+                                    (
+                                        $union::$variant(o),
+                                        [<$union Child>]::$variant(log),
+                                    ) => {
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                            <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
+                                        log.is_enabled(&child_op)
+                                    }
+                                )*
+                                _ => false,
+                            }),
                     }
                 }
 
@@ -202,15 +228,15 @@ macro_rules! union {
                     _q: $crate::moirai_protocol::crdt::query::Read<Self::Value>,
                 ) -> <$crate::moirai_protocol::crdt::query::Read<Self::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
                     match &self.child {
-                        [<$union Container>]::Unset => None,
-                        [<$union Container>]::Value(child) => Some(match child.as_ref() {
+                        [<$union Container>]::Unset => [<$union Value>]::Unset,
+                        [<$union Container>]::Value(child) => match child.as_ref() {
                             $(
                                 [<$union Child>]::$variant(log) => {
                                     let value = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
                                     [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
                                 }
                             )*
-                        }),
+                        },
                         [<$union Container>]::Conflicts(children) => {
                             let mut values = vec![];
                             for child in children {
@@ -225,7 +251,7 @@ macro_rules! union {
                                 values.push(value);
                             }
                             values.sort();
-                            Some([<$union Value>]::Conflict(values))
+                            [<$union Value>]::Conflict(values)
                         }
                     }
                 }

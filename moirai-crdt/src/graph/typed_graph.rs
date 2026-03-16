@@ -66,6 +66,7 @@ typed_graph! {
     connections {
         FooToBar: Foo -> Bar (FooBarEdge) [0, 1],
         BarToBaz: Bar -> Baz (BarBazEdge) [1, 1],
+        FooToBaz: Foo -> Baz (FooBarEdge) [0, *],
     }
 }
 
@@ -89,6 +90,70 @@ mod tests {
             petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]),
             petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]),
         );
+    }
+
+    #[test]
+    fn no_upper_bound() {
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
+
+        let e1 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Foo(Foo(1)),
+            })
+            .unwrap();
+        replica_b.receive(e1);
+
+        let e2 = replica_b
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Baz(Baz(1)),
+            })
+            .unwrap();
+        replica_a.receive(e2);
+
+        let e3 = replica_b
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Baz(Baz(2)),
+            })
+            .unwrap();
+        replica_a.receive(e3);
+
+        let e4 = replica_b
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Baz(Baz(3)),
+            })
+            .unwrap();
+        replica_a.receive(e4);
+
+        let e5 = replica_a
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: Foo(1),
+                target: Baz(1),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+        replica_b.receive(e5);
+
+        let e6 = replica_b
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: Foo(1),
+                target: Baz(2),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+        replica_a.receive(e6);
+
+        let e7 = replica_b
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: Foo(1),
+                target: Baz(3),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+        replica_a.receive(e7);
+
+        assert_convergence(&replica_a, &replica_b);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 4);
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 3);
     }
 
     #[test]
