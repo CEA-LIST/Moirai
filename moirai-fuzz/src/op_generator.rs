@@ -9,13 +9,13 @@ use moirai_protocol::{
         unstable_state::IsUnstableState,
     },
 };
-use rand::RngCore;
+use rand::Rng;
 
 pub trait OpGenerator: PureCRDT {
     type Config: Default;
 
     fn generate(
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
         config: &Self::Config,
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
@@ -23,7 +23,7 @@ pub trait OpGenerator: PureCRDT {
 }
 
 pub trait OpGeneratorNested: IsLog {
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op;
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op;
 }
 
 impl<O> OpGeneratorNested for EventGraph<O>
@@ -31,7 +31,7 @@ where
     O: PureCRDT + Clone + OpGenerator,
     EventGraph<O>: IsLog<Op = O>,
 {
-    fn generate(&self, rng: &mut impl RngCore) -> <EventGraph<O> as IsLog>::Op {
+    fn generate(&self, rng: &mut impl Rng) -> <EventGraph<O> as IsLog>::Op {
         O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
     }
 }
@@ -41,7 +41,7 @@ where
     O: PureCRDT + Clone + OpGenerator,
     U: IsUnstableState<O> + Default + Debug,
 {
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         O::generate(
             rng,
             &<O as OpGenerator>::Config::default(),

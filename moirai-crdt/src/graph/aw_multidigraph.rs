@@ -175,7 +175,7 @@ where
     type Config = ();
 
     fn generate(
-        rng: &mut impl rand::RngCore,
+        rng: &mut impl rand::Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
@@ -264,6 +264,27 @@ mod tests {
                 .first()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn concurrent_add_remove_vertex() {
+        let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
+
+        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
+        replica_b.receive(event);
+
+        let event_b = replica_b.send(Graph::RemoveVertex("A")).unwrap();
+        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert!(
+            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
+                .first()
+                .is_some()
+        );
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
     }
 
     #[test]

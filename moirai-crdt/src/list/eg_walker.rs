@@ -17,7 +17,7 @@ use moirai_protocol::{
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 #[cfg(feature = "fuzz")]
-use rand::RngCore;
+use rand::{Rng, RngExt};
 
 use crate::HashMap;
 
@@ -814,15 +814,12 @@ where
     type Config = ();
 
     fn generate(
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> Self {
-        use rand::{
-            Rng,
-            distr::{Distribution, weighted::WeightedIndex},
-        };
+        use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
             Insert,

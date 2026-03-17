@@ -10,6 +10,7 @@ use moirai_protocol::{
     event::Event,
     state::log::IsLog,
 };
+use rand::Rng;
 
 use crate::op_generator::OpGeneratorNested;
 
@@ -108,7 +109,7 @@ impl<L> OpGeneratorNested for MetricsLog<L>
 where
     L: IsLog + OpGeneratorNested,
 {
-    fn generate(&self, rng: &mut impl rand::RngCore) -> Self::Op {
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         self.inner.generate(rng)
     }
 }

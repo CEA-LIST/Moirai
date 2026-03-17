@@ -5,7 +5,7 @@ use moirai_macros::union;
 use moirai_protocol::crdt::query::Read;
 use moirai_protocol::state::{event_graph::EventGraph, po_log::VecLog};
 #[cfg(feature = "fuzz")]
-use rand::RngCore;
+use rand::Rng;
 
 use crate::{
     counter::resettable_counter::Counter,
@@ -27,7 +27,7 @@ union! {
 
 #[cfg(feature = "fuzz")]
 impl OpGeneratorNested for JsonLog {
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         use moirai_protocol::state::log::IsLog;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -40,7 +40,7 @@ impl OpGeneratorNested for JsonLog {
         }
         let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
 
-        fn generate_number(log: &VecLog<Counter<isize>>, rng: &mut impl RngCore) -> Json {
+        fn generate_number(log: &VecLog<Counter<isize>>, rng: &mut impl Rng) -> Json {
             use moirai_fuzz::op_generator::OpGenerator;
             use moirai_protocol::state::log::IsLogTest;
 
@@ -53,7 +53,7 @@ impl OpGeneratorNested for JsonLog {
             Json::Number(counter_op)
         }
 
-        fn generate_boolean(log: &VecLog<EWFlag>, rng: &mut impl RngCore) -> Json {
+        fn generate_boolean(log: &VecLog<EWFlag>, rng: &mut impl Rng) -> Json {
             use moirai_fuzz::op_generator::OpGenerator;
             use moirai_protocol::state::log::IsLogTest;
 
@@ -66,7 +66,7 @@ impl OpGeneratorNested for JsonLog {
             Json::Boolean(flag_op)
         }
 
-        fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl RngCore) -> Json {
+        fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl Rng) -> Json {
             use moirai_protocol::utils::boxer::Boxer;
 
             let map_op = <UWMapLog<String, JsonLog> as OpGeneratorNested>::generate(log, rng);
@@ -74,12 +74,12 @@ impl OpGeneratorNested for JsonLog {
             Json::Object(o)
         }
 
-        fn generate_string(log: &EventGraph<List<char>>, rng: &mut impl RngCore) -> Json {
+        fn generate_string(log: &EventGraph<List<char>>, rng: &mut impl Rng) -> Json {
             let list_op = <EventGraph<List<char>> as OpGeneratorNested>::generate(log, rng);
             Json::String(list_op)
         }
 
-        fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl RngCore) -> Json {
+        fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl Rng) -> Json {
             use moirai_protocol::utils::boxer::Boxer;
 
             let list_op = <NestedListLog<JsonLog> as OpGeneratorNested>::generate(log, rng);
@@ -87,7 +87,7 @@ impl OpGeneratorNested for JsonLog {
             Json::Array(o)
         }
 
-        fn generate_value(val: &JsonChildValue, log: &JsonChild, rng: &mut impl RngCore) -> Json {
+        fn generate_value(val: &JsonChildValue, log: &JsonChild, rng: &mut impl Rng) -> Json {
             match (val, log) {
                 (JsonChildValue::Number(_), JsonChild::Number(l)) => generate_number(l, rng),
                 (JsonChildValue::Boolean(_), JsonChild::Boolean(l)) => generate_boolean(l, rng),

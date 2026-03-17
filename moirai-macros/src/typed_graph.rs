@@ -655,7 +655,7 @@ macro_rules! typed_graph {
         // impl moirai_fuzz::value_generator::ValueGenerator for $vertex {
         //     type Config = ();
 
-        //     fn generate(rng: &mut impl rand::RngCore, _config: &Self::Config) -> Self {
+        //     fn generate(rng: &mut impl rand::Rng, _config: &Self::Config) -> Self {
         //         use rand::prelude::IndexedRandom;
 
         //         let choices = [$(stringify!($v)),*];
@@ -676,7 +676,7 @@ macro_rules! typed_graph {
         //     type Config = ();
 
         //     fn generate(
-        //         rng: &mut impl rand::RngCore,
+        //         rng: &mut impl rand::Rng,
         //         _config: &Self::Config,
         //         stable: &Self::StableState,
         //         unstable: &impl $crate::moirai_protocol::state::unstable_state::IsUnstableState<Self>,

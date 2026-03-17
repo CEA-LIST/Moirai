@@ -93,6 +93,38 @@ mod tests {
     }
 
     #[test]
+    fn add_delete_vertex() {
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
+
+        let init = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Foo(Foo(1)),
+            })
+            .unwrap();
+        replica_b.receive(init);
+
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_b.query(Read::new()).node_count(), 1);
+
+        let e1 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Foo(Foo(1)),
+            })
+            .unwrap();
+        let e2 = replica_b
+            .send(MyTypedGraph::RemoveVertex {
+                id: MyVertex::Foo(Foo(1)),
+            })
+            .unwrap();
+        replica_b.receive(e1);
+        replica_a.receive(e2);
+
+        // assert_convergence(&replica_a, &replica_b);
+        assert_eq!(replica_b.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+    }
+
+    #[test]
     fn no_upper_bound() {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 

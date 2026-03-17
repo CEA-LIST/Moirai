@@ -11,7 +11,7 @@ use moirai_protocol::{
     replica::{IsReplica, ReplicaIdx},
     state::log::IsLog,
 };
-use rand::{Rng, SeedableRng, seq::IteratorRandom};
+use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
 
 use crate::{
@@ -52,10 +52,8 @@ where
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
-        let mut rng = ChaCha8Rng::from_os_rng();
-        let mut seed = [0u8; 32];
-        rng.fill(&mut seed);
-        seed
+        let rng: ChaCha8Rng = rand::make_rng();
+        rng.get_seed()
     });
 
     info!("🎲 Using seed: {}", seed_to_hex(&used_seed));

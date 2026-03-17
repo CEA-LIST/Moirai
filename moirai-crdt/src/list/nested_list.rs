@@ -12,6 +12,8 @@ use moirai_protocol::{
     state::{event_graph::EventGraph, log::IsLog},
     utils::boxer::Boxer,
 };
+#[cfg(feature = "fuzz")]
+use rand::RngExt;
 
 use crate::{
     HashMap,
@@ -241,11 +243,8 @@ impl<L> OpGeneratorNested for NestedListLog<L>
 where
     L: OpGeneratorNested,
 {
-    fn generate(&self, rng: &mut impl rand::RngCore) -> Self::Op {
-        use rand::{
-            Rng,
-            distr::{Distribution, weighted::WeightedIndex},
-        };
+    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
             Insert,

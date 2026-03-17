@@ -13,7 +13,7 @@ use moirai_protocol::{
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 #[cfg(feature = "fuzz")]
-use rand::RngCore;
+use rand::{Rng, RngExt};
 
 use crate::HashSet;
 #[cfg(feature = "fuzz")]
@@ -147,15 +147,12 @@ impl OpGenerator for AWSet<usize> {
     type Config = SetConfig;
 
     fn generate(
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
         config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
     ) -> Self {
-        use rand::{
-            Rng,
-            distr::{Distribution, weighted::WeightedIndex},
-        };
+        use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
             Add,

@@ -16,7 +16,7 @@ use moirai_protocol::{
     utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
-use rand::RngCore;
+use rand::Rng;
 
 use crate::HashMap;
 
@@ -163,7 +163,7 @@ where
     L: OpGeneratorNested,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
-    fn generate(&self, rng: &mut impl RngCore) -> Self::Op {
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         use moirai_fuzz::value_generator::ValueGenerator;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 

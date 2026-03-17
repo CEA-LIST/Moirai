@@ -1,9 +1,9 @@
-use rand::RngCore;
+use rand::Rng;
 
 pub trait ValueGenerator {
     type Config: Default;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self;
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self;
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ impl StringConfig {
 impl ValueGenerator for String {
     type Config = StringConfig;
 
-    fn generate(rng: &mut impl RngCore, cfg: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, cfg: &Self::Config) -> Self {
         cfg.validate().expect("Invalid StringConfig");
 
         let len = usize::generate(
@@ -61,7 +61,7 @@ impl ValueGenerator for String {
 impl ValueGenerator for bool {
     type Config = ();
 
-    fn generate(rng: &mut impl RngCore, _config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
         rng.next_u32() & 1 == 1
     }
 }
@@ -104,7 +104,7 @@ impl Default for NumberConfig {
 impl ValueGenerator for f64 {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();
@@ -116,7 +116,7 @@ impl ValueGenerator for f64 {
 impl ValueGenerator for u32 {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();
@@ -128,7 +128,7 @@ impl ValueGenerator for u32 {
 impl ValueGenerator for usize {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();
@@ -140,7 +140,7 @@ impl ValueGenerator for usize {
 impl ValueGenerator for i32 {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();
@@ -174,7 +174,7 @@ impl CharConfig {
 impl ValueGenerator for char {
     type Config = CharConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid CharConfig");
 
         let idx = (rng.next_u32() as usize) % config.alphabet.len();
@@ -185,7 +185,7 @@ impl ValueGenerator for char {
 impl ValueGenerator for isize {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();
@@ -197,7 +197,7 @@ impl ValueGenerator for isize {
 impl ValueGenerator for u8 {
     type Config = NumberConfig;
 
-    fn generate(rng: &mut impl RngCore, config: &Self::Config) -> Self {
+    fn generate(rng: &mut impl Rng, config: &Self::Config) -> Self {
         config.validate().expect("Invalid NumberConfig");
 
         let range = config.range_size();

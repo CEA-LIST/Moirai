@@ -15,7 +15,7 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
 };
 #[cfg(feature = "fuzz")]
-use rand::RngCore;
+use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -110,7 +110,7 @@ where
     type Config = ();
 
     fn generate(
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
