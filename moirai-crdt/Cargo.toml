@@ -26,6 +26,7 @@ moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 rand = { version = "0.9.1", optional = true }
 
 [features]
-default = []
+default = ["fuzz"]
+# default = []
 serde = ["dep:serde"]
 fuzz = ["dep:moirai-fuzz", "dep:rand"]

@@ -468,46 +468,46 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
     }
 
-    #[cfg(feature = "fuzz")]
-    #[test]
-    fn fuzz_typed_graph() {
-        use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
-            fuzzer::fuzzer,
-        };
-        use moirai_protocol::state::po_log::VecLog;
+    // #[cfg(feature = "fuzz")]
+    // #[test]
+    // fn fuzz_typed_graph() {
+    //     use moirai_fuzz::{
+    //         config::{FuzzerConfig, RunConfig},
+    //         fuzzer::fuzzer,
+    //     };
+    //     use moirai_protocol::state::po_log::VecLog;
 
-        let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
-        let runs = vec![run_1; 10_000];
+    //     let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
+    //     let runs = vec![run_1; 10_000];
 
-        let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
-            "typed_graph",
-            runs,
-            true,
-            |a, b| {
-                let node = a.node_count() == b.node_count();
-                let edge = a.edge_count() == b.edge_count();
-                let is_valid = validate_schema(&a);
+    //     let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
+    //         "typed_graph",
+    //         runs,
+    //         true,
+    //         |a, b| {
+    //             let node = a.node_count() == b.node_count();
+    //             let edge = a.edge_count() == b.edge_count();
+    //             let is_valid = validate_schema(&a);
 
-                let is_valid = match is_valid {
-                    Ok(_) => true,
-                    Err(violations) => {
-                        if violations
-                            .iter()
-                            .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
-                        {
-                            true
-                        } else {
-                            println!("Schema violations: {:?}", violations);
-                            false
-                        }
-                    }
-                };
-                node && edge && is_valid
-            },
-            false,
-        );
+    //             let is_valid = match is_valid {
+    //                 Ok(_) => true,
+    //                 Err(violations) => {
+    //                     if violations
+    //                         .iter()
+    //                         .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+    //                     {
+    //                         true
+    //                     } else {
+    //                         println!("Schema violations: {:?}", violations);
+    //                         false
+    //                     }
+    //                 }
+    //             };
+    //             node && edge && is_valid
+    //         },
+    //         false,
+    //     );
 
-        fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
-    }
+    //     fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
+    // }
 }

@@ -699,6 +699,56 @@ where
     }
 }
 
+pub struct ItemOrder {
+    target: EventId,
+}
+
+impl ItemOrder {
+    pub fn new(target: EventId) -> Self {
+        Self { target }
+    }
+}
+
+impl QueryOperation for ItemOrder {
+    type Response = usize;
+}
+
+impl<V> Eval<ItemOrder> for List<V>
+where
+    V: Debug + Clone,
+{
+    fn execute_query(
+        q: ItemOrder,
+        _stable: &Self::StableState,
+        unstable: &impl IsUnstableState<Self>,
+    ) -> usize {
+        let mut document = Document::default();
+        let mut snapshot: Vec<V> = Vec::new();
+
+        for tagged_op in unstable.iter() {
+            let parents = unstable.parents(tagged_op.id());
+            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
+
+            for event_id in a_only {
+                Self::retreat(&mut document, unstable, &event_id);
+            }
+
+            for event_id in b_only {
+                Self::advance(&mut document, unstable, &event_id);
+            }
+
+            Self::apply(&mut document, tagged_op, &mut snapshot);
+
+            document.current_version = Some(tagged_op.id().clone());
+        }
+
+        *document
+            .items_by_idx
+            .get(&q.target)
+            .expect("Item order not found in document")
+    }
+}
+
 pub struct ReadAt<'a, V> {
     version: &'a Version,
     _marker: std::marker::PhantomData<V>,

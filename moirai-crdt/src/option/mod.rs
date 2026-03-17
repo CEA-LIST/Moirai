@@ -25,6 +25,16 @@ impl<L> Default for OptionLog<L> {
     }
 }
 
+impl<L> OptionLog<L> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn child(&self) -> Option<&L> {
+        self.child.as_ref()
+    }
+}
+
 impl<L> IsLog for OptionLog<L>
 where
     L: IsLog,

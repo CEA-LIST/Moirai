@@ -15,7 +15,7 @@ use moirai_protocol::{
 
 use crate::{
     HashMap,
-    list::eg_walker::{List as SimpleList, MutationTarget},
+    list::eg_walker::{List as SimpleList, ReadAt},
 };
 
 #[derive(Clone, Debug)]
@@ -52,6 +52,10 @@ pub struct NestedListLog<L> {
     positions: EventGraph<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
     children: HashMap<EventId, L>,
+    /// Last deleted position for a child. If the child later receives concurrent
+    /// nested updates and becomes non-default again, we can surface it back in
+    /// the list view at its deleted position.
+    deleted_positions: HashMap<EventId, usize>,
 }
 
 impl<L> Default for NestedListLog<L> {
@@ -59,6 +63,7 @@ impl<L> Default for NestedListLog<L> {
         Self {
             positions: EventGraph::default(),
             children: Default::default(),
+            deleted_positions: Default::default(),
         }
     }
 }
@@ -72,8 +77,38 @@ impl<L> NestedListLog<L> {
         &self.positions
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn children(&self) -> &HashMap<EventId, L> {
         &self.children
+    }
+
+    fn resolved_positions(&self) -> Vec<EventId>
+    where
+        L: IsLog,
+    {
+        let mut positions = self.positions.execute_query(Read::new());
+        let mut hidden_children = self
+            .deleted_positions
+            .iter()
+            .filter_map(|(id, pos)| {
+                self.children
+                    .get(id)
+                    .filter(|child| !child.is_default() && !positions.contains(id))
+                    .map(|_| (id.clone(), *pos))
+            })
+            .collect::<Vec<_>>();
+
+        hidden_children.sort_by(|(left_id, left_pos), (right_id, right_pos)| {
+            left_pos
+                .cmp(right_pos)
+                .then_with(|| left_id.to_string().cmp(&right_id.to_string()))
+        });
+
+        for (offset, (id, pos)) in hidden_children.into_iter().enumerate() {
+            positions.insert((pos + offset).min(positions.len()), id);
+        }
+
+        positions
     }
 }
 
@@ -106,17 +141,37 @@ where
                     .entry(event.id().clone())
                     .or_default()
                     .effect(child_event);
+                self.deleted_positions.remove(event.id());
             }
             NestedList::Delete { pos } => {
-                let list_event = Event::unfold(event, SimpleList::Delete { pos });
+                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let target = positions_at_version[pos].clone();
+                let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 self.positions.effect(list_event);
+                if let Some(child) = self.children.get_mut(&target) {
+                    child.redundant_by_parent(event.version(), true);
+                    if child.is_default() {
+                        self.children.remove(&target);
+                    }
+                }
+                self.deleted_positions
+                    .entry(target)
+                    .and_modify(|deleted_pos| *deleted_pos = (*deleted_pos).max(pos))
+                    .or_insert(pos);
             }
             NestedList::Update { pos, value } => {
+                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 self.positions.effect(list_event);
-                let target = self.positions.eval(MutationTarget::new(event.id().clone()));
                 let child_event = Event::unfold(event, value);
-                self.children.get_mut(&target).unwrap().effect(child_event);
+                self.children
+                    .entry(target.clone())
+                    .or_default()
+                    .effect(child_event);
+                if self.positions.execute_query(Read::new()).contains(&target) {
+                    self.deleted_positions.remove(&target);
+                }
             }
         }
     }
@@ -138,7 +193,7 @@ where
     }
 
     fn is_default(&self) -> bool {
-        self.positions.is_default() && self.children.is_empty()
+        self.positions.is_default() && self.children.is_empty() && self.deleted_positions.is_empty()
     }
 
     fn prepare(op: Self::Op) -> Self::Op {
@@ -153,10 +208,10 @@ where
             }
             NestedList::Update { pos, value } => {
                 *pos < positions.len()
-                    && self
-                        .children
-                        .get(&positions[*pos])
-                        .is_some_and(|c| c.is_enabled(value))
+                    && self.children.get(&positions[*pos]).map_or_else(
+                        || L::default().is_enabled(value),
+                        |child| child.is_enabled(value),
+                    )
             }
             NestedList::Delete { pos } => *pos < positions.len(),
         }
@@ -172,7 +227,7 @@ where
         _q: Read<<Self as IsLog>::Value>,
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
         let mut list = Vec::new();
-        let positions = self.positions.execute_query(Read::new());
+        let positions = self.resolved_positions();
         for id in positions.iter() {
             let child = self.children.get(id).unwrap();
             list.push(child.execute_query(Read::new()));
@@ -182,7 +237,7 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> OpGeneratorNested for ListLog<L>
+impl<L> OpGeneratorNested for NestedListLog<L>
 where
     L: OpGeneratorNested,
 {
@@ -199,7 +254,7 @@ where
         }
         let dist = WeightedIndex::new([2, 2, 1]).unwrap();
 
-        let positions = self.position.eval(Read::new());
+        let positions = self.positions.eval(Read::new());
         let choice = if positions.is_empty() {
             &Choice::Insert
         } else {
@@ -211,18 +266,22 @@ where
                 let pos = rng.random_range(0..=positions.len());
                 let default_child = L::new();
                 let value = <L as OpGeneratorNested>::generate(&default_child, rng);
-                List::Insert { pos, value }
+                NestedList::Insert { pos, value }
             }
             Choice::Update => {
                 let pos = rng.random_range(0..positions.len());
                 let target_id = &positions[pos];
-                let child = self.children.get(target_id).unwrap();
-                let value = <L as OpGeneratorNested>::generate(child, rng);
-                List::Update { pos, value }
+                let value = if let Some(child) = self.children.get(target_id) {
+                    <L as OpGeneratorNested>::generate(child, rng)
+                } else {
+                    let default_child = L::new();
+                    <L as OpGeneratorNested>::generate(&default_child, rng)
+                };
+                NestedList::Update { pos, value }
             }
             Choice::Delete => {
                 let pos = rng.random_range(0..positions.len());
-                List::Delete { pos }
+                NestedList::Delete { pos }
             }
         };
         assert!(self.is_enabled(&op));
@@ -239,7 +298,7 @@ mod tests {
         counter::resettable_counter::Counter,
         list::nested_list::{NestedList, NestedListLog},
         map::uw_map::{UWMap, UWMapLog},
-        utils::membership::twins_log,
+        utils::membership::{triplet_log, twins_log},
     };
 
     #[test]
@@ -311,6 +370,98 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
         assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
+    }
+
+    #[test]
+    fn concurrent_update_delete() {
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
+        replica_b.receive(event_a);
+
+        let event_a = replica_a
+            .send(NestedList::update(0, Counter::Inc(5)))
+            .unwrap();
+
+        let event_b = replica_b.send(NestedList::delete(0)).unwrap();
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert_eq!(replica_a.query(Read::new()), vec![5]);
+        assert_eq!(replica_b.query(Read::new()), vec![5]);
+        assert_eq!(replica_b.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn concurrent_update_delete_insert() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let initial_insert = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
+        replica_b.receive(initial_insert.clone());
+        replica_c.receive(initial_insert);
+
+        let event_a = replica_a
+            .send(NestedList::update(0, Counter::Inc(5)))
+            .unwrap();
+
+        let event_b = replica_b.send(NestedList::delete(0)).unwrap();
+        let event_c = replica_c
+            .send(NestedList::insert(0, Counter::Inc(15)))
+            .unwrap();
+        replica_a.receive(event_b.clone());
+        replica_a.receive(event_c.clone());
+        replica_b.receive(event_a.clone());
+        replica_b.receive(event_c.clone());
+        replica_c.receive(event_a);
+        replica_c.receive(event_b);
+
+        assert_eq!(replica_a.query(Read::new()), vec![5, 15]);
+        assert_eq!(replica_b.query(Read::new()), vec![5, 15]);
+        assert_eq!(replica_c.query(Read::new()), vec![5, 15]);
+    }
+
+    #[test]
+    fn concurrent_update_delete_insert_2() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event_b_1 = replica_b
+            .send(NestedList::insert(0, Counter::Inc(1)))
+            .unwrap();
+        replica_a.receive(event_b_1.clone());
+        replica_c.receive(event_b_1);
+
+        let event_b_2 = replica_b.send(NestedList::delete(0)).unwrap();
+
+        let event_a_1 = replica_a
+            .send(NestedList::update(0, Counter::Inc(1)))
+            .unwrap();
+
+        let event_c_1 = replica_c
+            .send(NestedList::insert(0, Counter::Reset))
+            .unwrap();
+
+        let event_c_2 = replica_c.send(NestedList::delete(1)).unwrap();
+
+        replica_a.receive(event_b_2.clone());
+        replica_a.receive(event_c_1.clone());
+        replica_a.receive(event_c_2.clone());
+
+        replica_b.receive(event_a_1.clone());
+        replica_b.receive(event_c_1.clone());
+        replica_b.receive(event_c_2.clone());
+
+        replica_c.receive(event_a_1);
+        replica_c.receive(event_b_2);
+
+        assert_eq!(replica_a.query(Read::new()), vec![0, 1]);
+        assert_eq!(replica_b.query(Read::new()), vec![0, 1]);
+        assert_eq!(replica_c.query(Read::new()), vec![0, 1]);
     }
 
     #[test]
@@ -433,10 +584,10 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.8, 8, 10, None, None, false, false);
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
+        let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<ListLog<VecLog<Counter<i32>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>>::new(
             "nested_list",
             runs,
             true,
@@ -444,7 +595,7 @@ mod tests {
             false,
         );
 
-        fuzzer::<ListLog<VecLog<Counter<i32>>>>(config);
+        fuzzer::<NestedListLog<VecLog<Counter<i32>>>>(config);
     }
 }
 

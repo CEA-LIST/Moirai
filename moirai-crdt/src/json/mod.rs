@@ -1,6 +1,8 @@
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_macros::union;
+#[cfg(feature = "fuzz")]
+use moirai_protocol::crdt::query::Read;
 use moirai_protocol::state::{event_graph::EventGraph, po_log::VecLog};
 #[cfg(feature = "fuzz")]
 use rand::RngCore;
@@ -97,31 +99,9 @@ impl OpGeneratorNested for JsonLog {
         }
 
         let value = self.eval(Read::new());
+
         match value {
-            Some(val) => match (val, &self.child) {
-                (JsonValue::Value(v), JsonContainer::Value(child_log)) => {
-                    generate_value(&*v, child_log, rng)
-                }
-                (JsonValue::Conflict(v), JsonContainer::Conflicts(child_logs)) => {
-                    let choice = rand::seq::IteratorRandom::choose(v.iter(), rng).unwrap();
-                    let log = child_logs
-                        .iter()
-                        .find(|log| {
-                            matches!(
-                                (choice, log),
-                                (JsonChildValue::Number(_), JsonChild::Number(_))
-                                    | (JsonChildValue::Boolean(_), JsonChild::Boolean(_))
-                                    | (JsonChildValue::Object(_), JsonChild::Object(_))
-                                    | (JsonChildValue::String(_), JsonChild::String(_))
-                                    | (JsonChildValue::Array(_), JsonChild::Array(_))
-                            )
-                        })
-                        .unwrap();
-                    generate_value(choice, log, rng)
-                }
-                _ => unreachable!(),
-            },
-            None => {
+            JsonValue::Unset => {
                 use moirai_protocol::state::log::IsLog;
 
                 let choice = &[
@@ -139,6 +119,31 @@ impl OpGeneratorNested for JsonLog {
                     Choice::Array => generate_array(&NestedListLog::<JsonLog>::new(), rng),
                 }
             }
+            JsonValue::Value(v) => match &self.child {
+                JsonContainer::Value(child) => generate_value(&v, child.as_ref(), rng),
+                _ => unreachable!(),
+            },
+            JsonValue::Conflict(json_child_values) => match &self.child {
+                JsonContainer::Conflicts(child_logs) => {
+                    let choice =
+                        rand::seq::IteratorRandom::choose(json_child_values.iter(), rng).unwrap();
+                    let log = child_logs
+                        .iter()
+                        .find(|log| {
+                            matches!(
+                                (choice, log),
+                                (JsonChildValue::Number(_), JsonChild::Number(_))
+                                    | (JsonChildValue::Boolean(_), JsonChild::Boolean(_))
+                                    | (JsonChildValue::Object(_), JsonChild::Object(_))
+                                    | (JsonChildValue::String(_), JsonChild::String(_))
+                                    | (JsonChildValue::Array(_), JsonChild::Array(_))
+                            )
+                        })
+                        .unwrap();
+                    generate_value(choice, log, rng)
+                }
+                _ => unreachable!(),
+            },
         }
     }
 }
