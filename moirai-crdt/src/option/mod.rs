@@ -1,3 +1,5 @@
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -7,6 +9,8 @@ use moirai_protocol::{
     event::Event,
     state::log::IsLog,
 };
+#[cfg(feature = "fuzz")]
+use rand::RngExt;
 
 #[derive(Clone, Debug)]
 pub enum Optional<O> {
@@ -84,6 +88,25 @@ where
         match self.child {
             Some(ref child) => child.is_default(),
             None => true,
+        }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> OpGeneratorNested for OptionLog<L>
+where
+    L: OpGeneratorNested,
+{
+    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+        match &self.child {
+            Some(child) => {
+                if rng.random_bool(1.0 / 5.0) {
+                    Optional::Unset
+                } else {
+                    Optional::Set(child.generate(rng))
+                }
+            }
+            None => Optional::Set(<L as OpGeneratorNested>::generate(&L::default(), rng)),
         }
     }
 }

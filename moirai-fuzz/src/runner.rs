@@ -126,7 +126,15 @@ where
         let msg = timed(
             ReplicaIdx(replica_idx),
             &mut total_time_to_deliver_per_replica,
-            || replicas[replica_idx].send(op.clone()).unwrap(),
+            || {
+                replicas[replica_idx].send(op.clone()).unwrap_or_else(|| {
+                    panic!(
+                        "Failed to send operation from replica {}: {:?}",
+                        replicas[replica_idx].id(),
+                        op
+                    )
+                })
+            },
         );
 
         // Add event to execution graph if enabled
