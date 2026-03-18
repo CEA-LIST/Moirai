@@ -10,5 +10,10 @@ description = "Macros for the Moirai CRDT framework implementation"
 
 [dependencies]
 moirai-protocol = { path = "../moirai-protocol" }
+moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 paste = "1.0.15"
 rustc-hash = "1.1.0"
+
+[features]
+default = []
+fuzz = ["moirai-fuzz"]

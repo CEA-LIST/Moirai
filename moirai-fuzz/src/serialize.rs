@@ -109,6 +109,7 @@ pub fn save_execution_record(
                 avg_effect_ms: data.0.avg_effect_ms,
                 execution_graph_dot: data.0.execution_graph_dot,
                 used_seed: data.0.used_seed,
+                final_metrics: data.0.final_metrics,
             },
         })
         .collect();

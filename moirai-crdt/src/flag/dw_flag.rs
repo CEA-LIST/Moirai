@@ -193,7 +193,7 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<DWFlag>>::new("dw_flag", runs, true, |a, b| a == b, true);
+            FuzzerConfig::<VecLog<DWFlag>>::new("dw_flag", runs, true, |a, b| a == b, false);
 
         fuzzer::<VecLog<DWFlag>>(config);
     }

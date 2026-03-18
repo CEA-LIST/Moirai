@@ -55,7 +55,12 @@ macro_rules! union {
 
             impl PartialEq for [<$union ChildValue>] {
                 fn eq(&self, other: &Self) -> bool {
-                    self.rank() == other.rank()
+                    match (self, other) {
+                        $(
+                            (Self::$variant(left), Self::$variant(right)) => left == right,
+                        )*
+                        _ => false,
+                    }
                 }
             }
 
@@ -222,6 +227,69 @@ macro_rules! union {
                 }
             }
 
+            impl $crate::moirai_protocol::state::sink::IsLogSink for [<$union Log>] {
+                fn effect_with_sink(
+                    &mut self,
+                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    path: $crate::moirai_protocol::state::sink::ObjectPath,
+                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
+                ) {
+                    match event.op().clone() {
+                        $(
+                            $union::$variant(o) => {
+                                let path = path.variant(stringify!($variant));
+                                match &mut self.child {
+                                    [<$union Container>]::Unset => {
+                                        let log = {
+                                            let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                            let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
+                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
+                                            <$log as $crate::moirai_protocol::state::sink::IsLogSink>::effect_with_sink(&mut log, child_event, path, sink);
+                                            log
+                                        };
+                                        self.child = [<$union Container>]::Value(Box::new([<$union Child>]::$variant(log)));
+                                    }
+                                    [<$union Container>]::Value(existing_child) => {
+                                        if let [<$union Child>]::$variant(existing_log) = existing_child.as_mut() {
+                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                            <$log as $crate::moirai_protocol::state::sink::IsLogSink>::effect_with_sink(existing_log, child_event, path, sink);
+                                        } else {
+                                            let mut new_children = vec![];
+                                            new_children.push((**existing_child).clone());
+                                            let log = {
+                                                let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                <$log as $crate::moirai_protocol::state::sink::IsLogSink>::effect_with_sink(&mut log, child_event, path, sink);
+                                                log
+                                            };
+                                            new_children.push([<$union Child>]::$variant(log));
+                                            self.child = [<$union Container>]::Conflicts(new_children);
+                                        }
+                                    }
+                                    [<$union Container>]::Conflicts(children) => {
+                                        if let Some([<$union Child>]::$variant(log)) = children
+                                            .iter_mut()
+                                            .find(|c| matches!(c, [<$union Child>]::$variant(_)))
+                                        {
+                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                            <$log as $crate::moirai_protocol::state::sink::IsLogSink>::effect_with_sink(log, child_event, path, sink);
+                                        } else {
+                                            let log = {
+                                                let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                <$log as $crate::moirai_protocol::state::sink::IsLogSink>::effect_with_sink(&mut log, child_event, path, sink);
+                                                log
+                                            };
+                                            children.push([<$union Child>]::$variant(log));
+                                        }
+                                    }
+                                }
+                            }
+                        )*
+                    }
+                }
+            }
+
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$union Log>] {
                 fn execute_query(
                     &self,
@@ -252,6 +320,36 @@ macro_rules! union {
                             }
                             values.sort();
                             [<$union Value>]::Conflict(values)
+                        }
+                    }
+                }
+            }
+
+            #[cfg(feature = "fuzz")]
+            impl ::moirai_fuzz::metrics::FuzzMetrics for [<$union Log>] {
+                fn structure_metrics(&self) -> ::moirai_fuzz::metrics::StructureMetrics {
+                    match &self.child {
+                        [<$union Container>]::Unset => ::moirai_fuzz::metrics::StructureMetrics::empty(),
+                        [<$union Container>]::Value(child) => {
+                            let child_metrics = match child.as_ref() {
+                                $(
+                                    [<$union Child>]::$variant(log) => {
+                                        ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(log)
+                                    }
+                                )*
+                            };
+                            ::moirai_fuzz::metrics::StructureMetrics::object([child_metrics])
+                        }
+                        [<$union Container>]::Conflicts(children) => {
+                            ::moirai_fuzz::metrics::StructureMetrics::object(
+                                children.iter().map(|child| match child {
+                                    $(
+                                        [<$union Child>]::$variant(log) => {
+                                            ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(log)
+                                        }
+                                    )*
+                                })
+                            )
                         }
                     }
                 }

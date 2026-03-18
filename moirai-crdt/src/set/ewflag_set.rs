@@ -7,7 +7,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
+    state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
 };
 
 use crate::{
@@ -91,6 +91,8 @@ where
         set
     }
 }
+
+impl<V> IsLogSink for EWFlagSetLog<V> where V: Clone + Hash + Debug + Eq {}
 
 #[cfg(test)]
 mod tests {

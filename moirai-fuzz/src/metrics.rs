@@ -8,7 +8,7 @@ use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    state::log::IsLog,
+    state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
 };
 use rand::Rng;
 
@@ -29,6 +29,101 @@ pub fn set_disable_stability(disable: bool) {
 /// Get the current stability disable flag
 fn get_disable_stability() -> bool {
     DISABLE_STABILITY.with(|flag| *flag.borrow())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub struct StructureMetrics {
+    pub size: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl StructureMetrics {
+    pub const fn empty() -> Self {
+        Self {
+            size: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    pub const fn scalar() -> Self {
+        Self {
+            size: 1,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    pub fn object(children: impl IntoIterator<Item = Self>) -> Self {
+        let children = children.into_iter().filter(|m| m.size > 0).collect::<Vec<_>>();
+        if children.is_empty() {
+            return Self::empty();
+        }
+
+        Self {
+            size: children.len(),
+            width: children
+                .len()
+                .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
+            height: 1 + children.iter().map(|m| m.height).max().unwrap_or(0),
+        }
+    }
+
+    pub fn list(children: impl IntoIterator<Item = Self>) -> Self {
+        let children = children.into_iter().filter(|m| m.size > 0).collect::<Vec<_>>();
+        if children.is_empty() {
+            return Self::empty();
+        }
+
+        Self {
+            size: children.len(),
+            width: children
+                .len()
+                .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
+            height: 1 + children.iter().map(|m| m.height).max().unwrap_or(0),
+        }
+    }
+}
+
+pub trait FuzzMetrics: IsLog {
+    fn structure_metrics(&self) -> StructureMetrics;
+}
+
+impl<O> FuzzMetrics for EventGraph<O>
+where
+    O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        if self.is_default() {
+            StructureMetrics::empty()
+        } else {
+            StructureMetrics::scalar()
+        }
+    }
+}
+
+impl<O, U> FuzzMetrics for POLog<O, U>
+where
+    O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
+    U: IsUnstableState<O> + Default + Debug,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        if self.is_default() {
+            StructureMetrics::empty()
+        } else {
+            StructureMetrics::scalar()
+        }
+    }
+}
+
+impl<L> FuzzMetrics for Box<L>
+where
+    L: FuzzMetrics,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        (**self).structure_metrics()
+    }
 }
 
 /// Wrapper autour d'un IsLog qui mesure le temps passé dans effect()
@@ -111,5 +206,14 @@ where
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         self.inner.generate(rng)
+    }
+}
+
+impl<L> FuzzMetrics for MetricsLog<L>
+where
+    L: IsLog + FuzzMetrics,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        self.inner.structure_metrics()
     }
 }

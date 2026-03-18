@@ -18,11 +18,11 @@ use crate::{
     HashMap,
     config::RunConfig,
     execution_graph::ExecutionGraph,
-    metrics::{MetricsLog, set_disable_stability},
+    metrics::{FuzzMetrics, MetricsLog, StructureMetrics, set_disable_stability},
     op_generator::OpGeneratorNested,
     utils::{
         boostrap::bootstrap_n,
-        format::{clean_dot_output, format_string, seed_to_hex},
+        format::{clean_dot_output, estimate_debug_size_bits, format_string_ellipsis, seed_to_hex},
     },
 };
 
@@ -34,6 +34,8 @@ pub struct RunData {
     pub used_seed: [u8; 32],
     /// Final value observed after convergence
     pub first_value: String,
+    /// Structural metrics observed after convergence
+    pub final_metrics: StructureMetrics,
     /// Total time taken to deliver all ops, per replica
     pub total_time_to_deliver_per_replica: HashMap<ReplicaIdx, Duration>,
     /// Total time spent in effect() per replica
@@ -48,7 +50,7 @@ pub fn runner<L>(
     compare: fn(&L::Value, &L::Value) -> bool,
 ) -> RunData
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
@@ -207,7 +209,9 @@ where
     check_pb.set_message("Checking convergence...");
 
     let first_value = replicas[0].query(Read::new());
-    let val = format_string(&first_value);
+    let val = format_string_ellipsis(&first_value, Some(100));
+    let mut final_metrics = replicas[0].state().structure_metrics();
+    final_metrics.size = estimate_debug_size_bits(&first_value);
     let num_delivered_events = replicas[0].num_delivered_events();
 
     for (idx, r) in replicas.iter().enumerate().skip(1) {
@@ -255,7 +259,8 @@ where
     RunData {
         config,
         used_seed,
-        first_value: format_string(&first_value),
+        first_value: val,
+        final_metrics,
         total_time_to_deliver_per_replica,
         total_time_in_effect_per_replica,
         execution_graph_dot,

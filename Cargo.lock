@@ -610,6 +610,7 @@ dependencies = [
 name = "moirai-macros"
 version = "0.1.0"
 dependencies = [
+ "moirai-fuzz",
  "moirai-protocol",
  "paste",
  "rustc-hash 1.1.0",

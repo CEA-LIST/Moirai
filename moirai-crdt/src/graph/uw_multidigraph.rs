@@ -10,7 +10,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{log::IsLog, sink::IsLogSink},
 };
 use petgraph::graph::DiGraph;
 
@@ -175,6 +175,15 @@ where
             }
         }
     }
+}
+
+impl<V, E, Nl, El> IsLogSink for UWGraphLog<V, E, Nl, El>
+where
+    Nl: IsLog,
+    El: IsLog,
+    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    E: Clone + Debug + Eq + PartialEq + Hash,
+{
 }
 
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>

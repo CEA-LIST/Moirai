@@ -73,6 +73,8 @@ typed_graph! {
 #[cfg(test)]
 mod tests {
     use moirai_macros::typed_graph::Arc;
+    #[cfg(feature = "fuzz")]
+    use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableState};
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use super::*;
@@ -500,46 +502,149 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
     }
 
-    // #[cfg(feature = "fuzz")]
-    // #[test]
-    // fn fuzz_typed_graph() {
-    //     use moirai_fuzz::{
-    //         config::{FuzzerConfig, RunConfig},
-    //         fuzzer::fuzzer,
-    //     };
-    //     use moirai_protocol::state::po_log::VecLog;
+    #[cfg(feature = "fuzz")]
+    impl<P> moirai_fuzz::op_generator::OpGenerator for MyTypedGraph<P>
+    where
+        P: Policy,
+    {
+        type Config = ();
 
-    //     let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
-    //     let runs = vec![run_1; 10_000];
+        fn generate(
+            rng: &mut impl rand::Rng,
+            _config: &Self::Config,
+            stable: &Self::StableState,
+            unstable: &impl IsUnstableState<Self>,
+        ) -> Self {
+            use moirai_protocol::crdt::eval::Eval;
+            use moirai_protocol::crdt::query::Read;
+            use rand::distr::{Distribution, weighted::WeightedIndex};
+            use rand::seq::IndexedRandom;
 
-    //     let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
-    //         "typed_graph",
-    //         runs,
-    //         true,
-    //         |a, b| {
-    //             let node = a.node_count() == b.node_count();
-    //             let edge = a.edge_count() == b.edge_count();
-    //             let is_valid = validate_schema(&a);
+            enum Choice {
+                AddVertex,
+                RemoveVertex,
+                AddArc,
+                RemoveArc,
+            }
 
-    //             let is_valid = match is_valid {
-    //                 Ok(_) => true,
-    //                 Err(violations) => {
-    //                     if violations
-    //                         .iter()
-    //                         .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
-    //                     {
-    //                         true
-    //                     } else {
-    //                         println!("Schema violations: {:?}", violations);
-    //                         false
-    //                     }
-    //                 }
-    //             };
-    //             node && edge && is_valid
-    //         },
-    //         false,
-    //     );
+            let graph = Self::execute_query(Read::new(), stable, unstable);
+            let constraints = compute_arc_constraints(&graph);
+            let existing_vertices: Vec<_> = graph.node_weights().cloned().collect();
 
-    //     fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
-    // }
+            let choice = if graph.node_count() < 2 {
+                &Choice::AddVertex
+            } else if graph.edge_count() == 0 {
+                if constraints.addable.is_empty() {
+                    let dist = WeightedIndex::new([2, 1]).unwrap();
+                    &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
+                } else {
+                    let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+                    &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
+                }
+            } else if constraints.removable.is_empty() && constraints.addable.is_empty() {
+                let dist = WeightedIndex::new([2, 1]).unwrap();
+                &[Choice::AddVertex, Choice::RemoveVertex][dist.sample(rng)]
+            } else if !constraints.removable.is_empty() && constraints.addable.is_empty() {
+                let dist = WeightedIndex::new([2, 1, 2]).unwrap();
+                &[Choice::AddVertex, Choice::RemoveVertex, Choice::RemoveArc][dist.sample(rng)]
+            } else if constraints.removable.is_empty() && !constraints.addable.is_empty() {
+                let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+                &[Choice::AddVertex, Choice::RemoveVertex, Choice::AddArc][dist.sample(rng)]
+            } else {
+                let dist = WeightedIndex::new([2, 1, 3, 2]).unwrap();
+                &[
+                    Choice::AddVertex,
+                    Choice::RemoveVertex,
+                    Choice::AddArc,
+                    Choice::RemoveArc,
+                ][dist.sample(rng)]
+            };
+
+            match choice {
+                Choice::AddVertex => MyTypedGraph::AddVertex {
+                    id: <MyVertex as moirai_fuzz::value_generator::ValueGenerator>::generate(
+                        rng,
+                        &(),
+                    ),
+                },
+                Choice::RemoveVertex => {
+                    let vertex = existing_vertices.choose(rng).unwrap().clone();
+                    MyTypedGraph::RemoveVertex { id: vertex }
+                }
+                Choice::AddArc => {
+                    MyTypedGraph::AddArc(constraints.addable.choose(rng).unwrap().clone())
+                }
+                Choice::RemoveArc => {
+                    MyTypedGraph::RemoveArc(constraints.removable.choose(rng).unwrap().clone())
+                }
+            }
+        }
+    }
+
+    // TODO: implement ValueGenerator for each vertex type, not just the wrapper enum
+
+    #[cfg(feature = "fuzz")]
+    impl moirai_fuzz::value_generator::ValueGenerator for MyVertex {
+        type Config = ();
+
+        fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
+            use rand::prelude::IndexedRandom;
+
+            enum Choice {
+                Foo,
+                Bar,
+                Baz,
+            }
+            let choices = [Choice::Foo, Choice::Bar, Choice::Baz];
+            let choice = choices.choose(rng).unwrap();
+            match choice {
+                Choice::Foo => MyVertex::Foo(Foo::generate(rng, &())),
+                Choice::Bar => MyVertex::Bar(Bar::generate(rng, &())),
+                Choice::Baz => MyVertex::Baz(Baz::generate(rng, &())),
+            }
+        }
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_typed_graph() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
+        let runs = vec![run_1; 10_000];
+
+        let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
+            "typed_graph",
+            runs,
+            true,
+            |a, b| {
+                let node = a.node_count() == b.node_count();
+                let edge = a.edge_count() == b.edge_count();
+                let is_valid = validate_schema(&a);
+
+                let is_valid = match is_valid {
+                    Ok(_) => true,
+                    Err(violations) => {
+                        if violations
+                            .iter()
+                            .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+                        {
+                            true
+                        } else {
+                            println!("Schema violations: {:?}", violations);
+                            false
+                        }
+                    }
+                };
+                node && edge && is_valid
+            },
+            false,
+        );
+
+        fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
+    }
 }

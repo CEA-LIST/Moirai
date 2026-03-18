@@ -1,5 +1,7 @@
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -7,7 +9,10 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{
+        log::IsLog,
+        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -89,6 +94,53 @@ where
             Some(ref child) => child.is_default(),
             None => true,
         }
+    }
+}
+
+impl<L> IsLogSink for OptionLog<L>
+where
+    L: IsLogSink,
+{
+    fn effect_with_sink(
+        &mut self,
+        event: Event<Self::Op>,
+        path: ObjectPath,
+        sink: &mut SinkCollector,
+    ) {
+        match event.op().clone() {
+            Optional::Set(o) => {
+                if self.child.is_some() {
+                    sink.collect(Sink::update(path.clone()));
+                } else {
+                    sink.collect(Sink::create(path.clone()));
+                }
+                let child_op = Event::unfold(event, o);
+                self.child.get_or_insert_with(L::default).effect(child_op);
+                self.child = self.child.take().filter(|c| !c.is_default());
+            }
+            Optional::Unset => {
+                sink.collect(Sink::delete(path.clone()));
+                if let Some(child) = self.child.as_mut() {
+                    child.redundant_by_parent(event.version(), true);
+                    if child.is_default() {
+                        self.child = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> FuzzMetrics for OptionLog<L>
+where
+    L: FuzzMetrics,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        self.child
+            .as_ref()
+            .map(FuzzMetrics::structure_metrics)
+            .unwrap_or_else(StructureMetrics::empty)
     }
 }
 

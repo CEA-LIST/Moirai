@@ -7,7 +7,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
+    state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
 };
 
 use crate::{
@@ -84,6 +84,8 @@ where
         self.0.execute_query(Read::new())
     }
 }
+
+impl<V> IsLogSink for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
 
 #[cfg(test)]
 mod tests {

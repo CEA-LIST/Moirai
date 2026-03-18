@@ -2,6 +2,8 @@ use std::fmt::Debug;
 
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,7 +11,11 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{event_graph::EventGraph, log::IsLog},
+    state::{
+        event_graph::EventGraph,
+        log::IsLog,
+        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+    },
     utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
@@ -220,6 +226,73 @@ where
     }
 }
 
+impl<L> IsLogSink for NestedListLog<L>
+where
+    L: IsLog,
+{
+    fn effect_with_sink(
+        &mut self,
+        event: Event<Self::Op>,
+        path: ObjectPath,
+        sink: &mut SinkCollector,
+    ) {
+        let path = path.list_element(event.id().clone());
+        match event.op().clone() {
+            NestedList::Insert { pos, value } => {
+                let list_event = Event::new(
+                    event.id().clone(),
+                    event.lamport().clone(),
+                    SimpleList::Insert {
+                        pos,
+                        content: event.id().clone(),
+                    },
+                    event.version().clone(),
+                );
+                sink.collect(Sink::create(path.clone()));
+                self.positions.effect_with_sink(list_event, path, sink);
+                let child_event = Event::unfold(event.clone(), value);
+                self.children
+                    .entry(event.id().clone())
+                    .or_default()
+                    .effect(child_event);
+                self.deleted_positions.remove(event.id());
+            }
+            NestedList::Delete { pos } => {
+                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let target = positions_at_version[pos].clone();
+                let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
+                sink.collect(Sink::delete(path.clone()));
+                self.positions.effect_with_sink(list_event, path, sink);
+                if let Some(child) = self.children.get_mut(&target) {
+                    child.redundant_by_parent(event.version(), true);
+                    if child.is_default() {
+                        self.children.remove(&target);
+                    }
+                }
+                self.deleted_positions
+                    .entry(target)
+                    .and_modify(|deleted_pos| *deleted_pos = (*deleted_pos).max(pos))
+                    .or_insert(pos);
+            }
+            NestedList::Update { pos, value } => {
+                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let target = positions_at_version[pos].clone();
+                let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
+                sink.collect(Sink::update(path.clone()));
+                self.positions.effect_with_sink(list_event, path, sink);
+                let child_event = Event::unfold(event, value);
+                self.children
+                    .entry(target.clone())
+                    .or_default()
+                    .effect(child_event);
+                if self.positions.execute_query(Read::new()).contains(&target) {
+                    self.deleted_positions.remove(&target);
+                }
+            }
+        }
+    }
+}
+
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
@@ -235,6 +308,21 @@ where
             list.push(child.execute_query(Read::new()));
         }
         list
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> FuzzMetrics for NestedListLog<L>
+where
+    L: IsLog + FuzzMetrics,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        StructureMetrics::list(
+            self.resolved_positions()
+                .into_iter()
+                .filter_map(|id| self.children.get(&id))
+                .map(FuzzMetrics::structure_metrics),
+        )
     }
 }
 

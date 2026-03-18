@@ -91,6 +91,35 @@ macro_rules! record {
                 }
             }
 
+            impl $crate::moirai_protocol::state::sink::IsLogSink for [<$name Log>] {
+                fn effect_with_sink(
+                    &mut self,
+                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    path: $crate::moirai_protocol::state::sink::ObjectPath,
+                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
+                ) {
+                    match event.op().clone() {
+                        $(
+                            $name::[<$field:camel>](op) => {
+                                let path = path.field(stringify!($field));
+                                sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
+
+                                self.$field.effect_with_sink(child_op, path, sink);
+                            }
+                        )*
+                        $name::New => {
+                            sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
+                            // new initialize each field to default, so we need to emit a create for each field
+                            $(
+                                let child_path = path.clone().field(stringify!($field));
+                                sink.collect($crate::moirai_protocol::state::sink::Sink::create(child_path));
+                            )*
+                        }
+                    }
+                }
+            }
+
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
                     [<$name Value>] {
@@ -98,6 +127,17 @@ macro_rules! record {
                             $field: self.$field.execute_query($crate::moirai_protocol::crdt::query::Read::new()),
                         )*
                     }
+                }
+            }
+
+            #[cfg(feature = "fuzz")]
+            impl ::moirai_fuzz::metrics::FuzzMetrics for [<$name Log>] {
+                fn structure_metrics(&self) -> ::moirai_fuzz::metrics::StructureMetrics {
+                    ::moirai_fuzz::metrics::StructureMetrics::object([
+                        $(
+                            ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(&self.$field),
+                        )*
+                    ])
                 }
             }
 

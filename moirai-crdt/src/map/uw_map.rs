@@ -4,7 +4,11 @@ use std::{
 };
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    metrics::{FuzzMetrics, StructureMetrics},
+    op_generator::OpGeneratorNested,
+    value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -12,7 +16,10 @@ use moirai_protocol::{
         query::{Get, QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{
+        log::IsLog,
+        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+    },
     utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
@@ -121,6 +128,58 @@ where
     }
 }
 
+impl<K, L> IsLogSink for UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash,
+    L: IsLogSink,
+{
+    fn effect_with_sink(
+        &mut self,
+        event: Event<Self::Op>,
+        path: ObjectPath,
+        sink: &mut SinkCollector,
+    ) {
+        match event.op().clone() {
+            UWMap::Update(k, v) => {
+                let path = path.map_entry(format!("{:?}", k));
+                if self.children.contains_key(&k) {
+                    sink.collect(Sink::update(path.clone()));
+                } else {
+                    sink.collect(Sink::create(path.clone()));
+                }
+
+                let child_op = Event::unfold(event, v);
+                self.children
+                    .entry(k.clone())
+                    .or_default()
+                    .effect_with_sink(child_op, path, sink);
+
+                if self.children.get(&k).unwrap().is_default() {
+                    self.children.remove(&k);
+                }
+            }
+            UWMap::Remove(k) => {
+                let path = path.map_entry(format!("{:?}", k));
+                sink.collect(Sink::delete(path));
+
+                if let Some(child) = self.children.get_mut(&k) {
+                    child.redundant_by_parent(event.version(), true);
+                    if child.is_default() {
+                        self.children.remove(&k);
+                    }
+                }
+            }
+            UWMap::Clear => {
+                sink.collect(Sink::delete(path));
+                self.children.retain(|_, child| {
+                    child.redundant_by_parent(event.version(), true);
+                    !child.is_default() // keep only non-default children
+                });
+            }
+        }
+    }
+}
+
 impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
@@ -154,6 +213,17 @@ where
         } else {
             None
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<K, L> FuzzMetrics for UWMapLog<K, L>
+where
+    K: Clone + Debug + Hash + Eq,
+    L: FuzzMetrics,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        StructureMetrics::object(self.children.values().map(FuzzMetrics::structure_metrics))
     }
 }
 
@@ -216,7 +286,11 @@ mod tests {
     use crate::{
         HashMap,
         counter::resettable_counter::Counter,
-        list::eg_walker::List,
+        // flag::ew_flag::EWFlag,
+        list::{
+            eg_walker::List,
+            nested_list::{NestedList, NestedListLog},
+        },
         map::uw_map::{UWMap, UWMapLog},
         set::aw_set::AWSet,
         utils::membership::{triplet_log, twins_log},
@@ -226,6 +300,91 @@ mod tests {
         first: VecLog<Counter<i32>>,
         second: VecLog<Counter<i32>>,
     });
+
+    // union!(Sum = Number(Counter<isize>, VecLog::<Counter<isize>>)
+    //     | Boolean(EWFlag, VecLog::<EWFlag>) | Duet(Duet, DuetLog) | Array(NestedList<Duet>, NestedListLog::<DuetLog>));
+
+    // #[derive(Clone, Debug)]
+    // pub struct Root {
+    //     map: UWMapLog<i32, SumLog>,
+    // }
+
+    // impl Default for Root {
+    //     fn default() -> Self {
+    //         Self {
+    //             map: UWMapLog::new(),
+    //         }
+    //     }
+    // }
+
+    // impl IsLog for Root {
+    //     type Value = HashMap<i32, SumValue>;
+    //     type Op = UWMap<i32, Sum>;
+
+    //     fn new() -> Self {
+    //         Self {
+    //             map: UWMapLog::new(),
+    //         }
+    //     }
+
+    //     fn effect(&mut self, event: Event<Self::Op>) {
+    //         let mut sink = SinkCollector::new();
+    //         let event_op = event.op().clone();
+    //         self.map.effect_with_sink(
+    //             event,
+    //             moirai_protocol::state::sink::ObjectPath::new("root"),
+    //             &mut sink,
+    //         );
+    //         println!("Effects with sink for op {:?}: {}", event_op, sink);
+    //     }
+
+    //     fn stabilize(&mut self, version: &Version) {
+    //         self.map.stabilize(version);
+    //     }
+
+    //     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+    //         self.map.redundant_by_parent(version, conservative);
+    //     }
+
+    //     fn is_default(&self) -> bool {
+    //         self.map.is_default()
+    //     }
+
+    //     fn is_enabled(&self, op: &Self::Op) -> bool {
+    //         self.map.is_enabled(op)
+    //     }
+    // }
+
+    // #[test]
+    // fn sink() {
+    //     let (mut replica_a, mut replica_b) = twins_log::<Root>();
+
+    //     println!("REPLICA A");
+    //     let a1 = replica_a
+    //         .send(UWMap::Update(1, Sum::Duet(Duet::New)))
+    //         .unwrap();
+
+    //     println!("REPLICA B");
+    //     let b1 = replica_b
+    //         .send(UWMap::Update(1, Sum::Number(Counter::Inc(10))))
+    //         .unwrap();
+
+    //     println!("REPLICA A");
+    //     replica_a.receive(b1);
+    //     println!("REPLICA B");
+    //     replica_b.receive(a1);
+
+    //     println!("REPLICA B");
+    //     let b2 = replica_b
+    //         .send(UWMap::Update(1, Sum::Number(Counter::Reset)))
+    //         .unwrap();
+    //     replica_a.receive(b2);
+
+    //     assert_eq!(
+    //         replica_a.state().map.execute_query(Read::new()),
+    //         replica_b.state().map.execute_query(Read::new())
+    //     );
+    // }
 
     #[test]
     fn nested_query() {
@@ -491,6 +650,57 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
         assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[test]
+    fn uw_map_nested_list_duet() {
+        let (mut replica_a, mut replica_b, mut replica_c) =
+            triplet_log::<UWMapLog<String, NestedListLog<DuetLog>>>();
+
+        let event_a_1 = replica_a
+            .send(UWMap::Update(
+                "scores".to_string(),
+                NestedList::insert(0, Duet::First(Counter::Inc(10))),
+            ))
+            .unwrap();
+        replica_b.receive(event_a_1.clone());
+        replica_c.receive(event_a_1.clone());
+
+        let event_a_2 = replica_a
+            .send(UWMap::Update(
+                "scores".to_string(),
+                NestedList::update(0, Duet::Second(Counter::Inc(3))),
+            ))
+            .unwrap();
+        let event_b_1 = replica_b
+            .send(UWMap::Update(
+                "scores".to_string(),
+                NestedList::insert(1, Duet::Second(Counter::Dec(4))),
+            ))
+            .unwrap();
+        let event_c_1 = replica_c.send(UWMap::Remove("scores".to_string())).unwrap();
+
+        replica_a.receive(event_b_1.clone());
+        replica_a.receive(event_c_1.clone());
+
+        replica_b.receive(event_a_2.clone());
+        replica_b.receive(event_c_1.clone());
+
+        replica_c.receive(event_b_1.clone());
+        replica_c.receive(event_a_2.clone());
+
+        let mut map = HashMap::default();
+        map.insert(
+            "scores".to_string(),
+            vec![DuetValue {
+                first: 0,
+                second: -4,
+            }],
+        );
+
+        assert_eq!(map, replica_a.query(Read::new()));
+        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_c.query(Read::new()));
     }
 
     #[test]
