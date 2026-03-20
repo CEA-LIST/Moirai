@@ -5,6 +5,7 @@ use log::{debug, info, warn};
 use moirai_protocol::{
     crdt::{eval::EvalNested, query::Read},
     state::log::IsLog,
+    utils::translate_ids::TranslateIds,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,7 @@ where
         + OpGeneratorNested
         + EvalNested<Read<<L as IsLog>::Value>>
         + crate::metrics::FuzzMetrics,
+    L::Op: TranslateIds,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {

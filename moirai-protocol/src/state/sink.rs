@@ -1,9 +1,10 @@
+use std::fmt::{Debug, Display};
+
 use crate::{
     crdt::pure_crdt::PureCRDT,
     event::{Event, id::EventId},
     state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
 };
-use std::fmt::{Debug, Display};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PathSegment {

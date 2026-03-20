@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
-    broadcast::tcsb::Tcsb,
+    broadcast::tcsb::{IsTcsbTest, Tcsb},
     crdt::{eval::EvalNested, query::Read},
     replica::{IsReplica, ReplicaIdx},
     state::log::IsLog,
+    utils::translate_ids::TranslateIds,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
@@ -51,6 +52,7 @@ pub fn runner<L>(
 ) -> RunData
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
+    L::Op: TranslateIds,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
@@ -191,6 +193,23 @@ where
 
                     merge_pb.inc(1);
                 }
+            }
+        }
+        let event_count = replicas[0].tcsb().matrix_clock().origin_version().sum();
+        assert_eq!(
+            event_count, config.num_operations,
+            "Replica 0 has a different number of events after final merge: {} vs {}",
+            event_count, config.num_operations
+        );
+        for replica in &replicas {
+            let replica_event_count = replica.tcsb().matrix_clock().origin_version().sum();
+            if replica_event_count != event_count {
+                panic!(
+                    "Replica {} has a different number of events after final merge: {} vs {}",
+                    replica.id(),
+                    replica_event_count,
+                    event_count
+                );
             }
         }
         merge_pb.finish_with_message("Convergence completed ✓");

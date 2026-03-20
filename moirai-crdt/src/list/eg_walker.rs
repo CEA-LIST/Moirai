@@ -14,7 +14,9 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
@@ -30,6 +32,15 @@ pub enum List<V> {
     Delete { pos: usize },
     DeleteRange { start: usize, len: usize },
     Update { pos: usize },
+}
+
+impl<V> TranslateIds for List<V>
+where
+    V: Debug + Clone,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1150,7 +1161,7 @@ mod tests {
         ];
 
         let config =
-            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, true);
+            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
 
         fuzzer::<EventGraph<List<char>>>(config);
     }

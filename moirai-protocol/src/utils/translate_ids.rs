@@ -10,8 +10,13 @@ pub trait TranslateIds: Clone {
 }
 
 impl TranslateIds for EventId {
-    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        let idx = interner.translate(from, self.idx());
+    fn translate_ids(&self, _from: ReplicaIdx, interner: &Interner) -> Self {
+        let idx = interner.get(self.origin_id()).unwrap_or_else(|| {
+            panic!(
+                "Cannot translate embedded EventId for unknown replica origin {}",
+                self.origin_id()
+            )
+        });
         EventId::new(idx, self.seq(), interner.resolver().clone())
     }
 }
@@ -20,7 +25,9 @@ impl TranslateIds for PathSegment {
     fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
         match self {
             PathSegment::Field(name) => PathSegment::Field(name),
-            PathSegment::ListElement(id) => PathSegment::ListElement(id.translate_ids(from, interner)),
+            PathSegment::ListElement(id) => {
+                PathSegment::ListElement(id.translate_ids(from, interner))
+            }
             PathSegment::MapEntry(key) => PathSegment::MapEntry(key.clone()),
             PathSegment::Variant(name) => PathSegment::Variant(name),
         }
@@ -31,7 +38,9 @@ impl TranslateIds for ObjectPath {
     fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
         self.segments()
             .iter()
-            .fold(ObjectPath::new(self.root()), |path, segment| match segment.translate_ids(from, interner) {
+            .fold(ObjectPath::new(self.root()), |path, segment| match segment
+                .translate_ids(from, interner)
+            {
                 PathSegment::Field(name) => path.field(name),
                 PathSegment::ListElement(id) => path.list_element(id),
                 PathSegment::MapEntry(key) => path.map_entry(key),
@@ -54,7 +63,9 @@ where
     T: TranslateIds,
 {
     fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        self.iter().map(|item| item.translate_ids(from, interner)).collect()
+        self.iter()
+            .map(|item| item.translate_ids(from, interner))
+            .collect()
     }
 }
 

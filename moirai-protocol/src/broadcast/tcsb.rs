@@ -12,7 +12,7 @@ use crate::{
     clock::{matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
     replica::ReplicaIdx,
-    utils::intern_str::Interner,
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 
 pub trait IsTcsb<O> {
@@ -46,7 +46,7 @@ pub struct Tcsb<O> {
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug,
+    O: Clone + Debug + TranslateIds,
 {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
@@ -92,6 +92,7 @@ where
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
+        let op = op.translate_ids(self.replica_idx, &self.interner);
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox
             .entry(event.id().idx())
@@ -174,7 +175,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Debug + Clone + TranslateIds,
 {
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
@@ -277,7 +278,7 @@ where
         Event::new(
             event_id,
             event.lamport().clone(),
-            event.op().clone(),
+            event.op().translate_ids(from, &self.interner),
             version,
         )
     }
@@ -361,7 +362,7 @@ where
             let e = Event::new(
                 event_id,
                 event.lamport().clone(),
-                event.op().clone(),
+                event.op().translate_ids(from, &self.interner),
                 version,
             );
             events.push(e);
@@ -383,12 +384,13 @@ pub trait IsTcsbTest<O>: IsTcsb<O> {
     where
         O: 'a;
     fn outbox_len(&self) -> usize;
+    fn interner(&self) -> &Interner;
 }
 
 #[cfg(feature = "test_utils")]
 impl<O> IsTcsbTest<O> for Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Debug + Clone + TranslateIds,
 {
     fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
@@ -423,5 +425,9 @@ where
             .values()
             .map(|events_by_seq| events_by_seq.len())
             .sum()
+    }
+
+    fn interner(&self) -> &Interner {
+        &self.interner
     }
 }

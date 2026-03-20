@@ -20,13 +20,10 @@
 ///
 /// # Requirements
 ///
-/// - Each vertex identifier (e.g. `Foo`) must be a type in scope that implements
-///   `Debug + Clone + PartialEq + Eq + Hash`.
 /// - Each edge identifier (e.g. `FooBarEdge`) must be a **unit struct** in scope
 ///   that implements `Debug + Clone + PartialEq + Eq + Hash`.
-/// - The vertex variant names **must** match their type names (the enum variant
-///   `Foo` wraps type `Foo`).
-/// - Each vertex identifier must implement `ValueGenerator`
+/// - The macro generates one tuple-struct vertex id per entry in `vertices { ... }`.
+///   Each generated vertex id wraps an `ObjectPath`.
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -66,6 +63,25 @@ where
     }
 }
 
+impl<S, T, E> moirai_protocol::utils::translate_ids::TranslateIds for Arc<S, T, E>
+where
+    S: Connectable<T, E> + moirai_protocol::utils::translate_ids::TranslateIds,
+    T: moirai_protocol::utils::translate_ids::TranslateIds,
+    E: Clone,
+{
+    fn translate_ids(
+        &self,
+        from: moirai_protocol::replica::ReplicaIdx,
+        interner: &moirai_protocol::utils::intern_str::Interner,
+    ) -> Self {
+        Self {
+            source: self.source.translate_ids(from, interner),
+            target: self.target.translate_ids(from, interner),
+            kind: self.kind.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Vertex<S>
 where
@@ -100,6 +116,21 @@ macro_rules! typed_graph {
         } $(,)?
     ) => {
         $(
+            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            pub struct $v(pub $crate::moirai_protocol::state::sink::ObjectPath);
+
+            impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $v {
+                fn translate_ids(
+                    &self,
+                    from: $crate::moirai_protocol::replica::ReplicaIdx,
+                    interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+                ) -> Self {
+                    Self(self.0.translate_ids(from, interner))
+                }
+            }
+        )*
+
+        $(
             impl $crate::typed_graph::Connectable<$tgt_ty, $ety> for $src_ty {
                 const MIN: usize = $min;
                 const MAX: usize = $crate::typed_graph!(@max $max);
@@ -112,6 +143,24 @@ macro_rules! typed_graph {
             $( $v($v) ),*
         }
 
+        fn vertex_path(vertex: &$vertex) -> &$crate::moirai_protocol::state::sink::ObjectPath {
+            match vertex {
+                $( $vertex::$v(id) => &id.0 ),*
+            }
+        }
+
+        impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $vertex {
+            fn translate_ids(
+                &self,
+                from: $crate::moirai_protocol::replica::ReplicaIdx,
+                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+            ) -> Self {
+                match self {
+                    $( Self::$v(id) => Self::$v(id.translate_ids(from, interner)) ),*
+                }
+            }
+        }
+
         // Edge enum
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $edge {
@@ -122,6 +171,24 @@ macro_rules! typed_graph {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $arcs {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
+        }
+
+        impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $arcs
+        where
+            $(
+                $src_ty: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+                $tgt_ty: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+            )*
+        {
+            fn translate_ids(
+                &self,
+                from: $crate::moirai_protocol::replica::ReplicaIdx,
+                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+            ) -> Self {
+                match self {
+                    $( Self::$conn(arc) => Self::$conn(arc.translate_ids(from, interner)) ),*
+                }
+            }
         }
 
         impl $arcs {
@@ -160,10 +227,39 @@ macro_rules! typed_graph {
         pub enum $graph<P> {
             AddVertex { id: $vertex },
             RemoveVertex { id: $vertex },
+            DeleteSubtree { prefix: $crate::moirai_protocol::state::sink::ObjectPath },
             AddArc($arcs),
             RemoveArc($arcs),
             #[doc(hidden)]
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
+        }
+
+        impl<P> $crate::moirai_protocol::utils::translate_ids::TranslateIds for $graph<P>
+        where
+            P: Clone,
+            $vertex: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+            $arcs: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+        {
+            fn translate_ids(
+                &self,
+                from: $crate::moirai_protocol::replica::ReplicaIdx,
+                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+            ) -> Self {
+                match self {
+                    Self::AddVertex { id } => Self::AddVertex {
+                        id: id.translate_ids(from, interner),
+                    },
+                    Self::RemoveVertex { id } => Self::RemoveVertex {
+                        id: id.translate_ids(from, interner),
+                    },
+                    Self::DeleteSubtree { prefix } => Self::DeleteSubtree {
+                        prefix: prefix.translate_ids(from, interner),
+                    },
+                    Self::AddArc(arc) => Self::AddArc(arc.translate_ids(from, interner)),
+                    Self::RemoveArc(arc) => Self::RemoveArc(arc.translate_ids(from, interner)),
+                    Self::__Marker(never, marker) => match *never {},
+                }
+            }
         }
 
         fn possible_arcs_between(
@@ -424,7 +520,8 @@ macro_rules! typed_graph {
 
             const DISABLE_R_WHEN_R: bool = false;
             const DISABLE_R_WHEN_NOT_R: bool = false;
-            const DISABLE_STABILIZE: bool = false;
+            // TODO: find a way to enable stabilize for this CRDT
+            const DISABLE_STABILIZE: bool = true;
 
             fn redundant_itself<'a>(
                 new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
@@ -436,7 +533,9 @@ macro_rules! typed_graph {
             {
                 match new_tagged_op.op() {
                     $graph::AddVertex { .. } | $graph::AddArc(_) => false,
-                    $graph::RemoveVertex { .. } | $graph::RemoveArc(_) => true,
+                    $graph::RemoveVertex { .. }
+                    | $graph::DeleteSubtree { .. }
+                    | $graph::RemoveArc(_) => true,
                     $graph::__Marker(_, _) => unreachable!(),
                 }
             }
@@ -452,6 +551,19 @@ macro_rules! typed_graph {
                         ($graph::AddArc(arc), $graph::RemoveVertex { id: v }) => {
                             arc.source() == *v || arc.target() == *v
                         }
+                        ($graph::AddVertex { id }, $graph::DeleteSubtree { prefix }) => {
+                            prefix.is_prefix_of(vertex_path(id))
+                        }
+                        ($graph::AddArc(arc), $graph::DeleteSubtree { prefix }) => {
+                            let source = arc.source();
+                            let target = arc.target();
+                            prefix.is_prefix_of(vertex_path(&source))
+                                || prefix.is_prefix_of(vertex_path(&target))
+                        }
+                        (
+                            $graph::DeleteSubtree { prefix: old_prefix },
+                            $graph::DeleteSubtree { prefix: new_prefix },
+                        ) => new_prefix.is_prefix_of(old_prefix),
                         ($graph::AddArc(arc1), $graph::AddArc(arc2))
                         | ($graph::AddArc(arc1), $graph::RemoveArc(arc2)) => {
                             arc1.source() == arc2.source()
@@ -487,6 +599,9 @@ macro_rules! typed_graph {
                 match op {
                     $graph::AddVertex { .. } => true,
                     $graph::RemoveVertex { id } => graph.node_weights().any(|node| node == id),
+                    $graph::DeleteSubtree { prefix } => {
+                        graph.node_weights().any(|node| prefix.is_prefix_of(vertex_path(node)))
+                    },
                     $graph::RemoveArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
@@ -577,30 +692,50 @@ macro_rules! typed_graph {
                 }
 
                 // Collect deduplicated arc candidates
-                let mut arc_entries: Vec<(
-                    $vertex,
-                    $vertex,
-                    $edge,
+                let mut deduped_arcs: $crate::HashMap<
+                    ($vertex, $vertex, $edge),
                     Option<&$crate::moirai_protocol::event::tag::Tag>,
-                )> = Vec::new();
-                let mut seen_arcs: $crate::HashSet<($vertex, $vertex, $edge)> =
-                    $crate::HashSet::default();
+                > = $crate::HashMap::default();
 
                 for (op, tag) in &tagged_ops {
                     if let $graph::AddArc(arcs) = op {
                         let v1 = arcs.source();
                         let v2 = arcs.target();
                         let e = arcs.kind();
-                        let key = (v1.clone(), v2.clone(), e.clone());
-                        if seen_arcs.contains(&key) {
-                            continue;
-                        }
                         if node_index.contains_key(&v1) && node_index.contains_key(&v2) {
-                            seen_arcs.insert(key);
-                            arc_entries.push((v1, v2, e, *tag));
+                            let key = (v1, v2, e);
+                            match deduped_arcs.entry(key) {
+                                ::std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert(*tag);
+                                }
+                                ::std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                    let replace = match (entry.get(), tag) {
+                                        (None, None) => false,
+                                        (None, Some(_)) => true,
+                                        (Some(_), None) => false,
+                                        (Some(old_tag), Some(new_tag)) => {
+                                            P::compare(old_tag, new_tag)
+                                                == ::std::cmp::Ordering::Less
+                                        }
+                                    };
+                                    if replace {
+                                        entry.insert(*tag);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+
+                let mut arc_entries: Vec<(
+                    $vertex,
+                    $vertex,
+                    $edge,
+                    Option<&$crate::moirai_protocol::event::tag::Tag>,
+                )> = deduped_arcs
+                    .into_iter()
+                    .map(|((v1, v2, e), tag)| (v1, v2, e, tag))
+                    .collect();
 
                 // MAX enforcement per (source, edge_kind) group
                 let mut groups: $crate::HashMap<($vertex, $edge), Vec<usize>> =
@@ -649,14 +784,7 @@ macro_rules! typed_graph {
             }
         }
     };
-    // --- ARM 1: plain ident syntax (all vertex types are bare idents) ---
-    //
-    // typed_graph! {
-    //     connections {
-    //         FooToBar: Foo -> Bar (FooBarEdge) [0, 1],
-    //         FooToBaz: Foo -> Baz (my_mod::FooBarEdge) [0, *],  // edge type may be a path
-    //     }
-    // }
+    // Public arm: vertex ids are generated directly from `vertices { ... }`.
     (
         graph: $graph:ident,
         vertex: $vertex:ident,
@@ -676,48 +804,9 @@ macro_rules! typed_graph {
             arcs_type: $arcs,
             vertices { $( $v ),* },
             connections {
-                // Normalise: variant name and type path are the same ident.
                 $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) [ $min, $max ] ),*
             }
         );
     };
 
-    // --- ARM 2: explicit type-path syntax for vertex types ---
-    //
-    // Use `[full::path::Type] VariantName` when the concrete type lives in
-    // a different module and you do not want to import it.  The ident after
-    // the brackets is the enum-variant name (must match `vertices { ... }`);
-    // the path inside the brackets is the concrete Rust type used in
-    // `Connectable` impls and `Arc<…>` generics.
-    //
-    // typed_graph! {
-    //     connections {
-    //         FooToBar: [my_mod::Foo] Foo -> [my_mod::Bar] Bar (my_mod::FooBarEdge) [0, 1],
-    //     }
-    // }
-    //
-    // Note: all connections in a single invocation must use the same arm
-    // (either all bare idents or all bracketed paths).
-    (
-        graph: $graph:ident,
-        vertex: $vertex:ident,
-        edge: $edge:ident,
-        arcs_type: $arcs:ident,
-
-        vertices { $( $v:ident ),* $(,)? },
-
-        connections {
-            $( $conn:ident : [$src_ty:path] $src:ident -> [$tgt_ty:path] $tgt:ident ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
-        } $(,)?
-    ) => {
-        $crate::typed_graph!(@generate
-            graph: $graph,
-            vertex: $vertex,
-            edge: $edge,
-            arcs_type: $arcs,
-            vertices { $( $v ),* },
-            connections {
-                $( $conn : $src [$src_ty] -> $tgt [$tgt_ty] ( $ety ) [ $min, $max ] ),*
-            }
-        );
-    };}
+}

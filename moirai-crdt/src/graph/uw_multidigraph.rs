@@ -10,7 +10,9 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{log::IsLog, sink::IsLogSink},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 use petgraph::graph::DiGraph;
 
@@ -46,6 +48,40 @@ where
 {
     arc_content: HashMap<(V, V, E), El>,
     vertex_content: HashMap<V, Nl>,
+}
+
+impl<V, E, No, Eo> TranslateIds for UWGraph<V, E, No, Eo>
+where
+    V: Clone,
+    E: Clone,
+    No: TranslateIds,
+    Eo: TranslateIds,
+{
+    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
+        match self {
+            UWGraph::UpdateVertex { id, child } => UWGraph::UpdateVertex {
+                id: id.clone(),
+                child: child.translate_ids(from, interner),
+            },
+            UWGraph::RemoveVertex { id } => UWGraph::RemoveVertex { id: id.clone() },
+            UWGraph::UpdateArc {
+                source,
+                target,
+                id,
+                child,
+            } => UWGraph::UpdateArc {
+                source: source.clone(),
+                target: target.clone(),
+                id: id.clone(),
+                child: child.translate_ids(from, interner),
+            },
+            UWGraph::RemoveArc { source, target, id } => UWGraph::RemoveArc {
+                source: source.clone(),
+                target: target.clone(),
+                id: id.clone(),
+            },
+        }
+    }
 }
 
 impl<V, E, Nl, El> IsLog for UWGraphLog<V, E, Nl, El>

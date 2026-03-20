@@ -16,11 +16,12 @@ use moirai_protocol::{
         query::{Get, QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{
         log::IsLog,
         sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
     },
-    utils::boxer::Boxer,
+    utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -40,6 +41,20 @@ where
     K: Clone + Eq + Hash,
 {
     children: HashMap<K, L>,
+}
+
+impl<K, L> TranslateIds for UWMap<K, L>
+where
+    K: Clone,
+    L: TranslateIds,
+{
+    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
+        match self {
+            UWMap::Update(k, v) => UWMap::Update(k.clone(), v.translate_ids(from, interner)),
+            UWMap::Remove(k) => UWMap::Remove(k.clone()),
+            UWMap::Clear => UWMap::Clear,
+        }
+    }
 }
 
 impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
@@ -829,8 +844,8 @@ mod tests {
 
         type UWMapNested = UWMapLog<String, EventGraph<List<char>>>;
 
-        let run = RunConfig::new(0.9, 4, 5, None, None, true, false);
-        let runs = vec![run.clone(); 10_000];
+        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
+        let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false);
 

@@ -11,6 +11,16 @@ macro_rules! union {
                 )*
             }
 
+            impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $union {
+                fn translate_ids(&self, from: $crate::moirai_protocol::replica::ReplicaIdx, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+                    match self {
+                        $(
+                            Self::$variant(o) => Self::$variant(o.translate_ids(from, interner)),
+                        )*
+                    }
+                }
+            }
+
             impl $union {
                 fn is_match_log(&self, log: &[<$union Child>]) -> bool {
                     match (self, log) {

@@ -1,7 +1,7 @@
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,10 +9,12 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{
         log::IsLog,
         sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
     },
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -21,6 +23,18 @@ use rand::RngExt;
 pub enum Optional<O> {
     Set(O),
     Unset,
+}
+
+impl<O> TranslateIds for Optional<O>
+where
+    O: TranslateIds,
+{
+    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
+        match self {
+            Optional::Set(o) => Optional::Set(o.translate_ids(from, interner)),
+            Optional::Unset => Optional::Unset,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

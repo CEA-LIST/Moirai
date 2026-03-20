@@ -106,6 +106,12 @@ where
     }
 
     fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+        assert!(
+            members.contains(&&(*id)),
+            "Bootstrap replica ID {} must be included in members list {:?}",
+            id,
+            members
+        );
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(&id);
         for member in members {

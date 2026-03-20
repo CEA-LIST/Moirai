@@ -13,6 +13,17 @@ macro_rules! record {
                 New,
             }
 
+            impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $name {
+                fn translate_ids(&self, from: $crate::moirai_protocol::replica::ReplicaIdx, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+                    match self {
+                        $(
+                            Self::[<$field:camel>](o) => Self::[<$field:camel>](o.translate_ids(from, interner)),
+                        )*
+                        Self::New => Self::New,
+                    }
+                }
+            }
+
             #[derive(Debug, Clone, Default, PartialEq)]
             pub struct [<$name Value>] {
                 $(

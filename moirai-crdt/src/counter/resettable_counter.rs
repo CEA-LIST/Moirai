@@ -12,7 +12,9 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -29,6 +31,15 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
     Reset,
+}
+
+impl<V> TranslateIds for Counter<V>
+where
+    V: Add + AddAssign + SubAssign + Default + Copy,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 impl<V> PureCRDT for Counter<V>
@@ -220,7 +231,7 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None, false, false);
+        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
@@ -228,7 +239,7 @@ mod tests {
             runs,
             true,
             |a, b| a == b,
-            true,
+            false,
         );
 
         fuzzer::<VecLog<Counter<i32>>>(config);

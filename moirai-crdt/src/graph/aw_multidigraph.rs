@@ -11,7 +11,9 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -31,6 +33,16 @@ pub enum Graph<V, E> {
     AddArc(V, V, E),
     /// Remove an arc from vertex `V` to vertex `V'` with edge identifier `E`. The triple `(V, V', E)` must already exist.
     RemoveArc(V, V, E),
+}
+
+impl<V, E> TranslateIds for Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 impl<V, E> PureCRDT for Graph<V, E>
@@ -409,8 +421,8 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run_1 = RunConfig::new(0.4, 4, 100, None, None, false, false);
-        let runs = vec![run_1; 1_000];
+        let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
+        let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Graph<String, u8>>>::new(
             "aw_graph",

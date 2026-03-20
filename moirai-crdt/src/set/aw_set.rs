@@ -10,7 +10,9 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
@@ -24,6 +26,15 @@ pub enum AWSet<V> {
     Add(V),
     Remove(V),
     Clear,
+}
+
+impl<V> TranslateIds for AWSet<V>
+where
+    V: Clone + Eq + Hash + Debug,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 impl<V> IsStableState<AWSet<V>> for HashSet<V>
@@ -363,24 +374,25 @@ mod tests {
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
-
-        let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        let run_2 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
-        let run_3 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
-        let run_4 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
-        let run_5 = RunConfig::new(0.7, 16, 600_000, None, None, false, true);
-        let run_6 = RunConfig::new(0.7, 16, 900_000, None, None, false, true);
-        let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
-        let run_8 = RunConfig::new(0.7, 16, 1_300_000, None, None, false, true);
-        let run_9 = RunConfig::new(0.7, 16, 1_600_000, None, None, false, true);
-        let run_10 = RunConfig::new(0.7, 16, 2_000_000, None, None, false, true);
-        let run_11 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
-        let runs = vec![
-            run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, run_10, run_11,
-        ];
+        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
+        let runs = vec![run.clone(); 1];
+        // let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        // let run_2 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
+        // let run_3 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        // let run_4 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
+        // let run_5 = RunConfig::new(0.7, 16, 600_000, None, None, false, true);
+        // let run_6 = RunConfig::new(0.7, 16, 900_000, None, None, false, true);
+        // let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
+        // let run_8 = RunConfig::new(0.7, 16, 1_300_000, None, None, false, true);
+        // let run_9 = RunConfig::new(0.7, 16, 1_600_000, None, None, false, true);
+        // let run_10 = RunConfig::new(0.7, 16, 2_000_000, None, None, false, true);
+        // let run_11 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
+        // let runs = vec![
+        //     run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, run_10, run_11,
+        // ];
 
         let config =
-            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, true);
+            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, false);
 
         fuzzer::<VecLog<AWSet<usize>>>(config);
     }

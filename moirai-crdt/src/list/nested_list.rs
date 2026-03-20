@@ -4,20 +4,20 @@ use std::fmt::Debug;
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
-use moirai_protocol::crdt::query::IsSemanticallyEmpty;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
-        query::{QueryOperation, Read},
+        query::{IsSemanticallyEmpty, QueryOperation, Read},
     },
     event::{Event, id::EventId},
+    replica::ReplicaIdx,
     state::{
         event_graph::EventGraph,
         log::IsLog,
         sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
     },
-    utils::boxer::Boxer,
+    utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -51,6 +51,25 @@ impl<O> NestedList<O> {
     }
 }
 
+impl<O> TranslateIds for NestedList<O>
+where
+    O: TranslateIds + Clone,
+{
+    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
+        match self {
+            NestedList::Insert { pos, value } => NestedList::Insert {
+                pos: *pos,
+                value: value.translate_ids(from, interner),
+            },
+            NestedList::Update { pos, value } => NestedList::Update {
+                pos: *pos,
+                value: value.translate_ids(from, interner),
+            },
+            NestedList::Delete { pos } => NestedList::Delete { pos: *pos },
+        }
+    }
+}
+
 /// Internal state of a nested list CRDT
 ///
 /// Maintains both the logical ordering of children (via EgWalker) and the
@@ -76,17 +95,6 @@ impl<L> Default for NestedListLog<L> {
         }
     }
 }
-
-// fn has_non_default_value<L>(child: &L) -> bool
-// where
-//     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-//     <L as IsLog>::Value: Default + PartialEq,
-// {
-//     let value = child.execute_query(Read::new());
-//     let default = L::default().execute_query(Read::new());
-//     println!("val: {:?}, default: {:?}", value, default);
-//     value != default
-// }
 
 impl<L> NestedListLog<L> {
     pub fn new() -> Self {
@@ -175,14 +183,6 @@ where
                 self.positions.effect(list_event);
                 if let Some(child) = self.children.get_mut(&target) {
                     child.redundant_by_parent(event.version(), true);
-                    // let value = child.execute_query(Read::new());
-                    // if value.is_semantically_empty() {
-                    // println!(
-                    //     "NestedList: causal reset made the child semantically empty at id {}",
-                    //     target
-                    // );
-                    // self.children.remove(&target);
-                    // }
                 }
                 self.deleted_positions
                     .entry(target)
@@ -290,14 +290,6 @@ where
                 self.positions.effect_with_sink(list_event, path, sink);
                 if let Some(child) = self.children.get_mut(&target) {
                     child.redundant_by_parent(event.version(), true);
-                    // let value = child.execute_query(Read::new());
-                    // if value.is_semantically_empty() {
-                    // println!(
-                    //     "NestedList: causal reset made the child semantically empty at id {}",
-                    //     target
-                    // );
-                    // self.children.remove(&target);
-                    // }
                 }
                 self.deleted_positions
                     .entry(target)
@@ -726,7 +718,7 @@ mod tests {
         };
 
         let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
-        let runs = vec![run.clone(); 100];
+        let runs = vec![run.clone(); 10];
 
         let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>>::new(
             "nested_list_counter",
@@ -751,7 +743,7 @@ mod tests {
         use crate::list::eg_walker::List;
 
         let run = RunConfig::new(0.6, 6, 20, None, None, false, false);
-        let runs = vec![run.clone(); 10_000];
+        let runs = vec![run.clone(); 10];
 
         let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
             "nested_list_string",

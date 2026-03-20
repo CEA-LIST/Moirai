@@ -1,55 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
-
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::value_generator::{NumberConfig, ValueGenerator};
 use moirai_macros::typed_graph;
-#[cfg(feature = "fuzz")]
-use rand::Rng;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Foo(u32);
-
-#[cfg(feature = "fuzz")]
-impl ValueGenerator for Foo {
-    type Config = ();
-
-    fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
-        Foo(<u32 as ValueGenerator>::generate(
-            rng,
-            &NumberConfig::new(0, 20).unwrap(),
-        ))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Bar(u32);
-
-#[cfg(feature = "fuzz")]
-impl ValueGenerator for Bar {
-    type Config = ();
-
-    fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
-        Bar(<u32 as ValueGenerator>::generate(
-            rng,
-            &NumberConfig::new(0, 20).unwrap(),
-        ))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Baz(u32);
-
-#[cfg(feature = "fuzz")]
-impl ValueGenerator for Baz {
-    type Config = ();
-
-    fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
-        Baz(<u32 as ValueGenerator>::generate(
-            rng,
-            &NumberConfig::new(0, 20).unwrap(),
-        ))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FooBarEdge;
@@ -75,7 +24,27 @@ mod tests {
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
     use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableState};
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
+    use moirai_protocol::{
+        crdt::query::Read,
+        replica::IsReplica,
+        state::{po_log::VecLog, sink::ObjectPath},
+    };
+    #[cfg(feature = "fuzz")]
+    use petgraph::Graph;
+    #[cfg(feature = "fuzz")]
+    use rand::{Rng, RngExt};
+
+    fn foo(id: u32) -> Foo {
+        Foo(ObjectPath::new("typed_graph").map_entry(format!("foo-{id}")))
+    }
+
+    fn bar(id: u32) -> Bar {
+        Bar(ObjectPath::new("typed_graph").map_entry(format!("bar-{id}")))
+    }
+
+    fn baz(id: u32) -> Baz {
+        Baz(ObjectPath::new("typed_graph").map_entry(format!("baz-{id}")))
+    }
 
     use super::*;
     use crate::{graph::typed_graph::MyTypedGraph, policy::LwwPolicy, utils::membership::twins};
@@ -100,20 +69,20 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(1)),
+                id: MyVertex::Baz(baz(1)),
             })
             .unwrap();
         replica_a.receive(e2);
         let e3 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(1),
+                source: foo(1),
+                target: baz(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -121,36 +90,36 @@ mod tests {
         assert!(
             replica_a
                 .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
-                    source: Foo(1),
-                    target: Baz(1),
+                    source: foo(1),
+                    target: baz(1),
                     kind: FooBarEdge,
                 })))
                 .is_none()
         );
         let e4 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(2)),
+                id: MyVertex::Baz(baz(2)),
             })
             .unwrap();
         replica_a.receive(e4);
         let e5 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(2),
+                source: foo(1),
+                target: baz(2),
                 kind: FooBarEdge,
             })))
             .unwrap();
         replica_b.receive(e5);
         let e6 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(3)),
+                id: MyVertex::Baz(baz(3)),
             })
             .unwrap();
         replica_a.receive(e6);
         let e7 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(3),
+                source: foo(1),
+                target: baz(3),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -159,15 +128,15 @@ mod tests {
         // concurrent remove of an arc (independently valid, but both of them violate the min constraint of FooToBaz)
         let event_a = replica_a
             .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(1),
+                source: foo(1),
+                target: baz(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let event_b = replica_b
             .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(2),
+                source: foo(1),
+                target: baz(2),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -188,7 +157,7 @@ mod tests {
 
         let init = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(init);
@@ -198,12 +167,12 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         let e2 = replica_b
             .send(MyTypedGraph::RemoveVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
@@ -220,36 +189,36 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
 
         let e2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(1)),
+                id: MyVertex::Baz(baz(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(2)),
+                id: MyVertex::Baz(baz(2)),
             })
             .unwrap();
         replica_a.receive(e3);
 
         let e4 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Baz(Baz(3)),
+                id: MyVertex::Baz(baz(3)),
             })
             .unwrap();
         replica_a.receive(e4);
 
         let e5 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(1),
+                source: foo(1),
+                target: baz(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -257,8 +226,8 @@ mod tests {
 
         let e6 = replica_b
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(2),
+                source: foo(1),
+                target: baz(2),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -266,8 +235,8 @@ mod tests {
 
         let e7 = replica_b
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
-                source: Foo(1),
-                target: Baz(3),
+                source: foo(1),
+                target: baz(3),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -284,22 +253,22 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
 
         let e2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(1)),
+                id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(1),
-                target: Bar(1),
+                source: foo(1),
+                target: bar(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -316,12 +285,12 @@ mod tests {
 
         let event_a = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         let event_b = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -337,21 +306,21 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(1)),
+                id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(1),
-                target: Bar(1),
+                source: foo(1),
+                target: bar(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -359,7 +328,7 @@ mod tests {
 
         let e4 = replica_b
             .send(MyTypedGraph::RemoveVertex {
-                id: MyVertex::Bar(Bar(1)),
+                id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e4);
@@ -375,27 +344,27 @@ mod tests {
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(1)),
+                id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(1)),
+                id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let event_a = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(1),
-                target: Bar(1),
+                source: foo(1),
+                target: bar(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let event_b = replica_b
             .send(MyTypedGraph::RemoveVertex {
-                id: MyVertex::Bar(Bar(1)),
+                id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -412,7 +381,7 @@ mod tests {
 
         let e_b_1 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(13)),
+                id: MyVertex::Foo(foo(13)),
             })
             .unwrap();
 
@@ -420,13 +389,13 @@ mod tests {
 
         let e_b_2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(19)),
+                id: MyVertex::Foo(foo(19)),
             })
             .unwrap();
 
         let e_a_1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(7)),
+                id: MyVertex::Bar(bar(7)),
             })
             .unwrap();
 
@@ -435,24 +404,24 @@ mod tests {
 
         let e_a_2 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(13),
-                target: Bar(7),
+                source: foo(13),
+                target: bar(7),
                 kind: FooBarEdge,
             })))
             .unwrap();
 
         let e_b_3 = replica_b
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(13),
-                target: Bar(7),
+                source: foo(13),
+                target: bar(7),
                 kind: FooBarEdge,
             })))
             .unwrap();
 
         let e_b_4 = replica_b
             .send(MyTypedGraph::RemoveArc(MyArcs::FooToBar(Arc {
-                source: Foo(13),
-                target: Bar(7),
+                source: foo(13),
+                target: bar(7),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -480,7 +449,7 @@ mod tests {
 
         let e_b_1 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(15)),
+                id: MyVertex::Foo(foo(15)),
             })
             .unwrap();
 
@@ -488,28 +457,28 @@ mod tests {
 
         let e_b_2 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(4)),
+                id: MyVertex::Bar(bar(4)),
             })
             .unwrap();
 
         let e_b_3 = replica_b
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(15),
-                target: Bar(4),
+                source: foo(15),
+                target: bar(4),
                 kind: FooBarEdge,
             })))
             .unwrap();
 
         let e_a_1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(17)),
+                id: MyVertex::Bar(bar(17)),
             })
             .unwrap();
 
         let e_a_2 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(15),
-                target: Bar(17),
+                source: foo(15),
+                target: bar(17),
                 kind: FooBarEdge,
             })))
             .unwrap();
@@ -538,38 +507,38 @@ mod tests {
 
         let e_a_1 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Foo(Foo(17)),
+                id: MyVertex::Foo(foo(17)),
             })
             .unwrap();
         replica_b.receive(e_a_1);
         let e_a_2 = replica_a
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(3)),
+                id: MyVertex::Bar(bar(3)),
             })
             .unwrap();
         let e_a_3 = replica_a
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(17),
-                target: Bar(3),
+                source: foo(17),
+                target: bar(3),
                 kind: FooBarEdge,
             })))
             .unwrap();
 
         let b_e_1 = replica_b
             .send(MyTypedGraph::AddVertex {
-                id: MyVertex::Bar(Bar(11)),
+                id: MyVertex::Bar(bar(11)),
             })
             .unwrap();
         let b_e_2 = replica_b
             .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
-                source: Foo(17),
-                target: Bar(11),
+                source: foo(17),
+                target: bar(11),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let b_e_3 = replica_b
             .send(MyTypedGraph::RemoveVertex {
-                id: MyVertex::Bar(Bar(11)),
+                id: MyVertex::Bar(bar(11)),
             })
             .unwrap();
 
@@ -603,10 +572,11 @@ mod tests {
             stable: &Self::StableState,
             unstable: &impl IsUnstableState<Self>,
         ) -> Self {
-            use moirai_protocol::crdt::eval::Eval;
-            use moirai_protocol::crdt::query::Read;
-            use rand::distr::{Distribution, weighted::WeightedIndex};
-            use rand::seq::IndexedRandom;
+            use moirai_protocol::crdt::{eval::Eval, query::Read};
+            use rand::{
+                distr::{Distribution, weighted::WeightedIndex},
+                seq::IndexedRandom,
+            };
 
             enum Choice {
                 AddVertex,
@@ -686,9 +656,9 @@ mod tests {
             let choices = [Choice::Foo, Choice::Bar, Choice::Baz];
             let choice = choices.choose(rng).unwrap();
             match choice {
-                Choice::Foo => MyVertex::Foo(Foo::generate(rng, &())),
-                Choice::Bar => MyVertex::Bar(Bar::generate(rng, &())),
-                Choice::Baz => MyVertex::Baz(Baz::generate(rng, &())),
+                Choice::Foo => MyVertex::Foo(foo(rng.random_range(0..20))),
+                Choice::Bar => MyVertex::Bar(bar(rng.random_range(0..20))),
+                Choice::Baz => MyVertex::Baz(baz(rng.random_range(0..20))),
             }
         }
     }
@@ -702,8 +672,8 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run_1 = RunConfig::new(0.4, 8, 100, None, None, true, false);
-        let runs = vec![run_1; 10_000];
+        let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
+        let runs = vec![run.clone(); 100];
 
         let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
             "typed_graph",
@@ -712,23 +682,27 @@ mod tests {
             |a, b| {
                 let node = a.node_count() == b.node_count();
                 let edge = a.edge_count() == b.edge_count();
-                let is_valid = validate_schema(&a);
 
-                let is_valid = match is_valid {
-                    Ok(_) => true,
-                    Err(violations) => {
-                        if violations
-                            .iter()
-                            .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
-                        {
-                            true
-                        } else {
-                            println!("Schema violations: {:?}", violations);
-                            false
+                fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
+                    let is_valid = validate_schema(&graph);
+                    let is_valid = match is_valid {
+                        Ok(_) => true,
+                        Err(violations) => {
+                            if violations
+                                .iter()
+                                .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+                            {
+                                true
+                            } else {
+                                println!("Schema violations: {:?}", violations);
+                                false
+                            }
                         }
-                    }
-                };
-                node && edge && is_valid
+                    };
+                    is_valid
+                }
+
+                node && edge && is_valid(a) && is_valid(b)
             },
             false,
         );

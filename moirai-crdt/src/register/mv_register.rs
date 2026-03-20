@@ -7,7 +7,9 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 
 use crate::HashSet;
@@ -16,6 +18,15 @@ use crate::HashSet;
 pub enum MVRegister<V> {
     Clear,
     Write(V),
+}
+
+impl<V> TranslateIds for MVRegister<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 impl<V> PureCRDT for MVRegister<V>

@@ -7,7 +7,9 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 
 use crate::{
@@ -21,6 +23,15 @@ pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
     Clear,
+}
+
+impl<V> TranslateIds for EWFlagSet<V>
+where
+    V: Clone,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 #[derive(Clone, Debug)]

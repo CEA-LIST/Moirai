@@ -1,3 +1,5 @@
+use std::{fmt::Debug, hash::Hash};
+
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::FuzzMetrics;
 #[cfg(feature = "fuzz")]
@@ -9,9 +11,10 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
-use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     HashMap,
@@ -24,6 +27,15 @@ pub enum AWBag<V> {
     Add(V),
     Remove(V),
     Clear,
+}
+
+impl<V> TranslateIds for AWBag<V>
+where
+    V: Clone,
+{
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 #[derive(Clone, Debug)]

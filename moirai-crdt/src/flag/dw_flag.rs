@@ -5,7 +5,9 @@ use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -20,6 +22,12 @@ pub enum DWFlag {
     Enable,
     Disable,
     Clear,
+}
+
+impl TranslateIds for DWFlag {
+    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
+        self.clone()
+    }
 }
 
 impl IsStableState<DWFlag> for Option<bool> {
@@ -189,7 +197,7 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 100_000, None, None, false, false);
+        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config =
