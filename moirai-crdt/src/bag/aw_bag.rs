@@ -1,5 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
-
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::metrics::FuzzMetrics;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::metrics::StructureMetrics;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,6 +11,7 @@ use moirai_protocol::{
     event::Event,
     state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
 };
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     HashMap,
@@ -86,6 +89,17 @@ where
 }
 
 impl<V> IsLogSink for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
+
+#[cfg(feature = "fuzz")]
+impl<V> FuzzMetrics for AWBagLog<V>
+where
+    V: Clone + Hash + Debug + Eq,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        let len = self.execute_query(Read::new()).len();
+        StructureMetrics::collection(len)
+    }
+}
 
 #[cfg(test)]
 mod tests {

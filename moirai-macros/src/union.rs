@@ -222,8 +222,45 @@ macro_rules! union {
                     }
                 }
 
+                // TODO: structurally its Unset, semantically not necessarily, so we may want to split this into two methods
                 fn is_default(&self) -> bool {
-                    matches!(self.child, [<$union Container>]::Unset)
+                    match &self.child {
+                        [<$union Container>]::Unset => true,
+                        [<$union Container>]::Value(child) => match child.as_ref() {
+                            $(
+                                [<$union Child>]::$variant(log) => {
+                                    log.is_default()
+                                }
+                            )*
+                        },
+                        [<$union Container>]::Conflicts(children) => children.iter().all(|child| match child {
+                            $(
+                                [<$union Child>]::$variant(log) => {
+                                    log.is_default()
+                                }
+                            )*
+                        }),
+                    }
+                }
+            }
+
+            impl $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty for [<$union Value>] {
+                fn is_semantically_empty(&self) -> bool {
+                    match self {
+                        Self::Unset => true,
+                        Self::Value(child) => match child.as_ref() {
+                            $(
+                                [<$union ChildValue>]::$variant(value) =>
+                                    $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty::is_semantically_empty(value),
+                            )*
+                        },
+                        Self::Conflict(values) => values.iter().all(|child| match child {
+                            $(
+                                [<$union ChildValue>]::$variant(value) =>
+                                    $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty::is_semantically_empty(value),
+                            )*
+                        }),
+                    }
                 }
             }
 
@@ -237,7 +274,7 @@ macro_rules! union {
                     match event.op().clone() {
                         $(
                             $union::$variant(o) => {
-                                let path = path.variant(stringify!($variant));
+                                let path = path.variant(stringify!([<$variant:lower>]));
                                 match &mut self.child {
                                     [<$union Container>]::Unset => {
                                         let log = {

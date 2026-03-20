@@ -101,10 +101,10 @@ macro_rules! record {
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
+                                sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
                                 let path = path.field(stringify!($field));
                                 sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-
                                 self.$field.effect_with_sink(child_op, path, sink);
                             }
                         )*
@@ -117,6 +117,20 @@ macro_rules! record {
                             )*
                         }
                     }
+                }
+            }
+
+            impl $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty for [<$name Value>]
+            where
+                $(
+                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value:
+                        $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty,
+                )*
+            {
+                fn is_semantically_empty(&self) -> bool {
+                    true $(
+                        && self.$field.is_semantically_empty()
+                    )*
                 }
             }
 

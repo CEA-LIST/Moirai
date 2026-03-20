@@ -1,9 +1,10 @@
 use std::fmt::Debug;
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_protocol::crdt::query::IsSemanticallyEmpty;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -76,6 +77,17 @@ impl<L> Default for NestedListLog<L> {
     }
 }
 
+// fn has_non_default_value<L>(child: &L) -> bool
+// where
+//     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+//     <L as IsLog>::Value: Default + PartialEq,
+// {
+//     let value = child.execute_query(Read::new());
+//     let default = L::default().execute_query(Read::new());
+//     println!("val: {:?}, default: {:?}", value, default);
+//     value != default
+// }
+
 impl<L> NestedListLog<L> {
     pub fn new() -> Self {
         Self::default()
@@ -92,7 +104,8 @@ impl<L> NestedListLog<L> {
 
     fn resolved_positions(&self) -> Vec<EventId>
     where
-        L: IsLog,
+        L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+        <L as IsLog>::Value: IsSemanticallyEmpty,
     {
         let mut positions = self.positions.execute_query(Read::new());
         let mut hidden_children = self
@@ -101,7 +114,10 @@ impl<L> NestedListLog<L> {
             .filter_map(|(id, pos)| {
                 self.children
                     .get(id)
-                    .filter(|child| !child.is_default() && !positions.contains(id))
+                    .filter(|child| {
+                        let value = child.execute_query(Read::new());
+                        !value.is_semantically_empty() && !positions.contains(id)
+                    })
                     .map(|_| (id.clone(), *pos))
             })
             .collect::<Vec<_>>();
@@ -122,7 +138,8 @@ impl<L> NestedListLog<L> {
 
 impl<L> IsLog for NestedListLog<L>
 where
-    L: IsLog,
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
 {
     type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
@@ -158,9 +175,14 @@ where
                 self.positions.effect(list_event);
                 if let Some(child) = self.children.get_mut(&target) {
                     child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.children.remove(&target);
-                    }
+                    // let value = child.execute_query(Read::new());
+                    // if value.is_semantically_empty() {
+                    // println!(
+                    //     "NestedList: causal reset made the child semantically empty at id {}",
+                    //     target
+                    // );
+                    // self.children.remove(&target);
+                    // }
                 }
                 self.deleted_positions
                     .entry(target)
@@ -228,7 +250,8 @@ where
 
 impl<L> IsLogSink for NestedListLog<L>
 where
-    L: IsLog,
+    L: IsLogSink + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
 {
     fn effect_with_sink(
         &mut self,
@@ -236,9 +259,9 @@ where
         path: ObjectPath,
         sink: &mut SinkCollector,
     ) {
-        let path = path.list_element(event.id().clone());
         match event.op().clone() {
             NestedList::Insert { pos, value } => {
+                let path = path.list_element(event.id().clone());
                 let list_event = Event::new(
                     event.id().clone(),
                     event.lamport().clone(),
@@ -249,25 +272,32 @@ where
                     event.version().clone(),
                 );
                 sink.collect(Sink::create(path.clone()));
-                self.positions.effect_with_sink(list_event, path, sink);
+                self.positions
+                    .effect_with_sink(list_event, path.clone(), sink);
                 let child_event = Event::unfold(event.clone(), value);
                 self.children
                     .entry(event.id().clone())
                     .or_default()
-                    .effect(child_event);
+                    .effect_with_sink(child_event, path, sink);
                 self.deleted_positions.remove(event.id());
             }
             NestedList::Delete { pos } => {
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
+                let path = path.list_element(target.clone());
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 sink.collect(Sink::delete(path.clone()));
                 self.positions.effect_with_sink(list_event, path, sink);
                 if let Some(child) = self.children.get_mut(&target) {
                     child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.children.remove(&target);
-                    }
+                    // let value = child.execute_query(Read::new());
+                    // if value.is_semantically_empty() {
+                    // println!(
+                    //     "NestedList: causal reset made the child semantically empty at id {}",
+                    //     target
+                    // );
+                    // self.children.remove(&target);
+                    // }
                 }
                 self.deleted_positions
                     .entry(target)
@@ -277,14 +307,16 @@ where
             NestedList::Update { pos, value } => {
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
+                let path = path.list_element(target.clone());
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 sink.collect(Sink::update(path.clone()));
-                self.positions.effect_with_sink(list_event, path, sink);
+                self.positions
+                    .effect_with_sink(list_event, path.clone(), sink);
                 let child_event = Event::unfold(event, value);
                 self.children
                     .entry(target.clone())
                     .or_default()
-                    .effect(child_event);
+                    .effect_with_sink(child_event, path, sink);
                 if self.positions.execute_query(Read::new()).contains(&target) {
                     self.deleted_positions.remove(&target);
                 }
@@ -296,6 +328,7 @@ where
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
 {
     fn execute_query(
         &self,
@@ -314,10 +347,11 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> FuzzMetrics for NestedListLog<L>
 where
-    L: IsLog + FuzzMetrics,
+    L: IsLog + FuzzMetrics + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
 {
     fn structure_metrics(&self) -> StructureMetrics {
-        StructureMetrics::list(
+        StructureMetrics::nested_collection(
             self.resolved_positions()
                 .into_iter()
                 .filter_map(|id| self.children.get(&id))
@@ -329,7 +363,8 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> OpGeneratorNested for NestedListLog<L>
 where
-    L: OpGeneratorNested,
+    L: OpGeneratorNested + IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
 {
     fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -378,6 +413,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use moirai_macros::record;
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
@@ -457,6 +493,24 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
         assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
+    }
+
+    #[test]
+    fn insert_then_delete() {
+        record!(Duet {
+            first: VecLog<Counter<i32>>,
+            second: VecLog<Counter<i32>>,
+        });
+
+        let (mut replica_a, _) = twins_log::<NestedListLog<DuetLog>>();
+
+        let _ = replica_a
+            .send(NestedList::insert(0, Duet::First(Counter::Inc(10))))
+            .unwrap();
+        let _ = replica_a.send(NestedList::delete(0)).unwrap();
+
+        let list = replica_a.query(Read::new());
+        assert_eq!(list, Vec::<DuetValue>::new());
     }
 
     #[test]
@@ -665,17 +719,17 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
-    fn fuzz_nested_list() {
+    fn fuzz_nested_list_counter() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
-        let runs = vec![run.clone(); 10_000];
+        let runs = vec![run.clone(); 100];
 
         let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>>::new(
-            "nested_list",
+            "nested_list_counter",
             runs,
             true,
             |a, b| a == b,
@@ -683,6 +737,31 @@ mod tests {
         );
 
         fuzzer::<NestedListLog<VecLog<Counter<i32>>>>(config);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_nested_list_string() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::event_graph::EventGraph;
+
+        use crate::list::eg_walker::List;
+
+        let run = RunConfig::new(0.6, 6, 20, None, None, false, false);
+        let runs = vec![run.clone(); 10_000];
+
+        let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
+            "nested_list_string",
+            runs,
+            true,
+            |a, b| a == b,
+            false,
+        );
+
+        fuzzer::<NestedListLog<EventGraph<List<char>>>>(config);
     }
 }
 

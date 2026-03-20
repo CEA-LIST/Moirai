@@ -130,6 +130,8 @@ impl<O> IsUnstableState<O> for EventGraph<O>
 where
     O: Clone + Debug,
 {
+    type Key = EventId;
+
     fn append(&mut self, event: Event<O>) {
         let new_tagged_op = TaggedOp::from(&event);
         let child_idx = self.graph.add_node(new_tagged_op);
@@ -177,6 +179,10 @@ where
         debug_assert!(self.graph.node_count() >= self.heads.len());
     }
 
+    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
+        tagged_op.id().clone()
+    }
+
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.map
             .get_by_right(event_id)
@@ -185,9 +191,17 @@ where
 
     /// # Complexity
     /// $O(e')$
+    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
+        self.get(key)
+    }
+
     fn remove(&mut self, _event_id: &EventId) {
         // TODO: update heads, re-attach if needed
         unimplemented!("EventGraph::remove is not implemented");
+    }
+
+    fn remove_by_key(&mut self, key: &Self::Key) {
+        self.remove(key)
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -362,8 +376,8 @@ where
     ///    3.1 If there exist a node N' in the list that has N as an ancestor, remove N from the list.
     ///    3.2 If not, add it to the list of immediate predecessors.
     ///    3.3 If there exist a node N' in the list with the same origin id and a lower sequence number, remove N' from the list.
-    #[deprecated]
-    #[allow(dead_code)]
+    // #[deprecated]
+    // #[allow(dead_code)]
     fn find_immediate_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
         let start_nodes: Vec<NodeIndex> = self
             .heads

@@ -28,12 +28,6 @@ where
     fn prune_redundant_ops(&mut self, rdnt: RedundancyRelation<O>, new_tagged_op: &TaggedOp<O>) {
         self.retain(|o| {
             let is_rdnt = rdnt(o, None, false, new_tagged_op);
-            // if is_rdnt {
-            //     println!(
-            //         "       Op {:?} is redundant by {:?}, removing it",
-            //         o, new_tagged_op
-            //     );
-            // }
             !is_rdnt
         });
     }

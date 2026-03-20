@@ -56,7 +56,10 @@ impl StructureMetrics {
     }
 
     pub fn object(children: impl IntoIterator<Item = Self>) -> Self {
-        let children = children.into_iter().filter(|m| m.size > 0).collect::<Vec<_>>();
+        let children = children
+            .into_iter()
+            .filter(|m| m.size > 0)
+            .collect::<Vec<_>>();
         if children.is_empty() {
             return Self::empty();
         }
@@ -70,8 +73,11 @@ impl StructureMetrics {
         }
     }
 
-    pub fn list(children: impl IntoIterator<Item = Self>) -> Self {
-        let children = children.into_iter().filter(|m| m.size > 0).collect::<Vec<_>>();
+    pub fn nested_collection(children: impl IntoIterator<Item = Self>) -> Self {
+        let children = children
+            .into_iter()
+            .filter(|m| m.size > 0)
+            .collect::<Vec<_>>();
         if children.is_empty() {
             return Self::empty();
         }
@@ -82,10 +88,20 @@ impl StructureMetrics {
                 .len()
                 .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
             height: 1 + children.iter().map(|m| m.height).max().unwrap_or(0),
+        }
+    }
+
+    // case of collection of scalar values (e.g., a set, a bag)
+    pub fn collection(len: usize) -> Self {
+        Self {
+            size: len,
+            width: 1,
+            height: 1,
         }
     }
 }
 
+// TODO: verify the implementations (seems messy and not very accurate, but maybe it's good enough for now)
 pub trait FuzzMetrics: IsLog {
     fn structure_metrics(&self) -> StructureMetrics;
 }

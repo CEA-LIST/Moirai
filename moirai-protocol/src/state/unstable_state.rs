@@ -7,9 +7,14 @@ use crate::{
 };
 
 pub trait IsUnstableState<O>: Debug {
+    type Key;
+
     fn append(&mut self, event: Event<O>);
+    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key;
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
+    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>>;
     fn remove(&mut self, event_id: &EventId);
+    fn remove_by_key(&mut self, key: &Self::Key);
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
     where
         O: 'a;
@@ -33,26 +38,34 @@ impl<O> IsUnstableState<O> for Vec<TaggedOp<O>>
 where
     O: Debug + Clone,
 {
-    /// # Complexity
-    /// `O(1)`
+    type Key = EventId;
+
     fn append(&mut self, event: Event<O>) {
         let tagged_op = TaggedOp::from(&event);
         self.push(tagged_op);
     }
 
-    /// # Complexity
-    /// `O(n)`
+    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
+        tagged_op.id().clone()
+    }
+
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.iter().find(|to| to.id() == event_id)
     }
 
-    /// # Complexity
-    /// `O(n)`
+    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
+        self.get(key)
+    }
+
     fn remove(&mut self, event_id: &EventId) {
         let maybe_pos = self.iter().position(|to| to.id() == event_id);
         if let Some(pos) = maybe_pos {
             self.remove(pos);
         }
+    }
+
+    fn remove_by_key(&mut self, key: &Self::Key) {
+        IsUnstableState::remove(self, key);
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -78,8 +91,6 @@ where
         self.clear();
     }
 
-    /// # Complexity
-    /// `O(n)`
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.iter()
             .filter(|to| to.id().is_predecessor_of(version))
@@ -91,8 +102,6 @@ where
         unimplemented!()
     }
 
-    /// # Complexity
-    /// `O(n)`
     fn delivery_order(&self, event_id: &EventId) -> usize {
         self.iter().position(|to| to.id() == event_id).unwrap()
     }
@@ -106,23 +115,31 @@ impl<O> IsUnstableState<O> for HashMap<EventId, TaggedOp<O>>
 where
     O: Debug + Clone,
 {
-    /// # Complexity
-    /// `O(1)`
+    type Key = EventId;
+
     fn append(&mut self, event: Event<O>) {
         let tagged_op = TaggedOp::from(&event);
         self.insert(tagged_op.id().clone(), tagged_op);
     }
 
-    /// # Complexity
-    /// `O(1)`
+    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
+        tagged_op.id().clone()
+    }
+
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.get(event_id)
     }
 
-    /// # Complexity
-    /// `O(1)`
+    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
+        self.get(key)
+    }
+
     fn remove(&mut self, event_id: &EventId) {
         self.remove(event_id);
+    }
+
+    fn remove_by_key(&mut self, key: &Self::Key) {
+        self.remove(key);
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -148,8 +165,6 @@ where
         self.clear();
     }
 
-    /// # Complexity
-    /// `O(n)`
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
         self.values()
             .filter(|to| to.id().is_predecessor_of(version))

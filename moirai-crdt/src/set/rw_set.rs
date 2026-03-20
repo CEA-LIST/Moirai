@@ -135,7 +135,8 @@ where
                     matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
                         && t.id() != tagged_op.id()
                 }) {
-                    unstable.remove(tagged_op.id());
+                    let key = unstable.key_of(tagged_op);
+                    unstable.remove_by_key(&key);
                 }
                 stable
                     .1
@@ -146,7 +147,8 @@ where
                     matches!(t.op(), RWSet::Remove(v2) | RWSet::Add(v2) if v != v2)
                         || t.id() == tagged_op.id()
                 }) {
-                    unstable.remove(tagged_op.id());
+                    let key = unstable.key_of(tagged_op);
+                    unstable.remove_by_key(&key);
                 }
             }
             RWSet::Clear => unreachable!(),

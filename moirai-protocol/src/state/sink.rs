@@ -24,10 +24,10 @@ impl std::fmt::Display for ObjectPath {
         write!(f, "{}", self.root)?;
         for segment in &self.segments {
             match segment {
-                PathSegment::Field(name) => write!(f, "/{}", name)?,
-                PathSegment::ListElement(id) => write!(f, "/{}", id)?,
-                PathSegment::MapEntry(key) => write!(f, "/{}", key)?,
-                PathSegment::Variant(name) => write!(f, "/{}", name)?,
+                PathSegment::Field(name) => write!(f, "/{}[f]", name)?,
+                PathSegment::ListElement(id) => write!(f, "/{}[l]", id)?,
+                PathSegment::MapEntry(key) => write!(f, "/{}[m]", key)?,
+                PathSegment::Variant(name) => write!(f, "/{}[v]", name)?,
             }
         }
         Ok(())
@@ -117,7 +117,7 @@ impl Sink {
         Self::new(object_path, SinkEffect::Update)
     }
 
-    pub fn object_path(&self) -> &ObjectPath {
+    pub fn path(&self) -> &ObjectPath {
         &self.object_path
     }
 
@@ -128,7 +128,7 @@ impl Sink {
 
 impl Display for Sink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({:?})", self.object_path(), self.effect())
+        write!(f, "{} ({:?})", self.path(), self.effect())
     }
 }
 
@@ -165,11 +165,7 @@ impl SinkCollector {
 
     pub fn collect(&mut self, sink: Sink) {
         // Ensure no duplicate sinks for the same path
-        if let Some(idx) = self
-            .sinks
-            .iter()
-            .position(|s| s.object_path() == sink.object_path())
-        {
+        if let Some(idx) = self.sinks.iter().position(|s| s.path() == sink.path()) {
             // TODO: not ideal...
             // println!(
             //     "Duplicate sink for path: [{} ({:?})],\n existing sinks:\n       {}",

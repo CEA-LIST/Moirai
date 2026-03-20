@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 
 use moirai_macros::record;
-use moirai_protocol::state::po_log::VecLog;
+use moirai_protocol::{crdt::query::IsSemanticallyEmpty, state::po_log::VecLog};
 use petgraph::{
     dot::{Config, Dot},
     graph::{DiGraph, NodeIndex},
@@ -29,6 +29,12 @@ pub enum RelationType {
     Aggregates,
     #[default]
     Associates,
+}
+
+impl IsSemanticallyEmpty for RelationType {
+    fn is_semantically_empty(&self) -> bool {
+        RelationType::default() == *self
+    }
 }
 
 impl RelationType {
@@ -64,10 +70,22 @@ pub enum PrimitiveType {
     Void,
 }
 
+impl IsSemanticallyEmpty for PrimitiveType {
+    fn is_semantically_empty(&self) -> bool {
+        PrimitiveType::default() == *self
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Class(String),
+}
+
+impl IsSemanticallyEmpty for TypeRef {
+    fn is_semantically_empty(&self) -> bool {
+        TypeRef::default() == *self
+    }
 }
 
 impl Default for TypeRef {
@@ -83,6 +101,12 @@ pub enum Visibility {
     Private,
     Protected,
     Package,
+}
+
+impl IsSemanticallyEmpty for Visibility {
+    fn is_semantically_empty(&self) -> bool {
+        Visibility::default() == *self
+    }
 }
 
 impl Visibility {
@@ -121,6 +145,12 @@ pub enum Multiplicity {
     Exactly(u8),        // exactly N
     ZeroToMany(u8),     // zero to N
     OneToMany(u8),      // one to N
+}
+
+impl IsSemanticallyEmpty for Multiplicity {
+    fn is_semantically_empty(&self) -> bool {
+        Multiplicity::default() == *self
+    }
 }
 
 impl Multiplicity {

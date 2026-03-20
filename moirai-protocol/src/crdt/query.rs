@@ -2,6 +2,10 @@ use std::fmt::Debug;
 
 use crate::event::id::EventId;
 
+pub trait IsSemanticallyEmpty {
+    fn is_semantically_empty(&self) -> bool;
+}
+
 pub trait QueryOperation {
     type Response;
 }
@@ -63,4 +67,121 @@ where
     Q: QueryOperation,
 {
     type Response = Option<Q::Response>;
+}
+
+impl IsSemanticallyEmpty for bool {
+    fn is_semantically_empty(&self) -> bool {
+        !*self
+    }
+}
+
+impl IsSemanticallyEmpty for i32 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for isize {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for u32 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for u64 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for u8 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for f32 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0.0
+    }
+}
+
+impl IsSemanticallyEmpty for f64 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0.0
+    }
+}
+
+impl IsSemanticallyEmpty for i64 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for usize {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for i16 {
+    fn is_semantically_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+impl IsSemanticallyEmpty for char {
+    fn is_semantically_empty(&self) -> bool {
+        false
+    }
+}
+
+impl IsSemanticallyEmpty for String {
+    fn is_semantically_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<T> IsSemanticallyEmpty for Vec<T> {
+    fn is_semantically_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<T: IsSemanticallyEmpty> IsSemanticallyEmpty for Option<T> {
+    fn is_semantically_empty(&self) -> bool {
+        match self {
+            None => true,
+            Some(v) => v.is_semantically_empty(),
+        }
+    }
+}
+
+impl<T: IsSemanticallyEmpty> IsSemanticallyEmpty for Box<T> {
+    fn is_semantically_empty(&self) -> bool {
+        self.as_ref().is_semantically_empty()
+    }
+}
+
+impl<K, V, S> IsSemanticallyEmpty for std::collections::HashMap<K, V, S>
+where
+    S: std::hash::BuildHasher,
+{
+    fn is_semantically_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<V, S> IsSemanticallyEmpty for std::collections::HashSet<V, S>
+where
+    S: std::hash::BuildHasher,
+{
+    fn is_semantically_empty(&self) -> bool {
+        self.is_empty()
+    }
 }

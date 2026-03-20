@@ -77,10 +77,11 @@ where
         let candidates = self.unstable.predecessors(version);
 
         for tagged_op in candidates {
+            let tagged_op_key = self.unstable.key_of(&tagged_op);
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
-            if self.unstable.get(tagged_op.id()).is_some() {
+            if self.unstable.get_by_key(&tagged_op_key).is_some() {
                 self.stable.apply(tagged_op.op().clone());
-                self.unstable.remove(tagged_op.id());
+                self.unstable.remove_by_key(&tagged_op_key);
             }
         }
     }
@@ -95,6 +96,8 @@ where
         }
     }
 
+    // TODO: we must decide if this function is semantic or structural, i.e. if it returns true if the log is semantically equivalent to the default value,
+    // TODO: or if it returns true if the log is empty.
     fn is_default(&self) -> bool {
         self.stable.is_default() && self.unstable.is_empty()
     }
