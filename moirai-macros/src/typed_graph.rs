@@ -234,6 +234,40 @@ macro_rules! typed_graph {
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
         }
 
+        $crate::paste::paste! {
+            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            pub enum [<$graph DerivedKey>] {
+                AddVertex($vertex),
+                RemoveVertex($vertex),
+                DeleteSubtree($crate::moirai_protocol::state::sink::ObjectPath),
+                AddArc($arcs),
+                RemoveArc($arcs),
+            }
+
+            pub type [<$graph State>]<P> =
+                $crate::moirai_protocol::state::unstable_state::DerivedKeyState<$graph<P>>;
+
+            impl<P> $crate::moirai_protocol::state::unstable_state::HasDerivedKey for $graph<P>
+            where
+                P: Clone + ::std::fmt::Debug,
+            {
+                type DerivedKey = [<$graph DerivedKey>];
+
+                fn derived_key(&self) -> Self::DerivedKey {
+                    match self {
+                        Self::AddVertex { id } => Self::DerivedKey::AddVertex(id.clone()),
+                        Self::RemoveVertex { id } => Self::DerivedKey::RemoveVertex(id.clone()),
+                        Self::DeleteSubtree { prefix } => {
+                            Self::DerivedKey::DeleteSubtree(prefix.clone())
+                        }
+                        Self::AddArc(arc) => Self::DerivedKey::AddArc(arc.clone()),
+                        Self::RemoveArc(arc) => Self::DerivedKey::RemoveArc(arc.clone()),
+                        Self::__Marker(never, _) => match *never {},
+                    }
+                }
+            }
+        }
+
         impl<P> $crate::moirai_protocol::utils::translate_ids::TranslateIds for $graph<P>
         where
             P: Clone,

@@ -64,6 +64,10 @@ impl Policy for FairPolicy {
     fn compare(a: &Tag, b: &Tag) -> Ordering {
         match a.lamport().cmp(b.lamport()) {
             Ordering::Equal => {
+                if a.id() == b.id() {
+                    return Ordering::Equal;
+                }
+
                 let val = a.lamport().val();
                 let mut members = a.id().resolver().into_vec();
                 members.sort_unstable();
@@ -78,11 +82,10 @@ impl Policy for FairPolicy {
                     .position(|r| *r == *b.id().origin_id())
                     .unwrap();
 
-                if other_idx < self_idx && other_idx < round_leader && round_leader <= self_idx {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
+                let self_rank = (self_idx + n - round_leader) % n;
+                let other_rank = (other_idx + n - round_leader) % n;
+
+                self_rank.cmp(&other_rank)
             }
             other_order => other_order,
         }
@@ -119,6 +122,8 @@ impl PartialOrd for Fair<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
+
     use moirai_protocol::{
         event::{id::EventId, lamport::Lamport, tag::Tag},
         replica::ReplicaIdx,
@@ -126,6 +131,25 @@ mod tests {
     };
 
     use crate::policy::Fair;
+
+    fn fair_cmp(num_members: usize, lamport: usize, left: usize, right: usize) -> Ordering {
+        let mut interner = Interner::new();
+        for idx in 0..num_members {
+            interner.intern(&format!("R{idx}"));
+        }
+
+        let resolver = interner.resolver();
+        let left = Tag::new(
+            EventId::new(ReplicaIdx(left), 1, resolver.clone()),
+            Lamport::new(lamport),
+        );
+        let right = Tag::new(
+            EventId::new(ReplicaIdx(right), 1, resolver.clone()),
+            Lamport::new(lamport),
+        );
+
+        Fair(&left).cmp(&Fair(&right))
+    }
 
     #[test]
     fn test_fair() {
@@ -180,7 +204,61 @@ mod tests {
         let bc = Fair(&b).cmp(&Fair(&c));
         let ac = Fair(&a).cmp(&Fair(&c));
 
-        assert_eq!(ab, bc);
-        assert_eq!(ab, ac);
+        assert_eq!(ab, Ordering::Greater);
+        assert_eq!(bc, Ordering::Less);
+        assert_eq!(ac, Ordering::Greater);
+    }
+
+    #[test]
+    fn test_fair_reflexive() {
+        let mut interner = Interner::new();
+        interner.intern("A");
+        interner.intern("B");
+        interner.intern("C");
+
+        let resolver = interner.resolver();
+        let a = Tag::new(
+            EventId::new(ReplicaIdx(0), 1, resolver.clone()),
+            Lamport::new(1),
+        );
+
+        assert_eq!(Fair(&a).cmp(&Fair(&a)), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_fair_antisymmetric_for_all_pairs_and_rounds_with_four_members() {
+        for lamport in 0..8 {
+            for left in 0..4 {
+                for right in 0..4 {
+                    let lr = fair_cmp(4, lamport, left, right);
+                    let rl = fair_cmp(4, lamport, right, left);
+
+                    assert_eq!(
+                        lr,
+                        rl.reverse(),
+                        "lamport={lamport}, left={left}, right={right}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fair_round_robin_order_with_four_members() {
+        let expected = [2, 3, 0, 1];
+        let mut interner = Interner::new();
+        for idx in 0..4 {
+            interner.intern(&format!("R{idx}"));
+        }
+
+        let resolver = interner.resolver();
+        let tags: Vec<_> = (0..4)
+            .map(|idx| Tag::new(EventId::new(ReplicaIdx(idx), 1, resolver.clone()), Lamport::new(2)))
+            .collect();
+
+        let mut ordered: Vec<_> = (0..4).collect();
+        ordered.sort_by(|left, right| Fair(&tags[*left]).cmp(&Fair(&tags[*right])));
+
+        assert_eq!(ordered, expected);
     }
 }

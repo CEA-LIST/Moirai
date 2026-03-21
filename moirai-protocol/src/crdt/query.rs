@@ -1,4 +1,8 @@
-use std::fmt::Debug;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::BuildHasher,
+};
 
 use crate::event::id::EventId;
 
@@ -168,18 +172,18 @@ impl<T: IsSemanticallyEmpty> IsSemanticallyEmpty for Box<T> {
     }
 }
 
-impl<K, V, S> IsSemanticallyEmpty for std::collections::HashMap<K, V, S>
+impl<K, V, S> IsSemanticallyEmpty for HashMap<K, V, S>
 where
-    S: std::hash::BuildHasher,
+    S: BuildHasher,
 {
     fn is_semantically_empty(&self) -> bool {
         self.is_empty()
     }
 }
 
-impl<V, S> IsSemanticallyEmpty for std::collections::HashSet<V, S>
+impl<V, S> IsSemanticallyEmpty for HashSet<V, S>
 where
-    S: std::hash::BuildHasher,
+    S: BuildHasher,
 {
     fn is_semantically_empty(&self) -> bool {
         self.is_empty()
