@@ -253,7 +253,12 @@ mod tests {
 
         let resolver = interner.resolver();
         let tags: Vec<_> = (0..4)
-            .map(|idx| Tag::new(EventId::new(ReplicaIdx(idx), 1, resolver.clone()), Lamport::new(2)))
+            .map(|idx| {
+                Tag::new(
+                    EventId::new(ReplicaIdx(idx), 1, resolver.clone()),
+                    Lamport::new(2),
+                )
+            })
             .collect();
 
         let mut ordered: Vec<_> = (0..4).collect();

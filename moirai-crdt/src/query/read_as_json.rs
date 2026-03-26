@@ -2,7 +2,7 @@ use moirai_protocol::crdt::{
     eval::EvalNested,
     query::{QueryOperation, Read},
 };
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 use crate::{
     json::{JsonChild, JsonContainer, JsonLog},
@@ -67,7 +67,9 @@ impl EvalNested<ReadAsJson> for JsonLog {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
         fn eval_child(child: &JsonChild) -> Value {
             match child {
-                JsonChild::Number(log) => Value::Number(log.execute_query(Read::new()).into()),
+                JsonChild::Number(log) => {
+                    Value::Number(Number::from_f64(log.execute_query(Read::new())).unwrap())
+                }
                 JsonChild::Boolean(log) => Value::Bool(log.execute_query(Read::new())),
                 JsonChild::String(log) => {
                     let chars: String = log.execute_query(Read::<String>::new());

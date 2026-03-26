@@ -15,7 +15,7 @@ use moirai_protocol::{
     state::{
         event_graph::EventGraph,
         log::IsLog,
-        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, Sink, SinkCollector},
     },
     utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
 };
@@ -315,6 +315,13 @@ where
             }
         }
     }
+}
+
+impl<L> DefaultSinkExpansion for NestedListLog<L>
+where
+    L: IsLogSink + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: IsSemanticallyEmpty,
+{
 }
 
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>

@@ -112,22 +112,45 @@ macro_rules! record {
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
-                                sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                let was_default =
+                                    <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
+                                if was_default {
+                                    <Self as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(path.clone(), sink);
+                                } else {
+                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                }
                                 let path = path.field(stringify!($field));
-                                sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                if !was_default {
+                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                }
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
                                 self.$field.effect_with_sink(child_op, path, sink);
                             }
                         )*
                         $name::New => {
-                            sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
-                            // new initialize each field to default, so we need to emit a create for each field
-                            $(
-                                let child_path = path.clone().field(stringify!($field));
-                                sink.collect($crate::moirai_protocol::state::sink::Sink::create(child_path));
-                            )*
+                            <Self as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(path, sink);
                         }
                     }
+                }
+            }
+
+            impl $crate::moirai_protocol::state::sink::DefaultSinkExpansion for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::state::sink::DefaultSinkExpansion,
+                )*
+            {
+                fn collect_default_sinks(
+                    path: $crate::moirai_protocol::state::sink::ObjectPath,
+                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
+                ) {
+                    sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
+                    $(
+                        <$T as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(
+                            path.clone().field(stringify!($field)),
+                            sink,
+                        );
+                    )*
                 }
             }
 

@@ -12,7 +12,7 @@ use moirai_protocol::{
     replica::ReplicaIdx,
     state::{
         log::IsLog,
-        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, Sink, SinkCollector},
     },
     utils::{intern_str::Interner, translate_ids::TranslateIds},
 };
@@ -144,6 +144,8 @@ where
         }
     }
 }
+
+impl<L> DefaultSinkExpansion for OptionLog<L> where L: IsLogSink {}
 
 #[cfg(feature = "fuzz")]
 impl<L> FuzzMetrics for OptionLog<L>

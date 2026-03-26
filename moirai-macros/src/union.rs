@@ -337,6 +337,8 @@ macro_rules! union {
                 }
             }
 
+            impl $crate::moirai_protocol::state::sink::DefaultSinkExpansion for [<$union Log>] {}
+
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$union Log>] {
                 fn execute_query(
                     &self,

@@ -6,6 +6,7 @@ use crate::{
 };
 
 pub trait TranslateIds: Clone {
+    /// Translates any embedded EventIds from the given replica index to the corresponding EventIds for the current replica, using the provided interner to resolve replica indices.
     fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self;
 }
 

@@ -19,7 +19,7 @@ use moirai_protocol::{
     replica::ReplicaIdx,
     state::{
         log::IsLog,
-        sink::{IsLogSink, ObjectPath, Sink, SinkCollector},
+        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, Sink, SinkCollector},
     },
     utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
 };
@@ -193,6 +193,13 @@ where
             }
         }
     }
+}
+
+impl<K, L> DefaultSinkExpansion for UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash,
+    L: IsLogSink,
+{
 }
 
 impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>

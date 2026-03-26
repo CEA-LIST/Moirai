@@ -203,9 +203,24 @@ where
     }
 }
 
+pub trait DefaultSinkExpansion
+where
+    Self: IsLog,
+{
+    fn collect_default_sinks(_path: ObjectPath, _sink: &mut SinkCollector) {}
+}
+
 impl<O> IsLogSink for EventGraph<O> where O: PureCRDT + Clone {}
+impl<O> DefaultSinkExpansion for EventGraph<O> where O: PureCRDT + Clone {}
 
 impl<O, U> IsLogSink for POLog<O, U>
+where
+    O: PureCRDT + Clone,
+    U: IsUnstableState<O> + Default + Debug,
+{
+}
+
+impl<O, U> DefaultSinkExpansion for POLog<O, U>
 where
     O: PureCRDT + Clone,
     U: IsUnstableState<O> + Default + Debug,
@@ -222,5 +237,11 @@ impl<L: IsLogSink> IsLogSink for Box<L> {
         let inner_op = *event.op().clone();
         let inner_event = event.unfold(inner_op);
         (**self).effect_with_sink(inner_event, path, sink);
+    }
+}
+
+impl<L: DefaultSinkExpansion> DefaultSinkExpansion for Box<L> {
+    fn collect_default_sinks(path: ObjectPath, sink: &mut SinkCollector) {
+        L::collect_default_sinks(path, sink);
     }
 }
