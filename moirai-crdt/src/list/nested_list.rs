@@ -749,8 +749,8 @@ mod tests {
 
         use crate::list::eg_walker::List;
 
-        let run = RunConfig::new(0.6, 6, 20, None, None, false, false);
-        let runs = vec![run.clone(); 10];
+        let run = RunConfig::new(0.7, 4, 100, None, None, false, false);
+        let runs = vec![run.clone(); 1_000];
 
         let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
             "nested_list_string",

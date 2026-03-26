@@ -130,6 +130,7 @@ where
     }
 }
 
+// TODO: does not work...
 fn transitive_reduce_dag<N>(graph: &mut Dag<N, ()>) {
     let edges: Vec<(NodeIndex, NodeIndex)> = graph
         .graph()
