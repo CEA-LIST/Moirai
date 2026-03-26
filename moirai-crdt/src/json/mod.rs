@@ -25,6 +25,7 @@ union! {
         | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog>)
 }
 
+// TODO: the code must be factorized
 #[cfg(feature = "fuzz")]
 impl OpGeneratorNested for JsonLog {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
@@ -86,13 +87,38 @@ impl OpGeneratorNested for JsonLog {
             JsonValue::Unset => {
                 use moirai_protocol::state::log::IsLog;
 
-                let choice = &[
-                    Choice::Number,
-                    Choice::String,
-                    Choice::Boolean,
-                    Choice::Object,
-                    Choice::Array,
-                ][dist.sample(rng)];
+                let available_choices: Vec<Choice> = match &self.child {
+                    JsonContainer::Unset => vec![
+                        Choice::Number,
+                        Choice::String,
+                        Choice::Boolean,
+                        Choice::Object,
+                        Choice::Array,
+                    ],
+                    JsonContainer::Value(child) => match child.as_ref() {
+                        JsonChild::Number(_) => vec![Choice::Number],
+                        JsonChild::Boolean(_) => vec![Choice::Boolean],
+                        JsonChild::String(_) => vec![Choice::String],
+                        JsonChild::Object(_) => vec![Choice::Object],
+                        JsonChild::Array(_) => vec![Choice::Array],
+                    },
+                    JsonContainer::Conflicts(children) => children
+                        .iter()
+                        .map(|child| match child {
+                            JsonChild::Number(_) => Choice::Number,
+                            JsonChild::Boolean(_) => Choice::Boolean,
+                            JsonChild::String(_) => Choice::String,
+                            JsonChild::Object(_) => Choice::Object,
+                            JsonChild::Array(_) => Choice::Array,
+                        })
+                        .collect(),
+                };
+
+                let choice = if available_choices.len() == 5 {
+                    &available_choices[dist.sample(rng)]
+                } else {
+                    rand::seq::IteratorRandom::choose(available_choices.iter(), rng).unwrap()
+                };
                 match choice {
                     Choice::Number => generate_number(&VecLog::<Counter<f64>>::new(), rng),
                     Choice::Boolean => generate_boolean(&VecLog::<EWFlag>::new(), rng),
@@ -103,7 +129,23 @@ impl OpGeneratorNested for JsonLog {
             }
             JsonValue::Value(v) => match &self.child {
                 JsonContainer::Value(child) => generate_value(&v, child.as_ref(), rng),
-                _ => unreachable!(),
+                JsonContainer::Conflicts(child_logs) => {
+                    let log = child_logs
+                        .iter()
+                        .find(|log| {
+                            matches!(
+                                (v.as_ref(), log),
+                                (JsonChildValue::Number(_), JsonChild::Number(_))
+                                    | (JsonChildValue::Boolean(_), JsonChild::Boolean(_))
+                                    | (JsonChildValue::Object(_), JsonChild::Object(_))
+                                    | (JsonChildValue::String(_), JsonChild::String(_))
+                                    | (JsonChildValue::Array(_), JsonChild::Array(_))
+                            )
+                        })
+                        .unwrap();
+                    generate_value(&v, log, rng)
+                }
+                JsonContainer::Unset => unreachable!(),
             },
             JsonValue::Conflict(json_child_values) => match &self.child {
                 JsonContainer::Conflicts(child_logs) => {
@@ -132,13 +174,14 @@ impl OpGeneratorNested for JsonLog {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::replica::IsReplica;
+    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
     use serde_json::{Value, json};
 
     use crate::{
         counter::resettable_counter::Counter,
         flag::ew_flag::EWFlag,
         json::{Json, JsonLog},
+        list::{eg_walker::List, nested_list::NestedList},
         map::uw_map::UWMap,
         query::read_as_json::ReadAsJson,
         utils::membership::{triplet_log, twins_log},
@@ -251,7 +294,7 @@ mod tests {
         replica_c.receive(event_a.clone());
         replica_c.receive(event_b.clone());
 
-        let result = json!([true, 1.0, {"key": 0.0}]);
+        let result = json!([true, 1, {"key": 0}]);
 
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
@@ -312,12 +355,103 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = json!({
-            "k1": 1.0,
+            "k1": 1,
             "k2": true
         });
 
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
+    }
+
+    /// digraph {
+    ///     0       [label="[Array(Insert { pos: 0, value: Object(Update('sj', String(Insert { content: 'w', pos: 0 }))) })@(0:1)]"];
+    ///     1       [label="[Array(Update { pos: 0, value: Object(Update('ok', Number(Inc(652798)))) })@(0:2)]"];
+    ///     0 -> 1;
+    ///     2       [label="[Array(Update { pos: 0, value: Object(Update('nsd', Object(Clear))) })@(1:1)]"];
+    ///     0 -> 2;
+    ///     4       [label="[Array(Delete { pos: 0 })@(0:3)]"];
+    ///     1 -> 4;
+    ///     3       [label="[Array(Update { pos: 0, value: Object(Clear) })@(1:2)]"];
+    ///     2 -> 3;
+    ///     5       [label="[Array(Insert { pos: 1, value: Boolean(Enable) })@(1:3)]"];
+    ///     3 -> 5;
+    ///     7       [label="[Array(Delete { pos: 0 })@(0:4)]"];
+    ///     4 -> 7;
+    ///     6       [label="[Array(Update { pos: 0, value: Object(Update('zw', Number(Reset))) })@(1:4)]"];
+    ///     5 -> 6;
+    ///     6 -> 7;
+    /// }
+    #[test]
+    fn error_1() {
+        let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
+
+        let b1 = replica_b
+            .send(Json::Array(NestedList::insert(
+                0,
+                Box::new(Json::Object(UWMap::Update(
+                    "s".into(),
+                    Box::new(Json::String(List::insert('w', 0))),
+                ))),
+            )))
+            .unwrap();
+
+        replica_a.receive(b1);
+
+        let b2 = replica_b
+            .send(Json::Array(NestedList::update(
+                0,
+                Box::new(Json::Object(UWMap::Update(
+                    "ok".into(),
+                    Box::new(Json::Number(Counter::Inc(5.0))),
+                ))),
+            )))
+            .unwrap();
+
+        let b3 = replica_b.send(Json::Array(NestedList::delete(0))).unwrap();
+
+        let a1 = replica_a
+            .send(Json::Array(NestedList::update(
+                0,
+                Box::new(Json::Object(UWMap::Update(
+                    "nsd".into(),
+                    Box::new(Json::Object(UWMap::Clear)),
+                ))),
+            )))
+            .unwrap();
+        let a2 = replica_a
+            .send(Json::Array(NestedList::update(
+                0,
+                Box::new(Json::Object(UWMap::Clear)),
+            )))
+            .unwrap();
+        let a3 = replica_a
+            .send(Json::Array(NestedList::insert(
+                1,
+                Box::new(Json::Boolean(EWFlag::Enable)),
+            )))
+            .unwrap();
+        let a4 = replica_a
+            .send(Json::Array(NestedList::update(
+                0,
+                Box::new(Json::Object(UWMap::Update(
+                    "zw".into(),
+                    Box::new(Json::Number(Counter::Reset)),
+                ))),
+            )))
+            .unwrap();
+
+        replica_b.receive(a1);
+        replica_b.receive(a2);
+        replica_b.receive(a3);
+        replica_b.receive(a4);
+
+        let b4 = replica_b.send(Json::Array(NestedList::delete(0))).unwrap();
+
+        replica_a.receive(b2);
+        replica_a.receive(b3);
+        replica_a.receive(b4);
+
+        assert_eq!(replica_b.query(Read::new()), replica_a.query(Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -328,8 +462,8 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.4, 4, 10, None, None, false, false);
-        let runs = vec![run.clone(); 1000];
+        let run = RunConfig::new(0.6, 4, 100, None, None, true, false);
+        let runs = vec![run.clone(); 1_000];
 
         let config = FuzzerConfig::<JsonLog>::new("json", runs, true, |a, b| a == b, false);
 

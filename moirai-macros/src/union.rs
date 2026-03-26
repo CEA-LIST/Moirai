@@ -349,26 +349,42 @@ macro_rules! union {
                         [<$union Container>]::Value(child) => match child.as_ref() {
                             $(
                                 [<$union Child>]::$variant(log) => {
+                                    if <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log) {
+                                        [<$union Value>]::Unset
+                                    } else {
                                     let value = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
                                     [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
+                                    }
                                 }
                             )*
                         },
                         [<$union Container>]::Conflicts(children) => {
                             let mut values = vec![];
                             for child in children {
-                                let value = match child {
+                                let maybe_value = match child {
                                     $(
                                         [<$union Child>]::$variant(log) => {
-                                            let v = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
-                                            [<$union ChildValue>]::$variant(v)
+                                            if <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log) {
+                                                None
+                                            } else {
+                                                let v = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
+                                                Some([<$union ChildValue>]::$variant(v))
+                                            }
                                         }
                                     )*
                                 };
-                                values.push(value);
+                                if let Some(value) = maybe_value {
+                                    values.push(value);
+                                }
                             }
-                            values.sort();
-                            [<$union Value>]::Conflict(values)
+                            match values.len() {
+                                0 => [<$union Value>]::Unset,
+                                1 => [<$union Value>]::Value(Box::new(values.pop().unwrap())),
+                                _ => {
+                                    values.sort();
+                                    [<$union Value>]::Conflict(values)
+                                }
+                            }
                         }
                     }
                 }
