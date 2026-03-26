@@ -6,16 +6,33 @@ pub struct FooBarEdge;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BarBazEdge;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FooBazEdge;
+
 typed_graph! {
-    graph: MyTypedGraph,
-    vertex: MyVertex,
-    edge: MyEdge,
-    arcs_type: MyArcs,
-    vertices { Foo, Bar, Baz },
-    connections {
-        FooToBar: Foo -> Bar (FooBarEdge) [0, 1],
-        BarToBaz: Bar -> Baz (BarBazEdge) [1, 1],
-        FooToBaz: Foo -> Baz (FooBarEdge) [2, *],
+    types {
+        graph = MyTypedGraph,
+        vertex_kind = MyVertex,
+        edge_kind = MyEdge,
+        arc_kind = MyArcs,
+    },
+
+    vertices {
+        Foo,
+        Bar,
+        Baz,
+    },
+
+    edges {
+        FooBarEdge [0, 1],
+        BarBazEdge [1, 1],
+        FooBazEdge [2, *],
+    },
+
+    arcs {
+        FooToBar: Foo -> Bar (FooBarEdge),
+        BarToBaz: Bar -> Baz (BarBazEdge),
+        FooToBaz: Foo -> Baz (FooBazEdge),
     }
 }
 
@@ -64,6 +81,52 @@ mod tests {
     }
 
     #[test]
+    fn multiple_arcs_to_the_same_target() {
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
+
+        let e1 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Foo(foo(1)),
+            })
+            .unwrap();
+        replica_b.receive(e1);
+        let e2 = replica_b
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Baz(baz(1)),
+            })
+            .unwrap();
+        replica_a.receive(e2);
+        let e3 = replica_a
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: foo(1),
+                target: baz(1),
+                kind: FooBazEdge,
+            })))
+            .unwrap();
+        replica_b.receive(e3);
+        let e4 = replica_b
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: foo(1),
+                target: baz(1),
+                kind: FooBazEdge,
+            })))
+            .unwrap();
+        replica_a.receive(e4);
+        let e5 = replica_a
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+                source: foo(1),
+                target: baz(1),
+                kind: FooBazEdge,
+            })))
+            .unwrap();
+        replica_b.receive(e5);
+
+        assert_convergence(&replica_a, &replica_b);
+        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+    }
+
+    #[test]
     fn remove_vertex() {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
@@ -83,7 +146,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_b.receive(e3);
@@ -92,7 +155,7 @@ mod tests {
                 .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
                     source: foo(1),
                     target: baz(1),
-                    kind: FooBarEdge,
+                    kind: FooBazEdge,
                 })))
                 .is_none()
         );
@@ -106,7 +169,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_b.receive(e5);
@@ -120,7 +183,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(3),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_b.receive(e7);
@@ -130,14 +193,14 @@ mod tests {
             .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         let event_b = replica_b
             .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
 
@@ -219,7 +282,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_b.receive(e5);
@@ -228,7 +291,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_a.receive(e6);
@@ -237,7 +300,7 @@ mod tests {
             .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(3),
-                kind: FooBarEdge,
+                kind: FooBazEdge,
             })))
             .unwrap();
         replica_a.receive(e7);

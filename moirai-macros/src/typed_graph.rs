@@ -1,71 +1,17 @@
 /// Generates a complete typed graph CRDT from a schema definition.
-///
-/// # Syntax
-///
-/// ```rust,ignore
-/// typed_graph! {
-///     graph: MyGraph,
-///     vertex: MyVertex,
-///     edge: MyEdge,
-///     arcs_type: MyArcs,
-///
-///     vertices { Foo, Bar, Baz },
-///
-///     connections {
-///         FooToBar: Foo -> Bar (FooBarEdge) [0, 3],
-///         BarToBaz: Bar -> Baz (BarBazEdge) [1, 1],
-///     }
-/// }
-/// ```
-///
-/// # Requirements
-///
-/// - Each edge identifier (e.g. `FooBarEdge`) must be a **unit struct** in scope
-///   that implements `Debug + Clone + PartialEq + Eq + Hash`.
-/// - The macro generates one tuple-struct vertex id per entry in `vertices { ... }`.
-///   Each generated vertex id wraps an `ObjectPath`.
 use std::fmt::Debug;
 use std::hash::Hash;
 
-pub trait Connectable<Target, Edge> {
-    const MIN: usize;
-    const MAX: usize;
-
-    fn min(&self) -> usize {
-        Self::MIN
-    }
-
-    fn max(&self) -> usize {
-        Self::MAX
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Arc<S, T, E>
-where
-    S: Connectable<T, E>,
-{
+pub struct Arc<S, T, E> {
     pub source: S,
     pub target: T,
     pub kind: E,
 }
 
-impl<S, T, E> Arc<S, T, E>
-where
-    S: Connectable<T, E>,
-{
-    pub fn min(&self) -> usize {
-        S::MIN
-    }
-
-    pub fn max(&self) -> usize {
-        S::MAX
-    }
-}
-
 impl<S, T, E> moirai_protocol::utils::translate_ids::TranslateIds for Arc<S, T, E>
 where
-    S: Connectable<T, E> + moirai_protocol::utils::translate_ids::TranslateIds,
+    S: moirai_protocol::utils::translate_ids::TranslateIds,
     T: moirai_protocol::utils::translate_ids::TranslateIds,
     E: Clone,
 {
@@ -83,12 +29,12 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Vertex<S>
+pub enum Vertex<T>
 where
-    S: Debug + Clone + PartialEq + Eq + Hash,
+    T: Debug + Clone + PartialEq + Eq + Hash,
 {
-    AddVertex { id: S },
-    RemoveVertex { id: S },
+    AddVertex { id: T },
+    RemoveVertex { id: T },
 }
 
 #[macro_export]
@@ -108,13 +54,15 @@ macro_rules! typed_graph {
         vertex: $vertex:ident,
         edge: $edge:ident,
         arcs_type: $arcs:ident,
-
         vertices { $( $v:ident ),* },
-
+        edge_types {
+            $( $edge_ty:ident [ $edge_min:expr , $edge_max:tt ] ),* $(,)?
+        },
         connections {
-            $( $conn:ident : $src:ident [$src_ty:path] -> $tgt:ident [$tgt_ty:path] ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
+            $( $conn:ident : $src:ident [$src_ty:path] -> $tgt:ident [$tgt_ty:path] ( $ety:ident ) ),* $(,)?
         } $(,)?
     ) => {
+        // Generate a vertex struct for each vertex variant, and implement TranslateIds for it.
         $(
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
             pub struct $v(pub $crate::moirai_protocol::state::sink::ObjectPath);
@@ -130,25 +78,38 @@ macro_rules! typed_graph {
             }
         )*
 
-        $(
-            impl $crate::typed_graph::Connectable<$tgt_ty, $ety> for $src_ty {
-                const MIN: usize = $min;
-                const MAX: usize = $crate::typed_graph!(@max $max);
-            }
-        )*
+        macro_rules! __typed_graph_min {
+            $(
+                ($edge_ty) => {
+                    $edge_min
+                };
+            )*
+        }
 
-        // Vertex enum
+        macro_rules! __typed_graph_max {
+            $(
+                ($edge_ty) => {
+                    $crate::typed_graph!(@max $edge_max)
+                };
+            )*
+        }
+
+        // Enum of all vertices
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $vertex {
             $( $v($v) ),*
         }
 
-        fn vertex_path(vertex: &$vertex) -> &$crate::moirai_protocol::state::sink::ObjectPath {
-            match vertex {
-                $( $vertex::$v(id) => &id.0 ),*
+        // Helper function to extract ObjectPath from any vertex variant
+        impl $vertex {
+            pub fn vertex_path(&self) -> &$crate::moirai_protocol::state::sink::ObjectPath {
+                match self {
+                    $( $vertex::$v(id) => &id.0 ),*
+                }
             }
         }
 
+        // Implement TranslateIds for the vertex enum by delegating to each variant's implementation
         impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $vertex {
             fn translate_ids(
                 &self,
@@ -161,18 +122,19 @@ macro_rules! typed_graph {
             }
         }
 
-        // Edge enum
+        // Enum of all edge types
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $edge {
             $( $conn($ety) ),*
         }
 
-        // Arcs enum
+        // Enum of all arcs
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $arcs {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
 
+        // Implement TranslateIds for the arcs enum by delegating to each variant's implementation
         impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $arcs
         where
             $(
@@ -191,6 +153,7 @@ macro_rules! typed_graph {
             }
         }
 
+        // Implement helper methods on the arcs enum to extract source, target, kind, and constraints
         impl $arcs {
             pub fn source(&self) -> $vertex {
                 match self {
@@ -212,17 +175,24 @@ macro_rules! typed_graph {
 
             pub fn max(&self) -> usize {
                 match self {
-                    $( $arcs::$conn(arc) => arc.max() ),*
+                    $( $arcs::$conn(_) => __typed_graph_max!($ety) ),*
                 }
             }
 
             pub fn min(&self) -> usize {
                 match self {
-                    $( $arcs::$conn(arc) => arc.min() ),*
+                    $( $arcs::$conn(_) => __typed_graph_min!($ety) ),*
+                }
+            }
+
+            pub fn family(&self) -> &'static str {
+                match self {
+                    $( $arcs::$conn(_) => stringify!($ety) ),*
                 }
             }
         }
 
+        // Main graph operation enum
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $graph<P> {
             AddVertex { id: $vertex },
@@ -247,6 +217,7 @@ macro_rules! typed_graph {
             pub type [<$graph State>]<P> =
                 $crate::moirai_protocol::state::unstable_state::DerivedKeyState<$graph<P>>;
 
+            //
             impl<P> $crate::moirai_protocol::state::unstable_state::HasDerivedKey for $graph<P>
             where
                 P: Clone + ::std::fmt::Debug,
@@ -268,6 +239,7 @@ macro_rules! typed_graph {
             }
         }
 
+        // Implement TranslateIds for the main graph operation enum by delegating to each variant's implementation
         impl<P> $crate::moirai_protocol::utils::translate_ids::TranslateIds for $graph<P>
         where
             P: Clone,
@@ -296,6 +268,7 @@ macro_rules! typed_graph {
             }
         }
 
+        // Helper functions for schema validation and constraints computation
         fn possible_arcs_between(
             source: &$vertex,
             target: &$vertex,
@@ -313,6 +286,7 @@ macro_rules! typed_graph {
             result
         }
 
+        // Helper function to check if a given edge is valid between two vertices and return the corresponding arc if so
         fn arc_from_vertices_and_edge(
             source: &$vertex,
             target: &$vertex,
@@ -332,15 +306,24 @@ macro_rules! typed_graph {
             }
         }
 
+        // Helper function to get the max edges allowed for a given source vertex and edge kind
         fn max_edges_for(source: &$vertex, kind: &$edge) -> usize {
             match (source, kind) {
                 $(
-                    ($vertex::$src(_), $edge::$conn(_)) => $crate::typed_graph!(@max $max),
+                    ($vertex::$src(_), $edge::$conn(_)) => __typed_graph_max!($ety),
                 )*
                 _ => usize::MAX,
             }
         }
 
+        // Helper function to get the family name for a given edge
+        fn edge_family(edge: &$edge) -> &'static str {
+            match edge {
+                $( $edge::$conn(_) => stringify!($ety) ),*
+            }
+        }
+
+        // Helper function to get the min and max constraints for a given source vertex, target vertex, and edge
         fn edge_constraints_for(
             source: &$vertex,
             target: &$vertex,
@@ -349,29 +332,37 @@ macro_rules! typed_graph {
             match (source, target, edge) {
                 $(
                     ($vertex::$src(_), $vertex::$tgt(_), $edge::$conn(_)) => {
-                        Some(($min, $crate::typed_graph!(@max $max)))
+                        Some((__typed_graph_min!($ety), __typed_graph_max!($ety)))
                     },
                 )*
                 _ => None,
             }
         }
 
-        fn required_constraints_for(vertex: &$vertex) -> Vec<($edge, usize, usize)> {
+        // Helper function to get the required edge family constraints for a given vertex
+        fn required_constraints_for(vertex: &$vertex) -> Vec<(&'static str, usize, usize)> {
             let mut constraints = Vec::new();
+            let mut seen_families: $crate::HashSet<&'static str> = $crate::HashSet::default();
             $(
                 if let $vertex::$src(_) = vertex {
-                    constraints.push(($edge::$conn($ety), $min, $crate::typed_graph!(@max $max)));
+                    let family = stringify!($ety);
+                    if seen_families.insert(family) {
+                        constraints.push((family, __typed_graph_min!($ety), __typed_graph_max!($ety)));
+                    }
                 }
             )*
             constraints
         }
 
+        // Struct to hold the addable and removable arcs for a given graph state
         #[derive(Debug, Clone)]
         pub struct ArcConstraints {
             pub addable: Vec<$arcs>,
             pub removable: Vec<$arcs>,
         }
 
+        // Function to compute the addable and removable arcs for a given graph state based on the schema constraints
+        // Mainly used for the fuzzer
         pub fn compute_arc_constraints(
             graph: &petgraph::graph::DiGraph<$vertex, $edge>,
         ) -> ArcConstraints {
@@ -391,9 +382,10 @@ macro_rules! typed_graph {
             for source_idx in graph.node_indices() {
                 let source = &graph[source_idx];
 
-                let mut outgoing_by_kind: $crate::HashMap<$edge, usize> = $crate::HashMap::default();
+                let mut outgoing_by_family: $crate::HashMap<&'static str, usize> =
+                    $crate::HashMap::default();
                 for edge in graph.edges_directed(source_idx, petgraph::Direction::Outgoing) {
-                    *outgoing_by_kind.entry(edge.weight().clone()).or_insert(0) += 1;
+                    *outgoing_by_family.entry(edge_family(edge.weight())).or_insert(0) += 1;
                 }
 
                 for target_idx in graph.node_indices() {
@@ -403,8 +395,9 @@ macro_rules! typed_graph {
                     let target = &graph[target_idx];
 
                     for candidate in possible_arcs_between(source, target) {
+                        let family = candidate.family();
                         let kind = candidate.kind();
-                        let count = outgoing_by_kind.get(&kind).copied().unwrap_or(0);
+                        let count = outgoing_by_family.get(&family).copied().unwrap_or(0);
                         if count < candidate.max()
                             && !existing_edges.contains(&(source.clone(), target.clone(), kind))
                         {
@@ -418,7 +411,10 @@ macro_rules! typed_graph {
                     let kind = edge.weight();
 
                     if let Some(arc) = arc_from_vertices_and_edge(source, target, kind) {
-                        let count = outgoing_by_kind.get(kind).copied().unwrap_or(0);
+                        let count = outgoing_by_family
+                            .get(&arc.family())
+                            .copied()
+                            .unwrap_or(0);
                         if count > arc.min() {
                             removable.push(arc);
                         }
@@ -429,6 +425,7 @@ macro_rules! typed_graph {
             ArcConstraints { addable, removable }
         }
 
+        // Struct to represent schema violations found during validation
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum SchemaViolation {
             InvalidEdge {
@@ -468,6 +465,8 @@ macro_rules! typed_graph {
             }
         }
 
+        // Function to validate a graph against the schema constraints, returning a list of violations if any are found
+        // Mainly used for testing and debugging, but could also be used in the fuzzer to guide generation towards valid graphs
         pub fn validate_schema(
             graph: &petgraph::graph::DiGraph<$vertex, $edge>,
         ) -> Result<(), Vec<SchemaViolation>> {
@@ -494,18 +493,19 @@ macro_rules! typed_graph {
             for node_idx in graph.node_indices() {
                 let source = &graph[node_idx];
 
-                let mut outgoing_by_kind: $crate::HashMap<$edge, usize> = $crate::HashMap::default();
+                let mut outgoing_by_family: $crate::HashMap<&'static str, usize> =
+                    $crate::HashMap::default();
                 for edge in graph.edges_directed(node_idx, petgraph::Direction::Outgoing) {
-                    *outgoing_by_kind.entry(edge.weight().clone()).or_insert(0) += 1;
+                    *outgoing_by_family.entry(edge_family(edge.weight())).or_insert(0) += 1;
                 }
 
-                for (kind, count) in &outgoing_by_kind {
+                for (family, count) in &outgoing_by_family {
                     let max = graph
                         .edges_directed(node_idx, petgraph::Direction::Outgoing)
                         .find_map(|e| {
-                            if e.weight() == kind {
+                            if edge_family(e.weight()) == *family {
                                 let target = &graph[e.target()];
-                                edge_constraints_for(source, target, kind).map(|(_, m)| m)
+                                edge_constraints_for(source, target, e.weight()).map(|(_, m)| m)
                             } else {
                                 None
                             }
@@ -514,19 +514,34 @@ macro_rules! typed_graph {
                     if let Some(max) = max
                         && *count > max
                     {
+                        let edge_kind = graph
+                            .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                            .find(|e| edge_family(e.weight()) == *family)
+                            .map(|e| e.weight().clone())
+                            .unwrap();
                         violations.push(SchemaViolation::ExceedsMax {
                             source: source.clone(),
-                            edge_kind: kind.clone(),
+                            edge_kind,
                             count: *count,
                             max,
                         });
                     }
                 }
 
-                for (edge_kind, min, _max) in required_constraints_for(source) {
+                for (family_name, min, _max) in required_constraints_for(source) {
                     if min > 0 {
-                        let count = outgoing_by_kind.get(&edge_kind).copied().unwrap_or(0);
+                        let count = outgoing_by_family.get(&family_name).copied().unwrap_or(0);
                         if count < min {
+                            let edge_kind = graph
+                                .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                                .find(|e| edge_family(e.weight()) == family_name)
+                                .map(|e| e.weight().clone())
+                                .unwrap_or_else(|| match source {
+                                    $(
+                                        $vertex::$src(_) => $edge::$conn($ety),
+                                    )*
+                                    _ => unreachable!(),
+                                });
                             violations.push(SchemaViolation::BelowMin {
                                 source: source.clone(),
                                 edge_kind,
@@ -545,6 +560,7 @@ macro_rules! typed_graph {
             }
         }
 
+        // Implement the PureCRDT trait for the graph operation enum, defining the CRDT behavior and how to execute queries to get the current graph state
         impl<P> $crate::moirai_protocol::crdt::pure_crdt::PureCRDT for $graph<P>
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
@@ -586,18 +602,14 @@ macro_rules! typed_graph {
                             arc.source() == *v || arc.target() == *v
                         }
                         ($graph::AddVertex { id }, $graph::DeleteSubtree { prefix }) => {
-                            prefix.is_prefix_of(vertex_path(id))
+                            prefix.is_prefix_of(id.vertex_path())
                         }
                         ($graph::AddArc(arc), $graph::DeleteSubtree { prefix }) => {
                             let source = arc.source();
                             let target = arc.target();
-                            prefix.is_prefix_of(vertex_path(&source))
-                                || prefix.is_prefix_of(vertex_path(&target))
+                            prefix.is_prefix_of(source.vertex_path())
+                                || prefix.is_prefix_of(target.vertex_path())
                         }
-                        (
-                            $graph::DeleteSubtree { prefix: old_prefix },
-                            $graph::DeleteSubtree { prefix: new_prefix },
-                        ) => new_prefix.is_prefix_of(old_prefix),
                         ($graph::AddArc(arc1), $graph::AddArc(arc2))
                         | ($graph::AddArc(arc1), $graph::RemoveArc(arc2)) => {
                             arc1.source() == arc2.source()
@@ -634,12 +646,13 @@ macro_rules! typed_graph {
                     $graph::AddVertex { .. } => true,
                     $graph::RemoveVertex { id } => graph.node_weights().any(|node| node == id),
                     $graph::DeleteSubtree { prefix } => {
-                        graph.node_weights().any(|node| prefix.is_prefix_of(vertex_path(node)))
+                        graph.node_weights().any(|node| prefix.is_prefix_of(node.vertex_path()))
                     },
                     $graph::RemoveArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
                         let kind = arc.kind();
+                        let family = arc.family();
 
                         let idx_1 = graph
                             .node_indices()
@@ -647,6 +660,8 @@ macro_rules! typed_graph {
                         let idx_2 = graph
                             .node_indices()
                             .find(|&idx| graph.node_weight(idx) == Some(&target));
+                        // if both vertices exist but the specific edge doesn't exist,
+                        // then it's not enabled (can't remove an edge that isn't there)
                         if let (Some(i1), Some(i2)) = (idx_1, idx_2)
                             && !graph
                                 .edges_connecting(i1, i2)
@@ -660,16 +675,19 @@ macro_rules! typed_graph {
                                 graph.node_indices().find(|&i| graph[i] == source).unwrap(),
                                 petgraph::Direction::Outgoing,
                             )
-                            .filter(|edge| edge.weight() == &kind)
+                            .filter(|edge| edge_family(edge.weight()) == family)
                             .count();
-
+                        // if the edge exists, then we can remove it as long as it doesn't violate the min constraint
                         count > arc.min()
                     }
                     $graph::AddArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
                         let kind = arc.kind();
+                        let family = arc.family();
 
+                        // if either vertex doesn't exist, then it's not enabled
+                        // (can't add an edge if one of the endpoints isn't there)
                         if !graph.node_weights().any(|node| node == &source)
                             || !graph.node_weights().any(|node| node == &target)
                         {
@@ -681,9 +699,10 @@ macro_rules! typed_graph {
                                 graph.node_indices().find(|&i| graph[i] == source).unwrap(),
                                 petgraph::Direction::Outgoing,
                             )
-                            .filter(|edge| edge.weight() == &kind)
+                            .filter(|edge| edge_family(edge.weight()) == family)
                             .count();
 
+                        // if both vertices exist, then we can add the edge as long as it doesn't violate the max constraint
                         count < arc.max()
                     }
                     $graph::__Marker(_, _) => unreachable!(),
@@ -716,6 +735,8 @@ macro_rules! typed_graph {
                 let mut graph = petgraph::graph::DiGraph::new();
                 let mut node_index: $crate::HashMap<$vertex, _> = $crate::HashMap::default();
 
+                // First add all vertices
+                // TODO: if the backend log is ordered, we could add vertices and arcs in one pass
                 for (op, _) in &tagged_ops {
                     if let $graph::AddVertex { id } = op
                         && !node_index.contains_key(id)
@@ -726,6 +747,7 @@ macro_rules! typed_graph {
                 }
 
                 // Collect deduplicated arc candidates
+                // TODO: if the backend log is ordered, we could add arcs in one pass and skip this deduplication step
                 let mut deduped_arcs: $crate::HashMap<
                     ($vertex, $vertex, $edge),
                     Option<&$crate::moirai_protocol::event::tag::Tag>,
@@ -757,6 +779,10 @@ macro_rules! typed_graph {
                                     }
                                 }
                             }
+                        } else {
+                            // This case happens when removeVertex(v1) || addArc(v1, v2, e)!
+                            // This is normal :) if the vertex is added again, the arc will be reconsidered for addition at that time,
+                            // and if not, then it shouldn't be in the graph anyway so we can just ignore this arc addition
                         }
                     }
                 }
@@ -771,23 +797,23 @@ macro_rules! typed_graph {
                     .map(|((v1, v2, e), tag)| (v1, v2, e, tag))
                     .collect();
 
-                // MAX enforcement per (source, edge_kind) group
-                let mut groups: $crate::HashMap<($vertex, $edge), Vec<usize>> =
+                // MAX enforcement per (source, edge_family) group
+                let mut groups: $crate::HashMap<($vertex, &'static str), Vec<usize>> =
                     $crate::HashMap::default();
                 for (i, (source, _target, kind, _tag)) in arc_entries.iter().enumerate() {
                     groups
-                        .entry((source.clone(), kind.clone()))
+                        .entry((source.clone(), edge_family(kind)))
                         .or_default()
                         .push(i);
                 }
 
                 let mut surviving = vec![true; arc_entries.len()];
 
-                for ((_, kind), indices) in &groups {
+                for ((_source, _family), indices) in &groups {
                     if indices.is_empty() {
                         continue;
                     }
-                    let max = max_edges_for(&arc_entries[indices[0]].0, kind);
+                    let max = max_edges_for(&arc_entries[indices[0]].0, &arc_entries[indices[0]].2);
                     if indices.len() > max {
                         let mut sorted_indices = indices.clone();
                         sorted_indices.sort_by(|&a, &b| {
@@ -818,17 +844,25 @@ macro_rules! typed_graph {
             }
         }
     };
-    // Public arm: vertex ids are generated directly from `vertices { ... }`.
+    // Public arm: block-style schema definition.
     (
-        graph: $graph:ident,
-        vertex: $vertex:ident,
-        edge: $edge:ident,
-        arcs_type: $arcs:ident,
+        types {
+            graph = $graph:ident,
+            vertex_kind = $vertex:ident,
+            edge_kind = $edge:ident,
+            arc_kind = $arcs:ident $(,)?
+        },
 
-        vertices { $( $v:ident ),* $(,)? },
+        vertices {
+            $( $v:ident ),* $(,)?
+        },
 
-        connections {
-            $( $conn:ident : $src:ident -> $tgt:ident ( $ety:path ) [ $min:expr , $max:tt ] ),* $(,)?
+        edges {
+            $( $edge_ty:ident [ $edge_min:expr , $edge_max:tt ] ),* $(,)?
+        },
+
+        arcs {
+            $( $conn:ident : $src:ident -> $tgt:ident ( $ety:ident ) ),* $(,)?
         } $(,)?
     ) => {
         $crate::typed_graph!(@generate
@@ -837,10 +871,19 @@ macro_rules! typed_graph {
             edge: $edge,
             arcs_type: $arcs,
             vertices { $( $v ),* },
+            edge_types {
+                $( $edge_ty [ $edge_min, $edge_max ] ),*
+            },
             connections {
-                $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) [ $min, $max ] ),*
+                $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) ),*
             }
         );
     };
+}
 
+#[macro_export]
+macro_rules! type_graph {
+    ($($tt:tt)*) => {
+        $crate::typed_graph! { $($tt)* }
+    };
 }

@@ -594,6 +594,7 @@ dependencies = [
  "comfy-table",
  "daggy",
  "env_logger",
+ "fixedbitset 0.5.7",
  "indicatif",
  "log",
  "moirai-protocol",
