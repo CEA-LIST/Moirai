@@ -108,8 +108,7 @@ where
     V: Clone + Hash + Debug + Eq,
 {
     fn structure_metrics(&self) -> StructureMetrics {
-        let len = self.execute_query(Read::new()).len();
-        StructureMetrics::collection(len)
+        StructureMetrics::collection()
     }
 }
 

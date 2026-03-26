@@ -6,7 +6,6 @@ use readable::num::Int;
 use crate::{
     config::RunConfig,
     fuzzer::{ExecutionSummary, RunResults},
-    utils::format::format_bits_human,
 };
 
 pub fn display_config_table(run_config: &RunConfig, final_merge: bool) -> Table {
@@ -72,22 +71,6 @@ pub fn display_summary(_execution_summary: &ExecutionSummary) -> Table {
         ]);
 
     summary_table.add_row(vec!["Runs", &_execution_summary.total_runs.to_string()]);
-    summary_table.add_row(vec![
-        "Avg final size",
-        &format!(
-            "{} ({:.0} b)",
-            format_bits_human(_execution_summary.avg_final_size.round() as usize),
-            _execution_summary.avg_final_size
-        ),
-    ]);
-    summary_table.add_row(vec![
-        "Max final width",
-        &_execution_summary.max_final_width.to_string(),
-    ]);
-    summary_table.add_row(vec![
-        "Max final depth",
-        &_execution_summary.max_final_height.to_string(),
-    ]);
 
     summary_table
 }
@@ -111,12 +94,8 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
 
     results_table.add_row(vec!["Final state", &results.final_state]);
     results_table.add_row(vec![
-        "Final size",
-        &format!(
-            "{} ({} b)",
-            format_bits_human(results.final_metrics.size),
-            Int::from(results.final_metrics.size as i64)
-        ),
+        "Number of elements",
+        &format!("{}", Int::from(results.final_metrics.size as i64)),
     ]);
     results_table.add_row(vec![
         "Final width",
@@ -139,6 +118,13 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
             Int::from(results.avg_throughput_ops_per_sec.floor() as i64)
         ),
     ]);
+
+    if let Some(ratio) = results.inter_replica_concurrency_ratio {
+        results_table.add_row(vec![
+            "Inter-replica concurrency ratio",
+            &format!("{:.6}", ratio),
+        ]);
+    }
 
     results_table.add_row(vec![
         "Total deliver time per replica (ms)",

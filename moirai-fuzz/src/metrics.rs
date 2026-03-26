@@ -11,6 +11,7 @@ use moirai_protocol::{
     state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
 };
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::op_generator::OpGeneratorNested;
 
@@ -31,10 +32,14 @@ fn get_disable_stability() -> bool {
     DISABLE_STABILITY.with(|flag| *flag.borrow())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+/// Metrics about the structure of the nested log
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StructureMetrics {
+    /// Total number of children, including nested ones
     pub size: usize,
+    /// Maximum number of children at any level
     pub width: usize,
+    /// Maximum depth of the structure
     pub height: usize,
 }
 
@@ -65,7 +70,7 @@ impl StructureMetrics {
         }
 
         Self {
-            size: children.len(),
+            size: children.iter().map(|m| m.size).sum(),
             width: children
                 .len()
                 .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
@@ -83,7 +88,7 @@ impl StructureMetrics {
         }
 
         Self {
-            size: children.len(),
+            size: children.iter().map(|m| m.size).sum(),
             width: children
                 .len()
                 .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
@@ -92,9 +97,9 @@ impl StructureMetrics {
     }
 
     // case of collection of scalar values (e.g., a set, a bag)
-    pub fn collection(len: usize) -> Self {
+    pub fn collection() -> Self {
         Self {
-            size: len,
+            size: 1,
             width: 1,
             height: 1,
         }

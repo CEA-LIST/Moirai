@@ -175,7 +175,7 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
+        let run = RunConfig::new(0.95, 4, 10_000, None, None, true, false);
         let runs = vec![run.clone(); 1];
 
         let config =

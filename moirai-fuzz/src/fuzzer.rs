@@ -95,6 +95,8 @@ pub struct RunResults {
     pub avg_effect_ms: f64,
     /// Execution graph in GraphViz DOT format (if generated)
     pub execution_graph_dot: Option<String>,
+    /// Inter-replica concurrency ratio (if execution graph was generated)
+    pub inter_replica_concurrency_ratio: Option<f64>,
     /// Seed
     pub used_seed: String,
     /// Structural metrics of the final converged state
@@ -147,6 +149,7 @@ fn run_results(run_data: &RunData) -> RunResults {
         total_effect_ms_per_replica,
         avg_effect_ms,
         execution_graph_dot: run_data.execution_graph_dot.clone(),
+        inter_replica_concurrency_ratio: run_data.inter_replica_concurrency_ratio,
         used_seed: seed_to_hex(&run_data.used_seed),
         final_metrics: run_data.final_metrics,
     }

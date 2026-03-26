@@ -18,30 +18,6 @@ where
     }
 }
 
-pub fn estimate_debug_size_bits<V>(value: &V) -> usize
-where
-    V: Debug,
-{
-    format!("{value:?}").len() * 8
-}
-
-pub fn format_bits_human(bits: usize) -> String {
-    const UNITS: [&str; 5] = ["b", "Kib", "Mib", "Gib", "Tib"];
-
-    if bits < 1024 {
-        return format!("{bits} b");
-    }
-
-    let mut value = bits as f64;
-    let mut unit = 0usize;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-
-    format!("{value:.2} {}", UNITS[unit])
-}
-
 /// Remove extraneous formatting from DOT output
 pub fn clean_dot_output(dot: &str) -> String {
     dot.replace("\"\"", "\"")

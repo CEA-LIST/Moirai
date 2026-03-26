@@ -23,7 +23,7 @@ use crate::{
     op_generator::OpGeneratorNested,
     utils::{
         boostrap::bootstrap_n,
-        format::{clean_dot_output, estimate_debug_size_bits, format_string_ellipsis, seed_to_hex},
+        format::{clean_dot_output, format_string_ellipsis, seed_to_hex},
     },
 };
 
@@ -43,6 +43,8 @@ pub struct RunData {
     pub total_time_in_effect_per_replica: HashMap<ReplicaIdx, Duration>,
     /// Execution graph in DOT format (if generated)
     pub execution_graph_dot: Option<String>,
+    /// Inter-replica concurrency ratio (if execution graph was generated)
+    pub inter_replica_concurrency_ratio: Option<f64>,
 }
 
 pub fn runner<L>(
@@ -229,8 +231,13 @@ where
 
     let first_value = replicas[0].query(Read::new());
     let val = format_string_ellipsis(&first_value, Some(100));
-    let mut final_metrics = replicas[0].state().structure_metrics();
-    final_metrics.size = estimate_debug_size_bits(&first_value);
+    let final_metrics = replicas[0].state().structure_metrics();
+    debug_assert!(
+        replicas[0].state().structure_metrics() == replicas[1].state().structure_metrics(),
+        "Replicas 0 and 1 have different structure metrics after convergence: {:?} vs {:?}",
+        replicas[0].state().structure_metrics(),
+        replicas[1].state().structure_metrics()
+    );
     let num_delivered_events = replicas[0].num_delivered_events();
 
     for (idx, r) in replicas.iter().enumerate().skip(1) {
@@ -268,9 +275,22 @@ where
 
     // Generate DOT format for the execution graph if it was created
     let mut execution_graph_dot = None;
+    let mut inter_replica_concurrency_ratio = None;
 
-    if let Some(graph) = execution_graph {
+    if let Some(graph) = execution_graph.as_mut() {
+        let graph_pb = ProgressBar::new_spinner();
+        graph_pb.set_message("Reducing execution graph and computing concurrency ratio...");
+        graph_pb.enable_steady_tick(std::time::Duration::from_millis(100));
+        graph.reduce();
+        let ratio = graph.inter_replica_concurrency_ratio();
+        graph_pb.finish_with_message(format!(
+            "Execution graph reduced. Inter-replica concurrency ratio: {:.6}",
+            ratio
+        ));
+        inter_replica_concurrency_ratio = Some(ratio);
+
         let output = graph.to_dot();
+        // println!("Execution graph:\n{}", clean_dot_output(&output));
         execution_graph_dot = Some(clean_dot_output(&output));
     }
 
@@ -283,6 +303,7 @@ where
         total_time_to_deliver_per_replica,
         total_time_in_effect_per_replica,
         execution_graph_dot,
+        inter_replica_concurrency_ratio,
     }
 }
 
