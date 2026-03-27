@@ -735,8 +735,8 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
-        let runs = vec![run.clone(); 100];
+        let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
+        let runs = vec![run.clone(); 1_000];
 
         let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
             "typed_graph",

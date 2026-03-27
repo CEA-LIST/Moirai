@@ -175,7 +175,7 @@ impl OpGeneratorNested for JsonLog {
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
-    use serde_json::{Value, json};
+    use serde_json::{Number, Value, json};
 
     use crate::{
         counter::resettable_counter::Counter,
@@ -197,7 +197,10 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let result = Value::Array(vec![Value::Bool(true), Value::Number(5.into())]);
+        let result = Value::Array(vec![
+            Value::Bool(true),
+            Value::Number(Number::from_f64(5.0).unwrap()),
+        ]);
 
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
@@ -210,7 +213,7 @@ mod tests {
         replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
         replica_a.send(Json::Number(Counter::Inc(3.0))).unwrap();
 
-        let result = Value::Number(8.into());
+        let result = Value::Number(Number::from_f64(8.0).unwrap());
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
     }
 
@@ -230,7 +233,7 @@ mod tests {
         let op = replica_a.send(Json::Boolean(EWFlag::Enable));
         assert!(op.is_none());
 
-        let result = Value::Number(5.into());
+        let result = Value::Number(Number::from_f64(5.0).unwrap());
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
     }
 
@@ -244,7 +247,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let result = Value::Number(8.into());
+        let result = Value::Number(Number::from_f64(8.0).unwrap());
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
     }
@@ -259,7 +262,10 @@ mod tests {
         replica_b.receive(event_a1.clone());
         replica_a.receive(event_b1.clone());
 
-        let conflicts = Value::Array(vec![Value::Bool(true), Value::Number(5.into())]);
+        let conflicts = Value::Array(vec![
+            Value::Bool(true),
+            Value::Number(Number::from_f64(5.0).unwrap()),
+        ]);
 
         assert_eq!(conflicts, replica_a.query(ReadAsJson::new()));
 
@@ -269,7 +275,10 @@ mod tests {
         replica_b.receive(event_a2);
         replica_a.receive(event_b2);
 
-        let result = Value::Array(vec![Value::Bool(false), Value::Number(7.into())]);
+        let result = Value::Array(vec![
+            Value::Bool(false),
+            Value::Number(Number::from_f64(7.0).unwrap()),
+        ]);
 
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
@@ -294,7 +303,7 @@ mod tests {
         replica_c.receive(event_a.clone());
         replica_c.receive(event_b.clone());
 
-        let result = json!([true, 1, {"key": 0}]);
+        let result = json!([true, 1.0, {"key": 0.0}]);
 
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
@@ -355,7 +364,7 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = json!({
-            "k1": 1,
+            "k1": 1.0,
             "k2": true
         });
 

@@ -39,7 +39,7 @@ impl ValueGenerator for String {
     type Config = StringConfig;
 
     fn generate(rng: &mut impl Rng, cfg: &Self::Config) -> Self {
-        cfg.validate().expect("Invalid StringConfig");
+        cfg.validate().expect("Invalid string config");
 
         let len = usize::generate(
             rng,
@@ -94,10 +94,7 @@ impl NumberConfig {
 
 impl Default for NumberConfig {
     fn default() -> Self {
-        Self {
-            min: 0,
-            max: 1_000_000,
-        }
+        Self { min: 0, max: 100 }
     }
 }
 

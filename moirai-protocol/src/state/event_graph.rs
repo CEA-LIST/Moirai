@@ -86,7 +86,7 @@ where
         O::is_enabled(op, &<O as PureCRDT>::StableState::default(), self)
     }
 
-    fn stabilize(&mut self, version: &Version) {}
+    fn stabilize(&mut self, _version: &Version) {}
 }
 
 impl<O> Display for EventGraph<O>

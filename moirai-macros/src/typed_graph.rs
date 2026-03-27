@@ -94,6 +94,11 @@ macro_rules! typed_graph {
             )*
         }
 
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        enum __TypedGraphEdgeType {
+            $( $edge_ty ),*
+        }
+
         // Enum of all vertices
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $vertex {
@@ -185,9 +190,9 @@ macro_rules! typed_graph {
                 }
             }
 
-            pub fn family(&self) -> &'static str {
+            pub fn edge_type(&self) -> __TypedGraphEdgeType {
                 match self {
-                    $( $arcs::$conn(_) => stringify!($ety) ),*
+                    $( $arcs::$conn(_) => __TypedGraphEdgeType::$ety ),*
                 }
             }
         }
@@ -217,7 +222,6 @@ macro_rules! typed_graph {
             pub type [<$graph State>]<P> =
                 $crate::moirai_protocol::state::unstable_state::DerivedKeyState<$graph<P>>;
 
-            //
             impl<P> $crate::moirai_protocol::state::unstable_state::HasDerivedKey for $graph<P>
             where
                 P: Clone + ::std::fmt::Debug,
@@ -316,10 +320,10 @@ macro_rules! typed_graph {
             }
         }
 
-        // Helper function to get the family name for a given edge
-        fn edge_family(edge: &$edge) -> &'static str {
+        // Helper function to get the schema edge type for a given edge
+        fn edge_type_of(edge: &$edge) -> __TypedGraphEdgeType {
             match edge {
-                $( $edge::$conn(_) => stringify!($ety) ),*
+                $( $edge::$conn(_) => __TypedGraphEdgeType::$ety ),*
             }
         }
 
@@ -339,15 +343,15 @@ macro_rules! typed_graph {
             }
         }
 
-        // Helper function to get the required edge family constraints for a given vertex
-        fn required_constraints_for(vertex: &$vertex) -> Vec<(&'static str, usize, usize)> {
+        // Helper function to get the required edge type constraints for a given vertex
+        fn required_constraints_for(vertex: &$vertex) -> Vec<(__TypedGraphEdgeType, usize, usize)> {
             let mut constraints = Vec::new();
-            let mut seen_families: $crate::HashSet<&'static str> = $crate::HashSet::default();
+            let mut seen_edge_types: $crate::HashSet<__TypedGraphEdgeType> = $crate::HashSet::default();
             $(
                 if let $vertex::$src(_) = vertex {
-                    let family = stringify!($ety);
-                    if seen_families.insert(family) {
-                        constraints.push((family, __typed_graph_min!($ety), __typed_graph_max!($ety)));
+                    let edge_type = __TypedGraphEdgeType::$ety;
+                    if seen_edge_types.insert(edge_type) {
+                        constraints.push((edge_type, __typed_graph_min!($ety), __typed_graph_max!($ety)));
                     }
                 }
             )*
@@ -382,10 +386,10 @@ macro_rules! typed_graph {
             for source_idx in graph.node_indices() {
                 let source = &graph[source_idx];
 
-                let mut outgoing_by_family: $crate::HashMap<&'static str, usize> =
+                let mut outgoing_by_type: $crate::HashMap<__TypedGraphEdgeType, usize> =
                     $crate::HashMap::default();
                 for edge in graph.edges_directed(source_idx, petgraph::Direction::Outgoing) {
-                    *outgoing_by_family.entry(edge_family(edge.weight())).or_insert(0) += 1;
+                    *outgoing_by_type.entry(edge_type_of(edge.weight())).or_insert(0) += 1;
                 }
 
                 for target_idx in graph.node_indices() {
@@ -395,9 +399,9 @@ macro_rules! typed_graph {
                     let target = &graph[target_idx];
 
                     for candidate in possible_arcs_between(source, target) {
-                        let family = candidate.family();
+                        let edge_type = candidate.edge_type();
                         let kind = candidate.kind();
-                        let count = outgoing_by_family.get(&family).copied().unwrap_or(0);
+                        let count = outgoing_by_type.get(&edge_type).copied().unwrap_or(0);
                         if count < candidate.max()
                             && !existing_edges.contains(&(source.clone(), target.clone(), kind))
                         {
@@ -411,8 +415,8 @@ macro_rules! typed_graph {
                     let kind = edge.weight();
 
                     if let Some(arc) = arc_from_vertices_and_edge(source, target, kind) {
-                        let count = outgoing_by_family
-                            .get(&arc.family())
+                        let count = outgoing_by_type
+                            .get(&arc.edge_type())
                             .copied()
                             .unwrap_or(0);
                         if count > arc.min() {
@@ -493,17 +497,17 @@ macro_rules! typed_graph {
             for node_idx in graph.node_indices() {
                 let source = &graph[node_idx];
 
-                let mut outgoing_by_family: $crate::HashMap<&'static str, usize> =
+                let mut outgoing_by_type: $crate::HashMap<__TypedGraphEdgeType, usize> =
                     $crate::HashMap::default();
                 for edge in graph.edges_directed(node_idx, petgraph::Direction::Outgoing) {
-                    *outgoing_by_family.entry(edge_family(edge.weight())).or_insert(0) += 1;
+                    *outgoing_by_type.entry(edge_type_of(edge.weight())).or_insert(0) += 1;
                 }
 
-                for (family, count) in &outgoing_by_family {
+                for (edge_type, count) in &outgoing_by_type {
                     let max = graph
                         .edges_directed(node_idx, petgraph::Direction::Outgoing)
                         .find_map(|e| {
-                            if edge_family(e.weight()) == *family {
+                            if edge_type_of(e.weight()) == *edge_type {
                                 let target = &graph[e.target()];
                                 edge_constraints_for(source, target, e.weight()).map(|(_, m)| m)
                             } else {
@@ -516,7 +520,7 @@ macro_rules! typed_graph {
                     {
                         let edge_kind = graph
                             .edges_directed(node_idx, petgraph::Direction::Outgoing)
-                            .find(|e| edge_family(e.weight()) == *family)
+                            .find(|e| edge_type_of(e.weight()) == *edge_type)
                             .map(|e| e.weight().clone())
                             .unwrap();
                         violations.push(SchemaViolation::ExceedsMax {
@@ -528,13 +532,13 @@ macro_rules! typed_graph {
                     }
                 }
 
-                for (family_name, min, _max) in required_constraints_for(source) {
+                for (edge_type, min, _max) in required_constraints_for(source) {
                     if min > 0 {
-                        let count = outgoing_by_family.get(&family_name).copied().unwrap_or(0);
+                        let count = outgoing_by_type.get(&edge_type).copied().unwrap_or(0);
                         if count < min {
                             let edge_kind = graph
                                 .edges_directed(node_idx, petgraph::Direction::Outgoing)
-                                .find(|e| edge_family(e.weight()) == family_name)
+                                .find(|e| edge_type_of(e.weight()) == edge_type)
                                 .map(|e| e.weight().clone())
                                 .unwrap_or_else(|| match source {
                                     $(
@@ -652,7 +656,7 @@ macro_rules! typed_graph {
                         let source = arc.source();
                         let target = arc.target();
                         let kind = arc.kind();
-                        let family = arc.family();
+                        let edge_type = arc.edge_type();
 
                         let idx_1 = graph
                             .node_indices()
@@ -675,7 +679,7 @@ macro_rules! typed_graph {
                                 graph.node_indices().find(|&i| graph[i] == source).unwrap(),
                                 petgraph::Direction::Outgoing,
                             )
-                            .filter(|edge| edge_family(edge.weight()) == family)
+                            .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
                         // if the edge exists, then we can remove it as long as it doesn't violate the min constraint
                         count > arc.min()
@@ -683,8 +687,7 @@ macro_rules! typed_graph {
                     $graph::AddArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
-                        let kind = arc.kind();
-                        let family = arc.family();
+                        let edge_type = arc.edge_type();
 
                         // if either vertex doesn't exist, then it's not enabled
                         // (can't add an edge if one of the endpoints isn't there)
@@ -699,7 +702,7 @@ macro_rules! typed_graph {
                                 graph.node_indices().find(|&i| graph[i] == source).unwrap(),
                                 petgraph::Direction::Outgoing,
                             )
-                            .filter(|edge| edge_family(edge.weight()) == family)
+                            .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
 
                         // if both vertices exist, then we can add the edge as long as it doesn't violate the max constraint
@@ -797,16 +800,17 @@ macro_rules! typed_graph {
                     .map(|((v1, v2, e), tag)| (v1, v2, e, tag))
                     .collect();
 
-                // MAX enforcement per (source, edge_family) group
-                let mut groups: $crate::HashMap<($vertex, &'static str), Vec<usize>> =
+                // MAX enforcement per (source, edge_type) group
+                let mut groups: $crate::HashMap<($vertex, __TypedGraphEdgeType), Vec<usize>> =
                     $crate::HashMap::default();
                 for (i, (source, _target, kind, _tag)) in arc_entries.iter().enumerate() {
                     groups
-                        .entry((source.clone(), edge_family(kind)))
+                        .entry((source.clone(), edge_type_of(kind)))
                         .or_default()
                         .push(i);
                 }
 
+                // Determine surviving arcs based on MAX constraints and tags
                 let mut surviving = vec![true; arc_entries.len()];
 
                 for ((_source, _family), indices) in &groups {

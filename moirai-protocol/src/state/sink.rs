@@ -203,6 +203,7 @@ where
     }
 }
 
+/// Only for objects (record)
 pub trait DefaultSinkExpansion
 where
     Self: IsLog,

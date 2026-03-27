@@ -4,6 +4,7 @@ use std::{fmt::Debug, hash::Hash};
 use moirai_fuzz::metrics::FuzzMetrics;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::StructureMetrics;
+use moirai_protocol::state::sink::DefaultSinkExpansion;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -101,6 +102,8 @@ where
 }
 
 impl<V> IsLogSink for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
+
+impl<V> DefaultSinkExpansion for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
 
 #[cfg(feature = "fuzz")]
 impl<V> FuzzMetrics for AWBagLog<V>
