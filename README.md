@@ -10,5 +10,5 @@ Moirai serves as a research platform for developing novel CRDTs tailored for Col
 
 - `moirai-protocol`: Implementation of the Pure Op framework's replication protocol.
 - `moirai-crdt`: A collection of CRDT implementations built with Moirai.
-- `mirai-macros`: Rust macros for specific CRDTs.
+- `moirai-macros`: Rust macros for specific CRDTs.
 - `moirai-fuzz`: A fuzzer tool to verify the correctness and performance of implementations.
