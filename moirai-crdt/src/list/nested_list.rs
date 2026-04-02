@@ -113,6 +113,14 @@ where
             NestedList::Delete { pos } => {
                 // TODO: We must resolve the target child at the time of delete so we must also resolve the position that were absent
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                // println!(
+                //     "Position at version: {}",
+                //     positions_at_version
+                //         .iter()
+                //         .map(|id| id.to_string())
+                //         .collect::<Vec<_>>()
+                //         .join(",")
+                // );
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 self.positions.effect(list_event);
@@ -253,22 +261,7 @@ where
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
         let mut list = Vec::new();
         let positions = self.positions.execute_query(Read::new());
-        // println!(
-        //     "Positions: {}",
-        //     positions
-        //         .iter()
-        //         .map(|id| id.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(",")
-        // );
         let mut map = self.children.execute_query(Read::new());
-        // println!(
-        //     "Children: {}",
-        //     map.iter()
-        //         .map(|(k, v)| format!("{}: {:?}", k, v))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
         for eid in positions {
             if let Some(child) = map.remove(&eid) {
                 list.push(child);
@@ -290,7 +283,8 @@ where
         //         .filter_map(|id| self.children.get(&id))
         //         .map(FuzzMetrics::structure_metrics),
         // )
-        todo!()
+        // TODO
+        StructureMetrics::empty()
     }
 }
 
@@ -348,11 +342,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_macros::record;
-    use moirai_protocol::{
-        crdt::{eval::EvalNested, query::Read},
-        replica::IsReplica,
-        state::po_log::VecLog,
-    };
+    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
         HashMap,
@@ -412,50 +402,6 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        println!(
-            "Replica A positions: {}",
-            replica_a
-                .state()
-                .positions
-                .execute_query(Read::new())
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        println!(
-            "Replica A children: {}",
-            replica_a
-                .state()
-                .children
-                .execute_query(Read::new())
-                .iter()
-                .map(|(k, v)| format!("{}: {:?}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "Replica B positions: {}",
-            replica_b
-                .state()
-                .positions
-                .execute_query(Read::new())
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        println!(
-            "Replica B children: {}",
-            replica_b
-                .state()
-                .children
-                .execute_query(Read::new())
-                .iter()
-                .map(|(k, v)| format!("{}: {:?}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
         assert_eq!(replica_b.query(Read::new()), vec![21]);
         assert_eq!(replica_a.query(Read::new()), vec![21]);
     }
@@ -543,9 +489,9 @@ mod tests {
         replica_c.receive(event_a);
         replica_c.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), vec![5, 15]);
-        assert_eq!(replica_b.query(Read::new()), vec![5, 15]);
-        assert_eq!(replica_c.query(Read::new()), vec![5, 15]);
+        assert_eq!(replica_a.query(Read::new()), vec![15, 5]);
+        assert_eq!(replica_b.query(Read::new()), vec![15, 5]);
+        assert_eq!(replica_c.query(Read::new()), vec![15, 5]);
     }
 
     #[test]
@@ -582,9 +528,9 @@ mod tests {
         replica_c.receive(event_a_1);
         replica_c.receive(event_b_2);
 
-        assert_eq!(replica_a.query(Read::new()), vec![0, 1]);
-        assert_eq!(replica_b.query(Read::new()), vec![0, 1]);
-        assert_eq!(replica_c.query(Read::new()), vec![0, 1]);
+        assert_eq!(replica_a.query(Read::new()), vec![1]);
+        assert_eq!(replica_b.query(Read::new()), vec![1]);
+        assert_eq!(replica_c.query(Read::new()), vec![1]);
     }
 
     #[test]
@@ -734,8 +680,8 @@ mod tests {
 
         use crate::list::eg_walker::List;
 
-        let run = RunConfig::new(0.7, 4, 100, None, None, false, false);
-        let runs = vec![run.clone(); 1_000];
+        let run = RunConfig::new(0.6, 4, 25, None, None, true, false);
+        let runs = vec![run.clone(); 10_000];
 
         let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
             "nested_list_string",

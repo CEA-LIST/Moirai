@@ -273,23 +273,4 @@ mod tests {
         );
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
-
-    // #[cfg(feature = "utils")]
-    // #[test]
-    // fn convergence_check() {
-    //     use crate::{
-    //         protocol::event_graph::EventGraph, utils::convergence_checker::convergence_checker,
-    //     };
-
-    //     convergence_checker::<EventGraph<PORegister<Family>>>(
-    //         &[
-    //             PORegister::Write(Family::Child),
-    //             PORegister::Write(Family::Parent(30)),
-    //             PORegister::Write(Family::Parent(40)),
-    //             PORegister::Clear,
-    //         ],
-    //         set_from_slice(&[Family::Parent(30), Family::Parent(40)]),
-    //         HashSet::eq,
-    //     );
-    // }
 }

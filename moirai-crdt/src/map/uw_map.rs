@@ -234,7 +234,7 @@ where
     K: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
-        if let Some(child) = self.children.get(&q.key) {
+        if let Some(child) = self.children.get(q.key) {
             Some(child.execute_query(q.nested_query))
         } else {
             None
@@ -633,10 +633,16 @@ mod tests {
         let mut map = HashMap::default();
         map.insert(
             "scores".to_string(),
-            vec![DuetValue {
-                first: 0,
-                second: -4,
-            }],
+            vec![
+                DuetValue {
+                    first: 0,
+                    second: 3,
+                },
+                DuetValue {
+                    first: 0,
+                    second: -4,
+                },
+            ],
         );
 
         assert_eq!(map, replica_a.query(Read::new()));

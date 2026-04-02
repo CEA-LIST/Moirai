@@ -1,6 +1,9 @@
+mod document;
+mod presence_state;
+
 use std::{
-    collections::BinaryHeap,
-    fmt::{Debug, Display, Formatter, Result},
+    collections::{BTreeMap, BTreeSet, BinaryHeap},
+    fmt::Debug,
 };
 
 #[cfg(feature = "fuzz")]
@@ -21,9 +24,10 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use crate::HashMap;
-
-// TODO: use Fair Tag
+use crate::{
+    HashMap,
+    list::eg_walker::{document::Document, presence_state::PresenceState},
+};
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
@@ -44,106 +48,32 @@ where
 }
 
 #[derive(Clone, Debug)]
-enum PrepareState {
-    /// \>0
-    Deleted(u8), // number of deletes applied
-    /// 0
-    Inserted,
-    /// -1
-    NotYetInserted,
-}
-
-impl PrepareState {
-    fn advance_state(&self) -> Self {
-        match self {
-            PrepareState::Deleted(x) => PrepareState::Deleted(x + 1),
-            PrepareState::Inserted => PrepareState::Deleted(1),
-            PrepareState::NotYetInserted => PrepareState::Inserted,
-        }
-    }
-
-    fn retreat_state(&self) -> Self {
-        match self {
-            PrepareState::Deleted(x) if *x >= 2 => PrepareState::Deleted(x - 1),
-            PrepareState::Deleted(1) => PrepareState::Inserted,
-            PrepareState::Deleted(_) => unreachable!(),
-            PrepareState::Inserted => PrepareState::NotYetInserted,
-            PrepareState::NotYetInserted => PrepareState::NotYetInserted,
-        }
-    }
+struct Item<V> {
+    pub id: EventId,
+    /// Event id of the character the user saw when inserting this new op.
+    /// The fields from the CRDT that determines insertion order.
+    pub origin_left: Option<EventId>,
+    pub origin_right: Option<EventId>,
+    pub content: V,
+    /// Active life dots in the final replayed version.
+    /// This is the state that materializes the visible list returned to the user.
+    pub effect_live_dots: BTreeSet<EventId>,
+    /// State in the prepared parent context used while Eg-Walker jumps across the event graph.
+    pub presence: PresenceState,
 }
 
 #[derive(Clone, Debug)]
-struct Item {
-    id: EventId,
-    /// Event id of the character the user saw when inserting this new op.
-    /// The fields from the CRDT that determines insertion order.
-    origin_left: Option<EventId>,
-    origin_right: Option<EventId>,
-    /// State at effect version. Either inserted or inserted-and-subsequently-deleted.
-    ever_deleted: bool,
-    /// State at prepare version (affected by retreat / advance)
-    prepare_state: PrepareState, // NOT_YET_INSERTED, INSERTED, >0 for number of deletes applied
+struct DeleteEffect {
+    item_id: EventId,
+    // A delete removes exactly the dots that were visible in its parent context.
+    // Capturing them once avoids any reachability query during advance/retreat.
+    removed_dots: BTreeSet<EventId>,
 }
 
 #[derive(Clone, Debug)]
 enum DeleteTarget {
-    Single(EventId),
-    Range(Vec<EventId>),
-}
-
-#[derive(Default, Debug)]
-struct Document {
-    items: Vec<Item>,
-    /// Last processed event
-    current_version: Option<EventId>,
-    /// Key = delete op id, Value = target insert op id
-    delete_targets: HashMap<EventId, DeleteTarget>,
-    /// map of the event id to the current value position in vector of items
-    items_by_idx: HashMap<EventId, usize>,
-}
-
-impl Display for Document {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        writeln!(
-            f,
-            "items by idx: {}",
-            self.items_by_idx
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )?;
-        writeln!(f, "items:")?;
-        for item in &self.items {
-            write!(f, "    - {}", item.id)?;
-            write!(f, " [")?;
-            if let Some(ol) = &item.origin_left {
-                write!(f, " L:{}", ol)?;
-            } else {
-                write!(f, " L:None")?;
-            }
-            if let Some(or) = &item.origin_right {
-                write!(f, " R:{}", or)?;
-            } else {
-                write!(f, " R:None")?;
-            }
-            write!(f, " | EverDeleted: {}", item.ever_deleted)?;
-            write!(f, " | State: {:?}", item.prepare_state)?;
-            writeln!(f, " ]")?;
-        }
-        // delete targets
-        writeln!(
-            f,
-            "delete targets: {}",
-            self.delete_targets
-                .iter()
-                .map(|(k, v)| format!("{}: {:?}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )?;
-        Ok(())
-    }
+    Single(DeleteEffect),
+    Range(Vec<DeleteEffect>),
 }
 
 impl<V> List<V>
@@ -167,12 +97,8 @@ where
     }
 
     /// Where to insert the new item so that it appears at target_pos in the current visible document
-    /// # Returns
-    /// First: index in the document
-    /// Second: index in the snapshot
-    fn find_by_current_pos(items: &[Item], target_pos: usize) -> (usize, usize) {
+    fn find_by_current_pos(items: &[Item<V>], target_pos: usize) -> usize {
         let mut cur_pos = 0usize;
-        let mut end_pos = 0usize;
         let mut idx = 0usize;
 
         while cur_pos < target_pos {
@@ -181,29 +107,17 @@ where
             }
 
             let item = &items[idx];
-            if matches!(item.prepare_state, PrepareState::Inserted) {
+            if item.presence.is_visible() {
                 cur_pos += 1;
-            }
-            if !item.ever_deleted {
-                end_pos += 1;
             }
             idx += 1;
         }
 
-        (idx, end_pos)
+        idx
     }
 
-    /// Add a new value to the snapshot
-    fn integrate(
-        doc: &mut Document,
-        new_item: Item,
-        mut idx: usize,
-        mut end_pos: usize,
-        snapshot: &mut Vec<V>,
-        content: V,
-    ) {
+    fn integrate(doc: &mut Document<V>, new_item: Item<V>, mut idx: usize) {
         let mut scan_idx = idx;
-        let mut scan_end_pos = end_pos;
 
         // If origin_left is None, we'll pretend there's an item at position -1 which we were inserted to the right of.
         let left = scan_idx as isize - 1;
@@ -220,7 +134,8 @@ where
         while scan_idx < right {
             let other = &doc.items[scan_idx];
 
-            if !matches!(other.prepare_state, PrepareState::NotYetInserted) {
+            // Only not-yet-integrated items participate in the Eg-Walker insertion walk.
+            if other.presence.is_integrated() {
                 break;
             }
 
@@ -240,21 +155,17 @@ where
                 doc.items.len()
             };
 
+            // TODO: use Fair Tag
             if oleft < left || (oleft == left && oright == right && new_item.id < other.id) {
                 break;
             }
             if oleft == left {
                 scanning = oright < right;
             }
-
-            if !other.ever_deleted {
-                scan_end_pos += 1;
-            }
             scan_idx += 1;
 
             if !scanning {
                 idx = scan_idx;
-                end_pos = scan_end_pos;
             }
         }
 
@@ -265,104 +176,122 @@ where
             let n = doc.items[i].id.clone();
             doc.items_by_idx.insert(n, i);
         }
-        // Update snapshot with content
-        snapshot.insert(end_pos, content);
     }
 
-    fn retreat(doc: &mut Document, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
-        // For inserts, target is the item itself; for deletes, target is the item which was deleted
-        let targets: Vec<&EventId> = match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => vec![event_id],
-            List::DeleteRange { .. } | List::Delete { .. } => doc
-                .delete_targets
-                .get(event_id)
-                .map(|t| match t {
-                    DeleteTarget::Single(eid) => vec![eid],
-                    DeleteTarget::Range(eids) => eids.iter().collect(),
-                })
-                .unwrap(),
-            List::Update { .. } => return,
-        };
+    fn retreat(doc: &mut Document<V>, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
+        match &state.get(event_id).unwrap().op() {
+            List::Insert { .. } => {
+                if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
+                    let item = &mut doc.items[item_idx];
+                    item.presence.born_dots.remove(event_id);
+                    item.presence.inserted = false;
+                }
+            }
+            List::Update { .. } => {
+                let target = doc.update_targets.get(event_id).unwrap();
+                if let Some(&item_idx) = doc.items_by_idx.get(target) {
+                    let item = &mut doc.items[item_idx];
+                    item.presence.born_dots.remove(event_id);
+                }
+            }
+            List::DeleteRange { .. } | List::Delete { .. } => {
+                let targets: Vec<&DeleteEffect> = doc
+                    .delete_targets
+                    .get(event_id)
+                    .map(|t| match t {
+                        DeleteTarget::Single(effect) => vec![effect],
+                        DeleteTarget::Range(effects) => effects.iter().collect(),
+                    })
+                    .unwrap();
 
-        for target in targets {
-            if let Some(&item_idx) = doc.items_by_idx.get(target) {
-                let item = &mut doc.items[item_idx];
-                item.prepare_state = PrepareState::retreat_state(&item.prepare_state);
+                for effect in targets {
+                    if let Some(&item_idx) = doc.items_by_idx.get(&effect.item_id) {
+                        let item = &mut doc.items[item_idx];
+                        for dot in &effect.removed_dots {
+                            item.presence.remove_deleted(dot);
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn advance(doc: &mut Document, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
-        let targets: Vec<&EventId> = match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => vec![event_id],
-            List::DeleteRange { .. } | List::Delete { .. } => doc
-                .delete_targets
-                .get(event_id)
-                .map(|t| match t {
-                    DeleteTarget::Single(eid) => vec![eid],
-                    DeleteTarget::Range(eids) => eids.iter().collect(),
-                })
-                .unwrap(),
-            List::Update { .. } => return,
-        };
+    fn advance(doc: &mut Document<V>, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
+        match &state.get(event_id).unwrap().op() {
+            List::Insert { .. } => {
+                if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
+                    let item = &mut doc.items[item_idx];
+                    item.presence.inserted = true;
+                    item.presence.born_dots.insert(event_id.clone());
+                }
+            }
+            List::Update { .. } => {
+                let target = doc.update_targets.get(event_id).unwrap();
+                if let Some(&item_idx) = doc.items_by_idx.get(target) {
+                    let item = &mut doc.items[item_idx];
+                    item.presence.born_dots.insert(event_id.clone());
+                }
+            }
+            List::DeleteRange { .. } | List::Delete { .. } => {
+                let targets: Vec<&DeleteEffect> = doc
+                    .delete_targets
+                    .get(event_id)
+                    .map(|t| match t {
+                        DeleteTarget::Single(effect) => vec![effect],
+                        DeleteTarget::Range(effects) => effects.iter().collect(),
+                    })
+                    .unwrap();
 
-        for target in targets {
-            if let Some(&item_idx) = doc.items_by_idx.get(target) {
-                let item = &mut doc.items[item_idx];
-                item.prepare_state = PrepareState::advance_state(&item.prepare_state);
+                for effect in targets {
+                    if let Some(&item_idx) = doc.items_by_idx.get(&effect.item_id) {
+                        let item = &mut doc.items[item_idx];
+                        for dot in &effect.removed_dots {
+                            item.presence.add_deleted(dot);
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn apply(doc: &mut Document, tagged_op: &TaggedOp<List<V>>, snapshot: &mut Vec<V>) {
+    fn apply(doc: &mut Document<V>, tagged_op: &TaggedOp<List<V>>) {
         match tagged_op.op() {
             List::Delete { pos } => {
-                let (mut idx, mut end_pos) = Self::find_by_current_pos(&doc.items, *pos);
+                let mut idx = Self::find_by_current_pos(&doc.items, *pos);
 
-                while idx < doc.items.len()
-                    && matches!(
-                        doc.items[idx].prepare_state,
-                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
-                    )
-                {
-                    if !doc.items[idx].ever_deleted {
-                        end_pos += 1;
-                    }
+                while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
                     idx += 1;
                 }
 
                 debug_assert!(
                     idx < doc.items.len(),
-                    "No `INSERTED` item found at position {pos}"
+                    "No visible item found at position {pos}"
                 );
 
                 let item = &mut doc.items[idx];
-                if !item.ever_deleted {
-                    item.ever_deleted = true;
-                    // TODO: O(n)
-                    snapshot.remove(end_pos);
+                // The delete only removes dots that are visible in its prepared parent context.
+                let removed_dots = item.presence.visible_dots();
+                for dot in &removed_dots {
+                    item.effect_live_dots.remove(dot);
                 }
-                item.prepare_state = PrepareState::Deleted(1);
+                for dot in &removed_dots {
+                    item.presence.add_deleted(dot);
+                }
                 doc.delete_targets.insert(
                     tagged_op.id().clone(),
-                    DeleteTarget::Single(item.id.clone()),
+                    DeleteTarget::Single(DeleteEffect {
+                        item_id: item.id.clone(),
+                        removed_dots,
+                    }),
                 );
             }
             List::DeleteRange { start, len } => {
-                let (mut idx, mut end_pos) = Self::find_by_current_pos(&doc.items, *start);
+                let mut idx = Self::find_by_current_pos(&doc.items, *start);
                 let mut pos = 0usize;
-                let mut deleted_ids = Vec::new();
+                let mut effects = Vec::new();
 
                 while pos < *len {
-                    while idx < doc.items.len()
-                        && matches!(
-                            doc.items[idx].prepare_state,
-                            PrepareState::NotYetInserted | PrepareState::Deleted(_)
-                        )
-                    {
-                        if !doc.items[idx].ever_deleted {
-                            end_pos += 1;
-                        }
+                    while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
                         idx += 1;
                     }
 
@@ -371,45 +300,47 @@ where
                     }
 
                     let item = &mut doc.items[idx];
-                    if !item.ever_deleted {
-                        item.ever_deleted = true;
-                        // TODO: O(n). Optimize with drain
-                        snapshot.remove(end_pos);
+                    let removed_dots = item.presence.visible_dots();
+                    for dot in &removed_dots {
+                        item.effect_live_dots.remove(dot);
                     }
-                    item.prepare_state = PrepareState::Deleted(1);
-                    deleted_ids.push(item.id.clone());
+                    for dot in &removed_dots {
+                        item.presence.add_deleted(dot);
+                    }
+                    effects.push(DeleteEffect {
+                        item_id: item.id.clone(),
+                        removed_dots,
+                    });
                     pos += 1;
                 }
 
                 doc.delete_targets
-                    .insert(tagged_op.id().clone(), DeleteTarget::Range(deleted_ids));
+                    .insert(tagged_op.id().clone(), DeleteTarget::Range(effects));
             }
             List::Update { pos } => {
-                let (mut idx, _) = Self::find_by_current_pos(&doc.items, *pos);
+                let mut idx = Self::find_by_current_pos(&doc.items, *pos);
 
-                while idx < doc.items.len()
-                    && matches!(
-                        doc.items[idx].prepare_state,
-                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
-                    )
-                {
+                while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
                     idx += 1;
                 }
 
                 debug_assert!(
                     idx < doc.items.len(),
-                    "No `INSERTED` item found at position {pos}"
+                    "No visible item found at position {pos}"
                 );
+
+                let item = &mut doc.items[idx];
+                // Updating an existing element adds a fresh life dot for the same identity.
+                // If concurrent with a delete, that dot is not part of the delete effect.
+                item.effect_live_dots.insert(tagged_op.id().clone());
+                item.presence.born_dots.insert(tagged_op.id().clone());
+                doc.update_targets
+                    .insert(tagged_op.id().clone(), item.id.clone());
             }
             List::Insert { content, pos } => {
-                let (idx, end_pos) = Self::find_by_current_pos(&doc.items, *pos);
+                let idx = Self::find_by_current_pos(&doc.items, *pos);
 
-                if idx >= 1
-                    && matches!(
-                        doc.items[idx - 1].prepare_state,
-                        PrepareState::NotYetInserted | PrepareState::Deleted(_)
-                    )
-                {
+                if idx >= 1 && !&doc.items[idx - 1].presence.is_integrated() {
                     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
                 }
 
@@ -421,10 +352,7 @@ where
 
                 let mut origin_right = None;
                 for i in idx..doc.items.len() {
-                    if matches!(
-                        doc.items[i].prepare_state,
-                        PrepareState::Inserted | PrepareState::Deleted(_)
-                    ) {
+                    if doc.items[i].presence.is_integrated() {
                         origin_right = Some(doc.items[i].id.clone());
                         break;
                     }
@@ -434,13 +362,28 @@ where
                     id: tagged_op.id().clone(),
                     origin_left,
                     origin_right,
-                    ever_deleted: false,
-                    prepare_state: PrepareState::Inserted,
+                    content: content.clone(),
+                    effect_live_dots: BTreeSet::from([tagged_op.id().clone()]),
+                    presence: PresenceState {
+                        inserted: true,
+                        born_dots: BTreeSet::from([tagged_op.id().clone()]),
+                        deleted_dots: BTreeMap::new(),
+                    },
                 };
 
-                Self::integrate(doc, item, idx, end_pos, snapshot, content.clone())
+                Self::integrate(doc, item, idx)
             }
         }
+    }
+
+    fn materialize(doc: &Document<V>) -> Vec<V> {
+        // Queries read the final replayed effect state, not the transient prepared state
+        // that Eg-Walker uses while moving between parent versions.
+        doc.items
+            .iter()
+            .filter(|item| !item.effect_live_dots.is_empty())
+            .map(|item| item.content.clone())
+            .collect()
     }
 
     fn diff(
@@ -595,7 +538,6 @@ where
         unstable: &impl IsUnstableState<Self>,
     ) -> Vec<V> {
         let mut document = Document::default();
-        let mut snapshot: Vec<V> = stable.clone();
 
         for tagged_op in unstable.iter() {
             let parents = unstable.parents(tagged_op.id());
@@ -609,12 +551,13 @@ where
                 Self::advance(&mut document, unstable, &event_id);
             }
 
-            Self::apply(&mut document, tagged_op, &mut snapshot);
-
+            Self::apply(&mut document, tagged_op);
             document.current_version = Some(tagged_op.id().clone());
         }
 
-        snapshot.into_iter().collect()
+        let mut result = stable.clone();
+        result.extend(Self::materialize(&document));
+        result
     }
 }
 
@@ -659,7 +602,6 @@ where
         unstable: &impl IsUnstableState<Self>,
     ) -> Vec<V> {
         let mut document = Document::default();
-        let mut snapshot: Vec<V> = Vec::new();
 
         for tagged_op in unstable.iter() {
             // TODO: optimize by stopping when we pass the version
@@ -678,12 +620,12 @@ where
                 Self::advance(&mut document, unstable, &event_id);
             }
 
-            Self::apply(&mut document, tagged_op, &mut snapshot);
+            Self::apply(&mut document, tagged_op);
 
             document.current_version = Some(tagged_op.id().clone());
         }
 
-        snapshot.into_iter().collect()
+        Self::materialize(&document)
     }
 }
 
@@ -1050,13 +992,76 @@ mod tests {
         replica_b.receive(e3);
         replica_a.receive(e2);
 
-        println!("Replica A read: {}", replica_a.query(Read::<String>::new()));
-        println!("Replica B read: {}", replica_b.query(Read::<String>::new()));
-
         assert_eq!(
             replica_a.query(Read::<String>::new()),
             replica_b.query(Read::<String>::new())
         );
+    }
+
+    /// digraph {
+    ///     0 [ label="[Insert { content: 'a', pos: 0 }@(0:1)]"]
+    ///     1 [ label="[Delete { pos: 0 }@(0:2)]"]
+    ///     2 [ label="[Insert { content: '6', pos: 0 }@(1:1)]"]
+    ///     3 [ label="[Delete { pos: 0 }@(0:3)]"]
+    ///     0 -> 1 [ ]  1 -> 3 [ ]  2 -> 3 [ ]
+    /// }
+    #[test]
+    fn regression_1() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let a1 = replica_a.send(List::insert('a', 0)).unwrap();
+        let a2 = replica_a.send(List::delete(0)).unwrap();
+        let b1 = replica_b.send(List::insert('6', 0)).unwrap();
+        replica_a.receive(b1);
+        replica_b.receive(a1);
+        replica_b.receive(a2);
+
+        let a3 = replica_a.send(List::delete(0)).unwrap();
+        replica_b.receive(a3);
+
+        let state_a = replica_a.query(Read::<String>::new());
+        let state_b = replica_b.query(Read::<String>::new());
+        let result = String::new();
+
+        assert_eq!(state_a, result);
+        assert_eq!(state_b, result);
+    }
+
+    /// digraph {
+    ///     0 [ label="[Insert { content: 'N', pos: 0 }@(1:1)]"]
+    ///     1 [ label="[Insert { content: 'r', pos: 1 }@(1:2)]"]
+    ///     2 [ label="[Delete { pos: 0 }@(0:1)]"]
+    ///     3 [ label="[Delete { pos: 0 }@(1:3)]"]
+    ///     4 [ label="[Insert { content: 'Y', pos: 0 }@(0:2)]"]
+    ///     5 [ label="[Insert { content: 'x', pos: 1 }@(1:4)]"]
+    ///     0 -> 1 [ ]  1 -> 2 [ ]  1 -> 3 [ ]  2 -> 4 [ ]  3 -> 4 [ ]  3 -> 5 [ ]
+    /// }
+    #[test]
+    fn regression_2() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+
+        let b1 = replica_b.send(List::insert('N', 0)).unwrap();
+        let b2 = replica_b.send(List::insert('r', 1)).unwrap();
+
+        replica_a.receive(b1);
+        replica_a.receive(b2);
+
+        let a1 = replica_a.send(List::delete(0)).unwrap();
+        let b3 = replica_b.send(List::delete(0)).unwrap();
+
+        replica_a.receive(b3);
+        let a2 = replica_a.send(List::insert('Y', 0)).unwrap();
+        let b4 = replica_b.send(List::insert('x', 1)).unwrap();
+
+        replica_a.receive(b4);
+        replica_b.receive(a1);
+        replica_b.receive(a2);
+
+        let state_a = replica_a.query(Read::<String>::new());
+        let state_b = replica_b.query(Read::<String>::new());
+        let result = String::from("Yrx");
+
+        assert_eq!(state_a, result);
+        assert_eq!(state_b, result);
     }
 
     #[cfg(feature = "fuzz")]
@@ -1068,20 +1073,8 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run_1 = RunConfig::new(0.6, 4, 1_000, None, None, false, false);
-        // let run_2 = RunConfig::new(0.4, 4, 200, None, None, false, false);
-        // let run_3 = RunConfig::new(0.4, 4, 300, None, None, false, false);
-        // let run_4 = RunConfig::new(0.4, 4, 400, None, None, false, false);
-        // let run_5 = RunConfig::new(0.4, 4, 500, None, None, false, false);
-        // let run_6 = RunConfig::new(0.4, 4, 600, None, None, false, false);
-        // let run_7 = RunConfig::new(0.4, 4, 700, None, None, false, false);
-        // let run_8 = RunConfig::new(0.4, 4, 800, None, None, false, false);
-        // let run_9 = RunConfig::new(0.4, 4, 900, None, None, false, false);
-        // let run_10 = RunConfig::new(0.4, 4, 1_000, None, None, false, false);
-        let runs = vec![
-            run_1 //, run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, // run_10,
-            ; 5
-        ];
+        let run = RunConfig::new(0.6, 8, 100, None, None, true, false);
+        let runs = vec![run; 10_000];
 
         let config =
             FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
