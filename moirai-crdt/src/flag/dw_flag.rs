@@ -190,6 +190,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_dw_flag() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

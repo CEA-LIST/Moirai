@@ -27,6 +27,7 @@ use crate::{
 // TODO: use Daggy?
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
+    // TODO: use the stability vector to know where to stop when performing find_immediate_predecessors, and to avoid visiting the whole graph when collecting predecessors.
     graph: StableDiGraph<TaggedOp<O>, ()>,
     map: BiMap<NodeIndex, EventId>,
     heads: HashSet<EventId>,

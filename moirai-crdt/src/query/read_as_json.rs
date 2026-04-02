@@ -31,13 +31,14 @@ impl Default for ReadAsJson {
 
 impl EvalNested<ReadAsJson> for NestedListLog<JsonLog> {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
-        let mut list = Vec::new();
-        let positions = self.positions().execute_query(Read::new());
-        for id in positions.iter() {
-            let child = self.children().get(id).unwrap();
-            list.push(child.execute_query(ReadAsJson::new()));
-        }
-        Value::Array(list)
+        // let mut list = Vec::new();
+        // let positions = self.positions().execute_query(Read::new());
+        // for id in positions.iter() {
+        //     let child = self.children().get(id).unwrap();
+        //     list.push(child.execute_query(ReadAsJson::new()));
+        // }
+        // Value::Array(list)
+        todo!()
     }
 }
 

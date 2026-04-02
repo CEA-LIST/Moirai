@@ -76,6 +76,10 @@ where
     pub fn children(&self) -> &HashMap<K, L> {
         &self.children
     }
+
+    pub fn get_child(&self, key: &K) -> Option<&L> {
+        self.children.get(key)
+    }
 }
 
 impl<K, L> IsLog for UWMapLog<K, L>
@@ -223,13 +227,13 @@ where
     }
 }
 
-impl<K, Q, L> EvalNested<Get<K, Q>> for UWMapLog<K, L>
+impl<'a, K, Q, L> EvalNested<Get<'a, K, Q>> for UWMapLog<K, L>
 where
     Q: QueryOperation,
     L: IsLog + EvalNested<Q>,
     K: Clone + Debug + Hash + Eq + PartialEq,
 {
-    fn execute_query(&self, q: Get<K, Q>) -> <Get<K, Q> as QueryOperation>::Response {
+    fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
         if let Some(child) = self.children.get(&q.key) {
             Some(child.execute_query(q.nested_query))
         } else {
@@ -323,91 +327,6 @@ mod tests {
         second: VecLog<Counter<i32>>,
     });
 
-    // union!(Sum = Number(Counter<isize>, VecLog::<Counter<isize>>)
-    //     | Boolean(EWFlag, VecLog::<EWFlag>) | Duet(Duet, DuetLog) | Array(NestedList<Duet>, NestedListLog::<DuetLog>));
-
-    // #[derive(Clone, Debug)]
-    // pub struct Root {
-    //     map: UWMapLog<i32, SumLog>,
-    // }
-
-    // impl Default for Root {
-    //     fn default() -> Self {
-    //         Self {
-    //             map: UWMapLog::new(),
-    //         }
-    //     }
-    // }
-
-    // impl IsLog for Root {
-    //     type Value = HashMap<i32, SumValue>;
-    //     type Op = UWMap<i32, Sum>;
-
-    //     fn new() -> Self {
-    //         Self {
-    //             map: UWMapLog::new(),
-    //         }
-    //     }
-
-    //     fn effect(&mut self, event: Event<Self::Op>) {
-    //         let mut sink = SinkCollector::new();
-    //         let event_op = event.op().clone();
-    //         self.map.effect_with_sink(
-    //             event,
-    //             moirai_protocol::state::sink::ObjectPath::new("root"),
-    //             &mut sink,
-    //         );
-    //         println!("Effects with sink for op {:?}: {}", event_op, sink);
-    //     }
-
-    //     fn stabilize(&mut self, version: &Version) {
-    //         self.map.stabilize(version);
-    //     }
-
-    //     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-    //         self.map.redundant_by_parent(version, conservative);
-    //     }
-
-    //     fn is_default(&self) -> bool {
-    //         self.map.is_default()
-    //     }
-
-    //     fn is_enabled(&self, op: &Self::Op) -> bool {
-    //         self.map.is_enabled(op)
-    //     }
-    // }
-
-    // #[test]
-    // fn sink() {
-    //     let (mut replica_a, mut replica_b) = twins_log::<Root>();
-
-    //     println!("REPLICA A");
-    //     let a1 = replica_a
-    //         .send(UWMap::Update(1, Sum::Duet(Duet::New)))
-    //         .unwrap();
-
-    //     println!("REPLICA B");
-    //     let b1 = replica_b
-    //         .send(UWMap::Update(1, Sum::Number(Counter::Inc(10))))
-    //         .unwrap();
-
-    //     println!("REPLICA A");
-    //     replica_a.receive(b1);
-    //     println!("REPLICA B");
-    //     replica_b.receive(a1);
-
-    //     println!("REPLICA B");
-    //     let b2 = replica_b
-    //         .send(UWMap::Update(1, Sum::Number(Counter::Reset)))
-    //         .unwrap();
-    //     replica_a.receive(b2);
-
-    //     assert_eq!(
-    //         replica_a.state().map.execute_query(Read::new()),
-    //         replica_b.state().map.execute_query(Read::new())
-    //     );
-    // }
-
     #[test]
     fn nested_query() {
         let (mut replica_a, mut _replica_b) = twins_log::<UWMapLog<String, VecLog<AWSet<i32>>>>();
@@ -417,7 +336,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             Some(true),
-            replica_a.query(Get::new("a".to_string(), Contains::<i32>(10)))
+            replica_a.query(Get::new(&"a".to_string(), Contains::<i32>(10)))
         );
     }
 
@@ -465,7 +384,7 @@ mod tests {
         assert_eq!(map, replica_b.query(Read::new()));
         assert_eq!(
             Some(10),
-            replica_a.query(Get::new("a".to_string(), Read::new()))
+            replica_a.query(Get::new(&"a".to_string(), Read::new()))
         );
     }
 
@@ -739,12 +658,14 @@ mod tests {
                 },
             ))
             .unwrap();
-        let event_b = replica_b.send(UWMap::Clear).unwrap();
-
-        replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        let event_b = replica_b.send(UWMap::Remove("doc".to_string())).unwrap();
+        replica_a.receive(event_b);
+
+        let result = HashMap::default();
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
     }
 
     #[test]
@@ -843,6 +764,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_uw_map() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

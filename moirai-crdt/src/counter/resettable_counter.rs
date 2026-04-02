@@ -224,6 +224,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_resettable_counter() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

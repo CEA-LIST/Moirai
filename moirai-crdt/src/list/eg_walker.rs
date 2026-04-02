@@ -101,8 +101,6 @@ struct Document {
     delete_targets: HashMap<EventId, DeleteTarget>,
     /// map of the event id to the current value position in vector of items
     items_by_idx: HashMap<EventId, usize>,
-    /// map of event id to the index of the mutate entry
-    mutations: HashMap<EventId, EventId>,
 }
 
 impl Display for Document {
@@ -162,6 +160,10 @@ where
 
     pub fn delete_range(start: usize, len: usize) -> Self {
         Self::DeleteRange { start, len }
+    }
+
+    pub fn update(pos: usize) -> Self {
+        Self::Update { pos }
     }
 
     /// Where to insert the new item so that it appears at target_pos in the current visible document
@@ -398,9 +400,6 @@ where
                     idx < doc.items.len(),
                     "No `INSERTED` item found at position {pos}"
                 );
-
-                doc.mutations
-                    .insert(tagged_op.id().clone(), doc.items[idx].id.clone());
             }
             List::Insert { content, pos } => {
                 let (idx, end_pos) = Self::find_by_current_pos(&doc.items, *pos);
@@ -543,35 +542,6 @@ where
     }
 }
 
-// TODO: implement the stable state for Eg-Walker.
-// Idea: compute the state at the stable version (ReadAtVersion)
-// Then flush this state (a Vec<V>) into the stable state.
-// Remove all causally stable updates from the unstable state (keep the nodes but remove the ops for updates that are parent of unstable updates).
-impl<V> IsStableState<List<V>> for Vec<V>
-where
-    V: Debug + Clone,
-{
-    fn is_default(&self) -> bool {
-        self.is_empty()
-    }
-
-    fn apply(&mut self, _value: List<V>) {
-        todo!()
-    }
-
-    fn clear(&mut self) {
-        self.clear();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<List<V>>,
-        _tagged_op: &TaggedOp<List<V>>,
-    ) {
-        unreachable!()
-    }
-}
-
 impl<V> PureCRDT for List<V>
 where
     V: Debug + Clone,
@@ -659,107 +629,6 @@ impl Eval<Read<String>> for List<char> {
     }
 }
 
-pub struct MutationTarget {
-    target: EventId,
-}
-
-impl MutationTarget {
-    pub fn new(target: EventId) -> Self {
-        Self { target }
-    }
-}
-
-impl QueryOperation for MutationTarget {
-    type Response = EventId;
-}
-
-impl<V> Eval<MutationTarget> for List<V>
-where
-    V: Debug + Clone,
-{
-    fn execute_query(
-        q: MutationTarget,
-        _stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> EventId {
-        let mut document = Document::default();
-        let mut snapshot: Vec<V> = Vec::new();
-
-        for tagged_op in unstable.iter() {
-            let parents = unstable.parents(tagged_op.id());
-            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
-
-            for event_id in a_only {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in b_only {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op, &mut snapshot);
-
-            document.current_version = Some(tagged_op.id().clone());
-
-            if let Some(event_id) = document.mutations.get(&q.target) {
-                return event_id.clone();
-            }
-        }
-
-        panic!("Mutation target not found in document");
-    }
-}
-
-pub struct ItemOrder {
-    target: EventId,
-}
-
-impl ItemOrder {
-    pub fn new(target: EventId) -> Self {
-        Self { target }
-    }
-}
-
-impl QueryOperation for ItemOrder {
-    type Response = usize;
-}
-
-impl<V> Eval<ItemOrder> for List<V>
-where
-    V: Debug + Clone,
-{
-    fn execute_query(
-        q: ItemOrder,
-        _stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> usize {
-        let mut document = Document::default();
-        let mut snapshot: Vec<V> = Vec::new();
-
-        for tagged_op in unstable.iter() {
-            let parents = unstable.parents(tagged_op.id());
-            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
-
-            for event_id in a_only {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in b_only {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op, &mut snapshot);
-
-            document.current_version = Some(tagged_op.id().clone());
-        }
-
-        *document
-            .items_by_idx
-            .get(&q.target)
-            .expect("Item order not found in document")
-    }
-}
-
 pub struct ReadAt<'a, V> {
     version: &'a Version,
     _marker: std::marker::PhantomData<V>,
@@ -778,6 +647,7 @@ impl<'a, V> QueryOperation for ReadAt<'a, V> {
     type Response = V;
 }
 
+// TODO: merge with the classical Read
 impl<'a, V> Eval<ReadAt<'a, <Self as PureCRDT>::Value>> for List<V>
 where
     V: Debug + Clone,
@@ -873,6 +743,35 @@ where
                 List::delete_range(start, len)
             }
         }
+    }
+}
+
+// TODO: implement the stable state for Eg-Walker.
+// Idea: compute the state at the stable version (ReadAtVersion)
+// Then flush this state (a Vec<V>) into the stable state.
+// Remove all causally stable updates from the unstable state (keep the nodes but remove the ops for updates that are parent of unstable updates).
+impl<V> IsStableState<List<V>> for Vec<V>
+where
+    V: Debug + Clone,
+{
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn apply(&mut self, _value: List<V>) {
+        todo!()
+    }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
+
+    fn prune_redundant_ops(
+        &mut self,
+        _rdnt: RedundancyRelation<List<V>>,
+        _tagged_op: &TaggedOp<List<V>>,
+    ) {
+        unreachable!()
     }
 }
 
@@ -1138,8 +1037,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn update_delete() {
+        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+
+        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+        replica_b.receive(e1);
+
+        let e2 = replica_b.send(List::update(0)).unwrap();
+
+        let e3 = replica_a.send(List::delete(0)).unwrap();
+        replica_b.receive(e3);
+        replica_a.receive(e2);
+
+        println!("Replica A read: {}", replica_a.query(Read::<String>::new()));
+        println!("Replica B read: {}", replica_b.query(Read::<String>::new()));
+
+        assert_eq!(
+            replica_a.query(Read::<String>::new()),
+            replica_b.query(Read::<String>::new())
+        );
+    }
+
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_list() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

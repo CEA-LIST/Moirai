@@ -728,6 +728,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_typed_graph() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

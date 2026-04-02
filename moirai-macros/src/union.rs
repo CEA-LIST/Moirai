@@ -254,26 +254,6 @@ macro_rules! union {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty for [<$union Value>] {
-                fn is_semantically_empty(&self) -> bool {
-                    match self {
-                        Self::Unset => true,
-                        Self::Value(child) => match child.as_ref() {
-                            $(
-                                [<$union ChildValue>]::$variant(value) =>
-                                    $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty::is_semantically_empty(value),
-                            )*
-                        },
-                        Self::Conflict(values) => values.iter().all(|child| match child {
-                            $(
-                                [<$union ChildValue>]::$variant(value) =>
-                                    $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty::is_semantically_empty(value),
-                            )*
-                        }),
-                    }
-                }
-            }
-
             impl $crate::moirai_protocol::state::sink::IsLogSink for [<$union Log>] {
                 fn effect_with_sink(
                     &mut self,
@@ -349,12 +329,12 @@ macro_rules! union {
                         [<$union Container>]::Value(child) => match child.as_ref() {
                             $(
                                 [<$union Child>]::$variant(log) => {
-                                    if <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log) {
-                                        [<$union Value>]::Unset
-                                    } else {
+                                    // if <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log) {
+                                        // [<$union Value>]::Unset
+                                    // } else {
                                     let value = log.execute_query($crate::moirai_protocol::crdt::query::Read::new());
                                     [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
-                                    }
+                                    // }
                                 }
                             )*
                         },

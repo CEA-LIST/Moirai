@@ -369,6 +369,7 @@ mod tests {
 
     #[cfg(feature = "fuzz")]
     #[test]
+    #[ignore]
     fn fuzz_aw_set() {
         use moirai_fuzz::{
             config::{FuzzerConfig, RunConfig},

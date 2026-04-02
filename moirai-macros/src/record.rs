@@ -154,20 +154,6 @@ macro_rules! record {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty for [<$name Value>]
-            where
-                $(
-                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value:
-                        $crate::moirai_protocol::crdt::query::IsSemanticallyEmpty,
-                )*
-            {
-                fn is_semantically_empty(&self) -> bool {
-                    true $(
-                        && self.$field.is_semantically_empty()
-                    )*
-                }
-            }
-
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
                     [<$name Value>] {
@@ -189,28 +175,28 @@ macro_rules! record {
                 }
             }
 
-            /// Evaluate a particular field of the record.
-            // TODO: this impl is too strong, as it requires all fields to implement EvalNested<Q>
-            impl<Q> $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>> for [<$name Log>]
-            where
-                Q: $crate::moirai_protocol::crdt::query::QueryOperation,
-                $(
-                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<Q>,
-                )*
-            {
-                fn execute_query(&self, q: $crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>) -> <$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
-                    match q.key.as_str() {
-                        $(
-                            stringify!($field) => {
-                                let field = &self.$field;
-                                let response = <_ as $crate::moirai_protocol::crdt::eval::EvalNested<Q>>::execute_query(field, q.nested_query);
-                                Some(response)
-                            },
-                        )*
-                        _ => None,
-                    }
-                }
-            }
+            // /// Evaluate a particular field of the record.
+            // // TODO: this impl is too strong, as it requires all fields to implement EvalNested<Q>
+            // impl<Q> $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>> for [<$name Log>]
+            // where
+            //     Q: $crate::moirai_protocol::crdt::query::QueryOperation,
+            //     $(
+            //         $T: $crate::moirai_protocol::crdt::eval::EvalNested<Q>,
+            //     )*
+            // {
+            //     fn execute_query(&self, q: $crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>) -> <$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
+            //         match q.key.as_str() {
+            //             $(
+            //                 stringify!($field) => {
+            //                     let field = &self.$field;
+            //                     let response = <_ as $crate::moirai_protocol::crdt::eval::EvalNested<Q>>::execute_query(field, q.nested_query);
+            //                     Some(response)
+            //                 },
+            //             )*
+            //             _ => None,
+            //         }
+            //     }
+            // }
         }
     };
 }
