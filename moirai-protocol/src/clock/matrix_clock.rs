@@ -221,6 +221,7 @@ mod tests {
     };
 
     #[test]
+    #[allow(deprecated)]
     fn column_wise_min() {
         let mut interner = Interner::new();
         interner.intern("A");
@@ -241,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn column_wise_min_incremental_advances_only_changed_columns() {
         let mut interner = Interner::new();
         interner.intern("A");

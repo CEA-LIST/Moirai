@@ -3,6 +3,8 @@ use std::{
     hash::Hash,
 };
 
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -10,9 +12,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaIdx,
-    state::{log::IsLog, sink::IsLogSink},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    state::log::IsLog,
+    utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
 
@@ -50,40 +51,6 @@ where
     vertex_content: HashMap<V, Nl>,
 }
 
-impl<V, E, No, Eo> TranslateIds for UWGraph<V, E, No, Eo>
-where
-    V: Clone,
-    E: Clone,
-    No: TranslateIds,
-    Eo: TranslateIds,
-{
-    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        match self {
-            UWGraph::UpdateVertex { id, child } => UWGraph::UpdateVertex {
-                id: id.clone(),
-                child: child.translate_ids(from, interner),
-            },
-            UWGraph::RemoveVertex { id } => UWGraph::RemoveVertex { id: id.clone() },
-            UWGraph::UpdateArc {
-                source,
-                target,
-                id,
-                child,
-            } => UWGraph::UpdateArc {
-                source: source.clone(),
-                target: target.clone(),
-                id: id.clone(),
-                child: child.translate_ids(from, interner),
-            },
-            UWGraph::RemoveArc { source, target, id } => UWGraph::RemoveArc {
-                source: source.clone(),
-                target: target.clone(),
-                id: id.clone(),
-            },
-        }
-    }
-}
-
 impl<V, E, Nl, El> IsLog for UWGraphLog<V, E, Nl, El>
 where
     Nl: IsLog,
@@ -98,12 +65,24 @@ where
         Self::default()
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    // TODO: sinks
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] sink: &mut SinkCollector,
+    ) {
         match event.op().clone() {
             // Update the child at vertex `v`
             UWGraph::UpdateVertex { id: v, child: op } => {
                 let child_op = Event::unfold(event, op);
-                self.vertex_content.entry(v).or_default().effect(child_op);
+                self.vertex_content.entry(v).or_default().effect(
+                    child_op,
+                    #[cfg(feature = "sink")]
+                    path,
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
             UWGraph::RemoveVertex { id: v } => {
@@ -130,10 +109,13 @@ where
                 child: op,
             } => {
                 let child_op = Event::unfold(event, op);
-                self.arc_content
-                    .entry((v1, v2, e))
-                    .or_default()
-                    .effect(child_op);
+                self.arc_content.entry((v1, v2, e)).or_default().effect(
+                    child_op,
+                    #[cfg(feature = "sink")]
+                    path,
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
             }
             // Remove the arc `(v1, v2, e)` and reset its child
             UWGraph::RemoveArc {
@@ -213,15 +195,6 @@ where
     }
 }
 
-impl<V, E, Nl, El> IsLogSink for UWGraphLog<V, E, Nl, El>
-where
-    Nl: IsLog,
-    El: IsLog,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
-    E: Clone + Debug + Eq + PartialEq + Hash,
-{
-}
-
 impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
@@ -232,6 +205,12 @@ where
             arc_content: HashMap::default(),
             vertex_content: HashMap::default(),
         }
+    }
+}
+
+impl<V, E, No, Lo> InternalizeOp for UWGraph<V, E, No, Lo> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

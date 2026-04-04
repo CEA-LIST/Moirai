@@ -2,6 +2,13 @@
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::object_path::ObjectPath;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::sink::Sink;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::sink::SinkCollector;
+use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,12 +16,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaIdx,
-    state::{
-        log::IsLog,
-        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, Sink, SinkCollector},
-    },
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    state::log::IsLog,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -23,18 +25,6 @@ use rand::RngExt;
 pub enum Optional<O> {
     Set(O),
     Unset,
-}
-
-impl<O> TranslateIds for Optional<O>
-where
-    O: TranslateIds,
-{
-    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        match self {
-            Optional::Set(o) => Optional::Set(o.translate_ids(from, interner)),
-            Optional::Unset => Optional::Unset,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +48,18 @@ impl<L> OptionLog<L> {
     }
 }
 
+impl<O> InternalizeOp for Optional<O>
+where
+    O: InternalizeOp,
+{
+    fn internalize(self, interner: &Interner) -> Self {
+        match self {
+            Optional::Set(o) => Optional::Set(o.internalize(interner)),
+            Optional::Unset => Optional::Unset,
+        }
+    }
+}
+
 impl<L> IsLog for OptionLog<L>
 where
     L: IsLog,
@@ -73,14 +75,35 @@ where
         true
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] sink: &mut SinkCollector,
+    ) {
         match event.op().clone() {
             Optional::Set(o) => {
+                #[cfg(feature = "sink")]
+                {
+                    if self.child.is_some() {
+                        sink.collect(Sink::update(path.clone()));
+                    } else {
+                        sink.collect(Sink::create(path.clone()));
+                    }
+                }
                 let child_op = Event::unfold(event, o);
-                self.child.get_or_insert_with(L::default).effect(child_op);
+                self.child.get_or_insert_with(L::default).effect(
+                    child_op,
+                    #[cfg(feature = "sink")]
+                    path,
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
             Optional::Unset => {
+                #[cfg(feature = "sink")]
+                sink.collect(Sink::delete(path.clone()));
                 if let Some(child) = self.child.as_mut() {
                     child.redundant_by_parent(event.version(), true);
                     if child.is_default() {
@@ -110,42 +133,6 @@ where
         }
     }
 }
-
-impl<L> IsLogSink for OptionLog<L>
-where
-    L: IsLogSink,
-{
-    fn effect_with_sink(
-        &mut self,
-        event: Event<Self::Op>,
-        path: ObjectPath,
-        sink: &mut SinkCollector,
-    ) {
-        match event.op().clone() {
-            Optional::Set(o) => {
-                if self.child.is_some() {
-                    sink.collect(Sink::update(path.clone()));
-                } else {
-                    sink.collect(Sink::create(path.clone()));
-                }
-                let child_op = Event::unfold(event, o);
-                self.child.get_or_insert_with(L::default).effect(child_op);
-                self.child = self.child.take().filter(|c| !c.is_default());
-            }
-            Optional::Unset => {
-                sink.collect(Sink::delete(path.clone()));
-                if let Some(child) = self.child.as_mut() {
-                    child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.child = None;
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl<L> DefaultSinkExpansion for OptionLog<L> where L: IsLogSink {}
 
 #[cfg(feature = "fuzz")]
 impl<L> FuzzMetrics for OptionLog<L>

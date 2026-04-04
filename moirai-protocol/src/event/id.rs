@@ -7,7 +7,7 @@ use std::{
 use crate::{
     clock::version_vector::{Seq, Version},
     replica::{ReplicaId, ReplicaIdx},
-    utils::intern_str::Resolver,
+    utils::intern_str::{InternalizeOp, Interner, Resolver},
 };
 
 /// Represents the unique identifier for an operation.
@@ -45,6 +45,18 @@ impl EventId {
 
     pub fn resolver(&self) -> &Resolver {
         &self.resolver
+    }
+}
+
+impl InternalizeOp for EventId {
+    fn internalize(self, interner: &Interner) -> Self {
+        let idx = interner.get(self.origin_id()).unwrap_or_else(|| {
+            panic!(
+                "Cannot translate embedded EventId for unknown replica origin {}",
+                self.origin_id()
+            )
+        });
+        EventId::new(idx, self.seq(), interner.resolver().clone())
     }
 }
 

@@ -23,4 +23,5 @@ wasm-bindgen = { version = "0.2.100", optional = true }
 
 [features]
 serde = ["dep:serde", "dep:serde_json", "dep:tsify", "dep:wasm-bindgen"]
+sink = []
 test_utils = []

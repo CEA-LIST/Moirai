@@ -12,6 +12,8 @@ use petgraph::{
     visit::{Dfs, VisitMap, Visitable},
 };
 
+#[cfg(feature = "sink")]
+use crate::state::{object_path::ObjectPath, sink::SinkCollector};
 use crate::{
     HashMap, HashSet,
     clock::version_vector::{Seq, Version},
@@ -52,7 +54,12 @@ where
         Default::default()
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] _path: ObjectPath,
+        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+    ) {
         IsUnstableState::append(self, event);
     }
 

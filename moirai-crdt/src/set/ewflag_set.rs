@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -7,9 +9,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaIdx,
-    state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    state::{log::IsLog, po_log::VecLog},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::{
@@ -23,15 +24,6 @@ pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
     Clear,
-}
-
-impl<V> TranslateIds for EWFlagSet<V>
-where
-    V: Clone,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -61,14 +53,28 @@ where
         true
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+    ) {
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
             EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
             EWFlagSet::Clear => UWMap::Clear,
         };
         let event = Event::unfold(event, op);
-        self.0.effect(event);
+        // The EWFlagSetLog is a semantically a leaf CRDT, so we ignore the path and sink for now
+        #[cfg(feature = "sink")]
+        let mut sink = SinkCollector::new();
+        self.0.effect(
+            event,
+            #[cfg(feature = "sink")]
+            path,
+            #[cfg(feature = "sink")]
+            &mut sink,
+        );
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -103,7 +109,11 @@ where
     }
 }
 
-impl<V> IsLogSink for EWFlagSetLog<V> where V: Clone + Hash + Debug + Eq {}
+impl<V> InternalizeOp for EWFlagSet<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
+    }
+}
 
 #[cfg(test)]
 mod tests {

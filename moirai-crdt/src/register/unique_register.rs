@@ -8,9 +8,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::policy::{FairPolicy, LwwPolicy};
@@ -27,16 +26,6 @@ pub enum Register<V, P> {
     Write(V),
     // TODO: find a better design pattern
     __Marker(std::convert::Infallible, PhantomData<P>),
-}
-
-impl<V, P> TranslateIds for Register<V, P>
-where
-    V: Clone,
-    P: Policy,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V, P> PureCRDT for Register<V, P>
@@ -93,6 +82,12 @@ where
             }
         }
         value
+    }
+}
+
+impl<V, P> InternalizeOp for Register<V, P> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

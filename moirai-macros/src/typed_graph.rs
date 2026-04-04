@@ -2,6 +2,8 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 
+use moirai_protocol::utils::intern_str::InternalizeOp;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Arc<S, T, E> {
     pub source: S,
@@ -9,21 +11,16 @@ pub struct Arc<S, T, E> {
     pub kind: E,
 }
 
-impl<S, T, E> moirai_protocol::utils::translate_ids::TranslateIds for Arc<S, T, E>
+impl<S, T, E> InternalizeOp for Arc<S, T, E>
 where
-    S: moirai_protocol::utils::translate_ids::TranslateIds,
-    T: moirai_protocol::utils::translate_ids::TranslateIds,
-    E: Clone,
+    S: InternalizeOp,
+    T: InternalizeOp,
 {
-    fn translate_ids(
-        &self,
-        from: moirai_protocol::replica::ReplicaIdx,
-        interner: &moirai_protocol::utils::intern_str::Interner,
-    ) -> Self {
+    fn internalize(self, interner: &moirai_protocol::utils::intern_str::Interner) -> Self {
         Self {
-            source: self.source.translate_ids(from, interner),
-            target: self.target.translate_ids(from, interner),
-            kind: self.kind.clone(),
+            source: self.source.internalize(interner),
+            target: self.target.internalize(interner),
+            kind: self.kind,
         }
     }
 }
@@ -62,18 +59,17 @@ macro_rules! typed_graph {
             $( $conn:ident : $src:ident [$src_ty:path] -> $tgt:ident [$tgt_ty:path] ( $ety:ident ) ),* $(,)?
         } $(,)?
     ) => {
-        // Generate a vertex struct for each vertex variant, and implement TranslateIds for it.
+        // Generate a vertex struct for each vertex variant
         $(
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-            pub struct $v(pub $crate::moirai_protocol::state::sink::ObjectPath);
+            pub struct $v(pub $crate::moirai_protocol::state::object_path::ObjectPath);
 
-            impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $v {
-                fn translate_ids(
-                    &self,
-                    from: $crate::moirai_protocol::replica::ReplicaIdx,
+            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $v {
+                fn internalize(
+                    self,
                     interner: &$crate::moirai_protocol::utils::intern_str::Interner,
                 ) -> Self {
-                    Self(self.0.translate_ids(from, interner))
+                    Self(self.0.internalize(interner))
                 }
             }
         )*
@@ -107,22 +103,20 @@ macro_rules! typed_graph {
 
         // Helper function to extract ObjectPath from any vertex variant
         impl $vertex {
-            pub fn vertex_path(&self) -> &$crate::moirai_protocol::state::sink::ObjectPath {
+            pub fn vertex_path(&self) -> &$crate::moirai_protocol::state::object_path::ObjectPath {
                 match self {
                     $( $vertex::$v(id) => &id.0 ),*
                 }
             }
         }
 
-        // Implement TranslateIds for the vertex enum by delegating to each variant's implementation
-        impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $vertex {
-            fn translate_ids(
-                &self,
-                from: $crate::moirai_protocol::replica::ReplicaIdx,
+        impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $vertex {
+            fn internalize(
+                self,
                 interner: &$crate::moirai_protocol::utils::intern_str::Interner,
             ) -> Self {
                 match self {
-                    $( Self::$v(id) => Self::$v(id.translate_ids(from, interner)) ),*
+                    $( $vertex::$v(id) => $vertex::$v(id.internalize(interner)) ),*
                 }
             }
         }
@@ -139,21 +133,19 @@ macro_rules! typed_graph {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
 
-        // Implement TranslateIds for the arcs enum by delegating to each variant's implementation
-        impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $arcs
+        impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $arcs
         where
             $(
-                $src_ty: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
-                $tgt_ty: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+                $src_ty: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
+                $tgt_ty: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
             )*
         {
-            fn translate_ids(
-                &self,
-                from: $crate::moirai_protocol::replica::ReplicaIdx,
+            fn internalize(
+                self,
                 interner: &$crate::moirai_protocol::utils::intern_str::Interner,
             ) -> Self {
                 match self {
-                    $( Self::$conn(arc) => Self::$conn(arc.translate_ids(from, interner)) ),*
+                    $( Self::$conn(arc) => Self::$conn(arc.internalize(interner)) ),*
                 }
             }
         }
@@ -202,7 +194,7 @@ macro_rules! typed_graph {
         pub enum $graph<P> {
             AddVertex { id: $vertex },
             RemoveVertex { id: $vertex },
-            DeleteSubtree { prefix: $crate::moirai_protocol::state::sink::ObjectPath },
+            DeleteSubtree { prefix: $crate::moirai_protocol::state::object_path::ObjectPath },
             AddArc($arcs),
             RemoveArc($arcs),
             #[doc(hidden)]
@@ -214,7 +206,7 @@ macro_rules! typed_graph {
             pub enum [<$graph DerivedKey>] {
                 AddVertex($vertex),
                 RemoveVertex($vertex),
-                DeleteSubtree($crate::moirai_protocol::state::sink::ObjectPath),
+                DeleteSubtree($crate::moirai_protocol::state::object_path::ObjectPath),
                 AddArc($arcs),
                 RemoveArc($arcs),
             }
@@ -243,31 +235,29 @@ macro_rules! typed_graph {
             }
         }
 
-        // Implement TranslateIds for the main graph operation enum by delegating to each variant's implementation
-        impl<P> $crate::moirai_protocol::utils::translate_ids::TranslateIds for $graph<P>
+        impl<P> $crate::moirai_protocol::utils::intern_str::InternalizeOp for $graph<P>
         where
             P: Clone,
-            $vertex: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
-            $arcs: $crate::moirai_protocol::utils::translate_ids::TranslateIds,
+            $vertex: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
+            $arcs: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
         {
-            fn translate_ids(
-                &self,
-                from: $crate::moirai_protocol::replica::ReplicaIdx,
+            fn internalize(
+                self,
                 interner: &$crate::moirai_protocol::utils::intern_str::Interner,
             ) -> Self {
                 match self {
                     Self::AddVertex { id } => Self::AddVertex {
-                        id: id.translate_ids(from, interner),
+                        id: id.internalize(interner),
                     },
                     Self::RemoveVertex { id } => Self::RemoveVertex {
-                        id: id.translate_ids(from, interner),
+                        id: id.internalize(interner),
                     },
                     Self::DeleteSubtree { prefix } => Self::DeleteSubtree {
-                        prefix: prefix.translate_ids(from, interner),
+                        prefix: prefix.internalize(interner),
                     },
-                    Self::AddArc(arc) => Self::AddArc(arc.translate_ids(from, interner)),
-                    Self::RemoveArc(arc) => Self::RemoveArc(arc.translate_ids(from, interner)),
-                    Self::__Marker(never, marker) => match *never {},
+                    Self::AddArc(arc) => Self::AddArc(arc.internalize(interner)),
+                    Self::RemoveArc(arc) => Self::RemoveArc(arc.internalize(interner)),
+                    Self::__Marker(never, marker) => unreachable!(),
                 }
             }
         }

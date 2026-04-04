@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "sink")]
+use crate::state::{object_path::ObjectPath, sink::SinkCollector};
 use crate::{
     HashMap,
     clock::version_vector::Version,
@@ -44,7 +46,12 @@ where
         O::is_enabled(op, &self.stable, &self.unstable)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] _path: ObjectPath,
+        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+    ) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             if !O::DISABLE_R_WHEN_R {

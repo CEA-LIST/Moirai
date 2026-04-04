@@ -1,13 +1,13 @@
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-};
-
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
     metrics::{FuzzMetrics, StructureMetrics},
     op_generator::OpGeneratorNested,
     value_generator::ValueGenerator,
+};
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{
+    object_path::ObjectPath,
+    sink::{Sink, SinkCollector},
 };
 use moirai_protocol::{
     clock::version_vector::Version,
@@ -16,15 +16,18 @@ use moirai_protocol::{
         query::{Get, QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaIdx,
-    state::{
-        log::IsLog,
-        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, Sink, SinkCollector},
+    state::log::IsLog,
+    utils::{
+        boxer::Boxer,
+        intern_str::{InternalizeOp, Interner},
     },
-    utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+};
 
 use crate::HashMap;
 
@@ -41,20 +44,6 @@ where
     K: Clone + Eq + Hash,
 {
     children: HashMap<K, L>,
-}
-
-impl<K, L> TranslateIds for UWMap<K, L>
-where
-    K: Clone,
-    L: TranslateIds,
-{
-    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        match self {
-            UWMap::Update(k, v) => UWMap::Update(k.clone(), v.translate_ids(from, interner)),
-            UWMap::Remove(k) => UWMap::Remove(k.clone()),
-            UWMap::Clear => UWMap::Clear,
-        }
-    }
 }
 
 impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
@@ -82,6 +71,19 @@ where
     }
 }
 
+impl<K, O> InternalizeOp for UWMap<K, O>
+where
+    O: InternalizeOp,
+{
+    fn internalize(self, interner: &Interner) -> Self {
+        match self {
+            UWMap::Update(k, v) => UWMap::Update(k, v.internalize(interner)),
+            UWMap::Remove(k) => UWMap::Remove(k),
+            UWMap::Clear => UWMap::Clear,
+        }
+    }
+}
+
 impl<K, L> IsLog for UWMapLog<K, L>
 where
     L: IsLog,
@@ -94,16 +96,45 @@ where
         Self::default()
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] sink: &mut SinkCollector,
+    ) {
         match event.op().clone() {
             UWMap::Update(k, v) => {
+                #[cfg(feature = "sink")]
+                let path = path.map_entry(format!("{:?}", k));
+                #[cfg(feature = "sink")]
+                {
+                    if self.children.contains_key(&k) {
+                        sink.collect(Sink::update(path.clone()));
+                    } else {
+                        sink.collect(Sink::create(path.clone()));
+                    }
+                }
+
                 let child_op = Event::unfold(event, v);
-                self.children.entry(k.clone()).or_default().effect(child_op);
+                self.children.entry(k.clone()).or_default().effect(
+                    child_op,
+                    #[cfg(feature = "sink")]
+                    path,
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
+
                 if self.children.get(&k).unwrap().is_default() {
                     self.children.remove(&k);
                 }
             }
             UWMap::Remove(k) => {
+                #[cfg(feature = "sink")]
+                {
+                    let path = path.map_entry(format!("{:?}", k));
+                    sink.collect(Sink::delete(path));
+                }
+
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
                     if child.is_default() {
@@ -112,6 +143,8 @@ where
                 }
             }
             UWMap::Clear => {
+                #[cfg(feature = "sink")]
+                sink.collect(Sink::delete(path));
                 self.children.retain(|_, child| {
                     child.redundant_by_parent(event.version(), true);
                     !child.is_default() // keep only non-default children
@@ -145,65 +178,6 @@ where
             UWMap::Remove(_) | UWMap::Clear => true,
         }
     }
-}
-
-impl<K, L> IsLogSink for UWMapLog<K, L>
-where
-    K: Clone + Debug + Eq + Hash,
-    L: IsLogSink,
-{
-    fn effect_with_sink(
-        &mut self,
-        event: Event<Self::Op>,
-        path: ObjectPath,
-        sink: &mut SinkCollector,
-    ) {
-        match event.op().clone() {
-            UWMap::Update(k, v) => {
-                let path = path.map_entry(format!("{:?}", k));
-                if self.children.contains_key(&k) {
-                    sink.collect(Sink::update(path.clone()));
-                } else {
-                    sink.collect(Sink::create(path.clone()));
-                }
-
-                let child_op = Event::unfold(event, v);
-                self.children
-                    .entry(k.clone())
-                    .or_default()
-                    .effect_with_sink(child_op, path, sink);
-
-                if self.children.get(&k).unwrap().is_default() {
-                    self.children.remove(&k);
-                }
-            }
-            UWMap::Remove(k) => {
-                let path = path.map_entry(format!("{:?}", k));
-                sink.collect(Sink::delete(path));
-
-                if let Some(child) = self.children.get_mut(&k) {
-                    child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.children.remove(&k);
-                    }
-                }
-            }
-            UWMap::Clear => {
-                sink.collect(Sink::delete(path));
-                self.children.retain(|_, child| {
-                    child.redundant_by_parent(event.version(), true);
-                    !child.is_default() // keep only non-default children
-                });
-            }
-        }
-    }
-}
-
-impl<K, L> DefaultSinkExpansion for UWMapLog<K, L>
-where
-    K: Clone + Debug + Eq + Hash,
-    L: IsLogSink,
-{
 }
 
 impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>

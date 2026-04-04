@@ -4,6 +4,11 @@ use std::fmt::Debug;
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::object_path::ObjectPath;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::sink::{Sink, SinkCollector};
+use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
 #[cfg(feature = "fuzz")]
 use moirai_protocol::{
     clock::version_vector::Version,
@@ -12,13 +17,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    replica::ReplicaIdx,
-    state::{
-        event_graph::EventGraph,
-        log::IsLog,
-        sink::{DefaultSinkExpansion, IsLogSink, ObjectPath, SinkCollector},
-    },
-    utils::{boxer::Boxer, intern_str::Interner, translate_ids::TranslateIds},
+    state::{event_graph::EventGraph, log::IsLog},
+    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -34,25 +34,6 @@ pub enum NestedList<O> {
     Update { pos: usize, op: O },
     /// Delete the child at the given position
     Delete { pos: usize },
-}
-
-impl<O> TranslateIds for NestedList<O>
-where
-    O: TranslateIds + Clone,
-{
-    fn translate_ids(&self, from: ReplicaIdx, interner: &Interner) -> Self {
-        match self {
-            NestedList::Insert { pos, op } => NestedList::Insert {
-                pos: *pos,
-                op: op.translate_ids(from, interner),
-            },
-            NestedList::Update { pos, op } => NestedList::Update {
-                pos: *pos,
-                op: op.translate_ids(from, interner),
-            },
-            NestedList::Delete { pos } => NestedList::Delete { pos: *pos },
-        }
-    }
 }
 
 /// Internal state of a nested list CRDT
@@ -93,47 +74,91 @@ where
         Self::default()
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] sink: &mut SinkCollector,
+    ) {
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
+                #[cfg(feature = "sink")]
+                let path = path.list_element(event.id().clone());
+                #[cfg(feature = "sink")]
+                sink.collect(Sink::create(path.clone()));
                 let list_event = Event::new(
                     event.id().clone(),
-                    event.lamport().clone(),
+                    *event.lamport(),
                     SimpleList::Insert {
                         pos,
                         content: event.id().clone(),
                     },
                     event.version().clone(),
                 );
-                self.positions.effect(list_event);
+                self.positions.effect(
+                    list_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
                 let child_event =
                     Event::unfold(event.clone(), UWMap::Update(event.id().clone(), op));
-                self.children.effect(child_event);
+                self.children.effect(
+                    child_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
             }
             NestedList::Delete { pos } => {
-                // TODO: We must resolve the target child at the time of delete so we must also resolve the position that were absent
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
-                // println!(
-                //     "Position at version: {}",
-                //     positions_at_version
-                //         .iter()
-                //         .map(|id| id.to_string())
-                //         .collect::<Vec<_>>()
-                //         .join(",")
-                // );
                 let target = positions_at_version[pos].clone();
+                #[cfg(feature = "sink")]
+                let path = path.list_element(target.clone());
+                #[cfg(feature = "sink")]
+                sink.collect(Sink::delete(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
-                self.positions.effect(list_event);
+                self.positions.effect(
+                    list_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target));
-                self.children.effect(map_event);
+                self.children.effect(
+                    map_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
             }
             NestedList::Update { pos, op } => {
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
+                #[cfg(feature = "sink")]
+                let path = path.list_element(target.clone());
+                #[cfg(feature = "sink")]
+                sink.collect(Sink::update(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
-                self.positions.effect(list_event);
-                self.children.effect(map_event);
+                self.positions.effect(
+                    list_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
+                self.children.effect(
+                    map_event,
+                    #[cfg(feature = "sink")]
+                    path.clone(),
+                    #[cfg(feature = "sink")]
+                    sink,
+                );
             }
         }
     }
@@ -174,80 +199,6 @@ where
             NestedList::Delete { pos } => *pos < positions.len(),
         }
     }
-}
-
-impl<L> IsLogSink for NestedListLog<L>
-where
-    L: IsLogSink + EvalNested<Read<<L as IsLog>::Value>>,
-{
-    fn effect_with_sink(
-        &mut self,
-        _event: Event<Self::Op>,
-        _path: ObjectPath,
-        _sink: &mut SinkCollector,
-    ) {
-        todo!()
-        // match event.op().clone() {
-        //     NestedList::Insert { pos, op } => {
-        //         let path = path.list_element(event.id().clone());
-        //         let list_event = Event::new(
-        //             event.id().clone(),
-        //             event.lamport().clone(),
-        //             SimpleList::Insert {
-        //                 pos,
-        //                 content: event.id().clone(),
-        //             },
-        //             event.version().clone(),
-        //         );
-        //         sink.collect(Sink::create(path.clone()));
-        //         self.positions
-        //             .effect_with_sink(list_event, path.clone(), sink);
-        //         let child_event = Event::unfold(event.clone(), value);
-        //         self.children
-        //             .entry(event.id().clone())
-        //             .or_default()
-        //             .effect_with_sink(child_event, path, sink);
-        //         self.deleted_positions.remove(event.id());
-        //     }
-        //     NestedList::Delete { pos } => {
-        //         let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
-        //         let target = positions_at_version[pos].clone();
-        //         let path = path.list_element(target.clone());
-        //         let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
-        //         sink.collect(Sink::delete(path.clone()));
-        //         self.positions.effect_with_sink(list_event, path, sink);
-        //         if let Some(child) = self.children.get_mut(&target) {
-        //             child.redundant_by_parent(event.version(), true);
-        //         }
-        //         self.deleted_positions
-        //             .entry(target)
-        //             .and_modify(|deleted_pos| *deleted_pos = (*deleted_pos).max(pos))
-        //             .or_insert(pos);
-        //     }
-        //     NestedList::Update { pos, op } => {
-        //         let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
-        //         let target = positions_at_version[pos].clone();
-        //         let path = path.list_element(target.clone());
-        //         let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
-        //         sink.collect(Sink::update(path.clone()));
-        //         self.positions
-        //             .effect_with_sink(list_event, path.clone(), sink);
-        //         let child_event = Event::unfold(event, value);
-        //         self.children
-        //             .entry(target.clone())
-        //             .or_default()
-        //             .effect_with_sink(child_event, path, sink);
-        //         if self.positions.execute_query(Read::new()).contains(&target) {
-        //             self.deleted_positions.remove(&target);
-        //         }
-        //     }
-        // }
-    }
-}
-
-impl<L> DefaultSinkExpansion for NestedListLog<L> where
-    L: IsLogSink + EvalNested<Read<<L as IsLog>::Value>>
-{
 }
 
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
@@ -336,6 +287,25 @@ where
         };
         assert!(self.is_enabled(&op));
         op
+    }
+}
+
+impl<O> InternalizeOp for NestedList<O>
+where
+    O: InternalizeOp,
+{
+    fn internalize(self, interner: &Interner) -> Self {
+        match self {
+            NestedList::Insert { pos, op } => NestedList::Insert {
+                pos,
+                op: op.internalize(interner),
+            },
+            NestedList::Update { pos, op } => NestedList::Update {
+                pos,
+                op: op.internalize(interner),
+            },
+            NestedList::Delete { pos } => NestedList::Delete { pos },
+        }
     }
 }
 

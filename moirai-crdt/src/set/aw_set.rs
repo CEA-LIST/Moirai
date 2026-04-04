@@ -10,9 +10,8 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
@@ -26,15 +25,6 @@ pub enum AWSet<V> {
     Add(V),
     Remove(V),
     Clear,
-}
-
-impl<V> TranslateIds for AWSet<V>
-where
-    V: Clone + Eq + Hash + Debug,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V> IsStableState<AWSet<V>> for HashSet<V>
@@ -150,6 +140,12 @@ where
                     false
                 }
             })
+    }
+}
+
+impl<V> InternalizeOp for AWSet<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

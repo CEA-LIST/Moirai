@@ -17,9 +17,8 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{id::EventId, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
@@ -38,12 +37,9 @@ pub enum List<V> {
     Update { pos: usize },
 }
 
-impl<V> TranslateIds for List<V>
-where
-    V: Debug + Clone,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
+impl<V> InternalizeOp for List<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 
@@ -102,9 +98,10 @@ where
         let mut idx = 0usize;
 
         while cur_pos < target_pos {
-            if idx >= items.len() {
-                panic!("Past end of items list");
-            }
+            debug_assert!(
+                idx < items.len(),
+                "Target position {target_pos} is out of bounds for current document"
+            );
 
             let item = &items[idx];
             if item.presence.is_visible() {
@@ -340,9 +337,15 @@ where
             List::Insert { content, pos } => {
                 let idx = Self::find_by_current_pos(&doc.items, *pos);
 
-                if idx >= 1 && !&doc.items[idx - 1].presence.is_integrated() {
-                    panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
-                }
+                debug_assert_ne!(
+                    true,
+                    idx >= 1 && !&doc.items[idx - 1].presence.is_integrated(),
+                    "Item to the left is not inserted!"
+                );
+
+                // if idx >= 1 && !&doc.items[idx - 1].presence.is_integrated() {
+                //     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
+                // }
 
                 let origin_left = if idx == 0 {
                     None

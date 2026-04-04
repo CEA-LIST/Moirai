@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::clock::version_vector::Version;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct Lamport(usize);
 
 impl Lamport {

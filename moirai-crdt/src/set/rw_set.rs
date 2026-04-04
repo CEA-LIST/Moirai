@@ -10,9 +10,8 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -26,15 +25,6 @@ pub enum RWSet<V> {
     Add(V),
     Remove(V),
     Clear,
-}
-
-impl<V> TranslateIds for RWSet<V>
-where
-    V: Clone + Eq + Hash + Debug,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 // TODO: maybe two hashsets is better?
@@ -164,6 +154,12 @@ where
             }
             RWSet::Clear => unreachable!(),
         }
+    }
+}
+
+impl<V> InternalizeOp for RWSet<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

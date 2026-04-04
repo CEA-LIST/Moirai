@@ -4,7 +4,12 @@ use std::{fmt::Debug, hash::Hash};
 use moirai_fuzz::metrics::FuzzMetrics;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::StructureMetrics;
-use moirai_protocol::state::sink::DefaultSinkExpansion;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::object_path::ObjectPath;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::sink::SinkCollector;
+use moirai_protocol::utils::intern_str::InternalizeOp;
+use moirai_protocol::utils::intern_str::Interner;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -12,9 +17,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaIdx,
-    state::{log::IsLog, po_log::VecLog, sink::IsLogSink},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    state::{log::IsLog, po_log::VecLog},
 };
 
 use crate::{
@@ -28,15 +31,6 @@ pub enum AWBag<V> {
     Add(V),
     Remove(V),
     Clear,
-}
-
-impl<V> TranslateIds for AWBag<V>
-where
-    V: Clone,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -66,14 +60,28 @@ where
         true
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+    ) {
         let op = match event.op() {
             AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
             AWBag::Remove(k) => UWMap::Update(k.clone(), Counter::Dec(1)),
             AWBag::Clear => UWMap::Clear,
         };
         let event = Event::unfold(event, op);
-        self.0.effect(event);
+        // While the Bag contains a map, it is semantically a leaf CRDT, so we ignore the path and sink.
+        #[cfg(feature = "sink")]
+        let mut sink = SinkCollector::new();
+        self.0.effect(
+            event,
+            #[cfg(feature = "sink")]
+            path,
+            #[cfg(feature = "sink")]
+            &mut sink,
+        );
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -101,9 +109,14 @@ where
     }
 }
 
-impl<V> IsLogSink for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
-
-impl<V> DefaultSinkExpansion for AWBagLog<V> where V: Clone + Hash + Debug + Eq {}
+impl<V> InternalizeOp for AWBag<V>
+where
+    V: Clone + Hash + Debug + Eq,
+{
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
+    }
+}
 
 #[cfg(feature = "fuzz")]
 impl<V> FuzzMetrics for AWBagLog<V>

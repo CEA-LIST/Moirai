@@ -12,9 +12,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -31,15 +30,6 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
     Reset,
-}
-
-impl<V> TranslateIds for Counter<V>
-where
-    V: Add + AddAssign + SubAssign + Default + Copy,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V> PureCRDT for Counter<V>
@@ -145,6 +135,15 @@ where
     }
 }
 
+impl<V> InternalizeOp for Counter<V>
+where
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+{
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
@@ -187,7 +186,6 @@ mod tests {
 
         let result = 8;
         assert_eq!(replica_a.query(Read::new()), result);
-        // assert_eq!(replica_a.state().unstable().len(), 0);
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
 
         let event = replica_a.send(Counter::Inc(5)).unwrap();

@@ -13,11 +13,11 @@ macro_rules! record {
                 New,
             }
 
-            impl $crate::moirai_protocol::utils::translate_ids::TranslateIds for $name {
-                fn translate_ids(&self, from: $crate::moirai_protocol::replica::ReplicaIdx, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $name {
+                fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
                     match self {
                         $(
-                            Self::[<$field:camel>](o) => Self::[<$field:camel>](o.translate_ids(from, interner)),
+                            Self::[<$field:camel>](o) => Self::[<$field:camel>](o.internalize(interner)),
                         )*
                         Self::New => Self::New,
                     }
@@ -58,15 +58,41 @@ macro_rules! record {
                     }
                 }
 
-                fn effect(&mut self, event: $crate::moirai_protocol::event::Event<Self::Op>) {
+                fn effect(
+                    &mut self,
+                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    #[cfg(feature = "sink")]
+                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
+                    #[cfg(feature = "sink")]
+                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector)
+                {
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
+                                #[cfg(feature = "sink")]
+                                let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
+                                #[cfg(feature = "sink")] {
+                                    if is_default {
+                                        self.default_sink_expansion(path.clone(), sink);
+                                    } else {
+                                        sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                    }
+                                }
+                                #[cfg(feature = "sink")]
+                                let path = path.field(stringify!($field));
+                                #[cfg(feature = "sink")]
+                                if !is_default {
+                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
+                                }
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                self.$field.effect(child_op);
+                                self.$field.effect(child_op, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink);
                             }
                         )*
-                        $name::New => {}
+                        $name::New => {
+                            #[cfg(feature = "sink")] {
+                                self.default_sink_expansion(path.clone(), sink);
+                            }
+                        }
                     }
                 }
 
@@ -100,53 +126,16 @@ macro_rules! record {
                         _ => unreachable!(),
                     }
                 }
-            }
 
-            impl $crate::moirai_protocol::state::sink::IsLogSink for [<$name Log>] {
-                fn effect_with_sink(
-                    &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
-                    path: $crate::moirai_protocol::state::sink::ObjectPath,
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
-                ) {
-                    match event.op().clone() {
-                        $(
-                            $name::[<$field:camel>](op) => {
-                                let was_default =
-                                    <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
-                                if was_default {
-                                    <Self as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(path.clone(), sink);
-                                } else {
-                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                }
-                                let path = path.field(stringify!($field));
-                                if !was_default {
-                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                }
-                                let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                self.$field.effect_with_sink(child_op, path, sink);
-                            }
-                        )*
-                        $name::New => {
-                            <Self as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(path, sink);
-                        }
-                    }
-                }
-            }
-
-            impl $crate::moirai_protocol::state::sink::DefaultSinkExpansion for [<$name Log>]
-            where
-                $(
-                    $T: $crate::moirai_protocol::state::sink::DefaultSinkExpansion,
-                )*
-            {
-                fn collect_default_sinks(
-                    path: $crate::moirai_protocol::state::sink::ObjectPath,
+                #[cfg(feature = "sink")]
+                fn default_sink_expansion(
+                    &self,
+                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
                     sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
                 ) {
                     sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
                     $(
-                        <$T as $crate::moirai_protocol::state::sink::DefaultSinkExpansion>::collect_default_sinks(
+                        <$T as $crate::moirai_protocol::state::log::IsLog>::new().default_sink_expansion(
                             path.clone().field(stringify!($field)),
                             sink,
                         );
@@ -174,29 +163,6 @@ macro_rules! record {
                     ])
                 }
             }
-
-            // /// Evaluate a particular field of the record.
-            // // TODO: this impl is too strong, as it requires all fields to implement EvalNested<Q>
-            // impl<Q> $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>> for [<$name Log>]
-            // where
-            //     Q: $crate::moirai_protocol::crdt::query::QueryOperation,
-            //     $(
-            //         $T: $crate::moirai_protocol::crdt::eval::EvalNested<Q>,
-            //     )*
-            // {
-            //     fn execute_query(&self, q: $crate::moirai_protocol::crdt::query::Get<::std::string::String, Q>) -> <$crate::moirai_protocol::crdt::query::Get<::std::string::String, Q> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
-            //         match q.key.as_str() {
-            //             $(
-            //                 stringify!($field) => {
-            //                     let field = &self.$field;
-            //                     let response = <_ as $crate::moirai_protocol::crdt::eval::EvalNested<Q>>::execute_query(field, q.nested_query);
-            //                     Some(response)
-            //                 },
-            //             )*
-            //             _ => None,
-            //         }
-            //     }
-            // }
         }
     };
 }

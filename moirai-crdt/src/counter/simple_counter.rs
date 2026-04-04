@@ -11,9 +11,8 @@ use moirai_protocol::{
         pure_crdt::PureCRDT,
         query::{QueryOperation, Read},
     },
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -29,15 +28,6 @@ use crate::counter::stable::CounterStable;
 pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
-}
-
-impl<V> TranslateIds for Counter<V>
-where
-    V: Add + AddAssign + SubAssign + Default + Copy,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V> PureCRDT for Counter<V>
@@ -99,6 +89,15 @@ impl OpGenerator for Counter<i32> {
             "Dec" => Counter::Dec(rng.next_u32() as i32),
             _ => unreachable!(),
         }
+    }
+}
+
+impl<V> InternalizeOp for Counter<V>
+where
+    V: Add + AddAssign + SubAssign + Default + Copy,
+{
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

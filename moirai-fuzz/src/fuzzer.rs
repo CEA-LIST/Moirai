@@ -5,14 +5,14 @@ use log::{debug, info, warn};
 use moirai_protocol::{
     crdt::{eval::EvalNested, query::Read},
     state::log::IsLog,
-    utils::translate_ids::TranslateIds,
+    utils::intern_str::InternalizeOp,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
-    metrics::StructureMetrics,
+    metrics::{FuzzMetrics, StructureMetrics},
     op_generator::OpGeneratorNested,
     runner::{RunData, runner},
     serialize::save_execution_record,
@@ -21,11 +21,8 @@ use crate::{
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog
-        + OpGeneratorNested
-        + EvalNested<Read<<L as IsLog>::Value>>
-        + crate::metrics::FuzzMetrics,
-    L::Op: TranslateIds,
+    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
+    <L as IsLog>::Op: InternalizeOp,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {

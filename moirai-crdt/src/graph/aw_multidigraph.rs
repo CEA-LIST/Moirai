@@ -11,9 +11,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -33,16 +32,6 @@ pub enum Graph<V, E> {
     AddArc(V, V, E),
     /// Remove an arc from vertex `V` to vertex `V'` with edge identifier `E`. The triple `(V, V', E)` must already exist.
     RemoveArc(V, V, E),
-}
-
-impl<V, E> TranslateIds for Graph<V, E>
-where
-    V: Debug + Clone + PartialEq + Eq + Hash,
-    E: Debug + Clone + PartialEq + Eq + Hash,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V, E> PureCRDT for Graph<V, E>
@@ -175,6 +164,17 @@ where
             }
         }
         graph
+    }
+}
+
+impl<V, E> InternalizeOp for Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+{
+    // TODO: we assume that V and E are already interned
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

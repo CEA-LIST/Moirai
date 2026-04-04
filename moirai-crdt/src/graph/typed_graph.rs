@@ -44,7 +44,7 @@ mod tests {
     use moirai_protocol::{
         crdt::query::Read,
         replica::IsReplica,
-        state::{po_log::VecLog, sink::ObjectPath},
+        state::{object_path::ObjectPath, po_log::VecLog},
     };
     #[cfg(feature = "fuzz")]
     use petgraph::Graph;

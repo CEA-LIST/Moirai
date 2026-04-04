@@ -7,24 +7,14 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 #[derive(Clone, Debug)]
 pub enum TORegister<V> {
     Clear,
     Write(V),
-}
-
-impl<V> TranslateIds for TORegister<V>
-where
-    V: Clone,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V> PureCRDT for TORegister<V>
@@ -82,6 +72,12 @@ where
             }
         }
         val
+    }
+}
+
+impl<V> InternalizeOp for TORegister<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

@@ -154,3 +154,13 @@ impl Interner {
         &self.int_to_str
     }
 }
+
+pub trait InternalizeOp {
+    fn internalize(self, interner: &Interner) -> Self;
+}
+
+impl<T: InternalizeOp> InternalizeOp for Box<T> {
+    fn internalize(self, interner: &Interner) -> Self {
+        Box::new((*self).internalize(interner))
+    }
+}

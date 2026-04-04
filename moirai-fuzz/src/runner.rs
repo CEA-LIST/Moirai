@@ -10,7 +10,7 @@ use moirai_protocol::{
     crdt::{eval::EvalNested, query::Read},
     replica::{IsReplica, ReplicaIdx},
     state::log::IsLog,
-    utils::translate_ids::TranslateIds,
+    utils::intern_str::InternalizeOp,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
@@ -54,7 +54,7 @@ pub fn runner<L>(
 ) -> RunData
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
-    L::Op: TranslateIds,
+    <L as IsLog>::Op: InternalizeOp,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {

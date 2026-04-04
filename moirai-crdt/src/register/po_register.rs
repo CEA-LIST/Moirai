@@ -7,9 +7,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::unstable_state::IsUnstableState,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::HashSet;
@@ -18,15 +17,6 @@ use crate::HashSet;
 pub enum PORegister<V> {
     Clear,
     Write(V),
-}
-
-impl<V> TranslateIds for PORegister<V>
-where
-    V: Debug + Clone + Eq + Hash,
-{
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl<V> PureCRDT for PORegister<V>
@@ -88,6 +78,12 @@ where
             }
         }
         set
+    }
+}
+
+impl<V> InternalizeOp for PORegister<V> {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

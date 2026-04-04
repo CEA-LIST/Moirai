@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
@@ -187,9 +189,20 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
         self.inner.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
+    fn effect(
+        &mut self,
+        event: Event<Self::Op>,
+        #[cfg(feature = "sink")] path: ObjectPath,
+        #[cfg(feature = "sink")] sink: &mut SinkCollector,
+    ) {
         let start = Instant::now();
-        self.inner.effect(event);
+        self.inner.effect(
+            event,
+            #[cfg(feature = "sink")]
+            path,
+            #[cfg(feature = "sink")]
+            sink,
+        );
         self.total_effect_time += start.elapsed();
         self.effect_call_count += 1;
     }

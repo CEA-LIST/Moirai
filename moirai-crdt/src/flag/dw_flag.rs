@@ -5,9 +5,8 @@ use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    replica::ReplicaIdx,
     state::{stable_state::IsStableState, unstable_state::IsUnstableState},
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -22,12 +21,6 @@ pub enum DWFlag {
     Enable,
     Disable,
     Clear,
-}
-
-impl TranslateIds for DWFlag {
-    fn translate_ids(&self, _from: ReplicaIdx, _interner: &Interner) -> Self {
-        self.clone()
-    }
 }
 
 impl IsStableState<DWFlag> for Option<bool> {
@@ -137,6 +130,12 @@ impl OpGenerator for DWFlag {
         )
         .unwrap();
         choice.clone()
+    }
+}
+
+impl InternalizeOp for DWFlag {
+    fn internalize(self, _interner: &Interner) -> Self {
+        self
     }
 }
 

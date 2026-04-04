@@ -12,7 +12,7 @@ use crate::{
     clock::{matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
     replica::ReplicaIdx,
-    utils::{intern_str::Interner, translate_ids::TranslateIds},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 pub trait IsTcsb<O> {
@@ -46,7 +46,7 @@ pub struct Tcsb<O> {
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug + TranslateIds,
+    O: Clone + Debug + InternalizeOp,
 {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
@@ -92,7 +92,7 @@ where
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
-        let op = op.translate_ids(self.replica_idx, &self.interner);
+        // let op = op.translate_ids(self.replica_idx, &self.interner);
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox
             .entry(event.id().idx())
@@ -175,7 +175,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone + TranslateIds,
+    O: Debug + Clone + InternalizeOp,
 {
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
@@ -274,13 +274,8 @@ where
         }
 
         let event = message.event();
-
-        Event::new(
-            event_id,
-            event.lamport().clone(),
-            event.op().translate_ids(from, &self.interner),
-            version,
-        )
+        let op = event.op().clone().internalize(&self.interner);
+        Event::new(event_id, *event.lamport(), op, version)
     }
 
     fn internalize_since(&mut self, message: SinceMessage) -> Since {
@@ -358,13 +353,8 @@ where
                 let idx = self.interner.translate(from, remote_idx);
                 version.set_by_idx(idx, seq);
             }
-
-            let e = Event::new(
-                event_id,
-                event.lamport().clone(),
-                event.op().translate_ids(from, &self.interner),
-                version,
-            );
+            let op = event.op().clone().internalize(&self.interner);
+            let e = Event::new(event_id, *event.lamport(), op, version);
             events.push(e);
         }
 
@@ -390,7 +380,7 @@ pub trait IsTcsbTest<O>: IsTcsb<O> {
 #[cfg(feature = "test_utils")]
 impl<O> IsTcsbTest<O> for Tcsb<O>
 where
-    O: Debug + Clone + TranslateIds,
+    O: Debug + Clone + InternalizeOp,
 {
     fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock

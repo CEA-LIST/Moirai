@@ -40,7 +40,7 @@ where
     fn from(event: &Event<O>) -> Self {
         Self {
             op: event.op().clone(),
-            tag: Tag::new(event.id().clone(), event.lamport().clone()),
+            tag: Tag::new(event.id().clone(), *event.lamport()),
         }
     }
 }
