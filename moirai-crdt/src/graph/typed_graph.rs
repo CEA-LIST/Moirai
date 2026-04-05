@@ -758,7 +758,7 @@ mod tests {
                             {
                                 true
                             } else {
-                                println!("Schema violations: {:?}", violations);
+                                // println!("Schema violations: {:?}", violations);
                                 false
                             }
                         }

@@ -3,12 +3,11 @@ use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 #[cfg(feature = "sink")]
-use moirai_protocol::state::object_path::ObjectPath;
-#[cfg(feature = "sink")]
 use moirai_protocol::state::sink::Sink;
 #[cfg(feature = "sink")]
 use moirai_protocol::state::sink::SinkCollector;
-use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -17,6 +16,7 @@ use moirai_protocol::{
     },
     event::Event,
     state::log::IsLog,
+    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -80,6 +80,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] ownership: SinkOwnership,
     ) {
         match event.op().clone() {
             Optional::Set(o) => {
@@ -98,12 +99,16 @@ where
                     path,
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
             Optional::Unset => {
                 #[cfg(feature = "sink")]
-                sink.collect(Sink::delete(path.clone()));
+                if ownership == SinkOwnership::Owned {
+                    sink.collect(Sink::delete(path.clone()));
+                }
                 if let Some(child) = self.child.as_mut() {
                     child.redundant_by_parent(event.version(), true);
                     if child.is_default() {

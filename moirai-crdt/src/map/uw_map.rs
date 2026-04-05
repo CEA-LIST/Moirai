@@ -1,3 +1,8 @@
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+};
+
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
     metrics::{FuzzMetrics, StructureMetrics},
@@ -7,6 +12,7 @@ use moirai_fuzz::{
 #[cfg(feature = "sink")]
 use moirai_protocol::state::{
     object_path::ObjectPath,
+    sink::SinkOwnership,
     sink::{Sink, SinkCollector},
 };
 use moirai_protocol::{
@@ -24,10 +30,6 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-};
 
 use crate::HashMap;
 
@@ -101,13 +103,18 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] ownership: SinkOwnership,
     ) {
         match event.op().clone() {
             UWMap::Update(k, v) => {
                 #[cfg(feature = "sink")]
-                let path = path.map_entry(format!("{:?}", k));
+                let path = if ownership == SinkOwnership::Owned {
+                    path.map_entry(format!("{:?}", k))
+                } else {
+                    path
+                };
                 #[cfg(feature = "sink")]
-                {
+                if ownership == SinkOwnership::Owned {
                     if self.children.contains_key(&k) {
                         sink.collect(Sink::update(path.clone()));
                     } else {
@@ -122,33 +129,29 @@ where
                     path,
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Owned,
                 );
-
-                if self.children.get(&k).unwrap().is_default() {
-                    self.children.remove(&k);
-                }
             }
             UWMap::Remove(k) => {
                 #[cfg(feature = "sink")]
-                {
+                if ownership == SinkOwnership::Owned {
                     let path = path.map_entry(format!("{:?}", k));
                     sink.collect(Sink::delete(path));
                 }
 
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.children.remove(&k);
-                    }
                 }
             }
             UWMap::Clear => {
                 #[cfg(feature = "sink")]
-                sink.collect(Sink::delete(path));
-                self.children.retain(|_, child| {
+                if ownership == SinkOwnership::Owned {
+                    sink.collect(Sink::delete(path));
+                }
+                for child in self.children.values_mut() {
                     child.redundant_by_parent(event.version(), true);
-                    !child.is_default() // keep only non-default children
-                });
+                }
             }
         }
     }

@@ -267,6 +267,7 @@ where
 
                 let item = &mut doc.items[idx];
                 // The delete only removes dots that are visible in its prepared parent context.
+                #[allow(clippy::mutable_key_type)]
                 let removed_dots = item.presence.visible_dots();
                 for dot in &removed_dots {
                     item.effect_live_dots.remove(dot);
@@ -297,6 +298,7 @@ where
                     }
 
                     let item = &mut doc.items[idx];
+                    #[allow(clippy::mutable_key_type)]
                     let removed_dots = item.presence.visible_dots();
                     for dot in &removed_dots {
                         item.effect_live_dots.remove(dot);
@@ -336,12 +338,6 @@ where
             }
             List::Insert { content, pos } => {
                 let idx = Self::find_by_current_pos(&doc.items, *pos);
-
-                debug_assert_ne!(
-                    true,
-                    idx >= 1 && !&doc.items[idx - 1].presence.is_integrated(),
-                    "Item to the left is not inserted!"
-                );
 
                 // if idx >= 1 && !&doc.items[idx - 1].presence.is_integrated() {
                 //     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained

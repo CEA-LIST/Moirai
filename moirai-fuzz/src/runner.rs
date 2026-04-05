@@ -290,7 +290,6 @@ where
         inter_replica_concurrency_ratio = Some(ratio);
 
         let output = graph.to_dot();
-        // println!("Execution graph:\n{}", clean_dot_output(&output));
         execution_graph_dot = Some(clean_dot_output(&output));
     }
 

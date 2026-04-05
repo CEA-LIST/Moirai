@@ -5,9 +5,9 @@ use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 #[cfg(feature = "sink")]
-use moirai_protocol::state::object_path::ObjectPath;
-#[cfg(feature = "sink")]
 use moirai_protocol::state::sink::{Sink, SinkCollector};
+#[cfg(feature = "sink")]
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
 use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
 #[cfg(feature = "fuzz")]
 use moirai_protocol::{
@@ -23,8 +23,10 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
 
-use crate::list::eg_walker::{List as SimpleList, ReadAt};
-use crate::map::uw_map::{UWMap, UWMapLog};
+use crate::{
+    list::eg_walker::{List as SimpleList, ReadAt},
+    map::uw_map::{UWMap, UWMapLog},
+};
 
 #[derive(Clone, Debug)]
 pub enum NestedList<O> {
@@ -79,6 +81,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
@@ -101,6 +104,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
                 let child_event =
                     Event::unfold(event.clone(), UWMap::Update(event.id().clone(), op));
@@ -110,6 +115,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
             }
             NestedList::Delete { pos } => {
@@ -126,6 +133,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target));
                 self.children.effect(
@@ -134,6 +143,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
             }
             NestedList::Update { pos, op } => {
@@ -151,6 +162,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
                 self.children.effect(
                     map_event,
@@ -158,6 +171,8 @@ where
                     path.clone(),
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    SinkOwnership::Delegated,
                 );
             }
         }
@@ -212,7 +227,23 @@ where
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
         let mut list = Vec::new();
         let positions = self.positions.execute_query(Read::new());
+        // println!(
+        //     "Positions: {}",
+        //     positions
+        //         .iter()
+        //         .map(|id| format!("{}", id))
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        #[allow(clippy::mutable_key_type)]
         let mut map = self.children.execute_query(Read::new());
+        // println!(
+        //     "Children: {}",
+        //     map.iter()
+        //         .map(|(id, child)| format!("{}: {:?}", id, child))
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
         for eid in positions {
             if let Some(child) = map.remove(&eid) {
                 list.push(child);

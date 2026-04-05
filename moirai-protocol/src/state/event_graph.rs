@@ -13,7 +13,7 @@ use petgraph::{
 };
 
 #[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector};
+use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     HashMap, HashSet,
     clock::version_vector::{Seq, Version},
@@ -59,6 +59,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] _path: ObjectPath,
         #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         IsUnstableState::append(self, event);
     }

@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 #[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector};
+use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     HashMap,
     clock::version_vector::Version,
@@ -51,6 +51,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] _path: ObjectPath,
         #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {

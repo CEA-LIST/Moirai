@@ -1,7 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
 #[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector};
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -58,6 +58,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
@@ -74,6 +75,8 @@ where
             path,
             #[cfg(feature = "sink")]
             &mut sink,
+            #[cfg(feature = "sink")]
+            SinkOwnership::Delegated,
         );
     }
 

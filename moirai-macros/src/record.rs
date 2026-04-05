@@ -64,7 +64,9 @@ macro_rules! record {
                     #[cfg(feature = "sink")]
                     path: $crate::moirai_protocol::state::object_path::ObjectPath,
                     #[cfg(feature = "sink")]
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector)
+                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
+                    #[cfg(feature = "sink")]
+                    ownership: $crate::moirai_protocol::state::sink::SinkOwnership)
                 {
                     match event.op().clone() {
                         $(
@@ -85,7 +87,7 @@ macro_rules! record {
                                     sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
                                 }
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                self.$field.effect(child_op, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink);
+                                self.$field.effect(child_op, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
                             }
                         )*
                         $name::New => {

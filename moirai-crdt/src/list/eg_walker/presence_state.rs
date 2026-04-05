@@ -25,6 +25,7 @@ impl PresenceState {
                 .any(|dot| self.deleted_dots.get(dot).copied().unwrap_or(0) == 0)
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn visible_dots(&self) -> BTreeSet<EventId> {
         // Update-wins semantics is expressed here: a dot is visible if it exists in the
         // prepared context and no prepared delete currently cancels it.

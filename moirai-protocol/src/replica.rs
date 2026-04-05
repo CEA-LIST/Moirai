@@ -3,7 +3,11 @@ use std::fmt::Debug;
 #[cfg(feature = "test_utils")]
 use crate::broadcast::tcsb::IsTcsbTest;
 #[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector};
+use crate::state::{
+    sink::SinkOwnership,
+    object_path::ObjectPath,
+    sink::SinkCollector,
+};
 use crate::{
     broadcast::{
         message::{BatchMessage, EventMessage, SinceMessage},
@@ -143,6 +147,8 @@ where
             object_path.clone(),
             #[cfg(feature = "sink")]
             &mut sink,
+            #[cfg(feature = "sink")]
+            SinkOwnership::Owned,
         );
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {

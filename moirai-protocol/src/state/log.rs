@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 #[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector};
+use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
@@ -13,7 +13,6 @@ use crate::{
     state::{po_log::POLog, stable_state::IsStableState, unstable_state::IsUnstableState},
 };
 
-/// Define the interface of a log structure for CRDTs that store events.
 pub trait IsLog: Default + Debug {
     // TODO: is Value really needed?
     type Value: Default + Debug;
@@ -33,6 +32,7 @@ pub trait IsLog: Default + Debug {
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] ownership: SinkOwnership,
     );
     fn eval<Q>(&self, q: Q) -> Q::Response
     where
@@ -96,6 +96,7 @@ impl<L: IsLog> IsLog for Box<L> {
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] ownership: SinkOwnership,
     ) {
         let inner_op = *event.op().clone();
         let inner_event = event.unfold(inner_op);
@@ -105,6 +106,8 @@ impl<L: IsLog> IsLog for Box<L> {
             path,
             #[cfg(feature = "sink")]
             sink,
+            #[cfg(feature = "sink")]
+            ownership,
         );
     }
 

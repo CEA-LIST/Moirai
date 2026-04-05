@@ -4,7 +4,7 @@ use std::{
 };
 
 #[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector};
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -65,12 +65,13 @@ where
         Self::default()
     }
 
-    // TODO: sinks
+    // TODO: add sink when vertex/arc creation/destruction
     fn effect(
         &mut self,
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] ownership: SinkOwnership,
     ) {
         match event.op().clone() {
             // Update the child at vertex `v`
@@ -82,6 +83,8 @@ where
                     path,
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    ownership,
                 );
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
@@ -115,6 +118,8 @@ where
                     path,
                     #[cfg(feature = "sink")]
                     sink,
+                    #[cfg(feature = "sink")]
+                    ownership,
                 );
             }
             // Remove the arc `(v1, v2, e)` and reset its child

@@ -8,8 +8,8 @@ use moirai_fuzz::metrics::StructureMetrics;
 use moirai_protocol::state::object_path::ObjectPath;
 #[cfg(feature = "sink")]
 use moirai_protocol::state::sink::SinkCollector;
-use moirai_protocol::utils::intern_str::InternalizeOp;
-use moirai_protocol::utils::intern_str::Interner;
+#[cfg(feature = "sink")]
+use moirai_protocol::state::sink::SinkOwnership;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -18,6 +18,7 @@ use moirai_protocol::{
     },
     event::Event,
     state::{log::IsLog, po_log::VecLog},
+    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::{
@@ -65,6 +66,7 @@ where
         event: Event<Self::Op>,
         #[cfg(feature = "sink")] path: ObjectPath,
         #[cfg(feature = "sink")] _sink: &mut SinkCollector,
+        #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         let op = match event.op() {
             AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
@@ -81,6 +83,8 @@ where
             path,
             #[cfg(feature = "sink")]
             &mut sink,
+            #[cfg(feature = "sink")]
+            SinkOwnership::Delegated,
         );
     }
 

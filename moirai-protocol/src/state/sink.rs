@@ -85,16 +85,6 @@ impl SinkCollector {
         // Ensure no duplicate sinks for the same path
         if let Some(idx) = self.sinks.iter().position(|s| s.path() == sink.path()) {
             // TODO: not ideal...
-            // println!(
-            //     "Duplicate sink for path: [{} ({:?})],\n existing sinks:\n       {}",
-            //     sink.object_path(),
-            //     sink.effect(),
-            //     self.sinks
-            //         .iter()
-            //         .map(|s| format!("[{} ({:?})]", s.object_path(), s.effect()))
-            //         .collect::<Vec<_>>()
-            //         .join("\n       ")
-            // );
             self.sinks.remove(idx);
         }
         self.sinks.push(sink);
@@ -103,4 +93,12 @@ impl SinkCollector {
     pub fn into_sinks(self) -> Vec<Sink> {
         self.sinks
     }
+}
+
+/// Define the interface of a log structure for CRDTs that store events.
+#[cfg(feature = "sink")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SinkOwnership {
+    Owned,
+    Delegated,
 }

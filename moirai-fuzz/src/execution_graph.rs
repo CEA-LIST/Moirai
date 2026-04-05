@@ -1,14 +1,15 @@
+use std::{collections::HashMap, fmt::Debug};
+
 use bimap::BiMap;
 use daggy::{Dag, NodeIndex};
 use fixedbitset::FixedBitSet;
 use moirai_protocol::event::{Event, id::EventId, tagged_op::TaggedOp};
-use petgraph::visit::{IntoNeighborsDirected, VisitMap, Visitable};
 use petgraph::{
     Direction,
     algo::toposort,
     dot::{Config, Dot},
+    visit::{IntoNeighborsDirected, VisitMap, Visitable},
 };
-use std::{collections::HashMap, fmt::Debug};
 
 pub struct ExecutionGraph<O> {
     graph: Dag<TaggedOp<O>, ()>,
@@ -176,8 +177,9 @@ fn transitive_reduce_dag<N>(graph: &mut Dag<N, ()>) {
 
 #[cfg(test)]
 mod tests {
-    use super::transitive_reduce_dag;
     use daggy::Dag;
+
+    use super::transitive_reduce_dag;
 
     #[test]
     fn transitive_reduction_removes_direct_shortcut() {
