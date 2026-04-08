@@ -2,6 +2,10 @@
 
 This crate implements the replication protocol of the Pure Op CRDT framework, including the Tagged Causal Stable Broadcast (TCSB) and the associated data structures for representing events and states, and defining the semantics of Pure CRDTs.
 
+## Architecture
+
+[![Moirai Protocol Architecture](../docs/images/pure_op_diagram.png)](../docs/images/pure_op_diagram.png)
+
 ## Crate organization
 
 ```sh
