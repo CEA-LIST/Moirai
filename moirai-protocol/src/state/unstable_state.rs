@@ -61,6 +61,38 @@ where
     }
 }
 
+#[cfg(feature = "test_utils")]
+impl<O> ::deepsize::DeepSizeOf for DerivedKeyState<O>
+where
+    O: HasDerivedKey + ::deepsize::DeepSizeOf,
+    O::DerivedKey: ::deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+        // DerivedKeyState stores the same logical key in the map and in the
+        // delivery order. Count both owned copies, and delegate operation
+        // payload accounting to TaggedOp.
+        let ops_size = self
+            .ops
+            .iter()
+            .map(|((event_id, derived_key), tagged_op)| {
+                event_id.deep_size_of_children(context)
+                    + derived_key.deep_size_of_children(context)
+                    + tagged_op.deep_size_of_children(context)
+            })
+            .sum::<usize>();
+
+        let order_size = self
+            .order
+            .iter()
+            .map(|(event_id, derived_key)| {
+                event_id.deep_size_of_children(context) + derived_key.deep_size_of_children(context)
+            })
+            .sum::<usize>();
+
+        ops_size + order_size
+    }
+}
+
 impl<O> IsUnstableState<O> for DerivedKeyState<O>
 where
     O: HasDerivedKey,

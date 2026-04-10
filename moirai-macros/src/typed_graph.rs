@@ -11,6 +11,19 @@ pub struct Arc<S, T, E> {
     pub kind: E,
 }
 
+#[cfg(feature = "test_utils")]
+impl<S, T, E> ::deepsize::DeepSizeOf for Arc<S, T, E>
+where
+    S: ::deepsize::DeepSizeOf,
+    T: ::deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+        // Edge kinds are schema marker values. Only the endpoint identifiers can
+        // carry heap-backed state, such as interned object paths.
+        self.source.deep_size_of_children(context) + self.target.deep_size_of_children(context)
+    }
+}
+
 impl<S, T, E> InternalizeOp for Arc<S, T, E>
 where
     S: InternalizeOp,
@@ -32,6 +45,18 @@ where
 {
     AddVertex { id: T },
     RemoveVertex { id: T },
+}
+
+#[cfg(feature = "test_utils")]
+impl<T> ::deepsize::DeepSizeOf for Vertex<T>
+where
+    T: Debug + Clone + PartialEq + Eq + Hash + ::deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+        match self {
+            Self::AddVertex { id } | Self::RemoveVertex { id } => id.deep_size_of_children(context),
+        }
+    }
 }
 
 #[macro_export]
@@ -64,6 +89,13 @@ macro_rules! typed_graph {
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
             pub struct $v(pub $crate::moirai_protocol::state::object_path::ObjectPath);
 
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for $v {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    self.0.deep_size_of_children(context)
+                }
+            }
+
             impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $v {
                 fn internalize(
                     self,
@@ -95,10 +127,26 @@ macro_rules! typed_graph {
             $( $edge_ty ),*
         }
 
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for __TypedGraphEdgeType {
+            fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> usize {
+                0
+            }
+        }
+
         // Enum of all vertices
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $vertex {
             $( $v($v) ),*
+        }
+
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for $vertex {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                match self {
+                    $( Self::$v(id) => id.deep_size_of_children(context) ),*
+                }
+            }
         }
 
         // Helper function to extract ObjectPath from any vertex variant
@@ -127,10 +175,28 @@ macro_rules! typed_graph {
             $( $conn($ety) ),*
         }
 
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for $edge {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                match self {
+                    $( Self::$conn(edge) => edge.deep_size_of_children(context) ),*
+                }
+            }
+        }
+
         // Enum of all arcs
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $arcs {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
+        }
+
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for $arcs {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                match self {
+                    $( Self::$conn(arc) => arc.deep_size_of_children(context) ),*
+                }
+            }
         }
 
         impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $arcs
@@ -201,6 +267,22 @@ macro_rules! typed_graph {
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
         }
 
+        #[cfg(feature = "test_utils")]
+        impl<P> ::deepsize::DeepSizeOf for $graph<P> {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                match self {
+                    Self::AddVertex { id } | Self::RemoveVertex { id } => {
+                        id.deep_size_of_children(context)
+                    }
+                    Self::DeleteSubtree { prefix } => prefix.deep_size_of_children(context),
+                    Self::AddArc(arc) | Self::RemoveArc(arc) => {
+                        arc.deep_size_of_children(context)
+                    }
+                    Self::__Marker(never, _) => match *never {},
+                }
+            }
+        }
+
         $crate::paste::paste! {
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
             pub enum [<$graph DerivedKey>] {
@@ -209,6 +291,21 @@ macro_rules! typed_graph {
                 DeleteSubtree($crate::moirai_protocol::state::object_path::ObjectPath),
                 AddArc($arcs),
                 RemoveArc($arcs),
+            }
+
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$graph DerivedKey>] {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    match self {
+                        Self::AddVertex(id) | Self::RemoveVertex(id) => {
+                            id.deep_size_of_children(context)
+                        }
+                        Self::DeleteSubtree(prefix) => prefix.deep_size_of_children(context),
+                        Self::AddArc(arc) | Self::RemoveArc(arc) => {
+                            arc.deep_size_of_children(context)
+                        }
+                    }
+                }
             }
 
             pub type [<$graph State>]<P> =

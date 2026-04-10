@@ -1,12 +1,17 @@
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_macros::typed_graph;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct FooBarEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct BarBazEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct FooBazEdge;
 
 typed_graph! {
@@ -726,51 +731,51 @@ mod tests {
         }
     }
 
-    // #[cfg(feature = "fuzz")]
-    // #[test]
-    // #[ignore]
-    // fn fuzz_typed_graph() {
-    //     use moirai_fuzz::{
-    //         config::{FuzzerConfig, RunConfig},
-    //         fuzzer::fuzzer,
-    //     };
-    //     use moirai_protocol::state::po_log::VecLog;
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_typed_graph() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
 
-    //     let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
-    //     let runs = vec![run.clone(); 1_000];
+        let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
+        let runs = vec![run.clone(); 1_000];
 
-    //     let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
-    //         "typed_graph",
-    //         runs,
-    //         true,
-    //         |a, b| {
-    //             let node = a.node_count() == b.node_count();
-    //             let edge = a.edge_count() == b.edge_count();
+        let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
+            "typed_graph",
+            runs,
+            true,
+            |a, b| {
+                let node = a.node_count() == b.node_count();
+                let edge = a.edge_count() == b.edge_count();
 
-    //             fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
-    //                 let is_valid = validate_schema(&graph);
-    //                 let is_valid = match is_valid {
-    //                     Ok(_) => true,
-    //                     Err(violations) => {
-    //                         if violations
-    //                             .iter()
-    //                             .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
-    //                         {
-    //                             true
-    //                         } else {
-    //                             // println!("Schema violations: {:?}", violations);
-    //                             false
-    //                         }
-    //                     }
-    //                 };
-    //                 is_valid
-    //             }
+                fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
+                    let is_valid = validate_schema(&graph);
+                    let is_valid = match is_valid {
+                        Ok(_) => true,
+                        Err(violations) => {
+                            if violations
+                                .iter()
+                                .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+                            {
+                                true
+                            } else {
+                                // println!("Schema violations: {:?}", violations);
+                                false
+                            }
+                        }
+                    };
+                    is_valid
+                }
 
-    //             node && edge && is_valid(a) && is_valid(b)
-    //         },
-    //         false,
-    //     );
+                node && edge && is_valid(a) && is_valid(b)
+            },
+            false,
+        );
 
-    //     fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
-    // }
+        fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
+    }
 }
