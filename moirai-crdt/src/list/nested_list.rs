@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
@@ -8,8 +10,6 @@ use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::state::sink::{Sink, SinkCollector};
 #[cfg(feature = "sink")]
 use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
-use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
-#[cfg(feature = "fuzz")]
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -18,7 +18,10 @@ use moirai_protocol::{
     },
     event::{Event, id::EventId},
     state::{event_graph::EventGraph, log::IsLog},
-    utils::boxer::Boxer,
+    utils::{
+        boxer::Boxer,
+        intern_str::{InternalizeOp, Interner},
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -29,6 +32,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum NestedList<O> {
     /// Insert a new child CRDT at the given position
     Insert { pos: usize, op: O },

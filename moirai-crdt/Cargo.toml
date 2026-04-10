@@ -13,7 +13,7 @@ description = "CRDT implementations for the Moirai"
 readme = "README.md"
 
 [dependencies]
-moirai-protocol = { path = "../moirai-protocol", features = ["test_utils"] }
+moirai-protocol = { path = "../moirai-protocol" }
 moirai-macros = { path = "../moirai-macros" }
 rustc-hash = "1.1.0"
 petgraph = { version = "0.6.4", features = ["serde-1"] }
@@ -24,11 +24,14 @@ serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 # MOIRAI-FUZZ
 moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 rand = { version = "0.10.0", optional = true }
+# TEST UTILS FEATURES
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "elsa",
+] }
 
 [features]
-# TODO: always enable fuzz by default for compatibility with Arachne and generated code
 default = ["fuzz"]
-# default = []
 serde = ["dep:serde"]
-fuzz = ["dep:moirai-fuzz", "dep:rand"]
+fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz/sink"]
+test_utils = ["dep:deepsize", "moirai-protocol/test_utils"]

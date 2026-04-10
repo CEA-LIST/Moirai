@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -14,6 +16,7 @@ use moirai_protocol::{
 use crate::HashSet;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PORegister<V> {
     Clear,
     Write(V),

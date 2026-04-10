@@ -1,5 +1,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -88,6 +90,19 @@ where
 impl<V, P> InternalizeOp for Register<V, P> {
     fn internalize(self, _interner: &Interner) -> Self {
         self
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<V, P> DeepSizeOf for Register<V, P>
+where
+    V: DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        match self {
+            Register::Write(v) => v.deep_size_of_children(context),
+            Register::__Marker(never, _) => match *never {},
+        }
     }
 }
 

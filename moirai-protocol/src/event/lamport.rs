@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::clock::version_vector::Version;
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct Lamport(usize);
 

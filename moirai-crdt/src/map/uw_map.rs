@@ -3,6 +3,8 @@ use std::{
     hash::Hash,
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
     metrics::{FuzzMetrics, StructureMetrics},
@@ -34,6 +36,7 @@ use rand::Rng;
 use crate::HashMap;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum UWMap<K, O> {
     Update(K, O),
     Remove(K),

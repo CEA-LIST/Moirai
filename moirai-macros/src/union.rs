@@ -11,6 +11,17 @@ macro_rules! union {
                 )*
             }
 
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for $union {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    match self {
+                        $(
+                            Self::$variant(value) => value.deep_size_of_children(context),
+                        )*
+                    }
+                }
+            }
+
             impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $union {
                 fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
                     match self {

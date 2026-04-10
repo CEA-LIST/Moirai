@@ -6,6 +6,7 @@ macro_rules! record {
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum $name {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),

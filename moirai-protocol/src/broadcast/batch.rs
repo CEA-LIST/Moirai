@@ -1,8 +1,12 @@
 use std::fmt::{Debug, Display};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::{clock::version_vector::Version, event::Event, replica::ReplicaId};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Batch<O> {
     events: Vec<Event<O>>,
     version: Version,

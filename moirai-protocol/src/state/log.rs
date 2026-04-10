@@ -1,5 +1,8 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 #[cfg(feature = "sink")]
 use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
@@ -53,25 +56,30 @@ pub trait IsLog: Default + Debug {
 pub trait IsLogTest
 where
     Self: IsLog,
-    Self::Op: PureCRDT,
+    Self::Op: PureCRDT + DeepSizeOf,
     <Self::Op as PureCRDT>::StableState: IsStableState<Self::Op>,
 {
     fn stable(&self) -> &<Self::Op as PureCRDT>::StableState;
-    fn unstable(&self) -> &impl IsUnstableState<Self::Op>;
+    fn unstable(&self) -> &(impl IsUnstableState<Self::Op> + DeepSizeOf);
+    fn unstable_mut(&mut self) -> &mut (impl IsUnstableState<Self::Op> + DeepSizeOf);
 }
 
 #[cfg(feature = "test_utils")]
 impl<O, U> IsLogTest for POLog<O, U>
 where
-    O: PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
+    O: PureCRDT + Clone + DeepSizeOf,
+    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
 {
     fn stable(&self) -> &<O as PureCRDT>::StableState {
         &self.stable
     }
 
-    fn unstable(&self) -> &impl IsUnstableState<<Self as IsLog>::Op> {
+    fn unstable(&self) -> &(impl IsUnstableState<Self::Op> + DeepSizeOf) {
         &self.unstable
+    }
+
+    fn unstable_mut(&mut self) -> &mut (impl IsUnstableState<Self::Op> + DeepSizeOf) {
+        &mut self.unstable
     }
 }
 

@@ -13,8 +13,13 @@ moirai-protocol = { path = "../moirai-protocol" }
 moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 paste = "1.0.15"
 rustc-hash = "1.1.0"
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "elsa",
+] }
 
+# TEST UTILS FEATURES
 [features]
 default = []
 fuzz = ["moirai-fuzz"]
 sink = ["moirai-protocol/sink"]
+test_utils = ["moirai-protocol/test_utils", "dep:deepsize"]

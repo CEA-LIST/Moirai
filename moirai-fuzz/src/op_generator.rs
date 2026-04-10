@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::pure_crdt::PureCRDT,
     state::{
@@ -38,8 +39,8 @@ where
 
 impl<O, U> OpGeneratorNested for POLog<O, U>
 where
-    O: PureCRDT + Clone + OpGenerator,
-    U: IsUnstableState<O> + Default + Debug,
+    O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
+    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         O::generate(

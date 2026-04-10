@@ -1,13 +1,12 @@
 use std::fmt::Debug;
 
 #[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
+#[cfg(feature = "test_utils")]
 use crate::broadcast::tcsb::IsTcsbTest;
 #[cfg(feature = "sink")]
-use crate::state::{
-    sink::SinkOwnership,
-    object_path::ObjectPath,
-    sink::SinkCollector,
-};
+use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     broadcast::{
         message::{BatchMessage, EventMessage, SinceMessage},
@@ -21,6 +20,8 @@ use crate::{
 
 pub type ReplicaId = str;
 pub type ReplicaIdOwned = String;
+
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReplicaIdx(pub usize);
 
@@ -160,8 +161,8 @@ where
 #[cfg(feature = "test_utils")]
 impl<L, T> Replica<L, T>
 where
-    L: IsLog,
-    T: IsTcsbTest<L::Op>,
+    L: IsLog,             // + DeepSizeOf,
+    T: IsTcsbTest<L::Op>, // + DeepSizeOf,
 {
     pub fn tcsb(&self) -> &T {
         &self.tcsb
@@ -173,5 +174,9 @@ where
 
     pub fn state(&self) -> &L {
         &self.state
+    }
+
+    pub fn state_mut(&mut self) -> &mut L {
+        &mut self.state
     }
 }

@@ -3,6 +3,8 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -25,6 +27,7 @@ use crate::counter::stable::CounterStable;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),

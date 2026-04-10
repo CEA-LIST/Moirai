@@ -5,12 +5,16 @@ pub mod tagged_op;
 
 use std::fmt::{Debug, Display};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::{
     clock::version_vector::Version,
     event::{id::EventId, lamport::Lamport},
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Event<O> {
     id: EventId,
     lamport: Lamport,

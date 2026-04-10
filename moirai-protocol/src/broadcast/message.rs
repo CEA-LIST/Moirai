@@ -1,5 +1,8 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::{
     broadcast::{batch::Batch, since::Since},
     event::Event,
@@ -7,13 +10,20 @@ use crate::{
 };
 
 pub mod kind {
+    #[cfg(feature = "test_utils")]
+    use deepsize::DeepSizeOf;
+
     #[derive(Debug, Clone, Copy, Default)]
+    #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
     pub struct Any;
     #[derive(Debug, Clone, Copy, Default)]
+    #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
     pub struct Event;
     #[derive(Debug, Clone, Copy, Default)]
+    #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
     pub struct Batch;
     #[derive(Debug, Clone, Copy, Default)]
+    #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
     pub struct Since;
 }
 
@@ -22,6 +32,7 @@ pub type BatchMessage<O> = Message<O, kind::Batch>;
 pub type SinceMessage = Message<(), kind::Since>;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Message<O, K = kind::Any> {
     payload: Payload<O>,
     resolver: Resolver,
@@ -29,6 +40,7 @@ pub struct Message<O, K = kind::Any> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Payload<O> {
     Event(Event<O>),
     Batch(Batch<O>),

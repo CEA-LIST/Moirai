@@ -4,6 +4,8 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -18,6 +20,7 @@ use crate::{
 /// Sequence number
 pub type Seq = usize;
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone, PartialEq)]
 struct VersionEntries(Vec<Seq>);
 
@@ -76,6 +79,7 @@ impl VersionEntries {
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Version {
     entries: VersionEntries,
     origin_idx: ReplicaIdx,

@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -21,6 +23,7 @@ use crate::HashSet;
 use crate::set::SetConfig;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum AWSet<V> {
     Add(V),
     Remove(V),

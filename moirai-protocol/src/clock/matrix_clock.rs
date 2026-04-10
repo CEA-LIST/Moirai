@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
@@ -12,6 +14,7 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 struct ReplicaMap(Vec<Version>);
 
 impl ReplicaMap {
@@ -24,16 +27,16 @@ impl ReplicaMap {
     }
 }
 
-/// A matrix clock is a generalization of a vector clock. It is a square matrix of positive integers.
+/// A matrix clock is a generalization in 2 dimensions of a vector clock. It is a square matrix of positive integers.
 /// Each row represents the last vector clock known by the local replica from each member of the view.
 /// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
-// #[cfg_attr(feature = "utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize, Tsify),
     tsify(into_wasm_abi, from_wasm_abi)
 )]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct MatrixClock {
     entries: ReplicaMap,
     origin_idx: ReplicaIdx,

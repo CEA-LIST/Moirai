@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -17,6 +19,7 @@ use tsify::Tsify;
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum EWFlag {
     Enable,
     Disable,

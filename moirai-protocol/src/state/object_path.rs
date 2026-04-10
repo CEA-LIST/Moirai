@@ -1,11 +1,15 @@
 use std::fmt::{Display, Error, Formatter};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::{
     event::id::EventId,
     utils::intern_str::{InternalizeOp, Interner},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PathSegment {
     Field(&'static str),
     ListElement(EventId),
@@ -14,6 +18,7 @@ pub enum PathSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ObjectPath {
     root: &'static str,
     segments: Vec<PathSegment>,

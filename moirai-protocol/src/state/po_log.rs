@@ -1,3 +1,5 @@
+// #[cfg(feature = "test_utils")]
+// use deepsize::DeepSizeOf;
 use std::fmt::Debug;
 
 #[cfg(feature = "sink")]
@@ -19,6 +21,7 @@ pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
 
 #[derive(Debug, Clone)]
+// #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct POLog<O, U>
 where
     O: PureCRDT,

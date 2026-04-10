@@ -6,6 +6,8 @@ use std::{
     fmt::Debug,
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
@@ -30,6 +32,7 @@ use crate::{
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum List<V> {
     Insert { content: V, pos: usize },
     Delete { pos: usize },

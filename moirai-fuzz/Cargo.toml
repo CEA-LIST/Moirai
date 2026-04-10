@@ -26,6 +26,10 @@ daggy = "0.9.0"
 bimap = "0.6.3"
 petgraph = "0.8.3"
 fixedbitset = "0.5.7"
+# TEST UTILS FEATURES
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", features = [
+    "elsa",
+] }
 
 [features]
 default = []
