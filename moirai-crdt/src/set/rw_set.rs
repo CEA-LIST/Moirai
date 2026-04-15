@@ -396,7 +396,14 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<RWSet<String>>>::new("rw_set", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<RWSet<String>>>::new(
+                "rw_set",
+                runs,
+                true,
+                |a, b| a == b,
+                false,
+                None,
+            );
 
         fuzzer::<VecLog<RWSet<String>>>(config);
     }

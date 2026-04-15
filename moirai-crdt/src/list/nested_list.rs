@@ -668,6 +668,7 @@ mod tests {
             true,
             |a, b| a == b,
             false,
+            None,
         );
 
         fuzzer::<NestedListLog<VecLog<Counter<i32>>>>(config);
@@ -694,6 +695,7 @@ mod tests {
             true,
             |a, b| a == b,
             false,
+            None,
         );
 
         fuzzer::<NestedListLog<EventGraph<List<char>>>>(config);

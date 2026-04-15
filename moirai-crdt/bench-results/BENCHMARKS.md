@@ -1,12 +1,12 @@
-# PaPoC ’26 Submission Experiments
+# ICSOFT ’26 Submission Experiments
 
-The PaPoC ’26 submission reports results from two independent experiments:
+The ICSOFT ’26 submission reports results from two independent experiments:
 
 1. **Enable-Wins Flag Set vs. Add-Wins Set**
 2. **Incremental vs. full recomputation of the Last Stable Vector (LSV)**
 
 The raw data corresponding to these experiments are stored in this folder and
-linked below.
+linked below. The experiments were conducted using the fuzzer on a MacBook M2 (2022), which generates execution traces and measures the execution time of the relevant code sections. The fuzzer is available at: [moirai-crdt/src/fuzzer/](moirai-crdt/src/fuzzer/).
 
 ---
 
@@ -49,12 +49,11 @@ Both data types were evaluated under identical conditions:
   of switching between online and offline states)
 - **Causal stability:** disabled, in order to observe the impact of an
   ever-growing PO-Log
-- **Element type:** `usize`
-- **Element range:** `[0, 1_000_000]`
+- **Element type:** `String` with a maximum length of 4 characters, a minimum length of 2 character, generated uniformly at random
 - **Operations:**
-  - `Add(elem)` with probability 62.5%
-  - `Remove(elem)` with probability 25%
-  - `Clear` with probability 12.5%
+  - `Add(elem)` with probability 100%
+  - `Remove(elem)` with probability 0%
+  - `Clear` with probability 0%
 
 Operations are generated without inspecting the current state (e.g., `Remove`
 may target an element that is not present), which is consistent with the
@@ -83,13 +82,13 @@ runs exhibit comparable levels of concurrency.
 ### Raw Data
 
 - **AW-Set**:
-  - Test results: [/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json](/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json)
-  - Test file: [/src/crdt/set/aw_set.rs#L387](/src/crdt/set/aw_set.rs#L387)
-  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
-- EWFlag-Set: 
-  - Test results: [/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json](/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json)
-  - Test file: [/src/crdt/set/ewflag_set.rs#L111](/src/crdt/set/ewflag_set.rs#L111)
-  - Command: `cargo test --release fuzz_aw_set -- --nocapture`
+  - Test results: [moirai-crdt/bench-results/aw_set/2026-04-15-15-55-06_24-event-graph_f938eff8.json](moirai-crdt/bench-results/aw_set/2026-04-15-15-55-06_24-event-graph_f938eff8.json)
+  - Test file: [moirai-crdt/src/crdt/set/aw_set.rs#L387](moirai-crdt/src/crdt/set/aw_set.rs#L387)
+  - Command: `sudo RUST_LOG=debug cargo test --release -- --no-capture --ignored fuzz_aw_set`
+- EWFlag-Set:
+  - Test results: [moirai-crdt/bench-results/ewflag_set/2026-04-15-15-56-06_24-event-graph_f938eff8.json](moirai-crdt/bench-results/ewflag_set/2026-04-15-15-56-06_24-event-graph_f938eff8.json)
+  - Test file: [moirai-crdt/src/crdt/set/ewflag_set.rs#L111](moirai-crdt/src/crdt/set/ewflag_set.rs#L111)
+  - Command: `sudo RUST_LOG=debug cargo test --release -- --no-capture --ignored fuzz_ewflag_set`
 
 ---
 
@@ -124,4 +123,4 @@ Note that the results of this experiment were not collected automatically, despi
 
 ### Raw Data
 
-The raw benchmark results for this experiment are available at: [/bench-results/stability_computation/](/bench-results/stability_computation/).
+The raw benchmark results for this experiment are available at: [moirai-crdt/bench-results/stability_computation/](moirai-crdt/bench-results/stability_computation/).

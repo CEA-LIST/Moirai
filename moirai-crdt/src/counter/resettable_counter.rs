@@ -242,6 +242,7 @@ mod tests {
             true,
             |a, b| a == b,
             false,
+            None,
         );
 
         fuzzer::<VecLog<Counter<i32>>>(config);

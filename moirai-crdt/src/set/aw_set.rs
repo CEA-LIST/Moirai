@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -16,7 +16,7 @@ use moirai_protocol::{
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
-use rand::{Rng, RngExt};
+use rand::Rng;
 
 use crate::HashSet;
 #[cfg(feature = "fuzz")]
@@ -153,12 +153,15 @@ impl<V> InternalizeOp for AWSet<V> {
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for AWSet<usize> {
+impl<V> OpGenerator for AWSet<V>
+where
+    V: Debug + Clone + Eq + Hash + ValueGenerator,
+{
     type Config = SetConfig;
 
     fn generate(
         rng: &mut impl Rng,
-        config: &Self::Config,
+        _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableState<Self>,
     ) -> Self {
@@ -169,10 +172,10 @@ impl OpGenerator for AWSet<usize> {
             Remove,
             Clear,
         }
-        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
+        let dist = WeightedIndex::new([1, 0, 0]).unwrap();
 
         let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
-        let value = rng.random_range(0..config.max_elements);
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
         match choice {
             Choice::Add => AWSet::Add(value),
             Choice::Remove => AWSet::Remove(value),
@@ -374,26 +377,23 @@ mod tests {
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
-        let runs = vec![run.clone(); 1];
-        // let run_1 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        // let run_2 = RunConfig::new(0.7, 16, 30_000, None, None, false, true);
-        // let run_3 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
-        // let run_4 = RunConfig::new(0.7, 16, 300_000, None, None, false, true);
-        // let run_5 = RunConfig::new(0.7, 16, 600_000, None, None, false, true);
-        // let run_6 = RunConfig::new(0.7, 16, 900_000, None, None, false, true);
-        // let run_7 = RunConfig::new(0.7, 16, 1_000_000, None, None, false, true);
-        // let run_8 = RunConfig::new(0.7, 16, 1_300_000, None, None, false, true);
-        // let run_9 = RunConfig::new(0.7, 16, 1_600_000, None, None, false, true);
-        // let run_10 = RunConfig::new(0.7, 16, 2_000_000, None, None, false, true);
-        // let run_11 = RunConfig::new(0.7, 16, 3_000_000, None, None, false, true);
-        // let runs = vec![
-        //     run_1, run_2, run_3, run_4, run_5, run_6, run_7, run_8, run_9, run_10, run_11,
-        // ];
 
-        let config =
-            FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, false);
+        let run_1 = RunConfig::new(0.7, 16, 1_000, None, None, false, true);
+        let run_2 = RunConfig::new(0.7, 16, 5_000, None, None, false, true);
+        let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        let run_4 = RunConfig::new(0.7, 16, 50_000, None, None, false, true);
+        let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        let runs = vec![run_1, run_2, run_3, run_4, run_5];
 
-        fuzzer::<VecLog<AWSet<usize>>>(config);
+        let config = FuzzerConfig::<VecLog<AWSet<String>>>::new(
+            "aw_set",
+            runs,
+            true,
+            |a, b| a == b,
+            true,
+            None,
+        );
+
+        fuzzer::<VecLog<AWSet<String>>>(config);
     }
 }

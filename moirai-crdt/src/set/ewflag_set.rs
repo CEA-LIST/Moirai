@@ -1,17 +1,21 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
+use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 #[cfg(feature = "sink")]
 use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
-        query::{QueryOperation, Read},
+        query::{Contains, QueryOperation, Read},
     },
     event::Event,
     state::{log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
+use rand::distr::weighted::WeightedIndex;
 
 use crate::{
     HashSet,
@@ -112,9 +116,63 @@ where
     }
 }
 
+impl<V> EvalNested<Contains<V>> for EWFlagSetLog<V>
+where
+    V: Clone + Debug + Hash + Eq + PartialEq,
+{
+    fn execute_query(&self, q: Contains<V>) -> <Contains<V> as QueryOperation>::Response {
+        let v = self.0.children().get(&q.0);
+        match v {
+            Some(v) => v.execute_query(Read::new()),
+            None => false,
+        }
+    }
+}
+
 impl<V> InternalizeOp for EWFlagSet<V> {
     fn internalize(self, _interner: &Interner) -> Self {
         self
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> OpGeneratorNested for EWFlagSetLog<V>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+{
+    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+        use rand::distr::Distribution;
+
+        #[derive(Debug)]
+        enum Choice {
+            Add,
+            Remove,
+            Clear,
+        }
+
+        let dist = WeightedIndex::new([1, 0, 0]).unwrap();
+
+        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Add => EWFlagSet::Add(value),
+            Choice::Remove => EWFlagSet::Remove(value),
+            Choice::Clear => EWFlagSet::Clear,
+        }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> FuzzMetrics for EWFlagSetLog<V>
+where
+    V: Clone + Hash + Debug + Eq,
+{
+    fn structure_metrics(&self) -> StructureMetrics {
+        if self.is_default() {
+            StructureMetrics::empty()
+        } else {
+            StructureMetrics::scalar()
+        }
     }
 }
 
@@ -167,5 +225,33 @@ mod tests {
             replica_b.query(Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec!["b", "c"])
         );
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_ewflag_set() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let run_1 = RunConfig::new(0.7, 16, 1_000, None, None, false, true);
+        let run_2 = RunConfig::new(0.7, 16, 5_000, None, None, false, true);
+        let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
+        let run_4 = RunConfig::new(0.7, 16, 50_000, None, None, false, true);
+        let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
+        let runs = vec![run_1, run_2, run_3, run_4, run_5];
+
+        let config = FuzzerConfig::<EWFlagSetLog<String>>::new(
+            "ewflag_set",
+            runs,
+            true,
+            |a, b| a == b,
+            true,
+            None,
+        );
+
+        fuzzer::<EWFlagSetLog<String>>(config);
     }
 }

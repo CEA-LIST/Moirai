@@ -774,6 +774,7 @@ mod tests {
                 node && edge && is_valid(a) && is_valid(b)
             },
             false,
+            None,
         );
 
         fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);

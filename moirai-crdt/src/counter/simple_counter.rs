@@ -157,7 +157,14 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<Counter<i32>>>::new("counter", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<Counter<i32>>>::new(
+                "counter",
+                runs,
+                true,
+                |a, b| a == b,
+                false,
+                None,
+            );
 
         fuzzer::<VecLog<Counter<i32>>>(config);
     }

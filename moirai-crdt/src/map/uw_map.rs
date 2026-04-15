@@ -762,7 +762,8 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false);
+        let config =
+            FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false, None);
 
         fuzzer::<UWMapNested>(config);
     }
