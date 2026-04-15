@@ -1,24 +1,5 @@
 # Moirai
 
-<div align="center">
-
-[![GitHub stars](https://img.shields.io/github/stars/CEA-LIST/Moirai?style=social)](https://github.com/CEA-LIST/Moirai/stargazers)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/CEA-LIST/Moirai/rust.yml?branch=master)](https://github.com/CEA-LIST/Moirai/actions)
-
-**A Rust Implementation of the Pure Operation-Based CRDT Framework, made for Building Collaborative Applications**
-
-</div>
-
----
-
-<div align="center">
-  <h2>⚠️ Work in Progress — In Development ⚠️</h2>
-</div>
-
-**This project is under active development.** The API and features are subject to change as we refine the framework.
-
 ## Overview
 
 **Moirai** is a Rust-based implementation of the pure operation-based Conflict-free Replicated Data Types (CRDT) framework proposed by Baquero, Almeida, and Shoker (see [their paper](https://arxiv.org/abs/1710.04469)). Moirai provides a collection of ready-to-use CRDT implementations while remaining open to extension. You can leverage it to create new CRDTs with custom conflict-resolution policies. Rust's extensive compilation target support, including WebAssembly, makes Moirai an ideal choice for building collaborative web applications.
@@ -34,43 +15,3 @@ Moirai serves as a research platform for developing novel CRDTs tailored for Col
 ├── moirai-macros/ # Rust macros for specific CRDTs.
 └── moirai-protocol/ # Implementation of the Pure Op framework's replication protocol.
 ```
-
-## Publications
-
-Moirai has been used in the following research:
-
-- **Léo Olivier, Kirollos Morcos, Marcos Didonet del Fabro, Sebastien Gerard.**  
-  [_A Local-First Collaborative Modeling Approach with Replicated Data Types_](https://cea.hal.science/cea-05322894).  
-  CoPaMo'25 - International Workshop on Collaborative and Participatory Modeling, October 2025, Grand Rapids, United States.
-
-## License
-
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-Developed at [CEA LIST](https://list.cea.fr/en/), the French Alternative Energies and Atomic Energy Commission.
-
-**Authors:**
-
-- Léo Olivier ([@leo-olivier](https://github.com/leo-olivier))
-- Kirollos Morcos ([@KirollosMorcos](https://github.com/KirollosMorcos))
-
----
-
-<div align="center">
-  <blockquote cite="https://www.huxley.net/bnw/four.html">
-    <p style="font-style:italic">Equal laws the Moirai make, <br /> Kings' and peasants' threads they take, <br /> And one weapon cuts them all.</p>
-  </blockquote>
-  <p>— Marquis de Racan</p>
-</div>
-
-<div align="center">
-
-**[⬆ Back to Top](#moirai)**
-
-Made with ❤️ by the CEA LIST team
-
-</div>
