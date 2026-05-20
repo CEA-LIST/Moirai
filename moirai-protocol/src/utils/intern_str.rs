@@ -9,18 +9,17 @@ use crate::{
     replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
 };
 
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone)]
 pub struct Resolver {
     inner: Rc<FrozenVec<ReplicaIdOwned>>,
 }
 
-// #[cfg(feature = "test_utils")]
-// impl DeepSizeOf for Resolver {
-//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-//         self.inner.deep_size_of_children(context)
-//     }
-// }
+#[cfg(feature = "test_utils")]
+impl DeepSizeOf for Resolver {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.inner.deep_size_of_children(context)
+    }
+}
 
 impl Resolver {
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {

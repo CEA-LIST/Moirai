@@ -1,6 +1,6 @@
-# PaPoC ’26 Submission Experiments
+# Experiments
 
-The PaPoC ’26 submission reports results from two independent experiments:
+We report results from two independent experiments:
 
 1. **Enable-Wins Flag Set vs. Add-Wins Set**
 2. **Incremental vs. full recomputation of the Last Stable Vector (LSV)**
@@ -43,8 +43,8 @@ updates in the set.
 
 Both data types were evaluated under identical conditions:
 
-- **Number of replicas:** 16  
-- **Network:** fully connected, asynchronous, bidirectional, reliable channels  
+- **Number of replicas:** 16
+- **Network:** fully connected, asynchronous, bidirectional, reliable channels
 - **Replica churn:** 0.7 (each time a replica is selected, it has a 70% chance
   of switching between online and offline states)
 - **Causal stability:** disabled, in order to observe the impact of an
@@ -86,7 +86,7 @@ runs exhibit comparable levels of concurrency.
   - Test results: [/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json](/bench-results/aw_set/2026-01-29-16-07-36_master_857b56ab.json)
   - Test file: [/src/crdt/set/aw_set.rs#L387](/src/crdt/set/aw_set.rs#L387)
   - Command: `cargo test --release fuzz_aw_set -- --nocapture`
-- EWFlag-Set: 
+- EWFlag-Set:
   - Test results: [/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json](/bench-results/ew_flag_set/2026-01-29-16-08-48_master_857b56ab.json)
   - Test file: [/src/crdt/set/ewflag_set.rs#L111](/src/crdt/set/ewflag_set.rs#L111)
   - Command: `cargo test --release fuzz_aw_set -- --nocapture`

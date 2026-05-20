@@ -21,6 +21,6 @@ is still under active development, benchmark reports may:
 
 The most recent naming convention is: `year-month-day-hour-minute-second_branch_commit-hash.json`
 
-## PaPoC ’26 Submission Experiments
+## Experiments
 
 See [BENCHMARKS.md](/bench-results/BENCHMARKS.md).

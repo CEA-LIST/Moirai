@@ -61,6 +61,10 @@ impl PartialOrd for Lww<'_> {
 pub struct FairPolicy;
 
 impl Policy for FairPolicy {
+    /// # Complexity
+    /// O(n log n).
+    /// Must sort the vec of members, which is O(n log n) where n is the number of members.
+    /// Then, must find the index of the origin id, which is O(n), for both tags.
     fn compare(a: &Tag, b: &Tag) -> Ordering {
         match a.lamport().cmp(b.lamport()) {
             Ordering::Equal => {
@@ -70,6 +74,7 @@ impl Policy for FairPolicy {
 
                 let val = a.lamport().val();
                 let mut members = a.id().resolver().into_vec();
+                // TODO: to avoid unnecessary sorting, we can maintain a sorted vec (or btreeset) of members in the resolver.
                 members.sort_unstable();
                 let n = members.len();
                 let round_leader = val % n;

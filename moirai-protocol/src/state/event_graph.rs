@@ -6,39 +6,91 @@ use std::{
 use bimap::BiMap;
 use petgraph::{
     Direction,
-    algo::has_path_connecting,
     graph::NodeIndex,
     prelude::StableDiGraph,
-    visit::{Dfs, VisitMap, Visitable},
+    visit::{Dfs, Visitable},
 };
 
 #[cfg(feature = "sink")]
 use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
-    HashMap, HashSet,
-    clock::version_vector::{Seq, Version},
+    HashSet,
+    clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
         pure_crdt::{CausalReset, PureCRDT},
         query::QueryOperation,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::{log::IsLog, unstable_state::IsUnstableState},
 };
 
-// TODO: use Daggy?
+/// Contains EventIds retained for parent discovery, sorted by process and sequence number.
+#[derive(Debug, Clone)]
+struct Cutter(BTreeMap<ReplicaIdx, BTreeMap<usize, NodeIndex>>);
+
+impl Cutter {
+    fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// Insert an event id and its corresponding node index in the cutter.
+    fn insert(&mut self, event_id: &EventId, node_idx: NodeIndex) {
+        self.0
+            .entry(event_id.idx())
+            .or_default()
+            .insert(event_id.seq(), node_idx);
+    }
+
+    /// For a given version, for each entry in the version,
+    /// return the node index of the event with the same replica id and
+    /// the highest sequence number that is lower or equal to the sequence number in the version.
+    fn below(&self, version: &Version) -> Vec<NodeIndex> {
+        version
+            .iter()
+            .filter_map(|(idx, seq)| {
+                self.0.get(&idx).and_then(|seq_map| {
+                    seq_map
+                        .range(..=seq)
+                        .next_back()
+                        .map(|(_, node_idx)| *node_idx)
+                })
+            })
+            .collect()
+    }
+
+    /// Remove all entries in the cutter that are lower or equal to the given version.
+    fn remove(&mut self, version: &Version) {
+        for (idx, seq) in version.iter() {
+            if let Some(seq_map) = self.0.get_mut(&idx) {
+                let keys_to_remove: Vec<usize> =
+                    seq_map.range(..seq).map(|(seq, _)| *seq).collect();
+                for key in keys_to_remove {
+                    seq_map.remove(&key);
+                }
+                if seq_map.is_empty() {
+                    self.0.remove(&idx);
+                }
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
-    // TODO: use the stability vector to know where to stop when performing find_immediate_predecessors, and to avoid visiting the whole graph when collecting predecessors.
     graph: StableDiGraph<TaggedOp<O>, ()>,
     map: BiMap<NodeIndex, EventId>,
     heads: HashSet<EventId>,
-    by_replica: Vec<BTreeMap<Seq, NodeIndex>>,
-    /// For each node, stores the maximum reachable sequence number per replica,
-    /// including the node itself. Used as a fast negative filter before exact
-    /// reachability checks.
-    summaries: HashMap<NodeIndex, Vec<Seq>>,
+    /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
+    cutter: Cutter,
 }
+
+// TODO: EventGraph is an unstable log, not a log.
 
 impl<O> IsLog for EventGraph<O>
 where
@@ -95,7 +147,9 @@ where
         O::is_enabled(op, &<O as PureCRDT>::StableState::default(), self)
     }
 
-    fn stabilize(&mut self, _version: &Version) {}
+    fn stabilize(&mut self, version: &Version) {
+        self.cutter.remove(version);
+    }
 }
 
 impl<O> Display for EventGraph<O>
@@ -133,39 +187,30 @@ where
 
     fn append(&mut self, event: Event<O>) {
         let new_tagged_op = TaggedOp::from(&event);
-        let child_idx = self.graph.add_node(new_tagged_op);
-        self.map.insert(child_idx, event.id().clone());
+        // Find the immediate predecessors
         let immediate_parents = self.find_immediate_predecessors(event.version());
-        for parent_idx in &immediate_parents {
-            self.graph.add_edge(child_idx, *parent_idx, ());
-            let parent_id = self.map.get_by_left(parent_idx).unwrap();
+
+        // Add the event to the graph
+        let child_idx = self.graph.add_node(new_tagged_op);
+        // Add to the cutter
+        self.cutter.insert(event.id(), child_idx);
+
+        // Record the node index of the event in the map
+        self.map.insert(child_idx, event.id().clone());
+
+        // For each predecessor found, add an edge from the new event to it
+        for parent_idx in immediate_parents {
+            self.graph.add_edge(child_idx, parent_idx, ());
+            let parent_id = self.map.get_by_left(&parent_idx).unwrap();
+            // If the parent was a head, it is not anymore since it has a child now
             if self.heads.contains(parent_id) {
                 self.heads.remove(parent_id);
             }
         }
+        // A new event is always a head of the graph since it has no children (yet)
         self.heads.insert(event.id().clone());
-        if self.by_replica.len() <= event.id().idx().0 {
-            self.by_replica
-                .resize_with(event.id().idx().0 + 1, BTreeMap::new);
-        }
-        self.by_replica[event.id().idx().0].insert(event.id().seq(), child_idx);
 
-        let mut summary = vec![0; event.id().resolver().len()];
-        summary[event.id().idx().0] = event.id().seq();
-        for parent_idx in &immediate_parents {
-            if let Some(parent_summary) = self.summaries.get(parent_idx) {
-                if summary.len() < parent_summary.len() {
-                    summary.resize(parent_summary.len(), 0);
-                }
-                for (idx, seq) in parent_summary.iter().enumerate() {
-                    if summary[idx] < *seq {
-                        summary[idx] = *seq;
-                    }
-                }
-            }
-        }
-        self.summaries.insert(child_idx, summary);
-
+        //* Debugging */
         #[allow(clippy::mutable_key_type)] // false positive
         fn max_one_per_id(set: &HashSet<EventId>) -> bool {
             let mut seen = HashSet::default();
@@ -200,7 +245,7 @@ where
     }
 
     /// # Complexity
-    /// $O(e')$
+    /// O(e')
     fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
         self.get(key)
     }
@@ -238,8 +283,7 @@ where
         self.graph.clear();
         self.map.clear();
         self.heads.clear();
-        self.by_replica.clear();
-        self.summaries.clear();
+        self.cutter.clear();
     }
 
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
@@ -269,7 +313,7 @@ where
     }
 
     /// # Complexity
-    /// $O(1)$
+    /// O(1)
     fn delivery_order(&self, event_id: &EventId) -> usize {
         let node_idx = self.map.get_by_right(event_id).unwrap();
         node_idx.index()
@@ -280,10 +324,9 @@ impl<O> Default for EventGraph<O> {
     fn default() -> Self {
         Self {
             graph: StableDiGraph::new(),
-            heads: HashSet::default(),
             map: BiMap::new(),
-            by_replica: Vec::new(),
-            summaries: HashMap::default(),
+            heads: HashSet::default(),
+            cutter: Cutter::new(),
         }
     }
 }
@@ -292,53 +335,17 @@ impl<O> EventGraph<O>
 where
     O: Debug,
 {
-    fn may_reach(&self, from: NodeIndex, to: NodeIndex) -> bool {
-        let Some(to_id) = self.map.get_by_left(&to) else {
-            return true;
-        };
-        let Some(summary) = self.summaries.get(&from) else {
-            return true;
-        };
-        summary
-            .get(to_id.idx().0)
-            .is_none_or(|max_seq| *max_seq >= to_id.seq())
-    }
-
-    fn start_nodes_for_version(&self, version: &Version) -> Vec<NodeIndex> {
-        let mut start_nodes = Vec::new();
-        let mut seen = HashSet::default();
-
-        for (replica_idx, seq) in version.iter() {
-            if seq == 0 {
-                continue;
-            }
-            let Some(events) = self.by_replica.get(replica_idx.0) else {
-                continue;
-            };
-            if let Some((_, node_idx)) = events.range(..=seq).next_back()
-                && seen.insert(*node_idx)
-            {
-                start_nodes.push(*node_idx);
-            }
-        }
-
-        if start_nodes.is_empty() {
-            self.heads
-                .iter()
-                .filter_map(|id| self.map.get_by_right(id).copied())
-                .collect()
-        } else {
-            start_nodes
-        }
-    }
-
     /// Collect all the node indices that correspond to an event lower or equal to the given version.
     /// # Complexity
-    /// O(n)
+    /// O(v + e)
+    // TODO: use the cutter to reduce the number of visited nodes and edges
     fn collect_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
-        let start_nodes = self.start_nodes_for_version(version);
+        let start_nodes: Vec<NodeIndex> = self
+            .heads
+            .iter()
+            .map(|id| *self.map.get_by_right(id).unwrap())
+            .collect();
 
-        // TODO: does it visit in the right direction?
         let mut collected = Vec::new();
         let discovered = self.graph.visit_map();
         let mut dfs = Dfs::from_parts(start_nodes, discovered);
@@ -363,132 +370,45 @@ where
     /// This is used to find the minimal set of events to attach a new event to.
     ///
     /// # Complexity
-    /// O(n^2)
+    /// O(v' + e')
     ///
     /// # Algorithm
-    /// 1. DFS from the heads of the graph.
-    /// 2. For each node N, check if it is an predecessor of any node in the given version.
-    /// 3. If it is, check that there is no other predecessor in the list with the same origin id and a higher sequence number.
-    ///    3.1 If there exist a node N' in the list that has N as an ancestor, remove N from the list.
-    ///    3.2 If not, add it to the list of immediate predecessors.
-    ///    3.3 If there exist a node N' in the list with the same origin id and a lower sequence number, remove N' from the list.
+    /// 1. Start from the highest retained event per replica that is lower or equal to the version.
+    /// 2. Keep a frontier of maximal starts.
+    /// 3. Walk parent edges once per uncovered slice. Every reached ancestor is dominated by the
+    ///    current start; any previous frontier node reached by this walk is removed.
     fn find_immediate_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
-        #[allow(clippy::mutable_key_type)]
-        fn reaches_cached<O>(
-            graph: &EventGraph<O>,
-            cache: &mut HashMap<(NodeIndex, NodeIndex), bool>,
-            from: NodeIndex,
-            to: NodeIndex,
-        ) -> bool
-        where
-            O: Debug,
-        {
-            if !graph.may_reach(from, to) {
-                return false;
-            }
-            if let Some(reaches) = cache.get(&(from, to)) {
-                return *reaches;
-            }
-            let reaches = has_path_connecting(&graph.graph, from, to, None);
-            cache.insert((from, to), reaches);
-            reaches
-        }
+        let mut frontier = HashSet::default();
+        let mut dominated = HashSet::default();
 
-        let start_nodes = self.start_nodes_for_version(version);
-
-        #[allow(clippy::mutable_key_type)]
-        let mut collected = Vec::<(EventId, NodeIndex)>::new();
-        #[allow(clippy::mutable_key_type)]
-        let mut reachability_cache: HashMap<(NodeIndex, NodeIndex), bool> = HashMap::default();
-        let mut discovered = self.graph.visit_map();
-        let mut stack = Vec::with_capacity(start_nodes.len());
-        for node_idx in start_nodes {
-            if discovered.visit(node_idx) {
-                stack.push(node_idx);
-            }
-        }
-
-        while let Some(node_idx) = stack.pop() {
-            let event_id = self.map.get_by_left(&node_idx).unwrap();
-            let dominated = collected.iter().any(|(id, nx)| {
-                (event_id.origin_id() == id.origin_id() && id.seq() > event_id.seq())
-                    || reaches_cached(self, &mut reachability_cache, *nx, node_idx)
-            });
-
-            if dominated {
+        for start_idx in self.cutter.below(version) {
+            if dominated.contains(&start_idx) || frontier.contains(&start_idx) {
                 continue;
             }
 
-            // The event is a predecessor of the version
-            if event_id.is_predecessor_of(version) {
-                // There is no event_id in the list with the same origin id and a higher sequence number
-                // ...and there is no event_id in the list that has the new event_id as predecessor
-                collected.retain(|(_, nx)| {
-                    !reaches_cached(self, &mut reachability_cache, node_idx, *nx)
-                });
+            frontier.insert(start_idx);
 
-                collected.push((event_id.clone(), node_idx));
-                continue;
-            }
+            let mut stack: Vec<NodeIndex> = self
+                .graph
+                .neighbors_directed(start_idx, Direction::Outgoing)
+                .collect();
 
-            for parent_idx in self.graph.neighbors_directed(node_idx, Direction::Outgoing) {
-                if discovered.visit(parent_idx) {
+            while let Some(node_idx) = stack.pop() {
+                let was_frontier = frontier.remove(&node_idx);
+                let newly_dominated = dominated.insert(node_idx);
+                if !newly_dominated && !was_frontier {
+                    continue;
+                }
+
+                for parent_idx in self.graph.neighbors_directed(node_idx, Direction::Outgoing) {
                     stack.push(parent_idx);
                 }
             }
         }
 
-        collected.into_iter().map(|(_, nx)| nx).collect()
-    }
-
-    // TODO: very inefficient, improve it
-    /// Perform transitive reduction on the event graph to remove redundant edges.
-    /// # Complexity
-    /// $O(∣V∣ * (∣V∣+∣E∣))$
-    pub fn transitive_reduction(&mut self) {
-        let edges: Vec<(NodeIndex, NodeIndex)> = self
-            .graph
-            .edge_indices()
-            .map(|eidx| {
-                let (u, v) = self.graph.edge_endpoints(eidx).unwrap();
-                (u, v)
-            })
-            .collect();
-
-        for (u, v) in edges {
-            if !self.graph.contains_edge(u, v) {
-                continue;
-            }
-
-            let mut redundant = false;
-            let mut stack = Vec::new();
-            let mut visited = self.graph.visit_map();
-
-            for w in self
-                .graph
-                .neighbors_directed(u, Direction::Outgoing)
-                .filter(|&nx| nx != v)
-            {
-                stack.push(w);
-                visited.visit(w);
-            }
-
-            while let Some(nx) = stack.pop() {
-                if nx == v {
-                    redundant = true;
-                    break;
-                }
-                for succ in self.graph.neighbors_directed(nx, Direction::Outgoing) {
-                    if visited.visit(succ) {
-                        stack.push(succ);
-                    }
-                }
-            }
-
-            if redundant && let Some(eidx) = self.graph.find_edge(u, v) {
-                self.graph.remove_edge(eidx);
-            }
-        }
+        let mut parents: Vec<NodeIndex> = frontier.into_iter().collect();
+        parents.sort_by_key(|node_idx| node_idx.index());
+        parents
     }
 }
 

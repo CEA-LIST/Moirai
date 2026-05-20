@@ -111,7 +111,7 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        policy::LwwPolicy,
+        policy::{FairPolicy, LwwPolicy},
         register::unique_register::Register,
         utils::membership::{triplet, twins},
     };
@@ -181,6 +181,48 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), "y".to_string());
         assert_eq!(replica_b.query(Read::new()), "y".to_string());
         assert_eq!(replica_c.query(Read::new()), "y".to_string());
+    }
+
+    #[test]
+    pub fn fair_register_concurrent() {
+        let (mut replica_a, mut replica_b) = twins::<Register<String, FairPolicy>>();
+
+        let event_a = replica_a
+            .send(Register::Write("Public".to_string()))
+            .unwrap();
+
+        let event_b = replica_b
+            .send(Register::Write("Protected".to_string()))
+            .unwrap();
+
+        replica_a.receive(event_b.clone());
+        replica_b.receive(event_a.clone());
+
+        assert_eq!(replica_a.query(Read::new()), "Public".to_string());
+        assert_eq!(replica_b.query(Read::new()), "Public".to_string());
+
+        let event_a_2 = replica_a
+            .send(Register::Write("Private".to_string()))
+            .unwrap();
+
+        replica_b.receive(event_a_2.clone());
+
+        assert_eq!(replica_a.query(Read::new()), "Private".to_string());
+        assert_eq!(replica_b.query(Read::new()), "Private".to_string());
+
+        let event_b_2 = replica_b
+            .send(Register::Write("Protected".to_string()))
+            .unwrap();
+
+        let event_a_3 = replica_a
+            .send(Register::Write("Public".to_string()))
+            .unwrap();
+
+        replica_a.receive(event_b_2.clone());
+        replica_b.receive(event_a_3.clone());
+
+        assert_eq!(replica_a.query(Read::new()), "Protected".to_string());
+        assert_eq!(replica_b.query(Read::new()), "Protected".to_string());
     }
 
     // TODO: fuzzer

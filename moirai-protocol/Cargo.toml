@@ -10,7 +10,7 @@ readme = "README.md"
 description = "Pure Operation-based CRDT framework implementation"
 
 [dependencies]
-elsa = { git = "https://github.com/leo-olivier/elsa.git" }
+elsa = { git = "https://github.com/Manishearth/elsa", rev = "91944aacda886a054a8e3ba9aa91c73ea04de96c" }
 rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 bimap = { version = "0.6.3", features = ["serde"] }
@@ -26,7 +26,7 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
 ] }
 
 [features]
-default = []
+default = ["test_utils"]
 serde = ["dep:serde", "dep:serde_json", "dep:tsify", "dep:wasm-bindgen"]
 sink = []
 test_utils = ["dep:deepsize"]

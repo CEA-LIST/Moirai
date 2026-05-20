@@ -22,7 +22,7 @@ pub type ReplicaId = str;
 pub type ReplicaIdOwned = String;
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ReplicaIdx(pub usize);
 
 pub trait IsReplica<L>

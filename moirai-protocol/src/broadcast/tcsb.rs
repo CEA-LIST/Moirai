@@ -369,6 +369,7 @@ where
 #[cfg(feature = "test_utils")]
 pub trait IsTcsbTest<O>: IsTcsb<O> {
     fn matrix_clock(&self) -> &MatrixClock;
+    fn last_stable_version(&self) -> &Version;
     fn members(&self) -> Vec<ReplicaIdOwned>;
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
@@ -388,6 +389,10 @@ where
 {
     fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
+    }
+
+    fn last_stable_version(&self) -> &Version {
+        &self.last_stable_version
     }
 
     fn members(&self) -> Vec<ReplicaIdOwned> {
