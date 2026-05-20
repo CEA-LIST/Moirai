@@ -11,8 +11,6 @@ use petgraph::{
     visit::{Dfs, Visitable},
 };
 
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     HashSet,
     clock::version_vector::Version,
@@ -23,7 +21,7 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::{log::IsLog, unstable_state::IsUnstableState},
+    state::{effect_context::EffectContext, log::IsLog, unstable_state::IsUnstableState},
 };
 
 /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
@@ -106,13 +104,7 @@ where
         Default::default()
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] _path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         IsUnstableState::append(self, event);
     }
 

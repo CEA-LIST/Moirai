@@ -4,13 +4,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
+    state::{
+        effect_context::EffectContext, event_graph::EventGraph, log::IsLog, po_log::POLog,
+        unstable_state::IsUnstableState,
+    },
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -189,23 +190,9 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
         self.inner.is_enabled(op)
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         let start = Instant::now();
-        self.inner.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            sink,
-            #[cfg(feature = "sink")]
-            ownership,
-        );
+        self.inner.effect(event, ctx);
         self.total_effect_time += start.elapsed();
         self.effect_call_count += 1;
     }

@@ -94,11 +94,3 @@ impl SinkCollector {
         self.sinks
     }
 }
-
-/// Define the interface of a log structure for CRDTs that store events.
-#[cfg(feature = "sink")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SinkOwnership {
-    Owned,
-    Delegated,
-}

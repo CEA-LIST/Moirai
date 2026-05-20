@@ -4,12 +4,6 @@ use std::{fmt::Debug, hash::Hash};
 use moirai_fuzz::metrics::FuzzMetrics;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::StructureMetrics;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::object_path::ObjectPath;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkCollector;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkOwnership;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -17,7 +11,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -61,13 +55,7 @@ where
         true
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
             AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
             AWBag::Remove(k) => UWMap::Update(k.clone(), Counter::Dec(1)),
@@ -75,17 +63,8 @@ where
         };
         let event = Event::unfold(event, op);
         // While the Bag contains a map, it is semantically a leaf CRDT, so we ignore the path and sink.
-        #[cfg(feature = "sink")]
-        let mut sink = SinkCollector::new();
-        self.0.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Delegated,
-        );
+        let mut silent_ctx = EffectContext::silent();
+        self.0.effect(event, &mut silent_ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {

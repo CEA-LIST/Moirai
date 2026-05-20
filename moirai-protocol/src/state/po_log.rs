@@ -2,8 +2,6 @@
 // use deepsize::DeepSizeOf;
 use std::fmt::Debug;
 
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     HashMap,
     clock::version_vector::Version,
@@ -14,7 +12,10 @@ use crate::{
         redundancy::RedundancyRelation,
     },
     event::{Event, id::EventId, tagged_op::TaggedOp},
-    state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{
+        effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
+        unstable_state::IsUnstableState,
+    },
 };
 
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
@@ -49,13 +50,7 @@ where
         O::is_enabled(op, &self.stable, &self.unstable)
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] _path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             if !O::DISABLE_R_WHEN_R {

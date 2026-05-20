@@ -165,64 +165,59 @@ macro_rules! union {
                 fn effect(
                     &mut self,
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
-                    #[cfg(feature = "sink")]
-                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
-                    #[cfg(feature = "sink")]
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
-                    #[cfg(feature = "sink")]
-                    _ownership: $crate::moirai_protocol::state::sink::SinkOwnership)
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match event.op().clone() {
                         $(
                             $union::$variant(o) => {
-                                #[cfg(feature = "sink")]
-                                let path = path.variant(stringify!([<$variant:lower>]));
-                                match &mut self.child {
-                                    [<$union Container>]::Unset => {
-                                        let log = {
-                                            let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
-                                            let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
-                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
-                                            <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
-                                            log
-                                        };
-                                        self.child = [<$union Container>]::Value(Box::new([<$union Child>]::$variant(log)));
-                                    }
-                                    [<$union Container>]::Value(existing_child) => {
-                                        if let [<$union Child>]::$variant(existing_log) = existing_child.as_mut() {
-                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
-                                            <$log as $crate::moirai_protocol::state::log::IsLog>::effect(existing_log, child_event, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
-                                        } else {
-                                            let mut new_children = vec![];
-                                            new_children.push((**existing_child).clone());
+                                ctx.with_variant(stringify!([<$variant:lower>]), |ctx| {
+                                    match &mut self.child {
+                                        [<$union Container>]::Unset => {
                                             let log = {
                                                 let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
-                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
-                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
+                                                let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
                                                 log
                                             };
-                                            new_children.push([<$union Child>]::$variant(log));
-                                            self.child = [<$union Container>]::Conflicts(new_children);
+                                            self.child = [<$union Container>]::Value(Box::new([<$union Child>]::$variant(log)));
                                         }
-                                    }
-                                    [<$union Container>]::Conflicts(children) => {
-                                        if let Some([<$union Child>]::$variant(log)) = children
-                                            .iter_mut()
-                                            .find(|c| matches!(c, [<$union Child>]::$variant(_)))
-                                        {
-                                            let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
-                                            <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
-                                        } else {
-                                            let log = {
-                                                let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                        [<$union Container>]::Value(existing_child) => {
+                                            if let [<$union Child>]::$variant(existing_log) = existing_child.as_mut() {
                                                 let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
-                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
-                                                log
-                                            };
-                                            children.push([<$union Child>]::$variant(log));
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(existing_log, child_event, ctx);
+                                            } else {
+                                                let mut new_children = vec![];
+                                                new_children.push((**existing_child).clone());
+                                                let log = {
+                                                    let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                    let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                    <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
+                                                    log
+                                                };
+                                                new_children.push([<$union Child>]::$variant(log));
+                                                self.child = [<$union Container>]::Conflicts(new_children);
+                                            }
+                                        }
+                                        [<$union Container>]::Conflicts(children) => {
+                                            if let Some([<$union Child>]::$variant(log)) = children
+                                                .iter_mut()
+                                                .find(|c| matches!(c, [<$union Child>]::$variant(_)))
+                                            {
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, ctx);
+                                            } else {
+                                                let log = {
+                                                    let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                    let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                    <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
+                                                    log
+                                                };
+                                                children.push([<$union Child>]::$variant(log));
+                                            }
                                         }
                                     }
-                                }
+                                });
                             }
                         )*
                     }

@@ -3,12 +3,11 @@ use std::fmt::Debug;
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
+    state::effect_context::EffectContext,
 };
 #[cfg(feature = "test_utils")]
 use crate::{
@@ -30,13 +29,7 @@ pub trait IsLog: Default + Debug {
     }
     // TODO: replace by Result
     fn is_enabled(&self, op: &Self::Op) -> bool;
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    );
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>);
     fn eval<Q>(&self, q: Q) -> Q::Response
     where
         Q: QueryOperation,
@@ -47,9 +40,7 @@ pub trait IsLog: Default + Debug {
     fn stabilize(&mut self, version: &Version);
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
     fn is_default(&self) -> bool;
-    // TODO find a better way to do this
-    #[cfg(feature = "sink")]
-    fn default_sink_expansion(&self, _path: ObjectPath, _sink: &mut SinkCollector) {}
+    fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}
 }
 
 #[cfg(feature = "test_utils")]
@@ -99,24 +90,10 @@ impl<L: IsLog> IsLog for Box<L> {
         (**self).is_enabled(op)
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         let inner_op = *event.op().clone();
         let inner_event = event.unfold(inner_op);
-        (**self).effect(
-            inner_event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            sink,
-            #[cfg(feature = "sink")]
-            ownership,
-        );
+        (**self).effect(inner_event, ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {

@@ -5,8 +5,6 @@ use deepsize::DeepSizeOf;
 
 #[cfg(feature = "test_utils")]
 use crate::broadcast::tcsb::IsTcsbTest;
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
     broadcast::{
         message::{BatchMessage, EventMessage, SinceMessage},
@@ -14,7 +12,7 @@ use crate::{
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    state::log::IsLog,
+    state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
     utils::intern_str::Interner,
 };
 
@@ -138,19 +136,9 @@ where
     T: IsTcsb<L::Op>,
 {
     fn deliver(&mut self, event: Event<L::Op>) {
-        #[cfg(feature = "sink")]
         let mut sink = SinkCollector::new();
-        #[cfg(feature = "sink")]
-        let object_path = ObjectPath::new("root"); // TODO: pass actual path
-        self.state.effect(
-            event,
-            #[cfg(feature = "sink")]
-            object_path.clone(),
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Owned,
-        );
+        let mut ctx = EffectContext::root("root", Some(&mut sink));
+        self.state.effect(event, &mut ctx);
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {
             self.state.stabilize(version);

@@ -11,12 +11,6 @@ use moirai_fuzz::{
     op_generator::OpGeneratorNested,
     value_generator::ValueGenerator,
 };
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{
-    object_path::ObjectPath,
-    sink::SinkOwnership,
-    sink::{Sink, SinkCollector},
-};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -24,7 +18,7 @@ use moirai_protocol::{
         query::{Get, QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{effect_context::EffectContext, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -101,46 +95,41 @@ where
         Self::default()
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             UWMap::Update(k, v) => {
-                #[cfg(feature = "sink")]
-                let path = if ownership == SinkOwnership::Owned {
-                    path.map_entry(format!("{:?}", k))
-                } else {
-                    path
-                };
-                #[cfg(feature = "sink")]
-                if ownership == SinkOwnership::Owned {
-                    if self.children.contains_key(&k) {
-                        sink.collect(Sink::update(path.clone()));
-                    } else {
-                        sink.collect(Sink::create(path.clone()));
-                    }
-                }
-
+                let owns_path = ctx.is_owned();
+                let existed = self.children.contains_key(&k);
                 let child_op = Event::unfold(event, v);
-                self.children.entry(k.clone()).or_default().effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Owned,
-                );
+
+                if owns_path {
+                    ctx.with_map_entry(
+                        || format!("{:?}", k),
+                        |ctx| {
+                            if existed {
+                                ctx.update();
+                            } else {
+                                ctx.create();
+                            }
+
+                            self.children
+                                .entry(k.clone())
+                                .or_default()
+                                .effect(child_op, ctx);
+                        },
+                    );
+                } else {
+                    ctx.with_owned(|ctx| {
+                        self.children
+                            .entry(k.clone())
+                            .or_default()
+                            .effect(child_op, ctx);
+                    });
+                }
             }
             UWMap::Remove(k) => {
-                #[cfg(feature = "sink")]
-                if ownership == SinkOwnership::Owned {
-                    let path = path.map_entry(format!("{:?}", k));
-                    sink.collect(Sink::delete(path));
+                if ctx.is_owned() {
+                    ctx.with_map_entry(|| format!("{:?}", k), |ctx| ctx.delete());
                 }
 
                 if let Some(child) = self.children.get_mut(&k) {
@@ -148,9 +137,8 @@ where
                 }
             }
             UWMap::Clear => {
-                #[cfg(feature = "sink")]
-                if ownership == SinkOwnership::Owned {
-                    sink.collect(Sink::delete(path));
+                if ctx.is_owned() {
+                    ctx.delete();
                 }
                 for child in self.children.values_mut() {
                     child.redundant_by_parent(event.version(), true);

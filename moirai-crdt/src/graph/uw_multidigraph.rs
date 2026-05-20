@@ -3,8 +3,6 @@ use std::{
     hash::Hash,
 };
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -12,7 +10,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{effect_context::EffectContext, log::IsLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
@@ -66,26 +64,15 @@ where
     }
 
     // TODO: add sink when vertex/arc creation/destruction
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             // Update the child at vertex `v`
             UWGraph::UpdateVertex { id: v, child: op } => {
                 let child_op = Event::unfold(event, op);
-                self.vertex_content.entry(v).or_default().effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    ownership,
-                );
+                self.vertex_content
+                    .entry(v)
+                    .or_default()
+                    .effect(child_op, ctx);
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
             UWGraph::RemoveVertex { id: v } => {
@@ -112,15 +99,10 @@ where
                 child: op,
             } => {
                 let child_op = Event::unfold(event, op);
-                self.arc_content.entry((v1, v2, e)).or_default().effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    ownership,
-                );
+                self.arc_content
+                    .entry((v1, v2, e))
+                    .or_default()
+                    .effect(child_op, ctx);
             }
             // Remove the arc `(v1, v2, e)` and reset its child
             UWGraph::RemoveArc {

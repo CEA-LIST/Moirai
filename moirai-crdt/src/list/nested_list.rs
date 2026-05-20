@@ -6,10 +6,6 @@ use deepsize::DeepSizeOf;
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::{Sink, SinkCollector};
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -17,7 +13,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{event_graph::EventGraph, log::IsLog},
+    state::{effect_context::EffectContext, event_graph::EventGraph, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -80,19 +76,9 @@ where
         Self::default()
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
-                #[cfg(feature = "sink")]
-                let path = path.list_element(event.id().clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::create(path.clone()));
                 let list_event = Event::new(
                     event.id().clone(),
                     *event.lamport(),
@@ -102,81 +88,43 @@ where
                     },
                     event.version().clone(),
                 );
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
                 let child_event =
                     Event::unfold(event.clone(), UWMap::Update(event.id().clone(), op));
-                self.children.effect(
-                    child_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                ctx.with_list_element(
+                    || event.id().clone(),
+                    |ctx| {
+                        ctx.create();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(child_event, ctx));
+                    },
                 );
             }
             NestedList::Delete { pos } => {
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
-                #[cfg(feature = "sink")]
-                let path = path.list_element(target.clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::delete(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
-                let map_event = Event::unfold(event.clone(), UWMap::Remove(target));
-                self.children.effect(
-                    map_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
+                ctx.with_list_element(
+                    || target.clone(),
+                    |ctx| {
+                        ctx.delete();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(map_event, ctx));
+                    },
                 );
             }
             NestedList::Update { pos, op } => {
                 let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
-                #[cfg(feature = "sink")]
-                let path = path.list_element(target.clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::update(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
-                self.children.effect(
-                    map_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                ctx.with_list_element(
+                    || target.clone(),
+                    |ctx| {
+                        ctx.update();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(map_event, ctx));
+                    },
                 );
             }
         }

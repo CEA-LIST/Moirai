@@ -1,7 +1,5 @@
 use std::{fmt::Debug, hash::Hash};
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,7 +7,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -53,31 +51,16 @@ where
         true
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
             EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
             EWFlagSet::Clear => UWMap::Clear,
         };
         let event = Event::unfold(event, op);
-        // The EWFlagSetLog is a semantically a leaf CRDT, so we ignore the path and sink for now
-        #[cfg(feature = "sink")]
-        let mut sink = SinkCollector::new();
-        self.0.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Delegated,
-        );
+        // The EWFlagSetLog is semantically a leaf CRDT, so we ignore the path and sink for now
+        let mut silent_ctx = EffectContext::silent();
+        self.0.effect(event, &mut silent_ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {

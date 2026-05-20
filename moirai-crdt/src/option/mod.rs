@@ -2,12 +2,6 @@
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::Sink;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkCollector;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -15,7 +9,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
+    state::{effect_context::EffectContext, log::IsLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -75,39 +69,25 @@ where
         true
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             Optional::Set(o) => {
-                #[cfg(feature = "sink")]
-                {
-                    if self.child.is_some() {
-                        sink.collect(Sink::update(path.clone()));
-                    } else {
-                        sink.collect(Sink::create(path.clone()));
-                    }
+                if self.child.is_some() {
+                    ctx.update();
+                } else {
+                    ctx.create();
                 }
                 let child_op = Event::unfold(event, o);
-                self.child.get_or_insert_with(L::default).effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
+                ctx.with_delegated(|ctx| {
+                    self.child
+                        .get_or_insert_with(L::default)
+                        .effect(child_op, ctx);
+                });
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
             Optional::Unset => {
-                #[cfg(feature = "sink")]
-                if ownership == SinkOwnership::Owned {
-                    sink.collect(Sink::delete(path.clone()));
+                if ctx.is_owned() {
+                    ctx.delete();
                 }
                 if let Some(child) = self.child.as_mut() {
                     child.redundant_by_parent(event.version(), true);

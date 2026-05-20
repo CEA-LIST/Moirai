@@ -62,39 +62,30 @@ macro_rules! record {
                 fn effect(
                     &mut self,
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
-                    #[cfg(feature = "sink")]
-                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
-                    #[cfg(feature = "sink")]
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
-                    #[cfg(feature = "sink")]
-                    ownership: $crate::moirai_protocol::state::sink::SinkOwnership)
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
-                                #[cfg(feature = "sink")]
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
-                                #[cfg(feature = "sink")] {
-                                    if is_default {
-                                        self.default_sink_expansion(path.clone(), sink);
-                                    } else {
-                                        sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                    }
+
+                                if is_default {
+                                    self.default_sink_expansion(ctx);
+                                } else {
+                                    ctx.update();
                                 }
-                                #[cfg(feature = "sink")]
-                                let path = path.field(stringify!($field));
-                                #[cfg(feature = "sink")]
-                                if !is_default {
-                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                }
+
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                self.$field.effect(child_op, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
+                                ctx.with_field(stringify!($field), |ctx| {
+                                    if !is_default {
+                                        ctx.update();
+                                    }
+                                    self.$field.effect(child_op, ctx);
+                                });
                             }
                         )*
                         $name::New => {
-                            #[cfg(feature = "sink")] {
-                                self.default_sink_expansion(path.clone(), sink);
-                            }
+                            self.default_sink_expansion(ctx);
                         }
                     }
                 }
@@ -130,18 +121,16 @@ macro_rules! record {
                     }
                 }
 
-                #[cfg(feature = "sink")]
                 fn default_sink_expansion(
                     &self,
-                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
                 ) {
-                    sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
+                    ctx.create();
                     $(
-                        <$T as $crate::moirai_protocol::state::log::IsLog>::new().default_sink_expansion(
-                            path.clone().field(stringify!($field)),
-                            sink,
-                        );
+                        ctx.with_field(stringify!($field), |ctx| {
+                            <$T as $crate::moirai_protocol::state::log::IsLog>::new()
+                                .default_sink_expansion(ctx);
+                        });
                     )*
                 }
             }
