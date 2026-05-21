@@ -14,7 +14,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    state::unstable_state::{CausalReplay, IsUnstableCore},
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -65,14 +65,15 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for Counter<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Counter<V>
 where
     V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    U: IsUnstableCore<Self> ,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
@@ -117,7 +118,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _unstable: &impl CausalReplay<Self>,
     ) -> Self {
         enum Choice {
             Inc,

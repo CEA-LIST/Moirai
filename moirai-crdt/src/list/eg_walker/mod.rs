@@ -19,7 +19,10 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{id::EventId, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{
+        stable_state::IsStableState,
+        unstable_state::{CausalReplay, IsUnstableCore},
+    },
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -178,7 +181,10 @@ where
         }
     }
 
-    fn retreat(doc: &mut Document<V>, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
+    fn retreat<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
+    where
+        U: IsUnstableCore<List<V>>,
+    {
         match &state.get(event_id).unwrap().op() {
             List::Insert { .. } => {
                 if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
@@ -216,7 +222,10 @@ where
         }
     }
 
-    fn advance(doc: &mut Document<V>, state: &impl IsUnstableState<List<V>>, event_id: &EventId) {
+    fn advance<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
+    where
+        U: IsUnstableCore<List<V>>,
+    {
         match &state.get(event_id).unwrap().op() {
             List::Insert { .. } => {
                 if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
@@ -388,11 +397,14 @@ where
             .collect()
     }
 
-    fn diff(
-        state: &impl IsUnstableState<List<V>>,
+    fn diff<U>(
+        state: &U,
         current_version: &Option<EventId>,
         parents: &[EventId],
-    ) -> (Vec<EventId>, Vec<EventId>) {
+    ) -> (Vec<EventId>, Vec<EventId>)
+    where
+        U: CausalReplay<List<V>>,
+    {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum DiffFlag {
             A,
@@ -434,7 +446,7 @@ where
         }
 
         if let Some(id) = current_version {
-            let event_idx = state.delivery_order(id);
+            let event_idx = state.delivery_order(id).unwrap();
             enq(
                 &mut flags,
                 &mut queue,
@@ -445,7 +457,7 @@ where
             );
         }
         for p in parents.iter() {
-            let event_idx = state.delivery_order(p);
+            let event_idx = state.delivery_order(p).unwrap();
             enq(
                 &mut flags,
                 &mut queue,
@@ -471,7 +483,7 @@ where
             }
 
             for parent in state.parents(&id).iter() {
-                let event_idx = state.delivery_order(parent);
+                let event_idx = state.delivery_order(parent).unwrap();
                 enq(
                     &mut flags,
                     &mut queue,
@@ -501,7 +513,7 @@ where
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> bool {
         let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
@@ -516,7 +528,7 @@ where
         version: &Version,
         conservative: bool,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> CausalReset<Self> {
         if !conservative {
             panic!("EventGraph::redundant_by_parent non-conservative is not implemented");
@@ -530,14 +542,15 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for List<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for List<V>
 where
     V: Debug + Clone,
+    U: CausalReplay<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> Vec<V> {
         let mut document = Document::default();
 
@@ -563,12 +576,11 @@ where
     }
 }
 
-impl Eval<Read<String>> for List<char> {
-    fn execute_query(
-        _q: Read<String>,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> String {
+impl<U> Eval<Read<String>, U> for List<char>
+where
+    U: CausalReplay<Self>,
+{
+    fn execute_query(_q: Read<String>, stable: &Self::StableState, unstable: &U) -> String {
         let chars: Vec<char> = Self::execute_query(Read::new(), stable, unstable);
         chars.into_iter().collect()
     }
@@ -593,15 +605,16 @@ impl<'a, V> QueryOperation for ReadAt<'a, V> {
 }
 
 // TODO: merge with the classical Read
-impl<'a, V> Eval<ReadAt<'a, <Self as PureCRDT>::Value>> for List<V>
+impl<'a, V, U> Eval<ReadAt<'a, <Self as PureCRDT>::Value>, U> for List<V>
 where
     V: Debug + Clone,
+    U: CausalReplay<Self>,
 {
     // TODO: add a stable state containing the snapshot
     fn execute_query(
         q: ReadAt<<Self as PureCRDT>::Value>,
         _stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> Vec<V> {
         let mut document = Document::default();
 
@@ -642,7 +655,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 

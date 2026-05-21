@@ -12,7 +12,7 @@ use crate::{
 #[cfg(feature = "test_utils")]
 use crate::{
     crdt::pure_crdt::PureCRDT,
-    state::{po_log::POLog, stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{po_log::POLog, stable_state::IsStableState, unstable_state::IsUnstableLog},
 };
 
 pub trait IsLog: Default + Debug {
@@ -51,33 +51,30 @@ where
     <Self::Op as PureCRDT>::StableState: IsStableState<Self::Op>,
 {
     fn stable(&self) -> &<Self::Op as PureCRDT>::StableState;
-    fn unstable(&self) -> &(impl IsUnstableState<Self::Op> + DeepSizeOf);
-    fn unstable_mut(&mut self) -> &mut (impl IsUnstableState<Self::Op> + DeepSizeOf);
+    fn unstable(&self) -> &(impl IsUnstableLog<Self::Op> + DeepSizeOf);
+    fn unstable_mut(&mut self) -> &mut (impl IsUnstableLog<Self::Op> + DeepSizeOf);
 }
 
 #[cfg(feature = "test_utils")]
 impl<O, U> IsLogTest for POLog<O, U>
 where
     O: PureCRDT + Clone + DeepSizeOf,
-    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
+    U: IsUnstableLog<O> + Default + Debug + DeepSizeOf,
 {
     fn stable(&self) -> &<O as PureCRDT>::StableState {
         &self.stable
     }
 
-    fn unstable(&self) -> &(impl IsUnstableState<Self::Op> + DeepSizeOf) {
+    fn unstable(&self) -> &(impl IsUnstableLog<Self::Op> + DeepSizeOf) {
         &self.unstable
     }
 
-    fn unstable_mut(&mut self) -> &mut (impl IsUnstableState<Self::Op> + DeepSizeOf) {
+    fn unstable_mut(&mut self) -> &mut (impl IsUnstableLog<Self::Op> + DeepSizeOf) {
         &mut self.unstable
     }
 }
 
-/// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`.
-/// This allows wrapping a log type in `Box` to break recursive type cycles
-/// without changing the macro infrastructure. Use `Box<SomeLog>` only where
-/// needed (recursive fields); plain `SomeLog` everywhere else.
+/// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
 impl<L: IsLog> IsLog for Box<L> {
     type Value = L::Value;
     type Op = Box<L::Op>;

@@ -9,7 +9,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    state::unstable_state::IsUnstableCore,
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -59,14 +59,15 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for PORegister<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for PORegister<V>
 where
     V: Debug + Default + PartialOrd + Clone + Eq + PartialEq + Hash,
+    U: IsUnstableCore<Self> ,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &<PORegister<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         // The set can contain only incomparable values
         let mut set = HashSet::<V>::default();

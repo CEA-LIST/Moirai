@@ -12,7 +12,10 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{
+        stable_state::IsStableState,
+        unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune},
+    },
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -125,7 +128,7 @@ where
     fn stabilize<'a>(
         tagged_op: &TaggedOp<Self>,
         stable: &mut Self::StableState,
-        unstable: &mut impl IsUnstableState<Self>,
+        unstable: &mut impl IsUnstablePrune<Self>,
     ) {
         // Two cases:
         // 1. The tagged_op is a 'add'
@@ -139,8 +142,7 @@ where
                     matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
                         && t.id() != tagged_op.id()
                 }) {
-                    let key = unstable.key_of(tagged_op);
-                    unstable.remove_by_key(&key);
+                    unstable.remove(&tagged_op.id());
                 }
                 stable
                     .1
@@ -151,8 +153,7 @@ where
                     matches!(t.op(), RWSet::Remove(v2) | RWSet::Add(v2) if v != v2)
                         || t.id() == tagged_op.id()
                 }) {
-                    let key = unstable.key_of(tagged_op);
-                    unstable.remove_by_key(&key);
+                    unstable.remove(&tagged_op.id());
                 }
             }
             RWSet::Clear => unreachable!(),
@@ -166,14 +167,15 @@ impl<V> InternalizeOp for RWSet<V> {
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for RWSet<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &<RWSet<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut set = stable.0.clone();
         let mut removed = HashSet::default();
@@ -202,14 +204,15 @@ where
     }
 }
 
-impl<V> Eval<Contains<V>> for RWSet<V>
+impl<V, U> Eval<Contains<V>, U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         q: Contains<V>,
         stable: &<RWSet<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
         stable.0.contains(&q.0)
             && !stable
@@ -234,7 +237,7 @@ impl OpGenerator for RWSet<String> {
         rng: &mut impl Rng,
         config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _unstable: &impl CausalReplay<Self>,
     ) -> Self {
         let letters: Vec<String> = (0..config.max_elements).map(|i| format!("{i}")).collect();
         let choice = rand::seq::IteratorRandom::choose(letters.iter(), rng)

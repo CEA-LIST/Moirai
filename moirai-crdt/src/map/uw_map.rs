@@ -698,9 +698,9 @@ mod tests {
 
         let event_a_1 = replica_a
             .send(UWMap::Update(
-                "vfq".to_string(),
+                "foo".to_string(),
                 List::Insert {
-                    content: 'q',
+                    content: 'a',
                     pos: 0,
                 },
             ))
@@ -708,9 +708,9 @@ mod tests {
 
         let event_a_2 = replica_a
             .send(UWMap::Update(
-                "tdx".to_string(),
+                "bar".to_string(),
                 List::Insert {
-                    content: 'W',
+                    content: 'b',
                     pos: 0,
                 },
             ))
@@ -721,7 +721,7 @@ mod tests {
         replica_b.receive(event_a_1);
         replica_b.receive(event_a_2);
 
-        let event_c_1 = replica_c.send(UWMap::Remove("qeq".to_string())).unwrap();
+        let event_c_1 = replica_c.send(UWMap::Remove("alice".to_string())).unwrap();
         let event_c_2 = replica_c.send(UWMap::Clear).unwrap();
 
         replica_a.receive(event_c_1.clone());

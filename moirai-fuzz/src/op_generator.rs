@@ -7,7 +7,7 @@ use moirai_protocol::{
         event_graph::EventGraph,
         log::{IsLog, IsLogTest},
         po_log::POLog,
-        unstable_state::IsUnstableState,
+        unstable_state::{CausalReplay, IsUnstableLog},
     },
 };
 use rand::Rng;
@@ -19,7 +19,7 @@ pub trait OpGenerator: PureCRDT {
         rng: &mut impl Rng,
         config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> Self;
 }
 
@@ -40,7 +40,7 @@ where
 impl<O, U> OpGeneratorNested for POLog<O, U>
 where
     O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
-    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
+    U: IsUnstableLog<O> + Default + Debug + DeepSizeOf,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         O::generate(

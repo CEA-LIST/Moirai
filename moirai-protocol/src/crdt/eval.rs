@@ -1,18 +1,14 @@
 use crate::{
     crdt::{pure_crdt::PureCRDT, query::QueryOperation},
-    state::{log::IsLog, unstable_state::IsUnstableState},
+    state::log::IsLog,
 };
 
-pub trait Eval<Q>
+pub trait Eval<Q, U>
 where
     Q: QueryOperation,
     Self: PureCRDT,
 {
-    fn execute_query(
-        q: Q,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Q::Response;
+    fn execute_query(q: Q, stable: &Self::StableState, unstable: &U) -> Q::Response;
 }
 
 pub trait EvalNested<Q>

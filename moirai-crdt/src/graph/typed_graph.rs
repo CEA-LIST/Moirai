@@ -45,7 +45,7 @@ typed_graph! {
 mod tests {
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
-    use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableState};
+    use moirai_protocol::{crdt::policy::Policy, state::unstable_state::CausalReplay};
     use moirai_protocol::{
         crdt::query::Read,
         replica::IsReplica,
@@ -638,7 +638,7 @@ mod tests {
             rng: &mut impl rand::Rng,
             _config: &Self::Config,
             stable: &Self::StableState,
-            unstable: &impl IsUnstableState<Self>,
+            unstable: &impl CausalReplay<Self>,
         ) -> Self {
             use moirai_protocol::crdt::{eval::Eval, query::Read};
             use rand::{

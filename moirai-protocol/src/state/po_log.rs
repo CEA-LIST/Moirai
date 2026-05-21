@@ -14,7 +14,7 @@ use crate::{
     event::{Event, id::EventId, tagged_op::TaggedOp},
     state::{
         effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
-        unstable_state::IsUnstableState,
+        unstable_state::IsUnstableLog,
     },
 };
 
@@ -34,7 +34,7 @@ where
 impl<O, U> IsLog for POLog<O, U>
 where
     O: PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
+    U: IsUnstableLog<O> + Default + Debug,
 {
     type Value = O::Value;
     type Op = O;
@@ -83,11 +83,10 @@ where
         let candidates = self.unstable.predecessors(version);
 
         for tagged_op in candidates {
-            let tagged_op_key = self.unstable.key_of(&tagged_op);
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
-            if self.unstable.get_by_key(&tagged_op_key).is_some() {
+            if self.unstable.get(tagged_op.id()).is_some() {
                 self.stable.apply(tagged_op.op().clone());
-                self.unstable.remove_by_key(&tagged_op_key);
+                self.unstable.remove(tagged_op.id());
             }
         }
     }
@@ -125,7 +124,7 @@ where
 impl<O, U> POLog<O, U>
 where
     O: PureCRDT,
-    U: IsUnstableState<O>,
+    U: IsUnstableLog<O>,
 {
     fn prune_redundant_ops(
         &mut self,
@@ -151,8 +150,8 @@ where
 impl<Q, O, U> EvalNested<Q> for POLog<O, U>
 where
     Q: QueryOperation,
-    O: PureCRDT + Clone + Debug + Eval<Q>,
-    U: IsUnstableState<O> + Default + Debug,
+    O: PureCRDT + Clone + Debug + Eval<Q, U>,
+    U: IsUnstableLog<O> + Default + Debug,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)

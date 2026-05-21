@@ -9,7 +9,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    state::unstable_state::IsUnstableCore,
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -57,14 +57,15 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for TORegister<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for TORegister<V>
 where
     V: Debug + Default + PartialOrd + Ord + Clone,
+    U: IsUnstableCore<Self> ,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &<TORegister<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut val = V::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {

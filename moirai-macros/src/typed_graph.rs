@@ -727,7 +727,7 @@ macro_rules! typed_graph {
             fn is_enabled(
                 op: &Self,
                 stable: &Self::StableState,
-                unstable: &impl $crate::moirai_protocol::state::unstable_state::IsUnstableState<Self>,
+                unstable: &impl $crate::moirai_protocol::state::unstable_state::CausalReplay<Self>,
             ) -> bool {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;
@@ -800,18 +800,20 @@ macro_rules! typed_graph {
             }
         }
 
-        impl<P> $crate::moirai_protocol::crdt::eval::Eval<
+        impl<P, U> $crate::moirai_protocol::crdt::eval::Eval<
             $crate::moirai_protocol::crdt::query::Read<
                 <Self as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::Value
-            >
+            >,
+            U
         > for $graph<P>
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
+            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<Self> ,
         {
             fn execute_query(
                 _q: $crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::Value>,
                 stable: &<Self as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::StableState,
-                unstable: &impl $crate::moirai_protocol::state::unstable_state::IsUnstableState<Self>) -> <$crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response
+                unstable: &U) -> <$crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response
             {
                 let tagged_ops: Vec<(
                     &Self,

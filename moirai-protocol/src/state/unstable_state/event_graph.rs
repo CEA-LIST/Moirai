@@ -21,63 +21,12 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::{effect_context::EffectContext, log::IsLog, unstable_state::IsUnstableState},
+    state::{
+        effect_context::EffectContext,
+        log::IsLog,
+        unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstableDelivery},
+    },
 };
-
-/// Contains EventIds retained for parent discovery, sorted by process and sequence number.
-#[derive(Debug, Clone)]
-struct Cutter(BTreeMap<ReplicaIdx, BTreeMap<usize, NodeIndex>>);
-
-impl Cutter {
-    fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    /// Insert an event id and its corresponding node index in the cutter.
-    fn insert(&mut self, event_id: &EventId, node_idx: NodeIndex) {
-        self.0
-            .entry(event_id.idx())
-            .or_default()
-            .insert(event_id.seq(), node_idx);
-    }
-
-    /// For a given version, for each entry in the version,
-    /// return the node index of the event with the same replica id and
-    /// the highest sequence number that is lower or equal to the sequence number in the version.
-    fn below(&self, version: &Version) -> Vec<NodeIndex> {
-        version
-            .iter()
-            .filter_map(|(idx, seq)| {
-                self.0.get(&idx).and_then(|seq_map| {
-                    seq_map
-                        .range(..=seq)
-                        .next_back()
-                        .map(|(_, node_idx)| *node_idx)
-                })
-            })
-            .collect()
-    }
-
-    /// Remove all entries in the cutter that are lower or equal to the given version.
-    fn remove(&mut self, version: &Version) {
-        for (idx, seq) in version.iter() {
-            if let Some(seq_map) = self.0.get_mut(&idx) {
-                let keys_to_remove: Vec<usize> =
-                    seq_map.range(..seq).map(|(seq, _)| *seq).collect();
-                for key in keys_to_remove {
-                    seq_map.remove(&key);
-                }
-                if seq_map.is_empty() {
-                    self.0.remove(&idx);
-                }
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0.clear();
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
@@ -87,8 +36,6 @@ pub struct EventGraph<O> {
     /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
     cutter: Cutter,
 }
-
-// TODO: EventGraph is an unstable log, not a log.
 
 impl<O> IsLog for EventGraph<O>
 where
@@ -105,7 +52,7 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-        IsUnstableState::append(self, event);
+        self.append(event);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -116,7 +63,6 @@ where
             &<O as PureCRDT>::StableState::default(),
             self,
         ) {
-            // Note: inject with its own event id!
             CausalReset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);
@@ -167,16 +113,10 @@ where
     }
 }
 
-// TODO: The Event Graph should never remove any operation from its graph.
-// However, we must preserve the effect of operations that remove other operations.
-// We need to ensure that querys do not read removed operations.
-
-impl<O> IsUnstableState<O> for EventGraph<O>
+impl<O> IsUnstableCore<O> for EventGraph<O>
 where
-    O: Clone + Debug,
+    O: Debug + Clone,
 {
-    type Key = EventId;
-
     fn append(&mut self, event: Event<O>) {
         let new_tagged_op = TaggedOp::from(&event);
         // Find the immediate predecessors
@@ -226,29 +166,22 @@ where
         debug_assert!(self.graph.node_count() >= self.heads.len());
     }
 
-    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
-        tagged_op.id().clone()
-    }
-
+    /// # Complexity
+    /// O(1)
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.map
             .get_by_right(event_id)
             .and_then(|idx| self.graph.node_weight(*idx))
     }
 
-    /// # Complexity
-    /// O(e')
-    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
-        self.get(key)
-    }
-
-    fn remove(&mut self, _event_id: &EventId) {
-        // TODO: update heads, re-attach if needed
-        unimplemented!("EventGraph::remove is not implemented");
-    }
-
-    fn remove_by_key(&mut self, key: &Self::Key) {
-        self.remove(key)
+    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>
+    where
+        O: Clone,
+    {
+        self.collect_predecessors(version)
+            .iter()
+            .filter_map(|nx| self.graph.node_weight(*nx).cloned())
+            .collect()
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -258,33 +191,19 @@ where
         self.graph.node_weights()
     }
 
-    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, _predicate: T) {
-        // TODO: update heads, re-attach if needed
-        unimplemented!("EventGraph::retain is not implemented");
-    }
-
     fn len(&self) -> usize {
         self.graph.node_count()
     }
 
     fn is_empty(&self) -> bool {
-        IsUnstableState::len(self) == 0
+        self.graph.node_count() == 0
     }
+}
 
-    fn clear(&mut self) {
-        self.graph.clear();
-        self.map.clear();
-        self.heads.clear();
-        self.cutter.clear();
-    }
-
-    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
-        self.collect_predecessors(version)
-            .iter()
-            .filter_map(|nx| self.graph.node_weight(*nx).cloned())
-            .collect()
-    }
-
+impl<O> IsUnstableCausal<O> for EventGraph<O>
+where
+    O: Debug + Clone,
+{
     fn parents(&self, event_id: &EventId) -> Vec<EventId> {
         let node_idx = self.map.get_by_right(event_id);
         match node_idx {
@@ -303,14 +222,33 @@ where
             .filter_map(|id| self.get(id).cloned())
             .collect()
     }
+}
 
-    /// # Complexity
-    /// O(1)
-    fn delivery_order(&self, event_id: &EventId) -> usize {
-        let node_idx = self.map.get_by_right(event_id).unwrap();
-        node_idx.index()
+impl<O> IsUnstableDelivery<O> for EventGraph<O>
+where
+    O: Debug + Clone,
+{
+    fn delivery_order(&self, event_id: &EventId) -> Option<usize> {
+        self.map.get_by_right(event_id).map(|idx| idx.index())
     }
 }
+
+// impl<O> UnstableKeyed<O> for EventGraph<O>
+// where
+//     O: Clone + Debug,
+// {
+//     type Key = EventId;
+
+//     fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
+//         tagged_op.id().clone()
+//     }
+
+//     /// # Complexity
+//     /// O(e')
+//     fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
+//         self.get(key)
+//     }
+// }
 
 impl<O> Default for EventGraph<O> {
     fn default() -> Self {
@@ -362,7 +300,7 @@ where
     /// This is used to find the minimal set of events to attach a new event to.
     ///
     /// # Complexity
-    /// O(v' + e')
+    /// O(v + e)
     ///
     /// # Algorithm
     /// 1. Start from the highest retained event per replica that is lower or equal to the version.
@@ -406,7 +344,7 @@ where
 
 impl<O, Q> EvalNested<Q> for EventGraph<O>
 where
-    O: PureCRDT + Clone + Eval<Q>,
+    O: PureCRDT + Clone + Eval<Q, EventGraph<O>>,
     Q: QueryOperation,
     EventGraph<O>: IsLog,
 {
@@ -431,5 +369,56 @@ where
                 &|_, n| format!("label=\"{}\"", n.1),
             )
         )
+    }
+}
+
+/// Contains EventIds retained for parent discovery, sorted by process and sequence number.
+#[derive(Debug, Clone)]
+struct Cutter(BTreeMap<ReplicaIdx, BTreeMap<usize, NodeIndex>>);
+
+impl Cutter {
+    fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// Insert an event id and its corresponding node index in the cutter.
+    fn insert(&mut self, event_id: &EventId, node_idx: NodeIndex) {
+        self.0
+            .entry(event_id.idx())
+            .or_default()
+            .insert(event_id.seq(), node_idx);
+    }
+
+    /// For a given version, for each entry in the version,
+    /// return the node index of the event with the same replica id and
+    /// the highest sequence number that is lower or equal to the sequence number in the version.
+    fn below(&self, version: &Version) -> Vec<NodeIndex> {
+        version
+            .iter()
+            .filter_map(|(idx, seq)| {
+                self.0.get(&idx).and_then(|seq_map| {
+                    seq_map
+                        .range(..=seq)
+                        .next_back()
+                        .map(|(_, node_idx)| *node_idx)
+                })
+            })
+            .collect()
+    }
+
+    /// Remove all entries in the cutter that are lower or equal to the given version.
+    fn remove(&mut self, version: &Version) {
+        for (idx, seq) in version.iter() {
+            if let Some(seq_map) = self.0.get_mut(&idx) {
+                let keys_to_remove: Vec<usize> =
+                    seq_map.range(..seq).map(|(seq, _)| *seq).collect();
+                for key in keys_to_remove {
+                    seq_map.remove(&key);
+                }
+                if seq_map.is_empty() {
+                    self.0.remove(&idx);
+                }
+            }
+        }
     }
 }

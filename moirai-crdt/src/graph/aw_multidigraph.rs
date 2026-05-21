@@ -13,7 +13,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    state::unstable_state::{CausalReplay, IsUnstableCore},
     utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
@@ -91,7 +91,7 @@ where
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> bool {
         let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
@@ -122,15 +122,16 @@ where
     }
 }
 
-impl<V, E> Eval<Read<<Self as PureCRDT>::Value>> for Graph<V, E>
+impl<V, E, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<Self> ,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut ops: Vec<&Self> = stable
             .iter()
@@ -193,7 +194,7 @@ where
         rng: &mut impl rand::Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl CausalReplay<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 

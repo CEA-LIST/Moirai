@@ -10,7 +10,7 @@ use moirai_protocol::{
     event::Event,
     state::{
         effect_context::EffectContext, event_graph::EventGraph, log::IsLog, po_log::POLog,
-        unstable_state::IsUnstableState,
+        unstable_state::IsUnstableLog,
     },
 };
 use rand::Rng;
@@ -130,7 +130,7 @@ where
 impl<O, U> FuzzMetrics for POLog<O, U>
 where
     O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
+    U: IsUnstableLog<O> + Default + Debug,
 {
     fn structure_metrics(&self) -> StructureMetrics {
         if self.is_default() {

@@ -12,7 +12,10 @@ use moirai_protocol::{
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{
+        stable_state::IsStableState,
+        unstable_state::{CausalReplay, IsUnstableCore},
+    },
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -28,40 +31,6 @@ pub enum AWSet<V> {
     Add(V),
     Remove(V),
     Clear,
-}
-
-impl<V> IsStableState<AWSet<V>> for HashSet<V>
-where
-    V: Clone + Eq + Hash + Debug,
-{
-    fn is_default(&self) -> bool {
-        self.is_empty()
-    }
-
-    fn apply(&mut self, value: AWSet<V>) {
-        if let AWSet::Add(v) = value {
-            self.insert(v);
-        }
-    }
-
-    fn clear(&mut self) {
-        self.clear();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<AWSet<V>>,
-        tagged_op: &TaggedOp<AWSet<V>>,
-    ) {
-        match tagged_op.op() {
-            AWSet::Add(v) | AWSet::Remove(v) => {
-                self.remove(v);
-            }
-            AWSet::Clear => {
-                self.clear();
-            }
-        }
-    }
 }
 
 impl<V> PureCRDT for AWSet<V>
@@ -107,14 +76,15 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for AWSet<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         stable: &<AWSet<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut set = stable.clone();
         for o in unstable.iter() {
@@ -126,29 +96,60 @@ where
     }
 }
 
-impl<V> Eval<Contains<V>> for AWSet<V>
+impl<V, U> Eval<Contains<V>, U> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         q: Contains<V>,
         stable: &<AWSet<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
         stable.contains(&q.0)
-            || unstable.iter().any(|o| {
-                if let AWSet::Add(v) = o.op() {
-                    v == &q.0
-                } else {
-                    false
-                }
-            })
+            || unstable
+                .iter()
+                .any(|o| matches!(o.op(), AWSet::Add(v) if v == &q.0))
     }
 }
 
 impl<V> InternalizeOp for AWSet<V> {
     fn internalize(self, _interner: &Interner) -> Self {
         self
+    }
+}
+
+impl<V> IsStableState<AWSet<V>> for HashSet<V>
+where
+    V: Clone + Eq + Hash + Debug,
+{
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn apply(&mut self, value: AWSet<V>) {
+        if let AWSet::Add(v) = value {
+            self.insert(v);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
+
+    fn prune_redundant_ops(
+        &mut self,
+        _rdnt: RedundancyRelation<AWSet<V>>,
+        tagged_op: &TaggedOp<AWSet<V>>,
+    ) {
+        match tagged_op.op() {
+            AWSet::Add(v) | AWSet::Remove(v) => {
+                self.remove(v);
+            }
+            AWSet::Clear => {
+                self.clear();
+            }
+        }
     }
 }
 
@@ -160,7 +161,7 @@ impl OpGenerator for AWSet<usize> {
         rng: &mut impl Rng,
         config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _unstable: &impl CausalReplay<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 

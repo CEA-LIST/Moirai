@@ -19,7 +19,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
+    state::unstable_state::{IsUnstableCausal, IsUnstableCore},
 };
 use petgraph::graph::DiGraph;
 
@@ -77,15 +77,16 @@ where
     }
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for MVSlidingWindow<V>
+impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for MVSlidingWindow<V>
 where
     V: Debug + Clone + Eq + Hash + Default,
+    U: IsUnstableCore<Self> + IsUnstableCausal<Self> ,
 {
     /// Returns the $k$-depth causal history preceding the heads as a directed graph.
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
         _stable: &<MVSlidingWindow<V> as PureCRDT>::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
         let mut graph = DiGraph::new();
         // Max depth
