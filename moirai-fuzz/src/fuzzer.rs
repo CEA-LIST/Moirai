@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
-    metrics::{FuzzMetrics, StructureMetrics},
     op_generator::OpGeneratorNested,
     runner::{RunData, runner},
     serialize::save_execution_record,
@@ -21,7 +20,7 @@ use crate::{
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
+    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
     <L as IsLog>::Op: InternalizeOp,
 {
     let _ = env_logger::builder()
@@ -96,8 +95,6 @@ pub struct RunResults {
     pub inter_replica_concurrency_ratio: Option<f64>,
     /// Seed
     pub used_seed: String,
-    /// Structural metrics of the final converged state
-    pub final_metrics: StructureMetrics,
 }
 
 fn run_results(run_data: &RunData) -> RunResults {
@@ -148,7 +145,6 @@ fn run_results(run_data: &RunData) -> RunResults {
         execution_graph_dot: run_data.execution_graph_dot.clone(),
         inter_replica_concurrency_ratio: run_data.inter_replica_concurrency_ratio,
         used_seed: seed_to_hex(&run_data.used_seed),
-        final_metrics: run_data.final_metrics,
     }
 }
 
@@ -165,12 +161,6 @@ pub struct ExecutionSummary {
     pub max_runs_per_replica_throughput_ops_per_sec: f64,
     /// Average time to deliver an operation (in milliseconds), across all runs, across all replicas
     pub avg_time_per_op_ms: f64,
-    /// Average final structural size across runs
-    pub avg_final_size: f64,
-    /// Maximum final tree width across runs
-    pub max_final_width: usize,
-    /// Maximum final tree height across runs
-    pub max_final_height: usize,
 }
 
 fn execution_summary(
@@ -188,20 +178,5 @@ fn execution_summary(
         min_runs_per_replica_throughput_ops_per_sec: 0.0,
         max_runs_per_replica_throughput_ops_per_sec: 0.0,
         avg_time_per_op_ms: 0.0,
-        avg_final_size: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.size as f64)
-            .sum::<f64>()
-            / total_runs as f64,
-        max_final_width: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.width)
-            .max()
-            .unwrap_or(0),
-        max_final_height: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.height)
-            .max()
-            .unwrap_or(0),
     })
 }

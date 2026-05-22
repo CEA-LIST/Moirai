@@ -3,8 +3,6 @@ use std::fmt::{Debug, Display};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
-#[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
@@ -233,28 +231,6 @@ where
             }
         }
         list
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<L> FuzzMetrics for NestedListLog<L>
-where
-    L: IsLog + FuzzMetrics + EvalNested<Read<<L as IsLog>::Value>>,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        // StructureMetrics::nested_collection(
-        //     self.resolved_positions()
-        //         .into_iter()
-        //         .filter_map(|id| self.children.get(&id))
-        //         .map(FuzzMetrics::structure_metrics),
-        // )
-        StructureMetrics::nested_collection(
-            self.positions
-                .eval(Read::new())
-                .into_iter()
-                .filter_map(|id| self.children.get(&id))
-                .map(FuzzMetrics::structure_metrics),
-        )
     }
 }
 

@@ -110,7 +110,6 @@ pub fn save_execution_record(
                 execution_graph_dot: data.0.execution_graph_dot,
                 inter_replica_concurrency_ratio: data.0.inter_replica_concurrency_ratio,
                 used_seed: data.0.used_seed,
-                final_metrics: data.0.final_metrics,
             },
         })
         .collect();

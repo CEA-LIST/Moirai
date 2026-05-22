@@ -1,9 +1,5 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::FuzzMetrics;
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::StructureMetrics;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -99,16 +95,6 @@ where
 {
     fn internalize(self, _interner: &Interner) -> Self {
         self
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<V> FuzzMetrics for AWBagLog<V>
-where
-    V: Clone + Hash + Debug + Eq,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        StructureMetrics::collection()
     }
 }
 

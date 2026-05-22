@@ -1,8 +1,6 @@
 use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
-#[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
@@ -115,19 +113,6 @@ where
             Some(ref child) => child.is_default(),
             None => true,
         }
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<L> FuzzMetrics for OptionLog<L>
-where
-    L: FuzzMetrics,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        self.child
-            .as_ref()
-            .map(FuzzMetrics::structure_metrics)
-            .unwrap_or_else(StructureMetrics::empty)
     }
 }
 

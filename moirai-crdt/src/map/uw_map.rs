@@ -6,11 +6,7 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{
-    metrics::{FuzzMetrics, StructureMetrics},
-    op_generator::OpGeneratorNested,
-    value_generator::ValueGenerator,
-};
+use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -208,17 +204,6 @@ where
         } else {
             None
         }
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<K, L> FuzzMetrics for UWMapLog<K, L>
-where
-    K: Clone + Debug + Hash + Eq,
-    L: FuzzMetrics,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        StructureMetrics::object(self.children.values().map(FuzzMetrics::structure_metrics))
     }
 }
 

@@ -93,18 +93,6 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
     ]);
 
     results_table.add_row(vec!["Final state", &results.final_state]);
-    results_table.add_row(vec![
-        "Number of elements",
-        &format!("{}", Int::from(results.final_metrics.size as i64)),
-    ]);
-    results_table.add_row(vec![
-        "Final width",
-        &format!("{}", Int::from(results.final_metrics.width as i64)),
-    ]);
-    results_table.add_row(vec![
-        "Final depth",
-        &format!("{}", Int::from(results.final_metrics.height as i64)),
-    ]);
 
     results_table.add_row(vec![
         "Avg time per op (ms)",

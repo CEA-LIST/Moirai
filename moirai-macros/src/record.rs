@@ -164,17 +164,6 @@ macro_rules! record {
                     }
                 }
             }
-
-            #[cfg(feature = "fuzz")]
-            impl ::moirai_fuzz::metrics::FuzzMetrics for [<$name Log>] {
-                fn structure_metrics(&self) -> ::moirai_fuzz::metrics::StructureMetrics {
-                    ::moirai_fuzz::metrics::StructureMetrics::object([
-                        $(
-                            ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(&self.$field),
-                        )*
-                    ])
-                }
-            }
         }
     };
 }

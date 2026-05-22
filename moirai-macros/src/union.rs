@@ -349,36 +349,6 @@ macro_rules! union {
                     }
                 }
             }
-
-            #[cfg(feature = "fuzz")]
-            impl ::moirai_fuzz::metrics::FuzzMetrics for [<$union Log>] {
-                fn structure_metrics(&self) -> ::moirai_fuzz::metrics::StructureMetrics {
-                    match &self.child {
-                        [<$union Container>]::Unset => ::moirai_fuzz::metrics::StructureMetrics::empty(),
-                        [<$union Container>]::Value(child) => {
-                            let child_metrics = match child.as_ref() {
-                                $(
-                                    [<$union Child>]::$variant(log) => {
-                                        ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(log)
-                                    }
-                                )*
-                            };
-                            ::moirai_fuzz::metrics::StructureMetrics::object([child_metrics])
-                        }
-                        [<$union Container>]::Conflicts(children) => {
-                            ::moirai_fuzz::metrics::StructureMetrics::object(
-                                children.iter().map(|child| match child {
-                                    $(
-                                        [<$union Child>]::$variant(log) => {
-                                            ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(log)
-                                        }
-                                    )*
-                                })
-                            )
-                        }
-                    }
-                }
-            }
         }
     };
 }
