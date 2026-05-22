@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use crate::{
     clock::version_vector::Version,
@@ -19,6 +19,7 @@ pub trait PureCRDT: Debug + Sized {
     // TODO: try to get rid of this
     type Value: Default + Debug;
     type StableState: IsStableState<Self>;
+    type Rejection: Debug + Display;
 
     const DISABLE_R_WHEN_R: bool = false;
     const DISABLE_R_WHEN_NOT_R: bool = false;
@@ -82,7 +83,7 @@ pub trait PureCRDT: Debug + Sized {
         _op: &Self,
         _stable: &Self::StableState,
         _unstable: &impl CausalReplay<Self>,
-    ) -> bool {
-        true
+    ) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }

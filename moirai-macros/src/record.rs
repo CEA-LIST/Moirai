@@ -32,6 +32,25 @@ macro_rules! record {
                 )*
             }
 
+            #[derive(Debug, Clone)]
+            pub enum [<$name Rejection>] {
+                $(
+                    [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Rejection),
+                )*
+                AlreadyInitialized,
+            }
+
+            impl std::fmt::Display for [<$name Rejection>] {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        $(
+                            Self::[<$field:camel>](e) => write!(f, "{}: {}", stringify!($field), e),
+                        )*
+                        Self::AlreadyInitialized => write!(f, "Already initialized"),
+                    }
+                }
+            }
+
             #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
                 $(
@@ -50,6 +69,7 @@ macro_rules! record {
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
                 type Value = [<$name Value>];
                 type Op = $name;
+                type Rejection = [<$name Rejection>];
 
                 fn new() -> Self {
                     Self {
@@ -111,12 +131,12 @@ macro_rules! record {
                     true
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> bool {
+                fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
                     match op {
                         $(
-                            $name::[<$field:camel>](o) => self.$field.is_enabled(o),
+                            $name::[<$field:camel>](o) => self.$field.is_enabled(o).map_err(Self::Rejection::[<$field:camel>]),
                         )*
-                        $name::New => self.is_default(),
+                        $name::New => if self.is_default() { Ok(()) } else { Err(Self::Rejection::AlreadyInitialized) },
                         _ => unreachable!(),
                     }
                 }

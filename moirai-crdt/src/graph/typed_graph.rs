@@ -162,7 +162,7 @@ mod tests {
                     target: baz(1),
                     kind: FooBazEdge,
                 })))
-                .is_none()
+                .is_err()
         );
         let e4 = replica_b
             .send(MyTypedGraph::AddVertex {

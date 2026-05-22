@@ -3,7 +3,7 @@ mod presence_state;
 
 use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 
 #[cfg(feature = "test_utils")]
@@ -351,9 +351,10 @@ where
             List::Insert { content, pos } => {
                 let idx = Self::find_by_current_pos(&doc.items, *pos);
 
-                // if idx >= 1 && !&doc.items[idx - 1].presence.is_integrated() {
-                //     panic!("Item to the left is not inserted! What!"); // OLDCODE behavior retained
-                // }
+                debug_assert!(
+                    idx == 0 || doc.items[idx - 1].presence.is_integrated(),
+                    "Item to the left is not integrated"
+                );
 
                 let origin_left = if idx == 0 {
                     None
@@ -499,12 +500,31 @@ where
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ListRejection {
+    OutOfBounds { pos: usize, len: usize },
+}
+
+impl Display for ListRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ListRejection::OutOfBounds { pos, len } => {
+                write!(
+                    f,
+                    "Position {pos} is out of bounds for document of length {len}"
+                )
+            }
+        }
+    }
+}
+
 impl<V> PureCRDT for List<V>
 where
     V: Debug + Clone,
 {
     type Value = Vec<V>;
     type StableState = Vec<V>;
+    type Rejection = ListRejection;
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
@@ -514,13 +534,39 @@ where
         op: &Self,
         stable: &Self::StableState,
         unstable: &impl CausalReplay<Self>,
-    ) -> bool {
+    ) -> Result<(), Self::Rejection> {
         let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
-            List::Insert { pos, .. } => *pos <= state.len(),
-            List::Delete { pos } => *pos < state.len(),
-            List::Update { pos } => *pos < state.len(),
-            List::DeleteRange { start, len } => (*start + *len) <= state.len(),
+            List::Insert { pos, .. } => {
+                if *pos <= state.len() {
+                    Ok(())
+                } else {
+                    Err(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: state.len(),
+                    })
+                }
+            }
+            List::Update { pos } | List::Delete { pos } => {
+                if *pos < state.len() {
+                    Ok(())
+                } else {
+                    Err(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: state.len(),
+                    })
+                }
+            }
+            List::DeleteRange { start, len } => {
+                if (*start + *len) <= state.len() {
+                    Ok(())
+                } else {
+                    Err(ListRejection::OutOfBounds {
+                        pos: *start + *len,
+                        len: state.len(),
+                    })
+                }
+            }
         }
     }
 
@@ -734,14 +780,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{replica::IsReplica, state::event_graph::EventGraph};
+    use moirai_protocol::{replica::IsReplica, state::graph_log::GraphLog};
 
     use super::*;
     use crate::utils::membership::{triplet_log, twins_log};
 
     #[test]
     fn simple_insertion_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
@@ -755,7 +801,7 @@ mod tests {
 
     #[test]
     fn concurrent_insertions_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
@@ -780,7 +826,7 @@ mod tests {
 
     #[test]
     fn concurrent_insert() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         let e2 = replica_b.send(List::insert('i', 0)).unwrap();
@@ -801,7 +847,7 @@ mod tests {
 
     #[test]
     fn delete_operation_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
@@ -818,7 +864,7 @@ mod tests {
 
     #[test]
     fn conc_delete_ins_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
@@ -837,7 +883,7 @@ mod tests {
 
     #[test]
     fn sequential_conc_operations_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
@@ -862,7 +908,7 @@ mod tests {
 
     #[test]
     fn in_paper() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         // e1: Insert(0, 'h')
         let e1 = replica_a.send(List::insert('h', 0)).unwrap();
@@ -914,7 +960,7 @@ mod tests {
 
     #[test]
     fn delete_range_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         let e2 = replica_a.send(List::insert('B', 1)).unwrap();
@@ -935,7 +981,7 @@ mod tests {
 
     #[test]
     fn delete_range_egwalker_2() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let event_a = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(event_a);
@@ -965,7 +1011,7 @@ mod tests {
 
     #[test]
     fn delete_range_egwalker_3() {
-        let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<GraphLog<List<char>>>();
 
         let event_a = replica_a.send(List::insert('4', 0)).unwrap();
         replica_c.receive(event_a.clone());
@@ -996,7 +1042,7 @@ mod tests {
 
     #[test]
     fn update_delete() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
@@ -1022,7 +1068,7 @@ mod tests {
     /// }
     #[test]
     fn regression_1() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
         let a1 = replica_a.send(List::insert('a', 0)).unwrap();
         let a2 = replica_a.send(List::delete(0)).unwrap();
         let b1 = replica_b.send(List::insert('6', 0)).unwrap();
@@ -1052,7 +1098,7 @@ mod tests {
     /// }
     #[test]
     fn regression_2() {
-        let (mut replica_a, mut replica_b) = twins_log::<EventGraph<List<char>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
         let b1 = replica_b.send(List::insert('N', 0)).unwrap();
         let b2 = replica_b.send(List::insert('r', 1)).unwrap();
@@ -1092,8 +1138,8 @@ mod tests {
         let runs = vec![run; 1];
 
         let config =
-            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<GraphLog<List<char>>>::new("list", runs, true, |a, b| a == b, false);
 
-        fuzzer::<EventGraph<List<char>>>(config);
+        fuzzer::<GraphLog<List<char>>>(config);
     }
 }

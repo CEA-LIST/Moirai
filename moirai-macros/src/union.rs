@@ -120,17 +120,37 @@ macro_rules! union {
                 pub child: [<$union Container>],
             }
 
+            #[derive(Debug)]
+            pub enum [<$union Rejection>] {
+                WrongVariant,
+                $(
+                    $variant(Box<<$log as $crate::moirai_protocol::state::log::IsLog>::Rejection>),
+                )*
+            }
+
+            impl std::fmt::Display for [<$union Rejection>] {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        Self::WrongVariant => write!(f, "operation does not match the active union variant"),
+                        $(
+                            Self::$variant(error) => write!(f, "{}: {}", stringify!($variant), error),
+                        )*
+                    }
+                }
+            }
+
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
                 type Value = [<$union Value>];
                 type Op = [<$union>];
+                type Rejection = [<$union Rejection>];
 
                 fn new() -> Self {
                     Self::default()
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> bool {
+                fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
                     match &self.child {
-                        [<$union Container>]::Unset => true,
+                        [<$union Container>]::Unset => Ok(()),
                         [<$union Container>]::Value(child) => match (op, child.as_ref()) {
                             $(
                                 (
@@ -140,13 +160,15 @@ macro_rules! union {
                                     let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
                                         <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
                                     log.is_enabled(&child_op)
+                                        .map_err(|error| [<$union Rejection>]::$variant(Box::new(error)))
                                 }
                             )*
-                            _ => false,
+                            _ => Err([<$union Rejection>]::WrongVariant),
                         },
-                        [<$union Container>]::Conflicts(children) => children
-                            .iter()
-                            .any(|child| match (op, child) {
+                        [<$union Container>]::Conflicts(children) => {
+                            let mut rejection = None;
+                            for child in children {
+                                match (op, child) {
                                 $(
                                     (
                                         $union::$variant(o),
@@ -154,11 +176,21 @@ macro_rules! union {
                                     ) => {
                                         let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
-                                        log.is_enabled(&child_op)
+                                        match log.is_enabled(&child_op) {
+                                            Ok(()) => return Ok(()),
+                                            Err(error) => {
+                                                if rejection.is_none() {
+                                                    rejection = Some([<$union Rejection>]::$variant(Box::new(error)));
+                                                }
+                                            }
+                                        }
                                     }
                                 )*
-                                _ => false,
-                            }),
+                                _ => {}
+                                }
+                            }
+                            Err(rejection.unwrap_or([<$union Rejection>]::WrongVariant))
+                        }
                     }
                 }
 

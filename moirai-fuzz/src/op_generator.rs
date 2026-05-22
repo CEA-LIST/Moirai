@@ -4,10 +4,10 @@ use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::pure_crdt::PureCRDT,
     state::{
-        event_graph::EventGraph,
+        graph_log::GraphLog,
         log::{IsLog, IsLogTest},
         po_log::POLog,
-        unstable_state::{CausalReplay, IsUnstableLog},
+        unstable_state::{CausalReplay, IsUnstableState},
     },
 };
 use rand::Rng;
@@ -27,27 +27,28 @@ pub trait OpGeneratorNested: IsLog {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op;
 }
 
-impl<O> OpGeneratorNested for EventGraph<O>
+impl<O> OpGeneratorNested for GraphLog<O>
 where
-    O: PureCRDT + Clone + OpGenerator,
-    EventGraph<O>: IsLog<Op = O>,
+    O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
 {
-    fn generate(&self, rng: &mut impl Rng) -> <EventGraph<O> as IsLog>::Op {
-        O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
+    fn generate(&self, rng: &mut impl Rng) -> <GraphLog<O> as IsLog>::Op {
+        self.with_stable(|stable| O::generate(rng, &O::Config::default(), stable, self.unstable()))
     }
 }
 
 impl<O, U> OpGeneratorNested for POLog<O, U>
 where
     O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
-    U: IsUnstableLog<O> + Default + Debug + DeepSizeOf,
+    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        O::generate(
-            rng,
-            &<O as OpGenerator>::Config::default(),
-            self.stable(),
-            self.unstable(),
-        )
+        self.with_stable(|stable| {
+            O::generate(
+                rng,
+                &<O as OpGenerator>::Config::default(),
+                stable,
+                self.unstable(),
+            )
+        })
     }
 }

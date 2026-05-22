@@ -52,13 +52,9 @@ impl<O, T> CausalReplay<O> for T where
 {
 }
 
-/// Full unstable-log surface needed by generic partially ordered logs.
-///
-/// CRDT-specific code should prefer narrower bounds such as `IsUnstableCore`,
-/// `IsUnstablePrune`, or `CausalReplay`.
-pub trait IsUnstableLog<O>: IsUnstablePrune<O> + CausalReplay<O> {}
+pub trait IsUnstableState<O>: IsUnstablePrune<O> + CausalReplay<O> {}
 
-impl<O, T> IsUnstableLog<O> for T where T: IsUnstablePrune<O> + CausalReplay<O> {}
+impl<O, T> IsUnstableState<O> for T where T: IsUnstablePrune<O> + CausalReplay<O> {}
 
 pub trait HasDerivedKey: Debug + Clone {
     type DerivedKey: Clone + Eq + Hash + Debug;
@@ -118,92 +114,3 @@ where
         ops_size + order_size
     }
 }
-
-// impl<O> IsUnstableState<O> for DerivedKeyState<O>
-// where
-//     O: HasDerivedKey,
-// {
-//     type Key = (EventId, O::DerivedKey);
-
-//     fn append(&mut self, event: Event<O>) {
-//         let tagged_op = TaggedOp::from(&event);
-//         let key = self.key_of(&tagged_op);
-//         self.order.push(key.clone());
-//         self.ops.insert(key, tagged_op);
-//     }
-
-//     fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key {
-//         (tagged_op.id().clone(), tagged_op.op().derived_key())
-//     }
-
-//     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
-//         self.order
-//             .iter()
-//             .find(|(id, _)| id == event_id)
-//             .and_then(|key| self.ops.get(key))
-//     }
-
-//     fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>> {
-//         self.ops.get(key)
-//     }
-
-//     fn remove(&mut self, event_id: &EventId) {
-//         if let Some(pos) = self.order.iter().position(|(id, _)| id == event_id) {
-//             let key = self.order.remove(pos);
-//             self.ops.remove(&key);
-//         }
-//     }
-
-//     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
-//     where
-//         O: 'a,
-//     {
-//         self.order.iter().filter_map(|key| self.ops.get(key))
-//     }
-
-//     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-//         self.order.retain(|key| match self.ops.get(key) {
-//             Some(tagged_op) if predicate(tagged_op) => true,
-//             Some(_) => {
-//                 self.ops.remove(key);
-//                 false
-//             }
-//             None => false,
-//         });
-//     }
-
-//     fn len(&self) -> usize {
-//         self.ops.len()
-//     }
-
-//     fn is_empty(&self) -> bool {
-//         self.ops.is_empty()
-//     }
-
-//     fn clear(&mut self) {
-//         self.ops.clear();
-//         self.order.clear();
-//     }
-
-//     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
-//         self.iter()
-//             .filter(|tagged_op| tagged_op.id().is_predecessor_of(version))
-//             .cloned()
-//             .collect()
-//     }
-
-//     fn parents(&self, _event_id: &EventId) -> Vec<EventId> {
-//         unimplemented!()
-//     }
-
-//     fn delivery_order(&self, event_id: &EventId) -> usize {
-//         self.order
-//             .iter()
-//             .position(|(id, _)| id == event_id)
-//             .unwrap()
-//     }
-
-//     fn frontier(&self) -> Vec<TaggedOp<O>> {
-//         unimplemented!()
-//     }
-// }

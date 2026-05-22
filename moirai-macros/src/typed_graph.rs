@@ -11,6 +11,35 @@ pub struct Arc<S, T, E> {
     pub kind: E,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypedGraphRejection {
+    MissingVertex,
+    MissingArc,
+    MinCardinality,
+    MaxCardinality,
+}
+
+impl std::fmt::Display for TypedGraphRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingVertex => write!(f, "required vertex does not exist"),
+            Self::MissingArc => write!(f, "required arc does not exist"),
+            Self::MinCardinality => {
+                write!(
+                    f,
+                    "operation would violate a minimum cardinality constraint"
+                )
+            }
+            Self::MaxCardinality => {
+                write!(
+                    f,
+                    "operation would violate a maximum cardinality constraint"
+                )
+            }
+        }
+    }
+}
+
 #[cfg(feature = "test_utils")]
 impl<S, T, E> ::deepsize::DeepSizeOf for Arc<S, T, E>
 where
@@ -658,6 +687,7 @@ macro_rules! typed_graph {
         {
             type Value = petgraph::graph::DiGraph<$vertex, $edge>;
             type StableState = Vec<Self>;
+            type Rejection = $crate::typed_graph::TypedGraphRejection;
 
             const DISABLE_R_WHEN_R: bool = false;
             const DISABLE_R_WHEN_NOT_R: bool = false;
@@ -728,16 +758,24 @@ macro_rules! typed_graph {
                 op: &Self,
                 stable: &Self::StableState,
                 unstable: &impl $crate::moirai_protocol::state::unstable_state::CausalReplay<Self>,
-            ) -> bool {
+            ) -> Result<(), Self::Rejection> {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;
 
                 let graph = Self::execute_query(Read::new(), stable, unstable);
                 match op {
-                    $graph::AddVertex { .. } => true,
-                    $graph::RemoveVertex { id } => graph.node_weights().any(|node| node == id),
+                    $graph::AddVertex { .. } => Ok(()),
+                    $graph::RemoveVertex { id } => graph
+                        .node_weights()
+                        .any(|node| node == id)
+                        .then_some(())
+                        .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex),
                     $graph::DeleteSubtree { prefix } => {
-                        graph.node_weights().any(|node| prefix.is_prefix_of(node.vertex_path()))
+                        graph
+                            .node_weights()
+                            .any(|node| prefix.is_prefix_of(node.vertex_path()))
+                            .then_some(())
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)
                     },
                     $graph::RemoveArc(arc) => {
                         let source = arc.source();
@@ -745,31 +783,31 @@ macro_rules! typed_graph {
                         let kind = arc.kind();
                         let edge_type = arc.edge_type();
 
-                        let idx_1 = graph
+                        let source_idx = graph
                             .node_indices()
-                            .find(|&idx| graph.node_weight(idx) == Some(&source));
-                        let idx_2 = graph
+                            .find(|&idx| graph.node_weight(idx) == Some(&source))
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
+                        let target_idx = graph
                             .node_indices()
-                            .find(|&idx| graph.node_weight(idx) == Some(&target));
+                            .find(|&idx| graph.node_weight(idx) == Some(&target))
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
                         // if both vertices exist but the specific edge doesn't exist,
                         // then it's not enabled (can't remove an edge that isn't there)
-                        if let (Some(i1), Some(i2)) = (idx_1, idx_2)
-                            && !graph
-                                .edges_connecting(i1, i2)
-                                .any(|edge| edge.weight() == &kind)
+                        if !graph
+                            .edges_connecting(source_idx, target_idx)
+                            .any(|edge| edge.weight() == &kind)
                         {
-                            return false;
+                            return Err($crate::typed_graph::TypedGraphRejection::MissingArc);
                         }
 
                         let count = graph
-                            .edges_directed(
-                                graph.node_indices().find(|&i| graph[i] == source).unwrap(),
-                                petgraph::Direction::Outgoing,
-                            )
+                            .edges_directed(source_idx, petgraph::Direction::Outgoing)
                             .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
                         // if the edge exists, then we can remove it as long as it doesn't violate the min constraint
-                        count > arc.min()
+                        (count > arc.min())
+                            .then_some(())
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MinCardinality)
                     }
                     $graph::AddArc(arc) => {
                         let source = arc.source();
@@ -778,22 +816,24 @@ macro_rules! typed_graph {
 
                         // if either vertex doesn't exist, then it's not enabled
                         // (can't add an edge if one of the endpoints isn't there)
-                        if !graph.node_weights().any(|node| node == &source)
-                            || !graph.node_weights().any(|node| node == &target)
-                        {
-                            return false;
-                        }
+                        let source_idx = graph
+                            .node_indices()
+                            .find(|&i| graph[i] == source)
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
+                        graph
+                            .node_indices()
+                            .find(|&i| graph[i] == target)
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
 
                         let count = graph
-                            .edges_directed(
-                                graph.node_indices().find(|&i| graph[i] == source).unwrap(),
-                                petgraph::Direction::Outgoing,
-                            )
+                            .edges_directed(source_idx, petgraph::Direction::Outgoing)
                             .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
 
                         // if both vertices exist, then we can add the edge as long as it doesn't violate the max constraint
-                        count < arc.max()
+                        (count < arc.max())
+                            .then_some(())
+                            .ok_or($crate::typed_graph::TypedGraphRejection::MaxCardinality)
                     }
                     $graph::__Marker(_, _) => unreachable!(),
                 }

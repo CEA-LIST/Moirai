@@ -1,10 +1,9 @@
 #[cfg(not(feature = "sink"))]
 use std::marker::PhantomData;
 
-use crate::{event::id::EventId, state::sink::SinkCollector};
-
 #[cfg(feature = "sink")]
 use crate::state::{object_path::ObjectPath, sink::Sink};
+use crate::{event::id::EventId, state::sink::SinkCollector};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EffectPathMode {

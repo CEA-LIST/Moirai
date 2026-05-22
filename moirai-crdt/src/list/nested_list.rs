@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -13,7 +13,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{effect_context::EffectContext, event_graph::EventGraph, log::IsLog},
+    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -45,7 +45,7 @@ pub enum NestedList<O> {
 #[derive(Debug, Clone)]
 pub struct NestedListLog<L> {
     /// EgWalker list tracking the logical positions of children
-    positions: EventGraph<SimpleList<EventId>>,
+    positions: GraphLog<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
     children: UWMapLog<EventId, L>,
 }
@@ -55,7 +55,7 @@ impl<L> NestedListLog<L> {
         Self::default()
     }
 
-    pub fn positions(&self) -> &EventGraph<SimpleList<EventId>> {
+    pub fn positions(&self) -> &GraphLog<SimpleList<EventId>> {
         &self.positions
     }
 
@@ -65,12 +65,37 @@ impl<L> NestedListLog<L> {
     }
 }
 
+#[derive(Debug)]
+pub enum NestedListRejection<E> {
+    /// Rejection from the child CRDT
+    ChildError { pos: usize, error: E },
+    /// The position specified is out of bounds
+    InvalidPosition { pos: usize, len: usize },
+}
+
+impl<E> Display for NestedListRejection<E>
+where
+    E: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NestedListRejection::ChildError { pos, error } => {
+                write!(f, "Child error at position {}: {}", pos, error)
+            }
+            NestedListRejection::InvalidPosition { pos, len } => {
+                write!(f, "Invalid position {}: list length is {}", pos, len)
+            }
+        }
+    }
+}
+
 impl<L> IsLog for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
 {
     type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
+    type Rejection = NestedListRejection<L::Rejection>;
 
     fn new() -> Self {
         Self::default()
@@ -148,22 +173,43 @@ where
         op
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         let positions = self.positions.eval(Read::new());
         match op {
             NestedList::Insert { pos, op } => {
-                *pos <= positions.len() && L::default().is_enabled(op)
+                if *pos > positions.len() {
+                    return Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    });
+                }
+                L::default()
+                    .is_enabled(op)
+                    .map_err(|error| NestedListRejection::ChildError { pos: *pos, error })
             }
             NestedList::Update { pos, op } => {
-                let out_of_bound = *pos >= positions.len();
-                if out_of_bound {
-                    return false;
+                if *pos >= positions.len() {
+                    return Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    });
                 }
                 let target = positions[*pos].clone();
                 let map_op = UWMap::Update(target, op.clone());
-                self.children.is_enabled(&map_op)
+                self.children
+                    .is_enabled(&map_op)
+                    .map_err(|error| NestedListRejection::ChildError { pos: *pos, error })
             }
-            NestedList::Delete { pos } => *pos < positions.len(),
+            NestedList::Delete { pos } => {
+                if *pos < positions.len() {
+                    Ok(())
+                } else {
+                    Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    })
+                }
+            }
         }
     }
 }
@@ -179,23 +225,8 @@ where
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
         let mut list = Vec::new();
         let positions = self.positions.execute_query(Read::new());
-        // println!(
-        //     "Positions: {}",
-        //     positions
-        //         .iter()
-        //         .map(|id| format!("{}", id))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
         #[allow(clippy::mutable_key_type)]
         let mut map = self.children.execute_query(Read::new());
-        // println!(
-        //     "Children: {}",
-        //     map.iter()
-        //         .map(|(id, child)| format!("{}: {:?}", id, child))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
         for eid in positions {
             if let Some(child) = map.remove(&eid) {
                 list.push(child);
@@ -217,8 +248,13 @@ where
         //         .filter_map(|id| self.children.get(&id))
         //         .map(FuzzMetrics::structure_metrics),
         // )
-        // TODO
-        StructureMetrics::empty()
+        StructureMetrics::nested_collection(
+            self.positions
+                .eval(Read::new())
+                .into_iter()
+                .filter_map(|id| self.children.get(&id))
+                .map(FuzzMetrics::structure_metrics),
+        )
     }
 }
 
@@ -268,7 +304,7 @@ where
                 NestedList::Delete { pos }
             }
         };
-        assert!(self.is_enabled(&op));
+        assert!(self.is_enabled(&op).is_ok());
         op
     }
 }
@@ -629,14 +665,14 @@ mod tests {
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
-        use moirai_protocol::state::event_graph::EventGraph;
+        use moirai_protocol::state::graph_log::GraphLog;
 
         use crate::list::eg_walker::List;
 
         let run = RunConfig::new(0.6, 4, 25, None, None, true, false);
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<GraphLog<List<char>>>>::new(
             "nested_list_string",
             runs,
             true,
@@ -644,7 +680,7 @@ mod tests {
             false,
         );
 
-        fuzzer::<NestedListLog<EventGraph<List<char>>>>(config);
+        fuzzer::<NestedListLog<GraphLog<List<char>>>>(config);
     }
 }
 
@@ -677,7 +713,7 @@ impl<O> Boxer<NestedList<Box<O>>> for NestedList<O> {
 impl<L> Default for NestedListLog<L> {
     fn default() -> Self {
         Self {
-            positions: EventGraph::default(),
+            positions: GraphLog::default(),
             children: Default::default(),
         }
     }

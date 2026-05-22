@@ -40,24 +40,62 @@ pub enum UWGraph<V, E, No, Lo> {
 }
 
 #[derive(Clone, Debug)]
-pub struct UWGraphLog<V, E, Nl, El>
+pub struct UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     arc_content: HashMap<(V, V, E), El>,
-    vertex_content: HashMap<V, Nl>,
+    vertex_content: HashMap<V, Vl>,
 }
 
-impl<V, E, Nl, El> IsLog for UWGraphLog<V, E, Nl, El>
+#[derive(Clone, Debug)]
+pub enum LabelledGraphRejection<V, E, Vl, El>
 where
-    Nl: IsLog,
+    Vl: IsLog,
+    El: IsLog,
+    V: Debug,
+    E: Debug,
+{
+    VertexNotFound(V),
+    ArcNotFound(V, V, E),
+    VertexDisabled(Vl::Rejection),
+    ArcDisabled(El::Rejection),
+}
+
+impl<V, E, Vl, El> Display for LabelledGraphRejection<V, E, Vl, El>
+where
+    Vl: IsLog,
+    El: IsLog,
+    V: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LabelledGraphRejection::VertexNotFound(v) => write!(f, "Vertex not found: {:?}", v),
+            LabelledGraphRejection::ArcNotFound(v1, v2, e) => {
+                write!(f, "Arc not found: {:?} -> {:?} (id: {:?})", v1, v2, e)
+            }
+            LabelledGraphRejection::VertexDisabled(r) => {
+                write!(f, "Vertex operation disabled in child log: {}", r)
+            }
+            LabelledGraphRejection::ArcDisabled(r) => {
+                write!(f, "Arc operation disabled in child log: {}", r)
+            }
+        }
+    }
+}
+
+impl<V, E, Vl, El> IsLog for UWGraphLog<V, E, Vl, El>
+where
+    Vl: IsLog,
     El: IsLog,
     V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
-    type Op = UWGraph<V, E, Nl::Op, El::Op>;
-    type Value = DiGraph<Content<V, Nl::Value>, Content<(V, V, E), El::Value>>;
+    type Op = UWGraph<V, E, Vl::Op, El::Op>;
+    type Value = DiGraph<Content<V, Vl::Value>, Content<(V, V, E), El::Value>>;
+    type Rejection = LabelledGraphRejection<V, E, Vl, El>;
 
     fn new() -> Self {
         Self::default()
@@ -141,48 +179,75 @@ where
         self.arc_content.is_empty() && self.vertex_content.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
         match op {
-            UWGraph::UpdateVertex { .. } => true,
-            UWGraph::RemoveVertex { id: v } => {
-                if let Some(child) = self.vertex_content.get(v) {
-                    !child.is_default()
+            UWGraph::UpdateVertex { id, child } => {
+                if let Some(log) = self.vertex_content.get(id) {
+                    log.is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
                 } else {
-                    false
+                    Vl::default()
+                        .is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
+                }
+            }
+            UWGraph::RemoveVertex { id: v } => {
+                if let Some(child) = self.vertex_content.get(v)
+                    && !child.is_default()
+                {
+                    Ok(())
+                } else {
+                    Err(LabelledGraphRejection::VertexNotFound(v.clone()))
                 }
             }
             UWGraph::UpdateArc {
-                source: v1,
-                target: v2,
-                ..
+                source,
+                target,
+                id,
+                child,
             } => {
-                if let (Some(child1), Some(child2)) =
-                    (self.vertex_content.get(v1), self.vertex_content.get(v2))
-                {
+                if let (Some(child1), Some(child2)) = (
+                    self.vertex_content.get(source),
+                    self.vertex_content.get(target),
+                ) {
                     if child1.is_default() || child2.is_default() {
-                        return false;
+                        return Err(LabelledGraphRejection::ArcNotFound(
+                            source.clone(),
+                            target.clone(),
+                            id.clone(),
+                        ));
                     }
-                    true
+                    El::default()
+                        .is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::ArcDisabled(e))
                 } else {
-                    false
+                    Err(LabelledGraphRejection::ArcNotFound(
+                        source.clone(),
+                        target.clone(),
+                        id.clone(),
+                    ))
                 }
             }
-            UWGraph::RemoveArc {
-                source: v1,
-                target: v2,
-                id: e,
-            } => {
-                if let Some(child) = self.arc_content.get(&(v1.clone(), v2.clone(), e.clone())) {
-                    !child.is_default()
+            UWGraph::RemoveArc { source, target, id } => {
+                if let Some(child) =
+                    self.arc_content
+                        .get(&(source.clone(), target.clone(), id.clone()))
+                    && !child.is_default()
+                {
+                    Ok(())
                 } else {
-                    false
+                    Err(LabelledGraphRejection::ArcNotFound(
+                        source.clone(),
+                        target.clone(),
+                        id.clone(),
+                    ))
                 }
             }
         }
     }
 }
 
-impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
+impl<V, E, Vl, El> Default for UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
     E: Clone + Debug + Eq + PartialEq + Hash,
@@ -201,9 +266,9 @@ impl<V, E, No, Lo> InternalizeOp for UWGraph<V, E, No, Lo> {
     }
 }
 
-impl<V, E, Nl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E, Nl, El>
+impl<V, E, Vl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E, Vl, El>
 where
-    Nl: IsLog + EvalNested<Read<<Nl as IsLog>::Value>>,
+    Vl: IsLog + EvalNested<Read<<Vl as IsLog>::Value>>,
     El: IsLog + EvalNested<Read<<El as IsLog>::Value>>,
     V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
     E: Clone + Debug + Eq + PartialEq + Hash,

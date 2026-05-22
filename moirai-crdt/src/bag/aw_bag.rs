@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::FuzzMetrics;
@@ -46,13 +46,14 @@ where
 {
     type Value = HashMap<V, usize>;
     type Op = AWBag<V>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
+    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
@@ -132,6 +133,7 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("b", 1);
+
         assert_eq!(replica_a.query(Read::new()), result);
         assert_eq!(replica_b.query(Read::new()), result);
     }

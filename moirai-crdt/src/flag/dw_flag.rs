@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{convert::Infallible, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -58,6 +58,7 @@ impl IsStableState<DWFlag> for Option<bool> {
 impl PureCRDT for DWFlag {
     type Value = bool;
     type StableState = Option<bool>;
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -91,7 +92,7 @@ impl PureCRDT for DWFlag {
 
 impl<U> Eval<Read<<Self as PureCRDT>::Value>, U> for DWFlag
 where
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,

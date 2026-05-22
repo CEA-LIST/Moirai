@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     HashMap,
     clock::version_vector::Version,
@@ -6,7 +8,6 @@ use crate::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
 };
-use std::fmt::Debug;
 
 impl<O> IsUnstablePrune<O> for HashMap<EventId, TaggedOp<O>>
 where

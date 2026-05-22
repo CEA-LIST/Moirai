@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 #[cfg(feature = "fuzz")]
@@ -60,13 +62,10 @@ where
 {
     type Value = Option<L::Value>;
     type Op = Optional<L::Op>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
-    }
-
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {

@@ -278,17 +278,19 @@ dependencies = [
 [[package]]
 name = "deepsize"
 version = "0.2.0"
-source = "git+https://github.com/leo-olivier/deepsize.git#04ae7d2909f767704eec724cdc7be8cad5fdcd0d"
+source = "git+https://github.com/leo-olivier/deepsize.git#2a68cc6ba42d22f55b82e0649fd1645031f20dcb"
 dependencies = [
+ "bimap",
  "deepsize_derive",
  "elsa",
+ "petgraph 0.8.3",
  "stable_deref_trait",
 ]
 
 [[package]]
 name = "deepsize_derive"
 version = "0.1.2"
-source = "git+https://github.com/leo-olivier/deepsize.git#04ae7d2909f767704eec724cdc7be8cad5fdcd0d"
+source = "git+https://github.com/leo-olivier/deepsize.git#2a68cc6ba42d22f55b82e0649fd1645031f20dcb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -671,7 +673,7 @@ dependencies = [
  "bimap",
  "deepsize",
  "elsa",
- "petgraph 0.6.5",
+ "petgraph 0.8.3",
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",
@@ -765,6 +767,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

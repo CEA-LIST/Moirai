@@ -90,6 +90,7 @@ where
 {
     type Value = HashMap<K, L::Value>;
     type Op = UWMap<K, L::Op>;
+    type Rejection = L::Rejection;
 
     fn new() -> Self {
         Self::default()
@@ -163,13 +164,13 @@ where
         self.children.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         match op {
             UWMap::Update(k, v) => self
                 .children
                 .get(k)
-                .map_or_else(|| true, |child| child.is_enabled(v)),
-            UWMap::Remove(_) | UWMap::Clear => true,
+                .map_or_else(|| Ok(()), |child| child.is_enabled(v)),
+            UWMap::Remove(_) | UWMap::Clear => Ok(()),
         }
     }
 }
@@ -274,7 +275,7 @@ mod tests {
     use moirai_protocol::{
         crdt::query::{Contains, Get, Read},
         replica::IsReplica,
-        state::{event_graph::EventGraph, po_log::VecLog},
+        state::{graph_log::GraphLog, po_log::VecLog},
     };
 
     use crate::{
@@ -620,8 +621,7 @@ mod tests {
 
     #[test]
     fn map_nested_eg_walker() {
-        let (mut replica_a, mut replica_b) =
-            twins_log::<UWMapLog<String, EventGraph<List<char>>>>();
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let event_a = replica_a
             .send(UWMap::Update(
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn map_nested_eg_walker_2() {
-        let (mut replica_a, _) = twins_log::<UWMapLog<String, EventGraph<List<char>>>>();
+        let (mut replica_a, _) = twins_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let _ = replica_a
             .send(UWMap::Update(
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn map_nested_eg_walker_3() {
         let (mut replica_a, mut replica_b, mut replica_c) =
-            triplet_log::<UWMapLog<String, EventGraph<List<char>>>>();
+            triplet_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let event_a = replica_a.send(UWMap::Clear).unwrap();
         let event_b = replica_b
@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn map_nested_eg_walker_4() {
         let (mut replica_a, mut replica_b, mut replica_c) =
-            triplet_log::<UWMapLog<String, EventGraph<List<char>>>>();
+            triplet_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let event_a_1 = replica_a
             .send(UWMap::Update(
@@ -745,7 +745,7 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        type UWMapNested = UWMapLog<String, EventGraph<List<char>>>;
+        type UWMapNested = UWMapLog<String, GraphLog<List<char>>>;
 
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];

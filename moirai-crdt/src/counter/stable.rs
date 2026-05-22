@@ -3,6 +3,8 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp,
     state::stable_state::IsStableState,
@@ -13,6 +15,7 @@ use crate::counter::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct CounterStable<V>(V);
 
 impl<V> CounterStable<V> {

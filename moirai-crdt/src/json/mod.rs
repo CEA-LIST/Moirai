@@ -1,7 +1,7 @@
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_macros::union;
-use moirai_protocol::state::{event_graph::EventGraph, po_log::VecLog};
+use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
 #[cfg(feature = "fuzz")]
 use moirai_protocol::{crdt::query::Read, utils::boxer::Boxer};
 #[cfg(feature = "fuzz")]
@@ -20,7 +20,7 @@ use crate::{
 union! {
     Json = Number(Counter<f64>, VecLog::<Counter<f64>>)
         | Boolean(EWFlag, VecLog::<EWFlag>)
-        | String(List<char>, EventGraph::<List<char>>)
+        | String(List<char>, GraphLog::<List<char>>)
         | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog>)
         | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog>)
 }
@@ -51,8 +51,8 @@ impl OpGeneratorNested for JsonLog {
             Json::Boolean(<VecLog<EWFlag> as OpGeneratorNested>::generate(log, rng))
         }
 
-        fn generate_string(log: &EventGraph<List<char>>, rng: &mut impl Rng) -> Json {
-            Json::String(<EventGraph<List<char>> as OpGeneratorNested>::generate(
+        fn generate_string(log: &GraphLog<List<char>>, rng: &mut impl Rng) -> Json {
+            Json::String(<GraphLog<List<char>> as OpGeneratorNested>::generate(
                 log, rng,
             ))
         }
@@ -123,7 +123,7 @@ impl OpGeneratorNested for JsonLog {
                     Choice::Number => generate_number(&VecLog::<Counter<f64>>::new(), rng),
                     Choice::Boolean => generate_boolean(&VecLog::<EWFlag>::new(), rng),
                     Choice::Object => generate_object(&UWMapLog::<String, JsonLog>::new(), rng),
-                    Choice::String => generate_string(&EventGraph::<List<char>>::new(), rng),
+                    Choice::String => generate_string(&GraphLog::<List<char>>::new(), rng),
                     Choice::Array => generate_array(&NestedListLog::<JsonLog>::new(), rng),
                 }
             }
@@ -231,7 +231,7 @@ mod tests {
 
         replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
         let op = replica_a.send(Json::Boolean(EWFlag::Enable));
-        assert!(op.is_none());
+        assert!(op.is_err());
 
         let result = Value::Number(Number::from_f64(5.0).unwrap());
         assert_eq!(result, replica_a.query(ReadAsJson::new()));

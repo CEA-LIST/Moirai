@@ -1,13 +1,44 @@
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
+#[cfg(feature = "test_utils")]
+use crate::state::{log::IsLogTest, unstable_state::CausalReplay};
 use crate::{
     clock::version_vector::Version,
-    crdt::pure_crdt::PureCRDT,
-    event::Event,
-    state::{effect_context::EffectContext, log::IsLog, unstable_state::event_graph::EventGraph},
+    crdt::{
+        eval::{Eval, EvalNested},
+        pure_crdt::{CausalReset, PureCRDT},
+        query::QueryOperation,
+    },
+    event::{Event, id::EventId, lamport::Lamport},
+    state::{
+        effect_context::EffectContext,
+        log::IsLog,
+        unstable_state::{IsUnstableCore, event_graph::EventGraph},
+    },
 };
 
-#[derive(Debug, Clone)]
-pub struct GraphLog<O> {
-    graph: EventGraph<O>,
+#[derive(Debug)]
+// #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+pub struct GraphLog<O>
+where
+    O: PureCRDT,
+{
+    stable: <O as PureCRDT>::StableState,
+    unstable: EventGraph<O>,
+}
+
+impl<O> Clone for GraphLog<O>
+where
+    O: PureCRDT + Clone,
+    O::StableState: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            stable: self.stable.clone(),
+            unstable: self.unstable.clone(),
+        }
+    }
 }
 
 impl<O> IsLog for GraphLog<O>
@@ -16,41 +47,94 @@ where
 {
     type Value = <O as PureCRDT>::Value;
     type Op = O;
+    type Rejection = O::Rejection;
 
     fn new() -> Self {
         const {
             debug_assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R && O::DISABLE_STABILIZE);
         }
         Self {
-            graph: Default::default(),
+            stable: <O as PureCRDT>::StableState::default(),
+            unstable: Default::default(),
         }
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        self.graph.effect(event, ctx);
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+        self.unstable.append(event);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.graph.redundant_by_parent(version, conservative);
+        debug_assert!(self.unstable.graph().node_count() >= self.unstable.heads().len());
+        match O::causal_reset(
+            version,
+            conservative,
+            &<O as PureCRDT>::StableState::default(),
+            &self.unstable,
+        ) {
+            CausalReset::Inject(ops) => {
+                for op in ops {
+                    let event_id = EventId::from(version);
+                    let lamport = Lamport::from(version);
+                    let event = Event::new(event_id, lamport, op, version.clone());
+                    println!("Injecting event {} from causal reset", event.id());
+                    self.unstable.append(event);
+                }
+            }
+            CausalReset::Prune => {
+                panic!("EventGraph requires CRDT to provide a reset op via causal_reset_plan()");
+            }
+        }
     }
 
     fn is_default(&self) -> bool {
-        self.graph.is_default()
+        self.unstable.graph().node_count() == 0
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        self.graph.is_enabled(op)
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+        O::is_enabled(op, &<O as PureCRDT>::StableState::default(), &self.unstable)
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.graph.stabilize(version);
+        self.unstable.stabilize(version);
     }
 }
 
-impl<O> Default for GraphLog<O> {
+impl<O> Default for GraphLog<O>
+where
+    O: PureCRDT,
+{
     fn default() -> Self {
         Self {
-            graph: Default::default(),
+            stable: <O as PureCRDT>::StableState::default(),
+            unstable: Default::default(),
         }
+    }
+}
+
+impl<O, Q> EvalNested<Q> for GraphLog<O>
+where
+    O: PureCRDT + Clone + Eval<Q, EventGraph<O>>,
+    Q: QueryOperation,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        O::execute_query(q, &O::StableState::default(), &self.unstable)
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<O> IsLogTest for GraphLog<O>
+where
+    O: PureCRDT + Clone + DeepSizeOf,
+{
+    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {
+        &self.stable
+    }
+
+    fn unstable(&self) -> &(impl CausalReplay<Self::Op> + DeepSizeOf) {
+        &self.unstable
+    }
+
+    fn unstable_mut(&mut self) -> &mut (impl CausalReplay<Self::Op> + DeepSizeOf) {
+        &mut self.unstable
     }
 }

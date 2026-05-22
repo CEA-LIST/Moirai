@@ -14,7 +14,7 @@ elsa = { git = "https://github.com/Manishearth/elsa", rev = "91944aacda886a054a8
 rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 bimap = { version = "0.6.3", features = ["serde"] }
-petgraph = { version = "0.6.4", features = ["serde-1"] }
+petgraph = { version = "0.8.3", features = ["serde-1"] }
 # SERDE FEATURES
 serde = { version = "1.0", features = ["derive", "rc"], optional = true }
 serde_json = { version = "1.0.128", optional = true }
@@ -23,6 +23,8 @@ wasm-bindgen = { version = "0.2.100", optional = true }
 # TEST UTILS FEATURES
 deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
     "elsa",
+    "bimap",
+    "petgraph",
 ] }
 
 [features]

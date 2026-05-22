@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, fmt::Debug, hash::Hash};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -37,6 +41,29 @@ pub enum Graph<V, E> {
     RemoveArc(V, V, E),
 }
 
+#[derive(Clone, Debug)]
+pub enum GraphRejection<V, E> {
+    ArcDoesNotExist(V, V, E),
+    VertexDoesNotExist(V),
+}
+
+impl<V, E> Display for GraphRejection<V, E>
+where
+    V: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GraphRejection::ArcDoesNotExist(v1, v2, e) => write!(
+                f,
+                "Arc from {:?} to {:?} with edge {:?} does not exist",
+                v1, v2, e
+            ),
+            GraphRejection::VertexDoesNotExist(v) => write!(f, "Vertex {:?} does not exist", v),
+        }
+    }
+}
+
 impl<V, E> PureCRDT for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
@@ -44,6 +71,7 @@ where
 {
     type Value = DiGraph<V, E>;
     type StableState = Vec<Self>;
+    type Rejection = GraphRejection<V, E>;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -92,30 +120,52 @@ where
         op: &Self,
         stable: &Self::StableState,
         unstable: &impl CausalReplay<Self>,
-    ) -> bool {
+    ) -> Result<(), Self::Rejection> {
         let state = Self::execute_query(Read::new(), stable, unstable);
-        match op {
-            Graph::AddVertex(_) => true,
-            // The vertex must exist to be removed.
-            Graph::RemoveVertex(v) => state.node_weights().any(|node| node == v),
-            // Both vertices must exist to add an arc.
-            Graph::AddArc(v1, v2, _) => {
-                state.node_weights().any(|node| node == v1)
-                    && state.node_weights().any(|node| node == v2)
-            }
-            Graph::RemoveArc(v1, v2, e) => {
-                let idx_1 = state
-                    .node_indices()
-                    .find(|&idx| state.node_weight(idx) == Some(v1));
-                let idx_2 = state
-                    .node_indices()
-                    .find(|&idx| state.node_weight(idx) == Some(v2));
-                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
+
+        let vertex_exists = |v| state.node_weights().any(|node| node == v);
+        let vertex_index = |v| {
+            state
+                .node_indices()
+                .find(|&idx| state.node_weight(idx) == Some(v))
+        };
+        let arc_exists = |v1, v2, e| {
+            vertex_index(v1)
+                .zip(vertex_index(v2))
+                .is_some_and(|(i1, i2)| {
                     state
                         .edges_connecting(i1, i2)
                         .any(|edge| edge.weight() == e)
+                })
+        };
+
+        match op {
+            Graph::AddVertex(_) => Ok(()),
+            Graph::RemoveVertex(v) => {
+                if vertex_exists(v) {
+                    Ok(())
                 } else {
-                    false
+                    Err(GraphRejection::VertexDoesNotExist(v.clone()))
+                }
+            }
+            Graph::AddArc(v1, v2, _) => {
+                if !vertex_exists(v1) {
+                    Err(GraphRejection::VertexDoesNotExist(v1.clone()))
+                } else if !vertex_exists(v2) {
+                    Err(GraphRejection::VertexDoesNotExist(v2.clone()))
+                } else {
+                    Ok(())
+                }
+            }
+            Graph::RemoveArc(v1, v2, e) => {
+                if arc_exists(v1, v2, e) {
+                    Ok(())
+                } else {
+                    Err(GraphRejection::ArcDoesNotExist(
+                        v1.clone(),
+                        v2.clone(),
+                        e.clone(),
+                    ))
                 }
             }
         }
@@ -126,7 +176,7 @@ impl<V, E, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -87,6 +87,7 @@ where
 {
     type Value = HashSet<V>;
     type StableState = (HashSet<V>, Vec<RWSet<V>>);
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -142,7 +143,7 @@ where
                     matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
                         && t.id() != tagged_op.id()
                 }) {
-                    unstable.remove(&tagged_op.id());
+                    unstable.remove(tagged_op.id());
                 }
                 stable
                     .1
@@ -153,7 +154,7 @@ where
                     matches!(t.op(), RWSet::Remove(v2) | RWSet::Add(v2) if v != v2)
                         || t.id() == tagged_op.id()
                 }) {
-                    unstable.remove(&tagged_op.id());
+                    unstable.remove(tagged_op.id());
                 }
             }
             RWSet::Clear => unreachable!(),

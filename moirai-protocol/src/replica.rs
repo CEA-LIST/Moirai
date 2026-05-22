@@ -23,21 +23,35 @@ pub type ReplicaIdOwned = String;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ReplicaIdx(pub usize);
 
+/// A replica in the system, which maintains a local state and communicates with other replicas via messages.
 pub trait IsReplica<L>
 where
     L: IsLog,
 {
+    /// Create a new replica with the given ID. The ID must be unique across all replicas in the system.
     fn new(id: ReplicaIdOwned) -> Self;
+    /// Return the ID of this replica.
     fn id(&self) -> &ReplicaId;
+    /// Receive a message from the network.
     fn receive(&mut self, message: EventMessage<L::Op>);
+    /// Receive a batch message from the network.
     fn receive_batch(&mut self, message: BatchMessage<L::Op>);
+    /// Return a `since` message representing a request for all events causally after the given version.
     fn since(&self) -> SinceMessage;
-    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>>;
+    /// Send an operation to the network. Returns the message to be sent, or `None` if the operation is not enabled.
+    fn send(&mut self, op: L::Op) -> Result<EventMessage<L::Op>, L::Rejection>;
+    /// Return a batch message containing all events causally after the given version.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
+    /// Query the current state of the replica with the given query operation.
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where
         L: EvalNested<Q>;
-    fn update(&mut self, op: L::Op);
+    /// Update the state of the replica with the given operation.
+    fn update(&mut self, op: L::Op) -> Result<(), L::Rejection> {
+        self.send(op)?;
+        Ok(())
+    }
+    /// Bootstrap a new replica with the given ID and list of members. The ID must be included in the members list.
     fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
 }
 
@@ -77,14 +91,12 @@ where
         }
     }
 
-    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>> {
-        if !self.state.is_enabled(&op) {
-            return None;
-        }
+    fn send(&mut self, op: L::Op) -> Result<EventMessage<L::Op>, L::Rejection> {
+        self.state.is_enabled(&op)?;
         let op = L::prepare(op);
         let message = self.tcsb.send(op);
         self.deliver(message.event().clone());
-        Some(message)
+        Ok(message)
     }
 
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op> {
@@ -96,10 +108,6 @@ where
         L: EvalNested<Q>,
     {
         self.state.eval(q)
-    }
-
-    fn update(&mut self, op: L::Op) {
-        self.send(op).unwrap();
     }
 
     fn since(&self) -> SinceMessage {

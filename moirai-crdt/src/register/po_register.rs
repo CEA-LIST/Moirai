@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug, hash::Hash};
+use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -28,6 +28,7 @@ where
 {
     type Value = HashSet<V>;
     type StableState = Vec<Self>;
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -62,7 +63,7 @@ where
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for PORegister<V>
 where
     V: Debug + Default + PartialOrd + Clone + Eq + PartialEq + Hash,
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,

@@ -133,13 +133,16 @@ where
             ReplicaIdx(replica_idx),
             &mut total_time_to_deliver_per_replica,
             || {
-                replicas[replica_idx].send(op.clone()).unwrap_or_else(|| {
-                    panic!(
-                        "Failed to send operation from replica {}: {:?}",
-                        replicas[replica_idx].id(),
-                        op
-                    )
-                })
+                replicas[replica_idx]
+                    .send(op.clone())
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to send operation from replica {}: {:?}. Error: {}",
+                            replicas[replica_idx].id(),
+                            op,
+                            err
+                        )
+                    })
             },
         );
 

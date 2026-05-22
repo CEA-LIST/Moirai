@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -39,6 +39,7 @@ where
 {
     type Value = HashSet<V>;
     type StableState = HashSet<V>;
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,

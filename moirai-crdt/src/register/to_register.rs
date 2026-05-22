@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{convert::Infallible, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -26,6 +26,7 @@ where
 {
     type Value = V;
     type StableState = Vec<Self>;
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -60,7 +61,7 @@ where
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for TORegister<V>
 where
     V: Debug + Default + PartialOrd + Ord + Clone,
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,

@@ -14,7 +14,7 @@ use crate::{
     event::{Event, id::EventId, tagged_op::TaggedOp},
     state::{
         effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
-        unstable_state::IsUnstableLog,
+        unstable_state::IsUnstableState,
     },
 };
 
@@ -34,10 +34,11 @@ where
 impl<O, U> IsLog for POLog<O, U>
 where
     O: PureCRDT + Clone,
-    U: IsUnstableLog<O> + Default + Debug,
+    U: IsUnstableState<O> + Default + Debug,
 {
     type Value = O::Value;
     type Op = O;
+    type Rejection = O::Rejection;
 
     fn new() -> Self {
         Self {
@@ -46,7 +47,7 @@ where
         }
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         O::is_enabled(op, &self.stable, &self.unstable)
     }
 
@@ -124,7 +125,7 @@ where
 impl<O, U> POLog<O, U>
 where
     O: PureCRDT,
-    U: IsUnstableLog<O>,
+    U: IsUnstableState<O>,
 {
     fn prune_redundant_ops(
         &mut self,
@@ -151,7 +152,7 @@ impl<Q, O, U> EvalNested<Q> for POLog<O, U>
 where
     Q: QueryOperation,
     O: PureCRDT + Clone + Debug + Eval<Q, U>,
-    U: IsUnstableLog<O> + Default + Debug,
+    U: IsUnstableState<O> + Default + Debug,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)

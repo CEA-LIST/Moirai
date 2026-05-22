@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 use moirai_protocol::{
     clock::version_vector::Version,
@@ -42,13 +42,14 @@ where
 {
     type Value = HashSet<V>;
     type Op = EWFlagSet<V>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
+    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {

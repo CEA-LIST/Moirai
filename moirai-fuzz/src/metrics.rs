@@ -9,8 +9,8 @@ use moirai_protocol::{
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::{
-        effect_context::EffectContext, event_graph::EventGraph, log::IsLog, po_log::POLog,
-        unstable_state::IsUnstableLog,
+        effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::POLog,
+        unstable_state::IsUnstableState,
     },
 };
 use rand::Rng;
@@ -114,7 +114,7 @@ pub trait FuzzMetrics: IsLog {
     fn structure_metrics(&self) -> StructureMetrics;
 }
 
-impl<O> FuzzMetrics for EventGraph<O>
+impl<O> FuzzMetrics for GraphLog<O>
 where
     O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
 {
@@ -130,7 +130,7 @@ where
 impl<O, U> FuzzMetrics for POLog<O, U>
 where
     O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
-    U: IsUnstableLog<O> + Default + Debug,
+    U: IsUnstableState<O> + Default + Debug,
 {
     fn structure_metrics(&self) -> StructureMetrics {
         if self.is_default() {
@@ -150,7 +150,6 @@ where
     }
 }
 
-/// Wrapper autour d'un IsLog qui mesure le temps passé dans effect()
 #[derive(Debug)]
 pub struct MetricsLog<L: IsLog> {
     pub inner: L,
@@ -177,6 +176,7 @@ impl<L: IsLog> Default for MetricsLog<L> {
 impl<L: IsLog> IsLog for MetricsLog<L> {
     type Value = L::Value;
     type Op = L::Op;
+    type Rejection = L::Rejection;
 
     fn new() -> Self {
         Self::new(L::new())
@@ -186,7 +186,7 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
         L::prepare(op)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         self.inner.is_enabled(op)
     }
 

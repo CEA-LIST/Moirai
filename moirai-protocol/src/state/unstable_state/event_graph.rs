@@ -4,6 +4,8 @@ use std::{
 };
 
 use bimap::BiMap;
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use petgraph::{
     Direction,
     graph::NodeIndex,
@@ -14,20 +16,12 @@ use petgraph::{
 use crate::{
     HashSet,
     clock::version_vector::Version,
-    crdt::{
-        eval::{Eval, EvalNested},
-        pure_crdt::{CausalReset, PureCRDT},
-        query::QueryOperation,
-    },
-    event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
+    event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::{
-        effect_context::EffectContext,
-        log::IsLog,
-        unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstableDelivery},
-    },
+    state::unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstableDelivery},
 };
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
 pub struct EventGraph<O> {
     graph: StableDiGraph<TaggedOp<O>, ()>,
@@ -35,82 +29,6 @@ pub struct EventGraph<O> {
     heads: HashSet<EventId>,
     /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
     cutter: Cutter,
-}
-
-impl<O> IsLog for EventGraph<O>
-where
-    O: PureCRDT + Clone,
-{
-    type Value = <O as PureCRDT>::Value;
-    type Op = O;
-
-    fn new() -> Self {
-        const {
-            debug_assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R && O::DISABLE_STABILIZE);
-        }
-        Default::default()
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-        self.append(event);
-    }
-
-    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        debug_assert!(self.graph.node_count() >= self.heads.len());
-        match O::causal_reset(
-            version,
-            conservative,
-            &<O as PureCRDT>::StableState::default(),
-            self,
-        ) {
-            CausalReset::Inject(ops) => {
-                for op in ops {
-                    let event_id = EventId::from(version);
-                    let lamport = Lamport::from(version);
-                    let event = Event::new(event_id, lamport, op, version.clone());
-                    self.append(event);
-                }
-            }
-            CausalReset::Prune => {
-                panic!("EventGraph requires CRDT to provide a reset op via causal_reset_plan()");
-            }
-        }
-    }
-
-    fn is_default(&self) -> bool {
-        self.graph.node_count() == 0
-    }
-
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        O::is_enabled(op, &<O as PureCRDT>::StableState::default(), self)
-    }
-
-    fn stabilize(&mut self, version: &Version) {
-        self.cutter.remove(version);
-    }
-}
-
-impl<O> Display for EventGraph<O>
-where
-    O: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Head:")?;
-        for head in self.heads.iter() {
-            write!(f, "{}", head)?;
-        }
-        writeln!(f, "\nEvents:")?;
-        for (node_idx, tagged_op) in self.graph.node_indices().zip(self.graph.node_weights()) {
-            write!(f, "\t{} -> ", tagged_op)?;
-            let predecessors: Vec<String> = self
-                .graph
-                .neighbors_directed(node_idx, Direction::Outgoing)
-                .filter_map(|pred_idx| self.map.get_by_left(&pred_idx).map(|id| id.to_string()))
-                .collect();
-            writeln!(f, "{:?}", predecessors)?;
-        }
-        Ok(())
-    }
 }
 
 impl<O> IsUnstableCore<O> for EventGraph<O>
@@ -340,16 +258,18 @@ where
         parents.sort_by_key(|node_idx| node_idx.index());
         parents
     }
-}
 
-impl<O, Q> EvalNested<Q> for EventGraph<O>
-where
-    O: PureCRDT + Clone + Eval<Q, EventGraph<O>>,
-    Q: QueryOperation,
-    EventGraph<O>: IsLog,
-{
-    fn execute_query(&self, q: Q) -> Q::Response {
-        O::execute_query(q, &O::StableState::default(), self)
+    pub fn stabilize(&mut self, version: &Version) {
+        self.cutter.remove(version);
+    }
+
+    pub fn graph(&self) -> &StableDiGraph<TaggedOp<O>, ()> {
+        &self.graph
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    pub fn heads(&self) -> &HashSet<EventId> {
+        &self.heads
     }
 }
 
@@ -372,7 +292,31 @@ where
     }
 }
 
+impl<O> Display for EventGraph<O>
+where
+    O: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Head:")?;
+        for head in self.heads.iter() {
+            write!(f, "{}", head)?;
+        }
+        writeln!(f, "\nEvents:")?;
+        for (node_idx, tagged_op) in self.graph.node_indices().zip(self.graph.node_weights()) {
+            write!(f, "\t{} -> ", tagged_op)?;
+            let predecessors: Vec<String> = self
+                .graph
+                .neighbors_directed(node_idx, Direction::Outgoing)
+                .filter_map(|pred_idx| self.map.get_by_left(&pred_idx).map(|id| id.to_string()))
+                .collect();
+            writeln!(f, "{:?}", predecessors)?;
+        }
+        Ok(())
+    }
+}
+
 /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
 struct Cutter(BTreeMap<ReplicaIdx, BTreeMap<usize, NodeIndex>>);
 
@@ -406,19 +350,39 @@ impl Cutter {
             .collect()
     }
 
-    /// Remove all entries in the cutter that are lower or equal to the given version.
+    /// Remove all entries in the cutter that are strictly lower than the given version.
     fn remove(&mut self, version: &Version) {
-        for (idx, seq) in version.iter() {
-            if let Some(seq_map) = self.0.get_mut(&idx) {
-                let keys_to_remove: Vec<usize> =
-                    seq_map.range(..seq).map(|(seq, _)| *seq).collect();
-                for key in keys_to_remove {
-                    seq_map.remove(&key);
-                }
-                if seq_map.is_empty() {
-                    self.0.remove(&idx);
-                }
+        for (idx, stable_seq) in version.iter() {
+            let Some(seq_map) = self.0.get_mut(&idx) else {
+                continue;
+            };
+
+            if let Some((&anchor, _)) = seq_map.range(..=stable_seq).next_back() {
+                seq_map.retain(|seq, _| *seq > stable_seq || *seq == anchor);
+            }
+
+            if seq_map.is_empty() {
+                self.0.remove(&idx);
             }
         }
+    }
+}
+
+impl Display for Cutter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (replica_idx, seq_map) in &self.0 {
+            write!(f, "{} -> ", replica_idx.0)?;
+            for seq in seq_map.keys() {
+                write!(f, "{{ {}, ", seq)?;
+            }
+            write!(f, "}}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Default for Cutter {
+    fn default() -> Self {
+        Self::new()
     }
 }

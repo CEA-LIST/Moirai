@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
@@ -5,7 +7,6 @@ use crate::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
 };
-use std::fmt::Debug;
 
 impl<O> IsUnstableCore<O> for Vec<TaggedOp<O>>
 where

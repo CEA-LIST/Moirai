@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData};
+use std::{convert::Infallible, fmt::Debug, marker::PhantomData};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -37,6 +37,8 @@ where
 {
     type Value = V;
     type StableState = Vec<Self>;
+    type Rejection = Infallible;
+
     const DISABLE_R_WHEN_R: bool = true;
 
     fn redundant_itself<'a>(
@@ -70,7 +72,7 @@ impl<V, P, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Register<V, P>
 where
     V: Default + Debug + Clone,
     P: Policy,
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,

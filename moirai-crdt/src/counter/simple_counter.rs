@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
@@ -39,6 +40,7 @@ where
 {
     type Value = V;
     type StableState = CounterStable<V>;
+    type Rejection = Infallible;
 
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_R_WHEN_NOT_R: bool = true;
@@ -47,7 +49,7 @@ where
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Counter<V>
 where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
-    U: IsUnstableCore<Self> ,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
