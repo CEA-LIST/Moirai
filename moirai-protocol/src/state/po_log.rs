@@ -81,7 +81,7 @@ where
         // 2. for each of them, call stabilize, which may modify stable and/or unstable
         // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
 
-        let candidates = self.unstable.predecessors(version);
+        let candidates = self.unstable.predecessors_cloned(version);
 
         for tagged_op in candidates {
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);

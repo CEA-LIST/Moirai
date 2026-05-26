@@ -498,6 +498,33 @@ where
 
         (a_only, b_only)
     }
+
+    fn replay<'a, U, I>(unstable: &'a U, events: I) -> Vec<V>
+    where
+        U: CausalReplay<List<V>> + 'a,
+        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
+        V: 'a,
+    {
+        let mut document = Document::default();
+
+        for tagged_op in events {
+            let parents = unstable.parents(tagged_op.id());
+            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
+
+            for event_id in a_only {
+                Self::retreat(&mut document, unstable, &event_id);
+            }
+
+            for event_id in b_only {
+                Self::advance(&mut document, unstable, &event_id);
+            }
+
+            Self::apply(&mut document, tagged_op);
+            document.current_version = Some(tagged_op.id().clone());
+        }
+
+        Self::materialize(&document)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -589,25 +616,7 @@ where
         _stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
-        let mut document = Document::default();
-
-        for tagged_op in unstable.iter() {
-            let parents = unstable.parents(tagged_op.id());
-            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
-
-            for event_id in a_only {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in b_only {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op);
-            document.current_version = Some(tagged_op.id().clone());
-        }
-
-        Self::materialize(&document)
+        Self::replay(unstable, unstable.iter())
     }
 }
 
@@ -639,7 +648,6 @@ impl<'a, V> QueryOperation for ReadAt<'a, V> {
     type Response = V;
 }
 
-// TODO: merge with the classical Read
 impl<'a, V, U> Eval<ReadAt<'a, <Self as PureCRDT>::Value>, U> for List<V>
 where
     V: Debug + Clone,
@@ -650,31 +658,8 @@ where
         _stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
-        let mut document = Document::default();
-
-        for tagged_op in unstable.iter() {
-            // TODO: optimize by stopping when we pass the version
-            if !tagged_op.id().is_predecessor_of(q.version) {
-                continue;
-            }
-
-            let parents = unstable.parents(tagged_op.id());
-            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
-
-            for event_id in a_only {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in b_only {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op);
-
-            document.current_version = Some(tagged_op.id().clone());
-        }
-
-        Self::materialize(&document)
+        let predecessors = unstable.predecessors(q.version);
+        Self::replay(unstable, predecessors)
     }
 }
 

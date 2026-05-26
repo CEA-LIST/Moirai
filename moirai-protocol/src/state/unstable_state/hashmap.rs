@@ -39,7 +39,16 @@ where
         self.get(event_id)
     }
 
-    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>> {
+    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>> {
+        self.values()
+            .filter(|to| to.id().is_predecessor_of(version))
+            .collect()
+    }
+
+    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
+    where
+        O: Clone,
+    {
         self.values()
             .filter(|to| to.id().is_predecessor_of(version))
             .cloned()

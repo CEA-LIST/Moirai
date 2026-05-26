@@ -15,7 +15,10 @@ pub trait IsUnstableCore<O>: Debug {
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
     /// TODO: ideally should be Vec<&TaggedOp<O>>, but it causes lifetime issues in POLog::effect.
     /// Maybe we can add a method `predecessors_cloned` that returns Vec<TaggedOp<O>>?
-    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>
+    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
+    where
+        O: Clone;
+    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
     where
         O: Clone;
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>

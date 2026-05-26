@@ -92,10 +92,11 @@ where
             .and_then(|idx| self.graph.node_weight(*idx))
     }
 
-    fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>
+    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
     where
         O: Clone,
     {
+        // TODO: stop earlier! the current implementation walks the whole graph
         let start_nodes: Vec<NodeIndex> = self
             .heads
             .iter()
@@ -112,11 +113,22 @@ where
             let event_id = self.map.get_by_left(&nx).unwrap();
             if event_id.is_predecessor_of(version) {
                 let tagged_op = self.graph.node_weight(nx).unwrap();
-                collected.push(tagged_op.clone());
+                collected.push((nx, tagged_op));
             }
         }
 
+        collected.sort_by_key(|(node_idx, _)| node_idx.index());
         collected
+            .into_iter()
+            .map(|(_, tagged_op)| tagged_op)
+            .collect()
+    }
+
+    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
+    where
+        O: Clone,
+    {
+        self.predecessors(version).into_iter().cloned().collect()
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
