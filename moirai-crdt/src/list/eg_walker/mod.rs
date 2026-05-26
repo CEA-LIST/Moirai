@@ -538,35 +538,25 @@ where
         let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
             List::Insert { pos, .. } => {
-                if *pos <= state.len() {
-                    Ok(())
-                } else {
-                    Err(ListRejection::OutOfBounds {
+                (*pos <= state.len())
+                    .then_some(())
+                    .ok_or_else(|| ListRejection::OutOfBounds {
                         pos: *pos,
                         len: state.len(),
                     })
-                }
             }
-            List::Update { pos } | List::Delete { pos } => {
-                if *pos < state.len() {
-                    Ok(())
-                } else {
-                    Err(ListRejection::OutOfBounds {
-                        pos: *pos,
-                        len: state.len(),
-                    })
-                }
-            }
-            List::DeleteRange { start, len } => {
-                if (*start + *len) <= state.len() {
-                    Ok(())
-                } else {
-                    Err(ListRejection::OutOfBounds {
-                        pos: *start + *len,
-                        len: state.len(),
-                    })
-                }
-            }
+            List::Update { pos } | List::Delete { pos } => (*pos < state.len())
+                .then_some(())
+                .ok_or_else(|| ListRejection::OutOfBounds {
+                    pos: *pos,
+                    len: state.len(),
+                }),
+            List::DeleteRange { start, len } => ((*start + *len) <= state.len())
+                .then_some(())
+                .ok_or_else(|| ListRejection::OutOfBounds {
+                    pos: *start + *len,
+                    len: state.len(),
+                }),
         }
     }
 
@@ -577,6 +567,7 @@ where
         unstable: &impl CausalReplay<Self>,
     ) -> CausalReset<Self> {
         if !conservative {
+            // TODO: implements non-conservative reset
             panic!("EventGraph::redundant_by_parent non-conservative is not implemented");
         }
         let state = Self::execute_query(ReadAt::new(version), stable, unstable);
@@ -595,7 +586,7 @@ where
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
-        stable: &Self::StableState,
+        _stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
         let mut document = Document::default();
@@ -616,9 +607,7 @@ where
             document.current_version = Some(tagged_op.id().clone());
         }
 
-        let mut result = stable.clone();
-        result.extend(Self::materialize(&document));
-        result
+        Self::materialize(&document)
     }
 }
 
@@ -656,7 +645,6 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    // TODO: add a stable state containing the snapshot
     fn execute_query(
         q: ReadAt<<Self as PureCRDT>::Value>,
         _stable: &Self::StableState,
@@ -687,6 +675,31 @@ where
         }
 
         Self::materialize(&document)
+    }
+}
+
+impl<V> IsStableState<List<V>> for Vec<V>
+where
+    V: Debug + Clone,
+{
+    fn is_default(&self) -> bool {
+        todo!()
+    }
+
+    fn apply(&mut self, _value: List<V>) {
+        todo!()
+    }
+
+    fn clear(&mut self) {
+        todo!()
+    }
+
+    fn prune_redundant_ops(
+        &mut self,
+        _rdnt: RedundancyRelation<List<V>>,
+        _tagged_op: &TaggedOp<List<V>>,
+    ) {
+        todo!()
     }
 }
 
@@ -746,35 +759,6 @@ where
                 List::delete_range(start, len)
             }
         }
-    }
-}
-
-// TODO: implement the stable state for Eg-Walker.
-// Idea: compute the state at the stable version (ReadAtVersion)
-// Then flush this state (a Vec<V>) into the stable state.
-// Remove all causally stable updates from the unstable state (keep the nodes but remove the ops for updates that are parent of unstable updates).
-impl<V> IsStableState<List<V>> for Vec<V>
-where
-    V: Debug + Clone,
-{
-    fn is_default(&self) -> bool {
-        self.is_empty()
-    }
-
-    fn apply(&mut self, _value: List<V>) {
-        todo!()
-    }
-
-    fn clear(&mut self) {
-        self.clear();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<List<V>>,
-        _tagged_op: &TaggedOp<List<V>>,
-    ) {
-        unreachable!()
     }
 }
 

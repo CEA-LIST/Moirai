@@ -14,12 +14,12 @@ use crate::{
     state::{
         effect_context::EffectContext,
         log::IsLog,
+        stable_state::IsStableState,
         unstable_state::{IsUnstableCore, event_graph::EventGraph},
     },
 };
 
 #[derive(Debug)]
-// #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct GraphLog<O>
 where
     O: PureCRDT,
@@ -51,7 +51,7 @@ where
 
     fn new() -> Self {
         const {
-            debug_assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R && O::DISABLE_STABILIZE);
+            debug_assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R);
         }
         Self {
             stable: <O as PureCRDT>::StableState::default(),
@@ -65,12 +65,7 @@ where
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         debug_assert!(self.unstable.graph().node_count() >= self.unstable.heads().len());
-        match O::causal_reset(
-            version,
-            conservative,
-            &<O as PureCRDT>::StableState::default(),
-            &self.unstable,
-        ) {
+        match O::causal_reset(version, conservative, &self.stable, &self.unstable) {
             CausalReset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);
@@ -87,11 +82,11 @@ where
     }
 
     fn is_default(&self) -> bool {
-        self.unstable.graph().node_count() == 0
+        self.stable.is_default() && self.unstable.graph().node_count() == 0
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        O::is_enabled(op, &<O as PureCRDT>::StableState::default(), &self.unstable)
+        O::is_enabled(op, &self.stable, &self.unstable)
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -117,7 +112,7 @@ where
     Q: QueryOperation,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
-        O::execute_query(q, &O::StableState::default(), &self.unstable)
+        O::execute_query(q, &self.stable, &self.unstable)
     }
 }
 

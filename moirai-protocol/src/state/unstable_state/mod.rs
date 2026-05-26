@@ -13,6 +13,8 @@ use crate::{
 pub trait IsUnstableCore<O>: Debug {
     fn append(&mut self, event: Event<O>);
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
+    /// TODO: ideally should be Vec<&TaggedOp<O>>, but it causes lifetime issues in POLog::effect.
+    /// Maybe we can add a method `predecessors_cloned` that returns Vec<TaggedOp<O>>?
     fn predecessors(&self, version: &Version) -> Vec<TaggedOp<O>>
     where
         O: Clone;

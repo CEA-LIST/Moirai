@@ -18,21 +18,30 @@ use crate::{
     utils::intern_str::{InternalizeOp, Interner},
 };
 
+/// Services of the Tagged Causal Stable Broadcast communication protocol
 pub trait IsTcsb<O> {
+    /// Create a new TCSB instance for a replica with the given id and interner.
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
+    /// Receive a message containing a single event from another replica.
     fn receive(&mut self, message: EventMessage<O>);
+    /// Receive a message containing a batch of events from another replica.
     fn receive_batch(&mut self, message: BatchMessage<O>);
+    /// Transform an operation into a message containing an event to be broadcast to other replicas.
     fn send(&mut self, op: O) -> EventMessage<O>;
+    /// Return a message containing the version vector and except set to pull events from other replicas.
     fn since(&self) -> SinceMessage;
+    /// Return the batch of events since the given version and are not in the except set.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O>;
+    /// Return the next causally ready event to be delivered, if any.
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
+    /// Return the new stable version if it has advanced
     fn is_stable(&mut self) -> Option<&Version>;
-    fn update_version(&mut self, version: &Version);
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Tcsb<O> {
+    replica_idx: ReplicaIdx,
     /// Received events not yet causally ready.
     /// It contains only events from other replicas than the local one.
     inbox: HashMap<EventId, Event<O>>,
@@ -40,11 +49,14 @@ pub struct Tcsb<O> {
     /// It contains events from all replicas, including the local one.
     /// Organized by replica index and then by sequence number for efficient range queries.
     outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
+    /// The matrix clock tracks the latest known version of each replica, including the local one.
     matrix_clock: MatrixClock,
+    /// The last stable version is the greatest version such that all events causally preceding this version
+    /// have been delivered by all replicas.
     last_stable_version: Version,
-    replica_idx: ReplicaIdx,
+    /// Local mapping between remote replica IDs and local replica indices, and resolver for translating between them.
     interner: Interner,
-    /// TEMPORARY: for testing purposes only
+    /// The indices of the columns that were updated in the last matrix clock update, used for efficient stable version computation.
     last_updated_columns: Vec<ReplicaIdx>,
 }
 
@@ -61,7 +73,6 @@ where
             last_stable_version: Version::new(replica_idx, resolver.clone()),
             interner,
             replica_idx,
-            // TEMPORARY: for testing purposes only
             last_updated_columns: Vec::new(),
         }
     }
@@ -69,25 +80,13 @@ where
     fn receive(&mut self, message: EventMessage<O>) {
         // TODO: do the checks before internalizing (i.e, before adding new replicas to the matrix clock)
         let event = self.internalize_event(message);
-        if self.is_valid(&event) {
-            self.inbox.insert(event.id().clone(), event.clone());
-            self.outbox
-                .entry(event.id().idx())
-                .or_default()
-                .insert(event.id().seq(), event);
-        }
+        self.record(event);
     }
 
     fn receive_batch(&mut self, message: BatchMessage<O>) {
         let batch = self.internalize_batch(message);
         for event in batch.into_events() {
-            if self.is_valid(&event) {
-                self.inbox.insert(event.id().clone(), event.clone());
-                self.outbox
-                    .entry(event.id().idx())
-                    .or_default()
-                    .insert(event.id().seq(), event);
-            }
+            self.record(event);
         }
     }
 
@@ -96,7 +95,6 @@ where
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
         let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
-        // let op = op.translate_ids(self.replica_idx, &self.interner);
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox
             .entry(event.id().idx())
@@ -133,12 +131,6 @@ where
             self.last_stable_version = lsv;
             Some(&self.last_stable_version)
         }
-    }
-
-    fn update_version(&mut self, version: &Version) {
-        self.matrix_clock.origin_version_mut().join(version);
-        self.matrix_clock
-            .set_by_idx(version.origin_idx(), version.clone());
     }
 
     /// # Performance
@@ -181,6 +173,17 @@ impl<O> Tcsb<O>
 where
     O: Debug + Clone + InternalizeOp,
 {
+    /// Record a received event in the inbox and outbox if it is valid.
+    fn record(&mut self, event: Event<O>) {
+        if self.is_valid(&event) {
+            self.inbox.insert(event.id().clone(), event.clone());
+            self.outbox
+                .entry(event.id().idx())
+                .or_default()
+                .insert(event.id().seq(), event);
+        }
+    }
+
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
 

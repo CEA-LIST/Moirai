@@ -96,10 +96,27 @@ where
     where
         O: Clone,
     {
-        self.collect_predecessors(version)
+        let start_nodes: Vec<NodeIndex> = self
+            .heads
             .iter()
-            .filter_map(|nx| self.graph.node_weight(*nx).cloned())
-            .collect()
+            .map(|id| *self.map.get_by_right(id).unwrap())
+            .collect();
+
+        let mut collected = Vec::new();
+        let discovered = self.graph.visit_map();
+        let mut dfs = Dfs::from_parts(start_nodes, discovered);
+
+        debug_assert!(self.graph.node_count() >= self.heads.len());
+
+        while let Some(nx) = dfs.next(&self.graph) {
+            let event_id = self.map.get_by_left(&nx).unwrap();
+            if event_id.is_predecessor_of(version) {
+                let tagged_op = self.graph.node_weight(nx).unwrap();
+                collected.push(tagged_op.clone());
+            }
+        }
+
+        collected
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
@@ -183,35 +200,6 @@ impl<O> EventGraph<O>
 where
     O: Debug,
 {
-    /// Collect all the node indices that correspond to an event lower or equal to the given version.
-    /// # Complexity
-    /// O(v + e)
-    // TODO: use the cutter to reduce the number of visited nodes and edges
-    fn collect_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
-        let start_nodes: Vec<NodeIndex> = self
-            .heads
-            .iter()
-            .map(|id| *self.map.get_by_right(id).unwrap())
-            .collect();
-
-        let mut collected = Vec::new();
-        let discovered = self.graph.visit_map();
-        let mut dfs = Dfs::from_parts(start_nodes, discovered);
-
-        debug_assert!(self.graph.node_count() >= self.heads.len());
-
-        while let Some(nx) = dfs.next(&self.graph) {
-            let event_id = self.map.get_by_left(&nx).unwrap();
-            if event_id.is_predecessor_of(version) {
-                collected.push(nx);
-            }
-        }
-
-        // TODO: are node indices topologically sorted?
-
-        collected
-    }
-
     /// Find the immediate predecessors of the given version in the DAG.
     /// An immediate predecessor is a node that is a predecessor of the given version,
     /// and has no other predecessors that are also predecessors of the given version.

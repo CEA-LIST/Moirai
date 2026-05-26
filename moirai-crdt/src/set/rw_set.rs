@@ -386,6 +386,24 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a"]));
     }
 
+    #[test]
+    fn concurrent_add_remove_same_element() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+
+        let event_a_1 = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_a_2 = replica_a.send(RWSet::Remove("a")).unwrap();
+        let event_b_1 = replica_b.send(RWSet::Add("a")).unwrap();
+        let event_b_2 = replica_b.send(RWSet::Remove("a")).unwrap();
+
+        replica_a.receive(event_b_1);
+        replica_b.receive(event_a_1);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
+
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
+    }
+
     #[cfg(feature = "fuzz")]
     #[test]
     #[ignore]

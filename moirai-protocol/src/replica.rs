@@ -146,7 +146,9 @@ where
     fn deliver(&mut self, event: Event<L::Op>) {
         let mut sink = SinkCollector::new();
         let mut ctx = EffectContext::root("root", Some(&mut sink));
+
         self.state.effect(event, &mut ctx);
+
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {
             self.state.stabilize(version);

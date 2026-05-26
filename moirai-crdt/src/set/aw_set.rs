@@ -368,6 +368,24 @@ mod tests {
         assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a", "b"]));
     }
 
+    #[test]
+    fn concurrent_add_remove_same_element() {
+        let (mut replica_a, mut replica_b) = twins_log::<VecLog<AWSet<&str>>>();
+
+        let event_a_1 = replica_a.send(AWSet::Add("a")).unwrap();
+        let event_a_2 = replica_a.send(AWSet::Remove("a")).unwrap();
+        let event_b_1 = replica_b.send(AWSet::Add("a")).unwrap();
+        let event_b_2 = replica_b.send(AWSet::Remove("a")).unwrap();
+
+        replica_a.receive(event_b_1);
+        replica_b.receive(event_a_1);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
+
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
+    }
+
     #[cfg(feature = "fuzz")]
     #[test]
     #[ignore]
