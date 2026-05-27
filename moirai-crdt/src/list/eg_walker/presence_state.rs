@@ -13,6 +13,14 @@ pub struct PresenceState {
 }
 
 impl PresenceState {
+    pub fn new(event_id: &EventId) -> Self {
+        Self {
+            inserted: true,
+            born_dots: BTreeSet::from([event_id.clone()]),
+            deleted_dots: BTreeMap::new(),
+        }
+    }
+
     pub fn is_integrated(&self) -> bool {
         self.inserted
     }

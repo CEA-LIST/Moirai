@@ -5,6 +5,8 @@
 macro_rules! record {
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
+            /// Set of operations that can be applied to the record.
+            /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
             #[derive(Clone, Debug)]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum $name {
@@ -14,6 +16,7 @@ macro_rules! record {
                 New,
             }
 
+            /// Internalize an operation, i.e., convert any contained event id from a remote replica into the local interner's mapping.
             impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $name {
                 fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
                     match self {
@@ -25,6 +28,7 @@ macro_rules! record {
                 }
             }
 
+            /// Returned value when reading the record, containing the values of all fields.
             #[derive(Debug, Clone, Default, PartialEq)]
             pub struct [<$name Value>] {
                 $(
@@ -32,32 +36,16 @@ macro_rules! record {
                 )*
             }
 
-            #[derive(Debug, Clone)]
-            pub enum [<$name Rejection>] {
-                $(
-                    [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Rejection),
-                )*
-                AlreadyInitialized,
-            }
-
-            impl std::fmt::Display for [<$name Rejection>] {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    match self {
-                        $(
-                            Self::[<$field:camel>](e) => write!(f, "{}: {}", stringify!($field), e),
-                        )*
-                        Self::AlreadyInitialized => write!(f, "Already initialized"),
-                    }
-                }
-            }
-
+            /// Record log type, containing a log for each field and a cache store for the read value.
             #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
                 $(
                     $field: $T,
                 )*
+                __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell<[<$name Value>]>,
             }
 
+            /// Accessor methods for each field log.
             impl [<$name Log>] {
                 $(
                         pub fn $field(&self) -> &$T {
@@ -66,6 +54,9 @@ macro_rules! record {
                 )*
             }
 
+            /// Implementation of the Log trait for the record.
+            /// No semantics are defined at the record level, all semantics are defined at the field level.
+            /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
                 type Value = [<$name Value>];
                 type Op = $name;
@@ -76,6 +67,7 @@ macro_rules! record {
                         $(
                             $field: <$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                         )*
+                        __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell::new(),
                     }
                 }
 
@@ -84,6 +76,7 @@ macro_rules! record {
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
+                    self.__moirai_read_cache.invalidate();
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
@@ -111,12 +104,14 @@ macro_rules! record {
                 }
 
                 fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                    self.__moirai_read_cache.invalidate();
                     $(
                         self.$field.stabilize(version);
                     )*
                 }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
+                    self.__moirai_read_cache.invalidate();
                     $(
                         self.$field.redundant_by_parent(version, conservative);
                     )*
@@ -136,6 +131,7 @@ macro_rules! record {
                         $(
                             $name::[<$field:camel>](o) => self.$field.is_enabled(o).map_err(Self::Rejection::[<$field:camel>]),
                         )*
+                        // "New" can only be applied if the record is in its default state
                         $name::New => if self.is_default() { Ok(()) } else { Err(Self::Rejection::AlreadyInitialized) },
                         _ => unreachable!(),
                     }
@@ -157,10 +153,46 @@ macro_rules! record {
 
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
+                    $crate::moirai_protocol::crdt::eval::BorrowedRead::read_ref(self).clone()
+                }
+            }
+
+            impl $crate::moirai_protocol::crdt::eval::BorrowedRead for [<$name Log>] {
+                fn read_ref(&self) -> &Self::Value {
+                    self.__moirai_read_cache.get_or_compute(|| self.read_uncached())
+                }
+            }
+
+            impl [<$name Log>] {
+                fn read_uncached(&self) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: self.$field.execute_query($crate::moirai_protocol::crdt::query::Read::new()),
+                            $field: <$T as $crate::moirai_protocol::state::log::IsLog>::eval(
+                                &self.$field,
+                                $crate::moirai_protocol::crdt::query::Read::new()
+                            ),
                         )*
+                    }
+                }
+            }
+
+            /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
+            /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.
+            #[derive(Debug, Clone)]
+            pub enum [<$name Rejection>] {
+                $(
+                    [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Rejection),
+                )*
+                AlreadyInitialized,
+            }
+
+            impl std::fmt::Display for [<$name Rejection>] {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        $(
+                            Self::[<$field:camel>](e) => write!(f, "{}: {}", stringify!($field), e),
+                        )*
+                        Self::AlreadyInitialized => write!(f, "Already initialized"),
                     }
                 }
             }

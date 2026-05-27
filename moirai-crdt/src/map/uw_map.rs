@@ -10,11 +10,11 @@ use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerat
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::EvalNested,
+        eval::{BorrowedRead, EvalNested},
         query::{Get, QueryOperation, Read},
     },
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -37,14 +37,21 @@ pub enum UWMap<K, O> {
 pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,
+    L: IsLog,
 {
     children: HashMap<K, L>,
+    read_cache: CacheCell<HashMap<K, L::Value>>,
 }
 
-impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
+impl<K, L> Default for UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash,
+    L: IsLog,
+{
     fn default() -> Self {
         Self {
             children: Default::default(),
+            read_cache: CacheCell::new(),
         }
     }
 }
@@ -52,6 +59,7 @@ impl<K: Clone + Debug + Eq + Hash, L> Default for UWMapLog<K, L> {
 impl<K, L> UWMapLog<K, L>
 where
     K: Clone + Debug + Eq + Hash,
+    L: IsLog,
 {
     pub fn new() -> Self {
         Self::default()
@@ -81,8 +89,9 @@ where
 
 impl<K, L> IsLog for UWMapLog<K, L>
 where
-    L: IsLog,
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
     K: Clone + Debug + Hash + Eq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     type Value = HashMap<K, L::Value>;
     type Op = UWMap<K, L::Op>;
@@ -123,6 +132,8 @@ where
                             .effect(child_op, ctx);
                     });
                 }
+
+                self.refresh_cached_key(&k);
             }
             UWMap::Remove(k) => {
                 if ctx.is_owned() {
@@ -132,8 +143,10 @@ where
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
                 }
+                self.refresh_cached_key(&k);
             }
             UWMap::Clear => {
+                self.read_cache.invalidate();
                 if ctx.is_owned() {
                     ctx.delete();
                 }
@@ -145,12 +158,14 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
+        self.read_cache.invalidate();
         for child in self.children.values_mut() {
             child.stabilize(version);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        self.read_cache.invalidate();
         for child in self.children.values_mut() {
             child.redundant_by_parent(version, conservative);
         }
@@ -175,12 +190,34 @@ impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Default + PartialEq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn execute_query(
         &self,
         _q: Read<Self::Value>,
     ) -> <Read<Self::Value> as QueryOperation>::Response {
+        BorrowedRead::read_ref(self).clone()
+    }
+}
+
+impl<K, L> BorrowedRead for UWMapLog<K, L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    K: Clone + Debug + Hash + Eq + PartialEq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
+{
+    fn read_ref(&self) -> &Self::Value {
+        self.read_cache.get_or_compute(|| self.read_uncached())
+    }
+}
+
+impl<K, L> UWMapLog<K, L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    K: Clone + Debug + Hash + Eq + PartialEq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
+{
+    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut map = HashMap::default();
         for (k, v) in &self.children {
             let val = v.execute_query(Read::new());
@@ -190,13 +227,36 @@ where
         }
         map
     }
+
+    fn refresh_cached_key(&mut self, key: &K) {
+        if self.read_cache.get().is_none() {
+            return;
+        }
+
+        let value = self.children.get(key).and_then(|child| {
+            let value = child.execute_query(Read::new());
+            (value != <L as IsLog>::Value::default()).then_some(value)
+        });
+
+        if let Some(cached) = self.read_cache.get_mut() {
+            match value {
+                Some(value) => {
+                    cached.insert(key.clone(), value);
+                }
+                None => {
+                    cached.remove(key);
+                }
+            }
+        }
+    }
 }
 
 impl<'a, K, Q, L> EvalNested<Get<'a, K, Q>> for UWMapLog<K, L>
 where
     Q: QueryOperation,
-    L: IsLog + EvalNested<Q>,
+    L: IsLog + EvalNested<Q> + EvalNested<Read<<L as IsLog>::Value>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
         if let Some(child) = self.children.get(q.key) {
@@ -210,8 +270,9 @@ where
 #[cfg(feature = "fuzz")]
 impl<K, L> OpGeneratorNested for UWMapLog<K, L>
 where
-    L: OpGeneratorNested,
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>> + OpGeneratorNested,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         use moirai_fuzz::value_generator::ValueGenerator;
@@ -244,7 +305,7 @@ where
 impl<K, L> Display for UWMapLog<K, L>
 where
     K: Display + Clone + PartialEq + Eq + Hash,
-    L: Display,
+    L: IsLog + Display,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for (k, v) in &self.children {
@@ -256,17 +317,27 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        convert::Infallible,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
     use moirai_macros::record;
     use moirai_protocol::{
-        crdt::query::{Contains, Get, Read},
-        replica::IsReplica,
-        state::{graph_log::GraphLog, po_log::VecLog},
+        clock::version_vector::Version,
+        crdt::{
+            eval::{BorrowedRead, EvalNested},
+            query::{Contains, Get, Read},
+        },
+        event::{Event, id::EventId, lamport::Lamport},
+        replica::{IsReplica, ReplicaIdx},
+        state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::VecLog},
+        utils::intern_str::{InternalizeOp, Interner},
     };
 
     use crate::{
         HashMap,
         counter::resettable_counter::Counter,
-        // flag::ew_flag::EWFlag,
         list::{
             eg_walker::List,
             nested_list::{NestedList, NestedListLog},
@@ -280,6 +351,103 @@ mod tests {
         first: VecLog<Counter<i32>>,
         second: VecLog<Counter<i32>>,
     });
+
+    static COUNTING_LOG_READS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Debug, Default)]
+    struct CountingLog {
+        value: usize,
+    }
+
+    #[derive(Clone, Debug)]
+    #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
+    struct CountingOp(usize);
+
+    impl InternalizeOp for CountingOp {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    impl IsLog for CountingLog {
+        type Value = usize;
+        type Op = CountingOp;
+        type Rejection = Infallible;
+
+        fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+            self.value = event.op().0;
+        }
+
+        fn stabilize(&mut self, _version: &Version) {}
+
+        fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {
+            self.value = 0;
+        }
+
+        fn is_default(&self) -> bool {
+            self.value == 0
+        }
+    }
+
+    impl EvalNested<Read<usize>> for CountingLog {
+        fn execute_query(&self, _q: Read<usize>) -> usize {
+            COUNTING_LOG_READS.fetch_add(1, Ordering::SeqCst);
+            self.value
+        }
+    }
+
+    record!(CachedRecord {
+        first: CountingLog,
+        second: CountingLog,
+    });
+
+    fn cached_record_event(seq: usize, op: CachedRecord) -> Event<CachedRecord> {
+        let mut interner = Interner::new();
+        interner.intern("a");
+        let resolver = interner.resolver().clone();
+        let mut version = Version::new(ReplicaIdx(0), resolver.clone());
+        version.set_by_idx(ReplicaIdx(0), seq);
+        Event::new(
+            EventId::from(&version),
+            Lamport::from(&version),
+            op,
+            version,
+        )
+    }
+
+    #[test]
+    fn record_read_cache_reuses_materialized_value() {
+        let mut log = CachedRecordLog::default();
+        log.first.value = 1;
+        log.second.value = 2;
+
+        COUNTING_LOG_READS.store(0, Ordering::SeqCst);
+        {
+            let first_ref = BorrowedRead::read_ref(&log);
+            assert_eq!(first_ref.first, 1);
+            assert_eq!(first_ref.second, 2);
+            assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
+
+            let second_ref = BorrowedRead::read_ref(&log);
+            assert!(std::ptr::eq(first_ref, second_ref));
+            assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
+        }
+
+        let owned = log.execute_query(Read::new());
+        assert_eq!(owned.first, 1);
+        assert_eq!(owned.second, 2);
+        assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
+
+        log.effect(
+            cached_record_event(1, CachedRecord::First(CountingOp(5))),
+            &mut EffectContext::silent(),
+        );
+
+        let refreshed = BorrowedRead::read_ref(&log);
+        assert_eq!(refreshed.first, 5);
+        assert_eq!(refreshed.second, 2);
+        assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 4);
+    }
 
     #[test]
     fn nested_query() {

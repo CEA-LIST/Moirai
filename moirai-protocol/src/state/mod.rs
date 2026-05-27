@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod effect_context;
 pub mod graph_log;
 pub mod log;

@@ -5,11 +5,11 @@ use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::EvalNested,
+        eval::{BorrowedRead, EvalNested},
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
@@ -22,17 +22,30 @@ pub enum Optional<O> {
 }
 
 #[derive(Clone, Debug)]
-pub struct OptionLog<L> {
+pub struct OptionLog<L>
+where
+    L: IsLog,
+{
     child: Option<L>,
+    read_cache: CacheCell<Option<L::Value>>,
 }
 
-impl<L> Default for OptionLog<L> {
+impl<L> Default for OptionLog<L>
+where
+    L: IsLog,
+{
     fn default() -> Self {
-        Self { child: None }
+        Self {
+            child: None,
+            read_cache: CacheCell::new(),
+        }
     }
 }
 
-impl<L> OptionLog<L> {
+impl<L> OptionLog<L>
+where
+    L: IsLog,
+{
     pub fn new() -> Self {
         Self::default()
     }
@@ -67,6 +80,7 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+        self.read_cache.invalidate();
         match event.op().clone() {
             Optional::Set(o) => {
                 if self.child.is_some() {
@@ -97,12 +111,14 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
+        self.read_cache.invalidate();
         if let Some(ref mut child) = self.child {
             child.stabilize(version);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        self.read_cache.invalidate();
         if let Some(ref mut child) = self.child {
             child.redundant_by_parent(version, conservative);
         }
@@ -138,12 +154,32 @@ where
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for OptionLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Default + PartialEq,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn execute_query(
         &self,
         _q: Read<Self::Value>,
     ) -> <Read<Self::Value> as QueryOperation>::Response {
+        BorrowedRead::read_ref(self).clone()
+    }
+}
+
+impl<L> BorrowedRead for OptionLog<L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
+{
+    fn read_ref(&self) -> &Self::Value {
+        self.read_cache.get_or_compute(|| self.read_uncached())
+    }
+}
+
+impl<L> OptionLog<L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + Default + PartialEq,
+{
+    fn read_uncached(&self) -> <Self as IsLog>::Value {
         match self.child {
             Some(ref child) => Some(child.execute_query(Read::new())),
             None => Default::default(),

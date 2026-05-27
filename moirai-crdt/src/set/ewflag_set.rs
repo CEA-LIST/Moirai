@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::EvalNested,
+        eval::{BorrowedRead, EvalNested},
         query::{QueryOperation, Read},
     },
     event::Event,
@@ -86,9 +86,8 @@ where
         _q: Read<HashSet<V>>,
     ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = HashSet::default();
-        for (k, v) in self.0.children() {
-            let val = v.execute_query(Read::new());
-            if val {
+        for (k, val) in self.0.read_ref() {
+            if *val {
                 set.insert(k.clone());
             }
         }

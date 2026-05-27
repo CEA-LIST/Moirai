@@ -7,11 +7,11 @@ use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::EvalNested,
+        eval::{BorrowedRead, EvalNested},
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{cache::CacheCell, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -41,14 +41,21 @@ pub enum NestedList<O> {
 /// Maintains both the logical ordering of children (via EgWalker) and the
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
-pub struct NestedListLog<L> {
+pub struct NestedListLog<L>
+where
+    L: IsLog,
+{
     /// EgWalker list tracking the logical positions of children
     positions: GraphLog<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
     children: UWMapLog<EventId, L>,
+    read_cache: CacheCell<Vec<L::Value>>,
 }
 
-impl<L> NestedListLog<L> {
+impl<L> NestedListLog<L>
+where
+    L: IsLog,
+{
     pub fn new() -> Self {
         Self::default()
     }
@@ -90,6 +97,7 @@ where
 impl<L> IsLog for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + PartialEq,
 {
     type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
@@ -100,6 +108,7 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+        self.read_cache.invalidate();
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
                 let list_event = Event::new(
@@ -154,11 +163,13 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
+        self.read_cache.invalidate();
         self.children.stabilize(version);
         self.positions.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        self.read_cache.invalidate();
         self.children.redundant_by_parent(version, conservative);
         self.positions.redundant_by_parent(version, conservative);
     }
@@ -215,19 +226,39 @@ where
 impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
 where
     L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: PartialEq,
+    <L as IsLog>::Value: Clone + PartialEq,
 {
     fn execute_query(
         &self,
         _q: Read<<Self as IsLog>::Value>,
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
+        BorrowedRead::read_ref(self).clone()
+    }
+}
+
+impl<L> BorrowedRead for NestedListLog<L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + PartialEq,
+{
+    fn read_ref(&self) -> &Self::Value {
+        self.read_cache.get_or_compute(|| self.read_uncached())
+    }
+}
+
+impl<L> NestedListLog<L>
+where
+    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + PartialEq,
+{
+    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut list = Vec::new();
         let positions = self.positions.execute_query(Read::new());
         #[allow(clippy::mutable_key_type)]
-        let mut map = self.children.execute_query(Read::new());
+        let map = self.children.read_ref();
         for eid in positions {
-            if let Some(child) = map.remove(&eid) {
-                list.push(child);
+            if let Some(child) = map.get(&eid) {
+                list.push(child.clone());
             }
         }
         list
@@ -238,6 +269,7 @@ where
 impl<L> OpGeneratorNested for NestedListLog<L>
 where
     L: OpGeneratorNested + IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    <L as IsLog>::Value: Clone + PartialEq,
 {
     fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -686,11 +718,15 @@ impl<O> Boxer<NestedList<Box<O>>> for NestedList<O> {
     }
 }
 
-impl<L> Default for NestedListLog<L> {
+impl<L> Default for NestedListLog<L>
+where
+    L: IsLog,
+{
     fn default() -> Self {
         Self {
             positions: GraphLog::default(),
             children: Default::default(),
+            read_cache: CacheCell::new(),
         }
     }
 }

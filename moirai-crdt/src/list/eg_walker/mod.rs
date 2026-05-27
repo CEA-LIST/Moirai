@@ -1,8 +1,9 @@
 mod document;
+mod item;
 mod presence_state;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, BinaryHeap},
+    collections::{BTreeSet, BinaryHeap},
     fmt::{Debug, Display},
 };
 
@@ -30,7 +31,7 @@ use rand::{Rng, RngExt};
 
 use crate::{
     HashMap,
-    list::eg_walker::{document::Document, presence_state::PresenceState},
+    list::eg_walker::{document::Document, item::Item},
 };
 
 // Single-character, position-based, pure op-based CRDT operations
@@ -47,21 +48,6 @@ impl<V> InternalizeOp for List<V> {
     fn internalize(self, _interner: &Interner) -> Self {
         self
     }
-}
-
-#[derive(Clone, Debug)]
-struct Item<V> {
-    pub id: EventId,
-    /// Event id of the character the user saw when inserting this new op.
-    /// The fields from the CRDT that determines insertion order.
-    pub origin_left: Option<EventId>,
-    pub origin_right: Option<EventId>,
-    pub content: V,
-    /// Active life dots in the final replayed version.
-    /// This is the state that materializes the visible list returned to the user.
-    pub effect_live_dots: BTreeSet<EventId>,
-    /// State in the prepared parent context used while Eg-Walker jumps across the event graph.
-    pub presence: PresenceState,
 }
 
 #[derive(Clone, Debug)]
@@ -370,32 +356,15 @@ where
                     }
                 }
 
-                let item = Item {
-                    id: tagged_op.id().clone(),
+                let item = Item::new(
+                    tagged_op.id().clone(),
                     origin_left,
                     origin_right,
-                    content: content.clone(),
-                    effect_live_dots: BTreeSet::from([tagged_op.id().clone()]),
-                    presence: PresenceState {
-                        inserted: true,
-                        born_dots: BTreeSet::from([tagged_op.id().clone()]),
-                        deleted_dots: BTreeMap::new(),
-                    },
-                };
-
+                    content.clone(),
+                );
                 Self::integrate(doc, item, idx)
             }
         }
-    }
-
-    fn materialize(doc: &Document<V>) -> Vec<V> {
-        // Queries read the final replayed effect state, not the transient prepared state
-        // that Eg-Walker uses while moving between parent versions.
-        doc.items
-            .iter()
-            .filter(|item| !item.effect_live_dots.is_empty())
-            .map(|item| item.content.clone())
-            .collect()
     }
 
     fn diff<U>(
@@ -523,7 +492,12 @@ where
             document.current_version = Some(tagged_op.id().clone());
         }
 
-        Self::materialize(&document)
+        document
+            .items
+            .iter()
+            .filter(|item| !item.effect_live_dots.is_empty())
+            .map(|item| item.content.clone())
+            .collect()
     }
 }
 
@@ -567,20 +541,20 @@ where
             List::Insert { pos, .. } => {
                 (*pos <= state.len())
                     .then_some(())
-                    .ok_or_else(|| ListRejection::OutOfBounds {
+                    .ok_or(ListRejection::OutOfBounds {
                         pos: *pos,
                         len: state.len(),
                     })
             }
             List::Update { pos } | List::Delete { pos } => (*pos < state.len())
                 .then_some(())
-                .ok_or_else(|| ListRejection::OutOfBounds {
+                .ok_or(ListRejection::OutOfBounds {
                     pos: *pos,
                     len: state.len(),
                 }),
             List::DeleteRange { start, len } => ((*start + *len) <= state.len())
                 .then_some(())
-                .ok_or_else(|| ListRejection::OutOfBounds {
+                .ok_or(ListRejection::OutOfBounds {
                     pos: *start + *len,
                     len: state.len(),
                 }),
