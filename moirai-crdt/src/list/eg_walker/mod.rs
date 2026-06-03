@@ -22,6 +22,8 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::{
     HashMap,
@@ -30,6 +32,7 @@ use crate::{
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum List<V> {
     Insert { content: V, pos: usize },
     Delete { pos: usize },

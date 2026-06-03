@@ -1,6 +1,10 @@
 use crate::{HashSet, clock::version_vector::Version, event::id::EventId, replica::ReplicaId};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Since {
     version: Version,
     except: HashSet<EventId>,

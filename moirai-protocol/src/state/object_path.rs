@@ -13,10 +13,81 @@ pub enum PathSegment {
     Variant(&'static str),
 }
 
+#[cfg(feature = "serde")]
+mod path_segment_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    enum PathSegmentHelper {
+        Field(String),
+        ListElement(EventId),
+        MapEntry(String),
+        Variant(String),
+    }
+
+    impl Serialize for PathSegment {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let helper = match self {
+                PathSegment::Field(s) => PathSegmentHelper::Field(s.to_string()),
+                PathSegment::ListElement(id) => PathSegmentHelper::ListElement(id.clone()),
+                PathSegment::MapEntry(s) => PathSegmentHelper::MapEntry(s.clone()),
+                PathSegment::Variant(s) => PathSegmentHelper::Variant(s.to_string()),
+            };
+            helper.serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for PathSegment {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let helper = PathSegmentHelper::deserialize(deserializer)?;
+            Ok(match helper {
+                PathSegmentHelper::Field(s) => PathSegment::Field(Box::leak(s.into_boxed_str())),
+                PathSegmentHelper::ListElement(id) => PathSegment::ListElement(id),
+                PathSegmentHelper::MapEntry(s) => PathSegment::MapEntry(s),
+                PathSegmentHelper::Variant(s) => PathSegment::Variant(Box::leak(s.into_boxed_str())),
+            })
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ObjectPath {
     root: &'static str,
     segments: Vec<PathSegment>,
+}
+
+#[cfg(feature = "serde")]
+mod object_path_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct ObjectPathHelper {
+        root: String,
+        segments: Vec<PathSegment>,
+    }
+
+    impl Serialize for ObjectPath {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let helper = ObjectPathHelper {
+                root: self.root.to_string(),
+                segments: self.segments.clone(),
+            };
+            helper.serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ObjectPath {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let helper = ObjectPathHelper::deserialize(deserializer)?;
+            Ok(ObjectPath {
+                root: Box::leak(helper.root.into_boxed_str()),
+                segments: helper.segments,
+            })
+        }
+    }
 }
 
 impl Display for ObjectPath {

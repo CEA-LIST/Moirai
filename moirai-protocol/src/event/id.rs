@@ -4,6 +4,9 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::{
     clock::version_vector::{Seq, Version},
     replica::{ReplicaId, ReplicaIdx},
@@ -12,6 +15,7 @@ use crate::{
 
 /// Represents the unique identifier for an operation.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EventId {
     idx: ReplicaIdx,
     seq: Seq,

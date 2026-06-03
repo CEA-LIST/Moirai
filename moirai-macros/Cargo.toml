@@ -13,8 +13,10 @@ moirai-protocol = { path = "../moirai-protocol" }
 moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 paste = "1.0.15"
 rustc-hash = "1.1.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
 
 [features]
 default = []
 fuzz = ["moirai-fuzz"]
+serde = ["dep:serde", "moirai-protocol/serde"]
 sink = ["moirai-protocol/sink"]

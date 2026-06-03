@@ -22,6 +22,7 @@ use crate::{
 pub type ReplicaId = str;
 pub type ReplicaIdOwned = String;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaIdx(pub usize);
 
 pub trait IsReplica<L>

@@ -30,10 +30,13 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashMap;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum UWMap<K, O> {
     Update(K, O),
     Remove(K),

@@ -6,6 +6,7 @@ macro_rules! record {
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum $name {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),
@@ -25,6 +26,7 @@ macro_rules! record {
             }
 
             #[derive(Debug, Clone, Default, PartialEq)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Value>] {
                 $(
                     pub $field: <$T as $crate::moirai_protocol::state::log::IsLog>::Value,

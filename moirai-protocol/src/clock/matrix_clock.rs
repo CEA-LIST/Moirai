@@ -12,6 +12,7 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct ReplicaMap(Vec<Version>);
 
 impl ReplicaMap {

@@ -16,10 +16,13 @@ use moirai_protocol::{
     utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashMap;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum UWGraph<V, E, No, Lo> {
     UpdateVertex {
         id: V,
@@ -266,6 +269,7 @@ where
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Content<Id, Val> {
     pub id: Id,
     pub val: Val,

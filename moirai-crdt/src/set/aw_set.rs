@@ -15,12 +15,15 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashSet;
 #[cfg(feature = "fuzz")]
 use crate::set::SetConfig;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AWSet<V> {
     Add(V),
     Remove(V),

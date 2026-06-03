@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["moirai-protocol", "moirai-crdt", "moirai-fuzz", "moirai-macros"]
+members = ["moirai-protocol", "moirai-crdt", "moirai-fuzz", "moirai-macros", "moirai-network"]
 
 [workspace.package]
 license = "Apache-2.0"

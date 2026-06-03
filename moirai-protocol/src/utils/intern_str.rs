@@ -1,6 +1,9 @@
-use std::{fmt::Debug, rc::Rc};
+use std::{fmt::Debug, sync::Arc};
 
-use elsa::FrozenVec;
+use elsa::sync::FrozenVec;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     HashMap,
@@ -9,7 +12,35 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Resolver {
-    inner: Rc<FrozenVec<ReplicaIdOwned>>,
+    inner: Arc<FrozenVec<ReplicaIdOwned>>,
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for Resolver {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize as a Vec<String>
+        self.into_vec().serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for Resolver {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec = Vec::<ReplicaIdOwned>::deserialize(deserializer)?;
+        let frozen = FrozenVec::new();
+        for item in vec {
+            frozen.push(item);
+        }
+        Ok(Resolver {
+            inner: Arc::new(frozen),
+        })
+    }
 }
 
 impl Resolver {
@@ -44,7 +75,7 @@ impl Debug for Resolver {
 
 impl PartialEq for Resolver {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
@@ -85,7 +116,7 @@ impl Interner {
         Self {
             str_to_int: HashMap::default(),
             int_to_str: Resolver {
-                inner: Rc::new(FrozenVec::new()),
+                inner: Arc::new(FrozenVec::new()),
             },
             translator: Translator { inner: Vec::new() },
         }

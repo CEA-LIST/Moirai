@@ -1,8 +1,12 @@
 use std::fmt::{Debug, Display};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::{clock::version_vector::Version, event::Event, replica::ReplicaId};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Batch<O> {
     events: Vec<Event<O>>,
     version: Version,

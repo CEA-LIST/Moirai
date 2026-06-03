@@ -18,13 +18,11 @@ pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
 
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Register<V, P> {
     Write(V),
     // TODO: find a better design pattern
+    #[cfg_attr(feature = "serde", serde(skip))]
     __Marker(std::convert::Infallible, PhantomData<P>),
 }
 

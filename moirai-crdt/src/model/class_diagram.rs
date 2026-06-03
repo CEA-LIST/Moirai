@@ -12,6 +12,8 @@ use petgraph::{
     dot::{Config, Dot},
     graph::{DiGraph, NodeIndex},
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::{
     HashMap,
@@ -22,6 +24,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum RelationType {
     Extends,
     Implements,
@@ -56,6 +59,7 @@ impl Ord for RelationType {
 }
 
 #[derive(Debug, Clone, Eq, Default, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PrimitiveType {
     String,
     Number,
@@ -65,6 +69,7 @@ pub enum PrimitiveType {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Class(String),
@@ -77,6 +82,7 @@ impl Default for TypeRef {
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Visibility {
     #[default]
     Public,
@@ -110,6 +116,7 @@ impl Ord for Visibility {
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Multiplicity {
     #[default]
     Unspecified,

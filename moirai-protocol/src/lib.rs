@@ -1,3 +1,5 @@
+#![feature(let_chains)]
+
 pub mod broadcast;
 pub mod clock;
 pub mod crdt;

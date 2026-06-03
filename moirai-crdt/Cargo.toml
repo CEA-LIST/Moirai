@@ -29,6 +29,6 @@ rand = { version = "0.10.0", optional = true }
 # TODO: always enable fuzz by default for compatibility with Arachne and generated code
 default = ["fuzz"]
 # default = []
-serde = ["dep:serde"]
+serde = ["dep:serde", "moirai-protocol/serde", "moirai-macros/serde"]
 fuzz = ["dep:moirai-fuzz", "dep:rand"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz/sink"]

@@ -180,9 +180,11 @@ where
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
 
-        // The event should not come from the local replica
+        // The event should not come from the local replica.
+        // In a gossip network the same event can loop back via other peers,
+        // so we silently drop it rather than panicking.
         if event.id().idx() == self.replica_idx {
-            panic!("Received event from local replica");
+            return false;
         }
 
         // The event should not be a duplicate, i.e. an event already received

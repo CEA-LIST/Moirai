@@ -19,6 +19,7 @@ use crate::{
 pub type Seq = usize;
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct VersionEntries(Vec<Seq>);
 
 impl VersionEntries {

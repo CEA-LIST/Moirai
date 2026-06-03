@@ -1,5 +1,8 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::{
     broadcast::{batch::Batch, since::Since},
     event::Event,
@@ -22,13 +25,16 @@ pub type BatchMessage<O> = Message<O, kind::Batch>;
 pub type SinceMessage = Message<(), kind::Since>;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Message<O, K = kind::Any> {
     payload: Payload<O>,
     resolver: Resolver,
+    #[cfg_attr(feature = "serde", serde(skip))]
     _kind: PhantomData<K>,
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Payload<O> {
     Event(Event<O>),
     Batch(Batch<O>),

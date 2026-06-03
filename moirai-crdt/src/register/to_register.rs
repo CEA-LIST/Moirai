@@ -10,8 +10,11 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
     utils::intern_str::{InternalizeOp, Interner},
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TORegister<V> {
     Clear,
     Write(V),

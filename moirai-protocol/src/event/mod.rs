@@ -5,12 +5,16 @@ pub mod tagged_op;
 
 use std::fmt::{Debug, Display};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::{
     clock::version_vector::Version,
     event::{id::EventId, lamport::Lamport},
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Event<O> {
     id: EventId,
     lamport: Lamport,

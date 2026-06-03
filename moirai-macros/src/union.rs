@@ -5,6 +5,7 @@ macro_rules! union {
     ) => {
         $crate::paste::paste! {
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum $union {
                 $(
                     $variant($ty),
@@ -40,6 +41,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union ChildValue>] {
                 $(
                     $variant(<$log as $crate::moirai_protocol::state::log::IsLog>::Value),
@@ -89,6 +91,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug, Default, PartialEq)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Value>] {
                 #[default]
                 Unset,

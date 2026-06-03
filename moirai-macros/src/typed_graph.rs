@@ -5,6 +5,7 @@ use std::hash::Hash;
 use moirai_protocol::utils::intern_str::InternalizeOp;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Arc<S, T, E> {
     pub source: S,
     pub target: T,
@@ -26,6 +27,7 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Vertex<T>
 where
     T: Debug + Clone + PartialEq + Eq + Hash,
@@ -62,6 +64,7 @@ macro_rules! typed_graph {
         // Generate a vertex struct for each vertex variant
         $(
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct $v(pub $crate::moirai_protocol::state::object_path::ObjectPath);
 
             impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $v {
@@ -97,6 +100,7 @@ macro_rules! typed_graph {
 
         // Enum of all vertices
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum $vertex {
             $( $v($v) ),*
         }
@@ -123,12 +127,14 @@ macro_rules! typed_graph {
 
         // Enum of all edge types
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum $edge {
             $( $conn($ety) ),*
         }
 
         // Enum of all arcs
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum $arcs {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
@@ -191,6 +197,7 @@ macro_rules! typed_graph {
 
         // Main graph operation enum
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum $graph<P> {
             AddVertex { id: $vertex },
             RemoveVertex { id: $vertex },
@@ -198,6 +205,7 @@ macro_rules! typed_graph {
             AddArc($arcs),
             RemoveArc($arcs),
             #[doc(hidden)]
+            #[cfg_attr(feature = "serde", serde(skip))]
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
         }
 
