@@ -40,7 +40,7 @@ where
 
         info!("{}", config_table);
 
-        let run_data = runner::<L>(run_config, config.final_merge, config.compare);
+        let run_data = runner::<L>(run_config, config.final_merge, config.compare, config.query);
         let results = run_results(&run_data);
 
         debug!("Run {} completed", run_idx + 1);
@@ -90,6 +90,10 @@ pub struct RunResults {
     pub total_effect_ms_per_replica: Vec<u128>,
     /// Average time per effect() call (in milliseconds), across all replicas
     pub avg_effect_ms: f64,
+    /// Total time spent running the configured query per replica (in milliseconds). Index i = replica i
+    pub total_query_ms_per_replica: Option<Vec<u128>>,
+    /// Average query runtime (in milliseconds), across all replicas
+    pub avg_query_ms: Option<f64>,
     /// Execution graph in GraphViz DOT format (if generated)
     pub execution_graph_dot: Option<String>,
     /// Inter-replica concurrency ratio (if execution graph was generated)
@@ -138,6 +142,18 @@ fn run_results(run_data: &RunData) -> RunResults {
         .sum::<f64>()
         / (run_data.config.num_replicas as f64);
 
+    let total_query_ms_per_replica = run_data.total_time_in_query_per_replica.as_ref().map(|times| {
+        let mut vec = vec![0u128; run_data.config.num_replicas as usize];
+        for (idx, duration) in times {
+            vec[idx.0] = duration.as_millis();
+        }
+        vec
+    });
+
+    let avg_query_ms = run_data.total_time_in_query_per_replica.as_ref().map(|times| {
+        times.values().map(|d| d.as_millis() as f64).sum::<f64>() / run_data.config.num_replicas as f64
+    });
+
     RunResults {
         final_state: run_data.first_value.clone(),
         avg_time_per_op_ms,
@@ -145,6 +161,8 @@ fn run_results(run_data: &RunData) -> RunResults {
         total_deliver_ms_per_replica,
         total_effect_ms_per_replica,
         avg_effect_ms,
+        total_query_ms_per_replica,
+        avg_query_ms,
         execution_graph_dot: run_data.execution_graph_dot.clone(),
         inter_replica_concurrency_ratio: run_data.inter_replica_concurrency_ratio,
         used_seed: seed_to_hex(&run_data.used_seed),

@@ -1,3 +1,6 @@
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::{HashSet, clock::version_vector::Version, event::id::EventId, replica::ReplicaId};
 
 #[cfg(feature = "serde")]
@@ -5,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Since {
     version: Version,
     except: HashSet<EventId>,

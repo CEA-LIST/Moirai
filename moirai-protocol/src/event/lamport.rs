@@ -1,10 +1,13 @@
 use std::fmt::Display;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::clock::version_vector::Version;
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Lamport(usize);

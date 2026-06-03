@@ -157,5 +157,23 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
         &format!("{}", results.avg_effect_ms),
     ]);
 
+    if let Some(ref total_query_ms_per_replica) = results.total_query_ms_per_replica {
+        results_table.add_row(vec![
+            "Total query time per replica (ms)",
+            &format!(
+                "[{}]",
+                total_query_ms_per_replica
+                    .iter()
+                    .map(|t| format!("{}", t))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        ]);
+    }
+
+    if let Some(avg_query_ms) = results.avg_query_ms {
+        results_table.add_row(vec!["Avg query time (ms)", &format!("{avg_query_ms}")]);
+    }
+
     results_table
 }

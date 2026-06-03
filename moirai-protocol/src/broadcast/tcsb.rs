@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
+#[cfg(feature = "test_utils")]
 use crate::replica::ReplicaIdOwned;
 use crate::{
     HashMap, HashSet,
@@ -28,6 +31,7 @@ pub trait IsTcsb<O> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Tcsb<O> {
     /// Received events not yet causally ready.
     /// It contains only events from other replicas than the local one.

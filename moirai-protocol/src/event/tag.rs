@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::event::{id::EventId, lamport::Lamport};
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Tag {
     id: EventId,

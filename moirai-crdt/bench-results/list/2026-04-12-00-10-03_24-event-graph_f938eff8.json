@@ -1,0 +1,54 @@
+{
+  "name": "list",
+  "timestamp": "2026-04-12T00:10:03.945487+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": null,
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 1000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['s', 'j', 's', 'Y', 'Z', 'Q', 's', 'X', 'd', 'W', 'Y', '4', 'K', 'P', '2', 'q', 'X', 'I', 'O', 'J', ... q']",
+        "avg_time_per_op_ms": 0.6017500000000001,
+        "avg_throughput_ops_per_sec": 1682.2314252412834,
+        "total_deliver_ms_per_replica": [
+          621,
+          549,
+          639,
+          652,
+          732,
+          583,
+          513,
+          525
+        ],
+        "total_effect_ms_per_replica": [
+          138,
+          129,
+          136,
+          130,
+          138,
+          129,
+          129,
+          122
+        ],
+        "avg_effect_ms": 131.375,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xB8DCEDE76DF01D7EE14BB90FAC06145D71692D0E4280805C6EC297CDED8AE269",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

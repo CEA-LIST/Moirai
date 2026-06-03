@@ -17,6 +17,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     HashMap,
+    config::QueryFn,
     config::RunConfig,
     execution_graph::ExecutionGraph,
     metrics::{FuzzMetrics, MetricsLog, StructureMetrics, set_disable_stability},
@@ -41,6 +42,8 @@ pub struct RunData {
     pub total_time_to_deliver_per_replica: HashMap<ReplicaIdx, Duration>,
     /// Total time spent in effect() per replica
     pub total_time_in_effect_per_replica: HashMap<ReplicaIdx, Duration>,
+    /// Total time spent running the configured query per replica
+    pub total_time_in_query_per_replica: Option<HashMap<ReplicaIdx, Duration>>,
     /// Execution graph in DOT format (if generated)
     pub execution_graph_dot: Option<String>,
     /// Inter-replica concurrency ratio (if execution graph was generated)
@@ -51,6 +54,7 @@ pub fn runner<L>(
     config: RunConfig,
     final_merge: bool,
     compare: fn(&L::Value, &L::Value) -> bool,
+    query: Option<QueryFn<L>>,
 ) -> RunData
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
@@ -77,6 +81,7 @@ where
     let mut online = vec![true; config.num_replicas.into()];
     let mut count_ops = 0;
     let mut total_time_to_deliver_per_replica: HashMap<ReplicaIdx, Duration> = HashMap::default();
+    let mut total_time_in_query_per_replica = query.map(|_| HashMap::default());
 
     // Create execution graph if requested
     let mut execution_graph: Option<ExecutionGraph<L::Op>> = if config.generate_execution_graph {
@@ -143,10 +148,29 @@ where
             },
         );
 
+        // println!(
+        //     "{} | {:.2}",
+        //     replicas[replica_idx].id(),
+        //     replicas[replica_idx]
+        //         .tcsb()
+        //         .sparse_matrix_clock_stats()
+        //         .reclaimable_percentage()
+        // );
+
         // Add event to execution graph if enabled
         if let Some(ref mut graph) = execution_graph {
             let event = msg.event().clone();
             graph.append(&event);
+        }
+
+        if let Some(query_fn) = query {
+            timed(
+                ReplicaIdx(replica_idx),
+                total_time_in_query_per_replica
+                    .as_mut()
+                    .expect("query timings should be enabled when a query function is configured"),
+                || query_fn(replicas[replica_idx].state()),
+            );
         }
 
         if online[replica_idx] {
@@ -301,6 +325,7 @@ where
         final_metrics,
         total_time_to_deliver_per_replica,
         total_time_in_effect_per_replica,
+        total_time_in_query_per_replica,
         execution_graph_dot,
         inter_replica_concurrency_ratio,
     }

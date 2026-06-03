@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
@@ -23,6 +25,7 @@ use rand::seq::IteratorRandom;
 use crate::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Graph<V, E> {
     /// Add a vertex with identifier `V`. `V` must be unique.
     AddVertex(V),
@@ -432,6 +435,7 @@ mod tests {
             // |a, b| vf2::isomorphisms(a, b).first().is_some(),
             |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
             false,
+            None,
         );
 
         fuzzer::<VecLog<Graph<String, u8>>>(config);

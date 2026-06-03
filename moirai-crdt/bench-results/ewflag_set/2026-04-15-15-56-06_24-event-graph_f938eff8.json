@@ -1,0 +1,329 @@
+{
+  "name": "ewflag_set",
+  "timestamp": "2026-04-15T15:56:06.782965+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "avg_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "min_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "max_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "avg_time_per_op_ms": 0.0,
+    "avg_final_size": 1.0,
+    "max_final_width": 1,
+    "max_final_height": 1
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 1000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"jkw\", \"zndm\", \"apg\", \"ntz\", \"ky\", \"teo\", \"kavh\", \"pvq\", \"uc\", \"yi\", \"yawc\", \"nu\", \"bdpk\", \"mjo\", \" ... u\"}",
+        "avg_time_per_op_ms": 0.0010000000000000005,
+        "avg_throughput_ops_per_sec": 606379.5179681988,
+        "total_deliver_ms_per_replica": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "total_effect_ms_per_replica": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "avg_effect_ms": 0.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xEC800F30C4DBDCD1DF2BA64BF3CA7C4F4705CB09377809AD895E1EBC736934DE",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 5000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"suek\", \"gu\", \"sw\", \"vq\", \"vo\", \"jbga\", \"jo\", \"eok\", \"tuc\", \"jngd\", \"vnwv\", \"yk\", \"yi\", \"mi\", \"meua ... f\"}",
+        "avg_time_per_op_ms": 0.0008000000000000003,
+        "avg_throughput_ops_per_sec": 1074554.7499890719,
+        "total_deliver_ms_per_replica": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "total_effect_ms_per_replica": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "avg_effect_ms": 0.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x93CF76D82C39D5CAE8C16F712275768B4439222722BEB57690AD1595A07D163A",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 10000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"jfe\", \"gccq\", \"ylx\", \"nrl\", \"vcg\", \"ylt\", \"xnj\", \"vo\", \"vxzl\", \"juxe\", \"jkxw\", \"jo\", \"vq\", \"vnje\", ... s\"}",
+        "avg_time_per_op_ms": 0.0008062500000000002,
+        "avg_throughput_ops_per_sec": 1189487.1844715422,
+        "total_deliver_ms_per_replica": [
+          8,
+          8,
+          8,
+          8,
+          8,
+          8,
+          8,
+          8,
+          8,
+          8,
+          9,
+          8,
+          8,
+          8,
+          8,
+          8
+        ],
+        "total_effect_ms_per_replica": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "avg_effect_ms": 1.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x93954388DF814D5A46623B89094C5FF7FEF85EF2AE8852ECC0A6EA30DFBBC8B0",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 50000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"siry\", \"dhj\", \"sued\", \"gkzr\", \"yqb\", \"xil\", \"cxk\", \"vdji\", \"vxfv\", \"jntu\", \"jncy\", \"teo\", \"pip\", \" ... w\"}",
+        "avg_time_per_op_ms": 0.0009075,
+        "avg_throughput_ops_per_sec": 1089117.6990399628,
+        "total_deliver_ms_per_replica": [
+          45,
+          46,
+          46,
+          45,
+          45,
+          44,
+          47,
+          46,
+          45,
+          45,
+          45,
+          46,
+          44,
+          45,
+          45,
+          47
+        ],
+        "total_effect_ms_per_replica": [
+          11,
+          11,
+          11,
+          10,
+          11,
+          10,
+          11,
+          11,
+          11,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10
+        ],
+        "avg_effect_ms": 10.4375,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x93A413A318792D61EBC882BD38E424FB2A4C46013201B05ABE2CD93FE6B3EDCE",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"su\", \"dhj\", \"dmd\", \"nrl\", \"xil\", \"gsek\", \"cxk\", \"vxwk\", \"vxmp\", \"jvbo\", \"jfka\", \"pip\", \"teo\", \"jvl ... y\"}",
+        "avg_time_per_op_ms": 0.0009399999999999999,
+        "avg_throughput_ops_per_sec": 1058743.1391380413,
+        "total_deliver_ms_per_replica": [
+          93,
+          94,
+          95,
+          92,
+          95,
+          95,
+          93,
+          92,
+          95,
+          94,
+          93,
+          96,
+          94,
+          95,
+          96,
+          92
+        ],
+        "total_effect_ms_per_replica": [
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23
+        ],
+        "avg_effect_ms": 23.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x1492B4642B4A5524CFF68AB9240A4CC32E6AD6C9A533E1FDD3BA7C776EAB7191",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

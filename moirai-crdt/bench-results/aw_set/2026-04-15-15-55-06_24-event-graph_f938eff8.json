@@ -1,0 +1,329 @@
+{
+  "name": "aw_set",
+  "timestamp": "2026-04-15T15:55:06.873646+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "avg_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "min_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "max_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "avg_time_per_op_ms": 0.0,
+    "avg_final_size": 1.0,
+    "max_final_width": 1,
+    "max_final_height": 1
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 1000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"zljh\", \"ocn\", \"zc\", \"vhyc\", \"vq\", \"vpy\", \"kkg\", \"gwo\", \"yi\", \"yk\", \"mtgn\", \"mlod\", \"ns\", \"mi\", \"bn ... g\"}",
+        "avg_time_per_op_ms": 0.0038750000000000017,
+        "avg_throughput_ops_per_sec": 239326.67588942617,
+        "total_deliver_ms_per_replica": [
+          4,
+          4,
+          3,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          3,
+          4,
+          4,
+          4,
+          4
+        ],
+        "total_effect_ms_per_replica": [
+          3,
+          3,
+          2,
+          2,
+          3,
+          3,
+          3,
+          2,
+          3,
+          2,
+          2,
+          2,
+          3,
+          3,
+          2,
+          3
+        ],
+        "avg_effect_ms": 2.5625,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xF087891BB77F4F44FD34CA20BC11267D8325E04497AE949C74DE73064F6B4B40",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 5000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"sgul\", \"ylt\", \"vck\", \"vstl\", \"vsmd\", \"jrym\", \"vo\", \"jo\", \"vq\", \"jpne\", \"pil\", \"vaus\", \"yiom\", \"yla ... u\"}",
+        "avg_time_per_op_ms": 0.011262499999999998,
+        "avg_throughput_ops_per_sec": 88020.3476436893,
+        "total_deliver_ms_per_replica": [
+          57,
+          56,
+          56,
+          56,
+          56,
+          56,
+          57,
+          56,
+          57,
+          57,
+          56,
+          57,
+          56,
+          56,
+          56,
+          56
+        ],
+        "total_effect_ms_per_replica": [
+          53,
+          52,
+          52,
+          52,
+          52,
+          52,
+          53,
+          52,
+          53,
+          53,
+          52,
+          52,
+          52,
+          52,
+          52,
+          52
+        ],
+        "avg_effect_ms": 52.25,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x93E6A6878B735870B8F6391FF07C1D0F34EF169DEE24559F6465CE860AFF83C8",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 10000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"jkw\", \"dmd\", \"gioq\", \"gnkv\", \"grfe\", \"xxf\", \"gdbb\", \"pil\", \"vgwc\", \"jhem\", \"jtok\", \"vddg\", \"tuc\",  ... u\"}",
+        "avg_time_per_op_ms": 0.019925,
+        "avg_throughput_ops_per_sec": 50033.78847986454,
+        "total_deliver_ms_per_replica": [
+          199,
+          198,
+          198,
+          198,
+          196,
+          196,
+          199,
+          198,
+          219,
+          199,
+          199,
+          198,
+          199,
+          197,
+          198,
+          197
+        ],
+        "total_effect_ms_per_replica": [
+          191,
+          190,
+          190,
+          190,
+          188,
+          188,
+          191,
+          190,
+          209,
+          191,
+          191,
+          189,
+          190,
+          189,
+          190,
+          189
+        ],
+        "avg_effect_ms": 191.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xB4AAA1773D89303319F3B7687E2DA881D437A830814511CE7709D4784CC69658",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 50000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"bum\", \"dmd\", \"sioq\", \"nrl\", \"ygf\", \"ggav\", \"gwmd\", \"vxtj\", \"vdty\", \"jvze\", \"jbtd\", \"vxmb\", \"vdmx\", ... e\"}",
+        "avg_time_per_op_ms": 0.07687374999999999,
+        "avg_throughput_ops_per_sec": 13007.2688736159,
+        "total_deliver_ms_per_replica": [
+          3848,
+          3834,
+          3835,
+          3847,
+          3839,
+          3831,
+          3854,
+          3829,
+          3855,
+          3840,
+          3853,
+          3858,
+          3865,
+          3835,
+          3838,
+          3838
+        ],
+        "total_effect_ms_per_replica": [
+          3798,
+          3785,
+          3787,
+          3798,
+          3789,
+          3782,
+          3805,
+          3782,
+          3805,
+          3792,
+          3805,
+          3808,
+          3815,
+          3788,
+          3789,
+          3790
+        ],
+        "avg_effect_ms": 3794.875,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x6F7426C2F0B55DFEC3031ADEA15CAB6D8369A46DAB2139A24276F8CD006EB1EE",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"gctt\", \"dmd\", \"dhj\", \"gsru\", \"suru\", \"suot\", \"cxk\", \"vhrw\", \"vxwr\", \"jvib\", \"jnck\", \"teo\", \"tjy\",  ... l\"}",
+        "avg_time_per_op_ms": 0.13080375,
+        "avg_throughput_ops_per_sec": 7644.877974098481,
+        "total_deliver_ms_per_replica": [
+          13026,
+          13151,
+          13116,
+          13133,
+          13111,
+          13079,
+          13025,
+          13081,
+          13057,
+          13054,
+          13125,
+          13114,
+          13027,
+          13032,
+          13120,
+          13035
+        ],
+        "total_effect_ms_per_replica": [
+          12913,
+          13032,
+          13005,
+          12996,
+          13005,
+          12972,
+          12916,
+          12971,
+          12945,
+          12944,
+          13019,
+          13004,
+          12918,
+          12924,
+          13015,
+          12928
+        ],
+        "avg_effect_ms": 12969.1875,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x0246AF88A59ED7CA0970636A5079C23121A37ED905CE46B67BDF23E6E128736B",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

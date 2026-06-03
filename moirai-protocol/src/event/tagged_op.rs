@@ -1,7 +1,11 @@
 use std::fmt::{Debug, Display};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+
 use crate::event::{Event, id::EventId, lamport::Lamport, tag::Tag};
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
 pub struct TaggedOp<O> {
     op: O,

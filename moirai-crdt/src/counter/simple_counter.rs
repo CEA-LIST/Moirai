@@ -3,6 +3,8 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -18,11 +20,14 @@ use moirai_protocol::{
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use tsify::Tsify;
 
 use crate::counter::stable::CounterStable;
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),
     Dec(V),
@@ -152,7 +157,14 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<Counter<i32>>>::new("counter", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<Counter<i32>>>::new(
+                "counter",
+                runs,
+                true,
+                |a, b| a == b,
+                false,
+                None,
+            );
 
         fuzzer::<VecLog<Counter<i32>>>(config);
     }

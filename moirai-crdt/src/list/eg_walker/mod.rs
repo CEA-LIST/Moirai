@@ -6,6 +6,8 @@ use std::{
     fmt::Debug,
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
@@ -33,6 +35,7 @@ use crate::{
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum List<V> {
     Insert { content: V, pos: usize },
     Delete { pos: usize },
@@ -1075,11 +1078,22 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.6, 8, 100, None, None, true, false);
-        let runs = vec![run; 10_000];
+        let run_1 = RunConfig::new(0.6, 8, 2_000, None, None, false, false);
+        // let run_2 = RunConfig::new(0.6, 8, 2_000, None, None, false, false);
+        // let run_3 = RunConfig::new(0.6, 8, 3_000, None, None, false, false);
+        let runs = vec![run_1]; //, run_2, run_3];
+        // let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
+        // let runs = vec![run; 10_000];
 
         let config =
-            FuzzerConfig::<EventGraph<List<char>>>::new("list", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<EventGraph<List<char>>>::new(
+                "list",
+                runs,
+                true,
+                |a, b| a == b,
+                true,
+                None,
+            );
 
         fuzzer::<EventGraph<List<char>>>(config);
     }

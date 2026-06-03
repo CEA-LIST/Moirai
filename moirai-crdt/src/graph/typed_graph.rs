@@ -1,15 +1,30 @@
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_macros::typed_graph;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct FooBarEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct BarBazEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+=======
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+pub struct FooBarEdge;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+pub struct BarBazEdge;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+>>>>>>> upstream/25-icsoft
 pub struct FooBazEdge;
 
 typed_graph! {
@@ -772,6 +787,7 @@ mod tests {
                 node && edge && is_valid(a) && is_valid(b)
             },
             false,
+            None,
         );
 
         fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);

@@ -1,5 +1,9 @@
 use moirai_protocol::state::log::IsLog;
 
+use crate::metrics::MetricsLog;
+
+pub type QueryFn<L> = fn(&MetricsLog<L>);
+
 pub struct FuzzerConfig<'a, L>
 where
     L: IsLog,
@@ -13,6 +17,8 @@ where
     pub compare: fn(&L::Value, &L::Value) -> bool,
     /// Whether to save the execution results to a JSON file in bench-results/
     pub save_execution: bool,
+    /// Optional query function executed on the local replica after each step
+    pub query: Option<QueryFn<L>>,
 }
 
 impl<'a, L> FuzzerConfig<'a, L>
@@ -25,6 +31,7 @@ where
         final_merge: bool,
         compare: fn(&L::Value, &L::Value) -> bool,
         save_execution: bool,
+        query: Option<QueryFn<L>>,
     ) -> Self {
         assert!(
             !runs.is_empty(),
@@ -36,6 +43,7 @@ where
             final_merge,
             compare,
             save_execution,
+            query,
         }
     }
 }

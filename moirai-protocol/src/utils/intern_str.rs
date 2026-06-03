@@ -1,5 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use elsa::sync::FrozenVec;
 
 #[cfg(feature = "serde")]
@@ -10,6 +12,7 @@ use crate::{
     replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
 };
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone)]
 pub struct Resolver {
     inner: Arc<FrozenVec<ReplicaIdOwned>>,
@@ -42,6 +45,13 @@ impl<'de> Deserialize<'de> for Resolver {
         })
     }
 }
+
+// #[cfg(feature = "test_utils")]
+// impl DeepSizeOf for Resolver {
+//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+//         self.inner.deep_size_of_children(context)
+//     }
+// }
 
 impl Resolver {
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {
@@ -79,6 +89,7 @@ impl PartialEq for Resolver {
     }
 }
 
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Translator {
     inner: Vec<Vec<ReplicaIdx>>,
 }
@@ -96,6 +107,7 @@ impl Debug for Translator {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Interner {
     str_to_int: HashMap<ReplicaIdOwned, ReplicaIdx>,
     int_to_str: Resolver,

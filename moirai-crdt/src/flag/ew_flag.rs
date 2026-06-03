@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -12,9 +14,12 @@ use moirai_protocol::{
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use tsify::Tsify;
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum EWFlag {
     Enable,
     Disable,
@@ -177,7 +182,14 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<EWFlag>>::new("ew_flag", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<EWFlag>>::new(
+                "ew_flag",
+                runs,
+                true,
+                |a, b| a == b,
+                false,
+                None,
+            );
 
         fuzzer::<VecLog<EWFlag>>(config);
     }

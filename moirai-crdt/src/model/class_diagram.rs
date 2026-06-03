@@ -6,6 +6,8 @@
 
 use std::cmp::Ordering;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_macros::record;
 use moirai_protocol::state::po_log::VecLog;
 use petgraph::{
@@ -25,6 +27,7 @@ use crate::{
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum RelationType {
     Extends,
     Implements,
@@ -60,6 +63,7 @@ impl Ord for RelationType {
 
 #[derive(Debug, Clone, Eq, Default, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PrimitiveType {
     String,
     Number,
@@ -70,6 +74,7 @@ pub enum PrimitiveType {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Class(String),
@@ -83,6 +88,7 @@ impl Default for TypeRef {
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Visibility {
     #[default]
     Public,
@@ -117,6 +123,7 @@ impl Ord for Visibility {
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Multiplicity {
     #[default]
     Unspecified,

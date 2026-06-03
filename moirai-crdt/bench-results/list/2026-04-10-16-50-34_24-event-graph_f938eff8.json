@@ -1,0 +1,151 @@
+{
+  "name": "list",
+  "timestamp": "2026-04-10T16:50:34.567946+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 3,
+    "avg_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "min_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "max_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "avg_time_per_op_ms": 0.0,
+    "avg_final_size": 1.0,
+    "max_final_width": 1,
+    "max_final_height": 1
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 1000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['S', 'R', 'x', 'c', 'g', '6', 'Y', 'j', 'X', 'V', 'V', 'x', 'e', 'd', 'l', 'I', 'r', 'l', 'G', 'W', ... u']",
+        "avg_time_per_op_ms": 0.44675,
+        "avg_throughput_ops_per_sec": 2247.9356508360506,
+        "total_deliver_ms_per_replica": [
+          421,
+          432,
+          410,
+          512,
+          433,
+          417,
+          465,
+          484
+        ],
+        "total_effect_ms_per_replica": [
+          16,
+          16,
+          16,
+          17,
+          16,
+          16,
+          17,
+          17
+        ],
+        "avg_effect_ms": 16.375,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x5DA45F655BF7A0638436A6FBBFEB9F676E4E67D2F375E2F085F2101B4FD5CA6B",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 2000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['g', 'L', 'j', 'Y', '6', 'U', 'V', '5', 's', 'r', 'V', 'n', 'y', '2', 'x', 'k', 'h', 'J', 'r', '3', ... R']",
+        "avg_time_per_op_ms": 1.2415,
+        "avg_throughput_ops_per_sec": 809.1001076837606,
+        "total_deliver_ms_per_replica": [
+          2560,
+          2349,
+          2231,
+          2754,
+          2434,
+          2420,
+          2724,
+          2392
+        ],
+        "total_effect_ms_per_replica": [
+          74,
+          74,
+          75,
+          78,
+          77,
+          73,
+          78,
+          78
+        ],
+        "avg_effect_ms": 75.875,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xEAA596B9F65EFB5189721C9F8D473F3D6D27E6EBFC99BE96C324F650C090E665",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 3000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['o', 'l', 'o', 'o', 'p', 'e', 'D', 'e', 'O', 'f', 'q', 'r', 'O', 'B', 'V', 'K', 'n', 'F', 'G', 'w', ... 3']",
+        "avg_time_per_op_ms": 2.24675,
+        "avg_throughput_ops_per_sec": 445.9936574627608,
+        "total_deliver_ms_per_replica": [
+          6762,
+          6614,
+          7254,
+          6502,
+          6149,
+          6926,
+          6780,
+          6935
+        ],
+        "total_effect_ms_per_replica": [
+          203,
+          203,
+          202,
+          204,
+          205,
+          209,
+          203,
+          200
+        ],
+        "avg_effect_ms": 203.625,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x207E00862E254038CBF2FB754D164744C08D31E36331AB0C2D7FC8CAA182C18F",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

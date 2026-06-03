@@ -107,6 +107,8 @@ pub fn save_execution_record(
                 total_deliver_ms_per_replica: data.0.total_deliver_ms_per_replica,
                 total_effect_ms_per_replica: data.0.total_effect_ms_per_replica,
                 avg_effect_ms: data.0.avg_effect_ms,
+                total_query_ms_per_replica: data.0.total_query_ms_per_replica,
+                avg_query_ms: data.0.avg_query_ms,
                 execution_graph_dot: data.0.execution_graph_dot,
                 inter_replica_concurrency_ratio: data.0.inter_replica_concurrency_ratio,
                 used_seed: data.0.used_seed,

@@ -5,7 +5,7 @@ use std::{
 };
 
 #[cfg(feature = "sink")]
-use moirai_protocol::state::{sink::SinkOwnership, object_path::ObjectPath, sink::SinkCollector};
+use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},

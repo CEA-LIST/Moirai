@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
@@ -21,6 +23,7 @@ use crate::HashSet;
 use crate::set::SetConfig;
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum RWSet<V> {
     Add(V),
     Remove(V),
@@ -393,7 +396,14 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<RWSet<String>>>::new("rw_set", runs, true, |a, b| a == b, false);
+            FuzzerConfig::<VecLog<RWSet<String>>>::new(
+                "rw_set",
+                runs,
+                true,
+                |a, b| a == b,
+                false,
+                None,
+            );
 
         fuzzer::<VecLog<RWSet<String>>>(config);
     }

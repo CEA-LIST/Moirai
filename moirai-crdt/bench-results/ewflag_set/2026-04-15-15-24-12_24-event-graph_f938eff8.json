@@ -1,0 +1,329 @@
+{
+  "name": "ewflag_set",
+  "timestamp": "2026-04-15T15:24:12.275033+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 5,
+    "avg_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "min_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "max_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "avg_time_per_op_ms": 0.0,
+    "avg_final_size": 1.0,
+    "max_final_width": 1,
+    "max_final_height": 1
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 10000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"sw\", \"dmd\", \"gu\", \"vhy\", \"ghch\", \"nwr\", \"dtjb\", \"vpjs\", \"vq\", \"jwyd\", \"vo\", \"jo\", \"vpxu\", \"vtve\",  ... u\"}",
+        "avg_time_per_op_ms": 0.0010437499999999998,
+        "avg_throughput_ops_per_sec": 939941.0825575332,
+        "total_deliver_ms_per_replica": [
+          15,
+          10,
+          11,
+          9,
+          9,
+          9,
+          11,
+          12,
+          17,
+          9,
+          9,
+          9,
+          9,
+          10,
+          9,
+          9
+        ],
+        "total_effect_ms_per_replica": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "avg_effect_ms": 2.0,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x1D18AEF3B05BB66F3396F7BA82721F3497D58DFC78C1EC29B2DCD5DB4E841F61",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 50000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"gwzu\", \"dmd\", \"dhj\", \"su\", \"ylt\", \"abus\", \"cxk\", \"vlmf\", \"vdqq\", \"jbqj\", \"jjbs\", \"jrhj\", \"jfaf\", \" ... w\"}",
+        "avg_time_per_op_ms": 0.0009200000000000001,
+        "avg_throughput_ops_per_sec": 1074692.2918534009,
+        "total_deliver_ms_per_replica": [
+          48,
+          46,
+          45,
+          47,
+          45,
+          46,
+          44,
+          45,
+          46,
+          45,
+          47,
+          48,
+          47,
+          46,
+          45,
+          46
+        ],
+        "total_effect_ms_per_replica": [
+          11,
+          10,
+          10,
+          11,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10,
+          10,
+          11,
+          10,
+          10
+        ],
+        "avg_effect_ms": 10.1875,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x5F0AC8FABB9EBE821AC2C4A0183B7308F96A29408B44902CA71FE4D2A2EBC7AD",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 100000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"su\", \"dmd\", \"dhj\", \"nrl\", \"yzmi\", \"yzwr\", \"yztj\", \"vhrw\", \"vpjs\", \"jvsy\", \"jncr\", \"jnqm\", \"jnjl\",  ... n\"}",
+        "avg_time_per_op_ms": 0.0009387499999999999,
+        "avg_throughput_ops_per_sec": 1061233.6543992695,
+        "total_deliver_ms_per_replica": [
+          93,
+          92,
+          98,
+          95,
+          92,
+          93,
+          92,
+          95,
+          93,
+          92,
+          97,
+          93,
+          96,
+          94,
+          92,
+          95
+        ],
+        "total_effect_ms_per_replica": [
+          23,
+          23,
+          23,
+          22,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23,
+          23
+        ],
+        "avg_effect_ms": 22.9375,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x4EA490D4D7598FB108E952C6BD99C765BDF32A2B97C0A850FA969DE1578AC049",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 4,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 500000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"gkpb\", \"gkpi\", \"gkbu\", \"gkwc\", \"gkpp\", \"smzr\", \"smzk\", \"vpns\", \"vpqt\", \"jntg\", \"jngk\", \"jnqf\", \"jn ... n\"}",
+        "avg_time_per_op_ms": 0.00102,
+        "avg_throughput_ops_per_sec": 979575.5922462353,
+        "total_deliver_ms_per_replica": [
+          508,
+          514,
+          515,
+          510,
+          522,
+          512,
+          509,
+          505,
+          507,
+          506,
+          506,
+          509,
+          509,
+          509,
+          507,
+          512
+        ],
+        "total_effect_ms_per_replica": [
+          143,
+          141,
+          142,
+          142,
+          141,
+          142,
+          141,
+          141,
+          141,
+          141,
+          142,
+          142,
+          143,
+          142,
+          142,
+          142
+        ],
+        "avg_effect_ms": 141.75,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x98933EE449E8DA4D24A789F42F0C6290533D9DC8C42E40AB0D44A7BE8995450A",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 5,
+      "parameters": {
+        "num_replicas": 16,
+        "num_operations": 1000000,
+        "churn_rate": 0.7,
+        "disable_stability": true,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "{\"dhol\", \"dhyn\", \"vpqt\", \"vpab\", \"vpxu\", \"jnxg\", \"jnwv\", \"vpxg\", \"jnqf\", \"jncr\", \"vpgk\", \"vpjz\", \"vp ... e\"}",
+        "avg_time_per_op_ms": 0.0010727500000000001,
+        "avg_throughput_ops_per_sec": 931959.7156509919,
+        "total_deliver_ms_per_replica": [
+          1087,
+          1075,
+          1069,
+          1067,
+          1060,
+          1075,
+          1070,
+          1068,
+          1063,
+          1063,
+          1059,
+          1092,
+          1064,
+          1128,
+          1060,
+          1064
+        ],
+        "total_effect_ms_per_replica": [
+          326,
+          319,
+          322,
+          330,
+          322,
+          331,
+          325,
+          330,
+          321,
+          326,
+          318,
+          319,
+          324,
+          318,
+          320,
+          320
+        ],
+        "avg_effect_ms": 323.1875,
+        "total_query_ms_per_replica": null,
+        "avg_query_ms": null,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x22F74C34AEFF7734780A80C088ABCC40FB2A2D98DDB7E8F0B502E627C34F2E66",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

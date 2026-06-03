@@ -14,9 +14,14 @@ moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 paste = "1.0.15"
 rustc-hash = "1.1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "elsa",
+] }
 
+# TEST UTILS FEATURES
 [features]
 default = []
 fuzz = ["moirai-fuzz"]
 serde = ["dep:serde", "moirai-protocol/serde"]
 sink = ["moirai-protocol/sink"]
+test_utils = ["moirai-protocol/test_utils", "dep:deepsize"]

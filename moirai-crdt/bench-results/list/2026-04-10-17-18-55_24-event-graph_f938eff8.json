@@ -1,0 +1,151 @@
+{
+  "name": "list",
+  "timestamp": "2026-04-10T17:18:55.122628+02:00",
+  "git_commit": "f938eff88a64e29ef20ef2ab459c7959bca329d0",
+  "git_branch": "24-event-graph",
+  "final_merge": true,
+  "summary": {
+    "total_runs": 3,
+    "avg_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "min_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "max_runs_per_replica_throughput_ops_per_sec": 0.0,
+    "avg_time_per_op_ms": 0.0,
+    "avg_final_size": 1.0,
+    "max_final_width": 1,
+    "max_final_height": 1
+  },
+  "runs": [
+    {
+      "run_number": 1,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 1000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['8', 'g', '9', 'r', 'S', 'v', 'g', 'T', 'c', 'R', 'Q', 'R', '4', 'e', 'R', 'k']",
+        "avg_time_per_op_ms": 1.259125,
+        "avg_throughput_ops_per_sec": 795.3040361653676,
+        "total_deliver_ms_per_replica": [
+          1229,
+          1259,
+          1170,
+          1224,
+          1317,
+          1250,
+          1277,
+          1347
+        ],
+        "total_effect_ms_per_replica": [
+          791,
+          784,
+          800,
+          811,
+          800,
+          803,
+          772,
+          796
+        ],
+        "avg_effect_ms": 794.625,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x6C73D926A92C462BEA918C4F57FFAF3A79282D364BF60E4094CC64EE51E5CE77",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 2,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 2000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['q', 'R', 'm', 'U', 'n', 'h', 'I', '2', 'f', 'V', 'd', 'M', '3', 'z', '7', 'T', 'k', 'y', 'C', '3', ... m']",
+        "avg_time_per_op_ms": 4.607625,
+        "avg_throughput_ops_per_sec": 217.30654295964504,
+        "total_deliver_ms_per_replica": [
+          9547,
+          8849,
+          8681,
+          9325,
+          9083,
+          9137,
+          9336,
+          9764
+        ],
+        "total_effect_ms_per_replica": [
+          6722,
+          6658,
+          6836,
+          6876,
+          6738,
+          6827,
+          6924,
+          6935
+        ],
+        "avg_effect_ms": 6814.5,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0xC4C5B356833CD8A2105F0B652472D86D874BEF6C28F33A5672F6AF7E2E210D85",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    },
+    {
+      "run_number": 3,
+      "parameters": {
+        "num_replicas": 8,
+        "num_operations": 3000,
+        "churn_rate": 0.6,
+        "disable_stability": false,
+        "reachability": null
+      },
+      "results": {
+        "final_state": "['j', 'n', 'k', 'a', 'g', 's', 'X', 'D', 'E', 'Z', '8', 'a', 'a', 'u', 'f', 'M', 't', 'r', 'v', 'Q', ... N']",
+        "avg_time_per_op_ms": 10.926916666666665,
+        "avg_throughput_ops_per_sec": 91.54591897075525,
+        "total_deliver_ms_per_replica": [
+          32145,
+          32504,
+          31941,
+          33158,
+          33083,
+          33557,
+          33539,
+          32319
+        ],
+        "total_effect_ms_per_replica": [
+          26290,
+          26110,
+          25821,
+          26254,
+          26092,
+          26741,
+          26480,
+          25760
+        ],
+        "avg_effect_ms": 26193.5,
+        "execution_graph_dot": null,
+        "inter_replica_concurrency_ratio": null,
+        "used_seed": "0x20B6161AA97EC14BB16E84D1BD7D84E77BF24FDE366798E7198300DE912FA613",
+        "final_metrics": {
+          "size": 1,
+          "width": 1,
+          "height": 1
+        }
+      }
+    }
+  ]
+}

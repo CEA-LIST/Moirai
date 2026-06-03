@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -15,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum TORegister<V> {
     Clear,
     Write(V),
