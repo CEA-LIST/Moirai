@@ -21,6 +21,8 @@ vf2 = { version = "1.0.1" }
 serde_json = { version = "1.0.128" }
 # SERDE FEATURES
 serde = { version = "1.0", features = ["derive", "rc"], optional = true }
+tsify = { version = "0.5.5", optional = true }
+wasm-bindgen = { version = "0.2.100", optional = true }
 # MOIRAI-FUZZ
 moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 rand = { version = "0.10.0", optional = true }
@@ -31,7 +33,7 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
 
 [features]
 default = ["fuzz"]
-serde = ["dep:serde", "moirai-protocol/serde", "moirai-macros/serde"]
+serde = ["dep:serde", "dep:tsify", "dep:wasm-bindgen", "moirai-protocol/serde", "moirai-macros/serde"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz/sink"]
 test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-macros/test_utils"]

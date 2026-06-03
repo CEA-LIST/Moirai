@@ -14,17 +14,7 @@ pub struct BarBazEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-=======
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub struct FooBarEdge;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub struct BarBazEdge;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
->>>>>>> upstream/25-icsoft
 pub struct FooBazEdge;
 
 typed_graph! {

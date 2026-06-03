@@ -12,7 +12,6 @@ use crate::{
     replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
 };
 
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone)]
 pub struct Resolver {
     inner: Arc<FrozenVec<ReplicaIdOwned>>,
@@ -46,12 +45,14 @@ impl<'de> Deserialize<'de> for Resolver {
     }
 }
 
-// #[cfg(feature = "test_utils")]
-// impl DeepSizeOf for Resolver {
-//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-//         self.inner.deep_size_of_children(context)
-//     }
-// }
+#[cfg(feature = "test_utils")]
+impl DeepSizeOf for Resolver {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        // FrozenVec doesn't implement DeepSizeOf, so we approximate by getting the vector
+        let vec = self.into_vec();
+        vec.deep_size_of_children(context)
+    }
+}
 
 impl Resolver {
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {

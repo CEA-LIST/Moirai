@@ -619,7 +619,9 @@ dependencies = [
  "rustc-hash 1.1.0",
  "serde",
  "serde_json",
+ "tsify",
  "vf2",
+ "wasm-bindgen",
 ]
 
 [[package]]
