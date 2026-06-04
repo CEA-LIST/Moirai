@@ -47,6 +47,7 @@ pub enum UWMap<K, O> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,

@@ -17,12 +17,15 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashSet;
 #[cfg(feature = "fuzz")]
 use crate::set::SetConfig;
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum RWSet<V> {
     Add(V),

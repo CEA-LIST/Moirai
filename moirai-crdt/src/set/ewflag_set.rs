@@ -15,6 +15,8 @@ use moirai_protocol::{
     state::{log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use rand::distr::weighted::WeightedIndex;
 
 use crate::{
@@ -24,6 +26,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
@@ -31,6 +34,7 @@ pub enum EWFlagSet<V> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<EWFlag>>);
 
 impl<V> Default for EWFlagSetLog<V>

@@ -2,10 +2,13 @@ use std::fmt::Display;
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::event::{id::EventId, lamport::Lamport};
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Tag {
     id: EventId,

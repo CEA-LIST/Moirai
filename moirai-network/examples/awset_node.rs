@@ -72,7 +72,6 @@ use moirai_network::tcp_transport::TcpTransport;
 use moirai_network::HashMap;
 use moirai_protocol::state::po_log::VecLog;
 use moirai_protocol::state::log::IsLog;
-use moirai_network::query::QueryableLog;
 use moirai_protocol::crdt::query::Read;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::broadcast::tcsb::Tcsb;

@@ -16,6 +16,8 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
     utils::intern_str::{InternalizeOp, Interner},
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
 use petgraph::visit::EdgeRef;
@@ -25,6 +27,7 @@ use rand::seq::IteratorRandom;
 use crate::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Graph<V, E> {
     /// Add a vertex with identifier `V`. `V` must be unique.
