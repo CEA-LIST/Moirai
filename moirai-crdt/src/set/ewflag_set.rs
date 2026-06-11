@@ -7,7 +7,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -25,14 +25,20 @@ pub enum EWFlagSet<V> {
 }
 
 #[derive(Clone, Debug)]
-pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<EWFlag>>);
+pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
+    inner: UWMapLog<V, VecLog<EWFlag>>,
+    read_cache: CacheCell<HashSet<V>>,
+}
 
 impl<V> Default for EWFlagSetLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
     fn default() -> Self {
-        Self(UWMapLog::default())
+        Self {
+            inner: UWMapLog::default(),
+            read_cache: CacheCell::new(),
+        }
     }
 }
 
@@ -53,6 +59,7 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+        self.read_cache.invalidate();
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
             EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
@@ -61,19 +68,21 @@ where
         let event = Event::unfold(event, op);
         // The EWFlagSetLog is semantically a leaf CRDT, so we ignore the path and sink for now
         let mut silent_ctx = EffectContext::silent();
-        self.0.effect(event, &mut silent_ctx);
+        self.inner.effect(event, &mut silent_ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.0.stabilize(version);
+        self.read_cache.invalidate();
+        self.inner.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.0.redundant_by_parent(version, conservative);
+        self.read_cache.invalidate();
+        self.inner.redundant_by_parent(version, conservative);
     }
 
     fn is_default(&self) -> bool {
-        self.0.is_default()
+        self.inner.is_default()
     }
 }
 
@@ -85,8 +94,26 @@ where
         &self,
         _q: Read<HashSet<V>>,
     ) -> <Read<HashSet<V>> as QueryOperation>::Response {
+        self.read_ref().clone()
+    }
+}
+
+impl<V> BorrowedRead for EWFlagSetLog<V>
+where
+    V: Clone + Debug + Hash + Eq + PartialEq,
+{
+    fn read_ref(&self) -> &Self::Value {
+        self.read_cache.get_or_compute(|| self.read_uncached())
+    }
+}
+
+impl<V> EWFlagSetLog<V>
+where
+    V: Clone + Debug + Hash + Eq + PartialEq,
+{
+    fn read_uncached(&self) -> HashSet<V> {
         let mut set = HashSet::default();
-        for (k, val) in self.0.read_ref() {
+        for (k, val) in self.inner.read_ref() {
             if *val {
                 set.insert(k.clone());
             }

@@ -10,7 +10,10 @@ use crate::{
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::IsTcsb,
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    crdt::{
+        eval::{BorrowedRead, EvalNested},
+        query::QueryOperation,
+    },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
     utils::intern_str::Interner,
@@ -46,6 +49,10 @@ where
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where
         L: EvalNested<Q>;
+    /// Borrow the cached materialized value of the replica state.
+    fn read_ref(&self) -> &L::Value
+    where
+        L: BorrowedRead;
     /// Update the state of the replica with the given operation.
     fn update(&mut self, op: L::Op) -> Result<(), L::Rejection> {
         self.send(op)?;
@@ -110,6 +117,13 @@ where
         self.state.eval(q)
     }
 
+    fn read_ref(&self) -> &L::Value
+    where
+        L: BorrowedRead,
+    {
+        self.state.read_ref()
+    }
+
     fn since(&self) -> SinceMessage {
         self.tcsb.since()
     }
@@ -143,6 +157,25 @@ where
     L: IsLog,
     T: IsTcsb<L::Op>,
 {
+    pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
+        assert!(
+            members.contains(&&(*id)),
+            "Bootstrap replica ID {} must be included in members list {:?}",
+            id,
+            members
+        );
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(&id);
+        for member in members {
+            interner.intern(member);
+        }
+        Self {
+            id,
+            tcsb: T::new(idx, interner),
+            state,
+        }
+    }
+
     fn deliver(&mut self, event: Event<L::Op>) {
         let mut sink = SinkCollector::new();
         let mut ctx = EffectContext::root("root", Some(&mut sink));

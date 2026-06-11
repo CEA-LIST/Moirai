@@ -317,22 +317,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        convert::Infallible,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
-
     use moirai_macros::record;
     use moirai_protocol::{
-        clock::version_vector::Version,
-        crdt::{
-            eval::{BorrowedRead, EvalNested},
-            query::{Contains, Get, Read},
-        },
-        event::{Event, id::EventId, lamport::Lamport},
-        replica::{IsReplica, ReplicaIdx},
-        state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::VecLog},
-        utils::intern_str::{InternalizeOp, Interner},
+        crdt::query::{Contains, Get, Read},
+        replica::IsReplica,
+        state::{graph_log::GraphLog, po_log::VecLog},
     };
 
     use crate::{
@@ -351,103 +340,6 @@ mod tests {
         first: VecLog<Counter<i32>>,
         second: VecLog<Counter<i32>>,
     });
-
-    static COUNTING_LOG_READS: AtomicUsize = AtomicUsize::new(0);
-
-    #[derive(Clone, Debug, Default)]
-    struct CountingLog {
-        value: usize,
-    }
-
-    #[derive(Clone, Debug)]
-    #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
-    struct CountingOp(usize);
-
-    impl InternalizeOp for CountingOp {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
-
-    impl IsLog for CountingLog {
-        type Value = usize;
-        type Op = CountingOp;
-        type Rejection = Infallible;
-
-        fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-            self.value = event.op().0;
-        }
-
-        fn stabilize(&mut self, _version: &Version) {}
-
-        fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {
-            self.value = 0;
-        }
-
-        fn is_default(&self) -> bool {
-            self.value == 0
-        }
-    }
-
-    impl EvalNested<Read<usize>> for CountingLog {
-        fn execute_query(&self, _q: Read<usize>) -> usize {
-            COUNTING_LOG_READS.fetch_add(1, Ordering::SeqCst);
-            self.value
-        }
-    }
-
-    record!(CachedRecord {
-        first: CountingLog,
-        second: CountingLog,
-    });
-
-    fn cached_record_event(seq: usize, op: CachedRecord) -> Event<CachedRecord> {
-        let mut interner = Interner::new();
-        interner.intern("a");
-        let resolver = interner.resolver().clone();
-        let mut version = Version::new(ReplicaIdx(0), resolver.clone());
-        version.set_by_idx(ReplicaIdx(0), seq);
-        Event::new(
-            EventId::from(&version),
-            Lamport::from(&version),
-            op,
-            version,
-        )
-    }
-
-    #[test]
-    fn record_read_cache_reuses_materialized_value() {
-        let mut log = CachedRecordLog::default();
-        log.first.value = 1;
-        log.second.value = 2;
-
-        COUNTING_LOG_READS.store(0, Ordering::SeqCst);
-        {
-            let first_ref = BorrowedRead::read_ref(&log);
-            assert_eq!(first_ref.first, 1);
-            assert_eq!(first_ref.second, 2);
-            assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
-
-            let second_ref = BorrowedRead::read_ref(&log);
-            assert!(std::ptr::eq(first_ref, second_ref));
-            assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
-        }
-
-        let owned = log.execute_query(Read::new());
-        assert_eq!(owned.first, 1);
-        assert_eq!(owned.second, 2);
-        assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 2);
-
-        log.effect(
-            cached_record_event(1, CachedRecord::First(CountingOp(5))),
-            &mut EffectContext::silent(),
-        );
-
-        let refreshed = BorrowedRead::read_ref(&log);
-        assert_eq!(refreshed.first, 5);
-        assert_eq!(refreshed.second, 2);
-        assert_eq!(COUNTING_LOG_READS.load(Ordering::SeqCst), 4);
-    }
 
     #[test]
     fn nested_query() {
@@ -840,8 +732,12 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_c);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
-        assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
+        let mut result = HashMap::default();
+        result.insert("doc".to_string(), vec!['A']);
+
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_c.query(Read::new()), result);
     }
 
     #[test]

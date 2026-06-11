@@ -307,7 +307,10 @@ where
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
-    use crate::{graph::aw_multidigraph::Graph, utils::membership::twins};
+    use crate::{
+        graph::aw_multidigraph::Graph,
+        utils::membership::{triplet, twins},
+    };
 
     #[test]
     fn simple_graph() {
@@ -404,6 +407,38 @@ mod tests {
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+    }
+
+    #[test]
+    fn concurrent_revive_arc() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Graph<&str, u8>>();
+
+        let event_a_1 = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a_2 = replica_a.send(Graph::AddVertex("B")).unwrap();
+
+        replica_b.receive(event_a_1.clone());
+        replica_b.receive(event_a_2.clone());
+        replica_c.receive(event_a_1);
+        replica_c.receive(event_a_2);
+
+        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        replica_c.receive(event_b.clone());
+        let event_c = replica_c.send(Graph::AddVertex("B")).unwrap();
+
+        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
+
+        replica_a.receive(event_b);
+        replica_a.receive(event_c.clone());
+        replica_b.receive(event_a.clone());
+        replica_b.receive(event_c);
+        replica_c.receive(event_a);
+
+        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_b.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_b.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_c.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_c.query(Read::new()).edge_count(), 1);
     }
 
     #[test]

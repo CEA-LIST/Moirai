@@ -1,3 +1,5 @@
+#![allow(clippy::mutable_key_type)]
+
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_macros::typed_graph;

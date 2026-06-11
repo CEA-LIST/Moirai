@@ -5,6 +5,10 @@ use deepsize::DeepSizeOf;
 
 use crate::clock::version_vector::Version;
 
+/// This is not really a Lamport timestamp.
+/// It is just a wrapper around the sum of the version vector, which is used for ordering events in the event log.
+/// The sum of vector-clock components is a valid Lamport timestamp in the sense that it satisfies Lamport’s clock condition.
+/// But it is not necessarily the same value as the Lamport algorithm would produce.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct Lamport(usize);

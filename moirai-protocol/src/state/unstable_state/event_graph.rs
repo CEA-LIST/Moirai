@@ -18,7 +18,9 @@ use crate::{
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstableDelivery},
+    state::unstable_state::{
+        IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
+    },
 };
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -177,6 +179,42 @@ where
 {
     fn delivery_order(&self, event_id: &EventId) -> Option<usize> {
         self.map.get_by_right(event_id).map(|idx| idx.index())
+    }
+}
+
+impl<O> IsUnstablePrune<O> for EventGraph<O>
+where
+    O: Debug + Clone,
+{
+    fn remove(&mut self, event_id: &EventId) {
+        if let Some(node_idx) = self.map.get_by_right(event_id) {
+            self.graph.remove_node(*node_idx);
+            self.map.remove_by_right(event_id);
+            self.heads.remove(event_id);
+            self.cutter.remove_event(event_id);
+        }
+    }
+
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
+        let mut to_remove = Vec::new();
+        for node_idx in self.graph.node_indices() {
+            let tagged_op = self.graph.node_weight(node_idx).unwrap();
+            if !predicate(tagged_op) {
+                to_remove.push(node_idx);
+            }
+        }
+
+        for node_idx in to_remove {
+            let event_id = self.map.get_by_left(&node_idx).unwrap().clone();
+            self.remove(&event_id);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.graph.clear();
+        self.map.clear();
+        self.heads.clear();
+        self.cutter = Cutter::new();
     }
 }
 
@@ -363,6 +401,15 @@ impl Cutter {
 
             if seq_map.is_empty() {
                 self.0.remove(&idx);
+            }
+        }
+    }
+
+    fn remove_event(&mut self, event_id: &EventId) {
+        if let Some(seq_map) = self.0.get_mut(&event_id.idx()) {
+            seq_map.remove(&event_id.seq());
+            if seq_map.is_empty() {
+                self.0.remove(&event_id.idx());
             }
         }
     }

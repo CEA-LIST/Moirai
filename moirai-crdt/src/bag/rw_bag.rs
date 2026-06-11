@@ -14,34 +14,34 @@ use moirai_protocol::{
 use crate::{
     HashMap,
     counter::resettable_counter::Counter,
-    map::uw_map::{UWMap, UWMapLog},
+    map::rw_map::{RWMap, RWMapLog},
 };
 
 #[derive(Clone, Debug)]
-pub enum AWBag<V> {
+pub enum RWBag<V> {
     Add(V),
     Remove(V),
     Clear,
 }
 
 #[derive(Clone, Debug)]
-pub struct AWBagLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<Counter<usize>>>);
+pub struct RWBagLog<V: Clone + Hash + Debug + Eq>(RWMapLog<V, VecLog<Counter<usize>>>);
 
-impl<V> Default for AWBagLog<V>
+impl<V> Default for RWBagLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
     fn default() -> Self {
-        Self(UWMapLog::default())
+        Self(RWMapLog::default())
     }
 }
 
-impl<V> IsLog for AWBagLog<V>
+impl<V> IsLog for RWBagLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
     type Value = HashMap<V, usize>;
-    type Op = AWBag<V>;
+    type Op = RWBag<V>;
     type Rejection = Infallible;
 
     fn new() -> Self {
@@ -54,9 +54,9 @@ where
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
-            AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
-            AWBag::Remove(k) => UWMap::Update(k.clone(), Counter::Dec(1)),
-            AWBag::Clear => UWMap::Clear,
+            RWBag::Add(k) => RWMap::Update(k.clone(), Counter::Inc(1)),
+            RWBag::Remove(k) => RWMap::Update(k.clone(), Counter::Dec(1)),
+            RWBag::Clear => RWMap::Clear,
         };
         let event = Event::unfold(event, op);
         // While the Bag contains a map, it is semantically a leaf CRDT, so we ignore the path and sink.
@@ -77,7 +77,7 @@ where
     }
 }
 
-impl<V> EvalNested<Read<HashMap<V, usize>>> for AWBagLog<V>
+impl<V> EvalNested<Read<HashMap<V, usize>>> for RWBagLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
@@ -89,7 +89,7 @@ where
     }
 }
 
-impl<V> BorrowedRead for AWBagLog<V>
+impl<V> BorrowedRead for RWBagLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
@@ -98,7 +98,7 @@ where
     }
 }
 
-impl<V> InternalizeOp for AWBag<V>
+impl<V> InternalizeOp for RWBag<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
@@ -116,14 +116,14 @@ mod tests {
 
     #[test]
     fn simple_bag() {
-        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<&str>>();
+        let (mut replica_a, mut replica_b) = twins_log::<RWBagLog<&str>>();
 
-        let event_a = replica_a.send(AWBag::Add("a")).unwrap();
-        let event_b = replica_b.send(AWBag::Add("b")).unwrap();
+        let event_a = replica_a.send(RWBag::Add("a")).unwrap();
+        let event_b = replica_b.send(RWBag::Add("b")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(AWBag::Remove("a")).unwrap();
+        let event_a = replica_a.send(RWBag::Remove("a")).unwrap();
         replica_b.receive(event_a);
 
         let mut result = HashMap::default();
@@ -135,10 +135,10 @@ mod tests {
 
     #[test]
     fn concurrent_bag() {
-        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<&str>>();
+        let (mut replica_a, mut replica_b) = twins_log::<RWBagLog<&str>>();
 
-        let event_a = replica_a.send(AWBag::Add("a")).unwrap();
-        let event_b = replica_b.send(AWBag::Add("a")).unwrap();
+        let event_a = replica_a.send(RWBag::Add("a")).unwrap();
+        let event_b = replica_b.send(RWBag::Add("a")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 

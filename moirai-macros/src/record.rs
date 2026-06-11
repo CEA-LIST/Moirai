@@ -151,26 +151,41 @@ macro_rules! record {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
+                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
+                )*
+            {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
                     $crate::moirai_protocol::crdt::eval::BorrowedRead::read_ref(self).clone()
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::BorrowedRead for [<$name Log>] {
+            impl $crate::moirai_protocol::crdt::eval::BorrowedRead for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
+                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
+                )*
+            {
                 fn read_ref(&self) -> &Self::Value {
                     self.__moirai_read_cache.get_or_compute(|| self.read_uncached())
                 }
             }
 
-            impl [<$name Log>] {
+            impl [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
+                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
+                )*
+            {
                 fn read_uncached(&self) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::state::log::IsLog>::eval(
-                                &self.$field,
-                                $crate::moirai_protocol::crdt::query::Read::new()
-                            ),
+                            $field: $crate::moirai_protocol::crdt::eval::BorrowedRead::read_ref(&self.$field).clone(),
                         )*
                     }
                 }

@@ -112,7 +112,10 @@ where
                 | (RWSet::Add(v1), RWSet::Remove(v2))
                 | (RWSet::Remove(v1), RWSet::Add(v2))
                 | (RWSet::Remove(v1), RWSet::Remove(v2)) => v1 == v2,
-                (_, RWSet::Clear) => true,
+                // There was a mistake in the original paper. 'clear' should not make prior 'remove' redundant,
+                // otherwise it would fail to preserve the remove against concurrent add.
+                (RWSet::Add(_), RWSet::Clear) => true,
+                (RWSet::Remove(_), RWSet::Clear) => false,
                 (RWSet::Clear, _) => unreachable!(),
             }
     }
@@ -210,23 +213,33 @@ where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
+    /// Semantics: there exists an 'add' for the element, and there is no 'remove' for the element.
     fn execute_query(
         q: Contains<V>,
         stable: &<RWSet<V> as PureCRDT>::StableState,
         unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
-        stable.0.contains(&q.0)
-            && !stable
-                .1
-                .iter()
-                .any(|o| matches!(o, RWSet::Remove(v2) if v2 == &q.0))
-            || unstable.iter().any(|o| {
-                if let RWSet::Add(v) = o.op() {
-                    v == &q.0
-                } else {
-                    false
+        let stable_removed = stable
+            .1
+            .iter()
+            .any(|o| matches!(o, RWSet::Remove(v) if v == &q.0));
+        let mut present = stable.0.contains(&q.0) && !stable_removed;
+        let mut removed = stable_removed;
+
+        for op in unstable.iter().map(|t| t.op()) {
+            match op {
+                RWSet::Add(v) if v == &q.0 && !removed => {
+                    present = true;
                 }
-            })
+                RWSet::Remove(v) if v == &q.0 => {
+                    present = false;
+                    removed = true;
+                }
+                _ => {}
+            }
+        }
+
+        present
     }
 }
 
@@ -283,6 +296,25 @@ mod tests {
         assert_eq!(replica_b.query(Read::new()), result);
         assert_eq!(replica_a.query(Contains("a")), false);
         assert_eq!(replica_b.query(Contains("b")), false);
+    }
+
+    #[test]
+    fn clear_preserves_prior_remove_against_concurrent_add() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+
+        let remove = replica_a.send(RWSet::Remove("a")).unwrap();
+        let clear = replica_a.send(RWSet::Clear).unwrap();
+        let add = replica_b.send(RWSet::Add("a")).unwrap();
+
+        replica_a.receive(add);
+        replica_b.receive(remove);
+        replica_b.receive(clear);
+
+        let result = set_from_slice(&[]);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(Contains("a")), false);
+        assert_eq!(replica_b.query(Contains("a")), false);
     }
 
     // Note: Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
@@ -346,6 +378,8 @@ mod tests {
         let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(Read::new()), result);
         assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Contains("a")), false);
+        assert_eq!(replica_a.query(Contains("a")), false);
     }
 
     #[test]
@@ -414,8 +448,8 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(0.4, 4, 10, None, None, false, false);
+        let runs = vec![run.clone(); 10_000];
 
         let config =
             FuzzerConfig::<VecLog<RWSet<String>>>::new("rw_set", runs, true, |a, b| a == b, false);
