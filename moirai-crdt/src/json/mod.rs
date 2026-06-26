@@ -81,6 +81,16 @@ impl OpGeneratorNested for JsonLog {
             }
         }
 
+        fn variant_of(value: &JsonChildValue) -> JsonVariant {
+            match value {
+                JsonChildValue::Number(_) => JsonVariant::Number,
+                JsonChildValue::Boolean(_) => JsonVariant::Boolean,
+                JsonChildValue::String(_) => JsonVariant::String,
+                JsonChildValue::Object(_) => JsonVariant::Object,
+                JsonChildValue::Array(_) => JsonVariant::Array,
+            }
+        }
+
         let value = self.eval(Read::new());
 
         match value {
@@ -149,8 +159,21 @@ impl OpGeneratorNested for JsonLog {
             },
             JsonValue::Conflict(json_child_values) => match &self.child {
                 JsonContainer::Conflicts(child_logs) => {
+                    enum ConflictChoice {
+                        Choose,
+                        Update,
+                    }
+
+                    let conflict_dist = WeightedIndex::new([1, 3]).unwrap();
+                    let conflict_choice = &[ConflictChoice::Choose, ConflictChoice::Update]
+                        [conflict_dist.sample(rng)];
                     let choice =
                         rand::seq::IteratorRandom::choose(json_child_values.iter(), rng).unwrap();
+
+                    if matches!(conflict_choice, ConflictChoice::Choose) {
+                        return Json::Choose(variant_of(choice));
+                    }
+
                     let log = child_logs
                         .iter()
                         .find(|log| {
@@ -180,7 +203,7 @@ mod tests {
     use crate::{
         counter::resettable_counter::Counter,
         flag::ew_flag::EWFlag,
-        json::{Json, JsonLog},
+        json::{Json, JsonLog, JsonVariant},
         list::{eg_walker::List, nested_list::NestedList},
         map::uw_map::UWMap,
         query::read_as_json::ReadAsJson,
@@ -202,6 +225,34 @@ mod tests {
             Value::Number(Number::from_f64(5.0).unwrap()),
         ]);
 
+        assert_eq!(result, replica_a.query(ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+    }
+
+    #[test]
+    fn choose_absent_variant_is_disabled() {
+        let (mut replica_a, _) = twins_log::<JsonLog>();
+
+        assert!(replica_a.send(Json::Choose(JsonVariant::Number)).is_err());
+
+        replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
+        assert!(replica_a.send(Json::Choose(JsonVariant::Number)).is_err());
+        assert!(replica_a.send(Json::Choose(JsonVariant::Boolean)).is_err());
+    }
+
+    #[test]
+    fn choose_resolves_observed_conflict() {
+        let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
+
+        let event_a = replica_a.send(Json::Boolean(EWFlag::Enable)).unwrap();
+        let event_b = replica_b.send(Json::Number(Counter::Inc(5.0))).unwrap();
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        let choose = replica_a.send(Json::Choose(JsonVariant::Number)).unwrap();
+        replica_b.receive(choose);
+
+        let result = Value::Number(Number::from_f64(5.0).unwrap());
         assert_eq!(result, replica_a.query(ReadAsJson::new()));
         assert_eq!(result, replica_b.query(ReadAsJson::new()));
     }

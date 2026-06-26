@@ -5,7 +5,7 @@ use moirai_protocol::crdt::{
 use serde_json::{Map, Number, Value};
 
 use crate::{
-    json::{JsonChild, JsonContainer, JsonLog},
+    json::{JsonChildValue, JsonLog, JsonValue},
     list::nested_list::NestedListLog,
     map::uw_map::UWMapLog,
 };
@@ -66,29 +66,39 @@ fn variant_rank(v: &Value) -> u8 {
 
 impl EvalNested<ReadAsJson> for JsonLog {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
-        fn eval_child(child: &JsonChild) -> Value {
+        fn eval_child(child: &JsonChildValue) -> Value {
             match child {
-                JsonChild::Number(log) => {
-                    Value::Number(Number::from_f64(log.execute_query(Read::new())).unwrap())
+                JsonChildValue::Number(value) => {
+                    Value::Number(Number::from_f64(*value).unwrap())
                 }
-                JsonChild::Boolean(log) => Value::Bool(log.execute_query(Read::new())),
-                JsonChild::String(log) => {
-                    let chars: String = log.execute_query(Read::<String>::new());
-                    Value::String(chars)
+                JsonChildValue::Boolean(value) => Value::Bool(*value),
+                JsonChildValue::String(value) => Value::String(value.iter().collect()),
+                JsonChildValue::Object(map) => {
+                    let mut object = Map::new();
+                    for (key, value) in map {
+                        object.insert(key.clone(), eval_value(value));
+                    }
+                    Value::Object(object)
                 }
-                JsonChild::Object(log) => log.execute_query(ReadAsJson::new()),
-                JsonChild::Array(log) => log.execute_query(ReadAsJson::new()),
+                JsonChildValue::Array(list) => {
+                    Value::Array(list.iter().map(eval_value).collect())
+                }
             }
         }
 
-        match &self.child {
-            JsonContainer::Value(child) => eval_child(child),
-            JsonContainer::Conflicts(children) => {
-                let mut evaluated = children.iter().map(eval_child).collect::<Vec<Value>>();
-                evaluated.sort_by_key(variant_rank);
-                Value::Array(evaluated)
+        fn eval_value(value: &JsonValue) -> Value {
+            match value {
+                JsonValue::Unset => Value::Null,
+                JsonValue::Value(child) => eval_child(child),
+                JsonValue::Conflict(children) => {
+                    let mut evaluated = children.iter().map(eval_child).collect::<Vec<Value>>();
+                    evaluated.sort_by_key(variant_rank);
+                    Value::Array(evaluated)
+                }
             }
-            JsonContainer::Unset => Value::Null,
         }
+
+        let value = <JsonLog as EvalNested<Read<JsonValue>>>::execute_query(self, Read::new());
+        eval_value(&value)
     }
 }

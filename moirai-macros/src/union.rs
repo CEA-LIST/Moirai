@@ -4,35 +4,25 @@ macro_rules! union {
         $union:ident = $($variant:ident ($ty:ty, $log:ty))|+ $(,)?
     ) => {
         $crate::paste::paste! {
+            /// List of variant names, used in the `Choose` operation to select a variant
+            #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+            pub enum [<$union Variant>] {
+                $(
+                    $variant,
+                )*
+            }
+
+            /// Set of Union CRDT operations
             #[derive(Clone, Debug)]
             pub enum $union {
                 $(
                     $variant($ty),
                 )*
-            }
-
-            #[cfg(feature = "test_utils")]
-            impl ::deepsize::DeepSizeOf for $union {
-                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-                    match self {
-                        $(
-                            Self::$variant(value) => value.deep_size_of_children(context),
-                        )*
-                    }
-                }
-            }
-
-            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $union {
-                fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
-                    match self {
-                        $(
-                            Self::$variant(o) => Self::$variant(o.internalize(interner)),
-                        )*
-                    }
-                }
+                Choose([<$union Variant>]),
             }
 
             impl $union {
+                /// Returns true if the given log corresponds to the same variant as this operation.
                 fn is_match_log(&self, log: &[<$union Child>]) -> bool {
                     match (self, log) {
                         $(
@@ -43,6 +33,7 @@ macro_rules! union {
                 }
             }
 
+            /// Set of Union CRDT child logs, one for each variant
             #[derive(Clone, Debug)]
             pub enum [<$union Child>] {
                 $(
@@ -50,6 +41,18 @@ macro_rules! union {
                 )*
             }
 
+            impl [<$union Child>] {
+                /// Returns the variant name that this child log corresponds to.
+                fn __moirai_variant(&self) -> [<$union Variant>] {
+                    match self {
+                        $(
+                            Self::$variant(_) => [<$union Variant>]::$variant,
+                        )*
+                    }
+                }
+            }
+
+            /// Value returned by the child log of each variant
             #[derive(Clone, Debug)]
             pub enum [<$union ChildValue>] {
                 $(
@@ -57,48 +60,7 @@ macro_rules! union {
                 )*
             }
 
-            #[repr(usize)]
-            enum [<$union ChildValueRank>] {
-                $(
-                    $variant,
-                )*
-            }
-
-            impl [<$union ChildValue>] {
-                fn rank(&self) -> usize {
-                    match self {
-                        $(
-                            Self::$variant(_) => [<$union ChildValueRank>]::$variant as usize,
-                        )*
-                    }
-                }
-            }
-
-            impl PartialEq for [<$union ChildValue>] {
-                fn eq(&self, other: &Self) -> bool {
-                    match (self, other) {
-                        $(
-                            (Self::$variant(left), Self::$variant(right)) => left == right,
-                        )*
-                        _ => false,
-                    }
-                }
-            }
-
-            impl Eq for [<$union ChildValue>] {}
-
-            impl PartialOrd for [<$union ChildValue>] {
-                fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                    Some(self.cmp(other))
-                }
-            }
-
-            impl Ord for [<$union ChildValue>] {
-                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                    self.rank().cmp(&other.rank())
-                }
-            }
-
+            /// Value returned by the union log, which may be a single value, a conflict of values, or unset.
             #[derive(Clone, Debug, Default, PartialEq)]
             pub enum [<$union Value>] {
                 #[default]
@@ -107,6 +69,7 @@ macro_rules! union {
                 Conflict(Vec<[<$union ChildValue>]>),
             }
 
+            /// Internal Union log state
             #[derive(Clone, Debug, Default)]
             pub enum [<$union Container>] {
                 #[default]
@@ -115,26 +78,45 @@ macro_rules! union {
                 Conflicts(Vec<[<$union Child>]>),
             }
 
+            /// Union log
             #[derive(Clone, Debug, Default)]
             pub struct [<$union Log>] {
                 pub child: [<$union Container>],
                 __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell<[<$union Value>]>,
             }
 
+            /// Rejection reasons for union operations
+            /// i.e., when an operation is not enabled in the current state
             #[derive(Debug)]
             pub enum [<$union Rejection>] {
                 WrongVariant,
+                MissingVariant,
+                NotConflict,
                 $(
                     $variant(Box<<$log as $crate::moirai_protocol::state::log::IsLog>::Rejection>),
                 )*
             }
 
-            impl std::fmt::Display for [<$union Rejection>] {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    match self {
-                        Self::WrongVariant => write!(f, "operation does not match the active union variant"),
+            impl [<$union Log>] {
+                fn __moirai_child_is_default(child: &[<$union Child>]) -> bool {
+                    match child {
                         $(
-                            Self::$variant(error) => write!(f, "{}: {}", stringify!($variant), error),
+                            [<$union Child>]::$variant(log) => {
+                                <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log)
+                            }
+                        )*
+                    }
+                }
+
+                fn __moirai_reset_child(
+                    child: &mut [<$union Child>],
+                    version: &$crate::moirai_protocol::clock::version_vector::Version,
+                ) {
+                    match child {
+                        $(
+                            [<$union Child>]::$variant(log) => {
+                                <$log as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(log, version, true);
+                            }
                         )*
                     }
                 }
@@ -151,22 +133,42 @@ macro_rules! union {
 
                 fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
                     match &self.child {
-                        [<$union Container>]::Unset => Ok(()),
-                        [<$union Container>]::Value(child) => match (op, child.as_ref()) {
-                            $(
-                                (
-                                    $union::$variant(o),
-                                    [<$union Child>]::$variant(log),
-                                ) => {
-                                    let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
-                                        <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
-                                    log.is_enabled(&child_op)
-                                        .map_err(|error| [<$union Rejection>]::$variant(Box::new(error)))
+                        [<$union Container>]::Unset => match op {
+                            $union::Choose(_) => Err([<$union Rejection>]::MissingVariant),
+                            _ => Ok(()),
+                        },
+                        [<$union Container>]::Value(child) => match op {
+                            $union::Choose(choice) => {
+                                if child.__moirai_variant() == *choice {
+                                    Err([<$union Rejection>]::NotConflict)
+                                } else {
+                                    Err([<$union Rejection>]::MissingVariant)
                                 }
-                            )*
-                            _ => Err([<$union Rejection>]::WrongVariant),
+                            }
+                            _ => match (op, child.as_ref()) {
+                                $(
+                                    (
+                                        $union::$variant(o),
+                                        [<$union Child>]::$variant(log),
+                                    ) => {
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                            <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o.clone());
+                                        log.is_enabled(&child_op)
+                                            .map_err(|error| [<$union Rejection>]::$variant(Box::new(error)))
+                                    }
+                                )*
+                                _ => Err([<$union Rejection>]::WrongVariant),
+                            },
                         },
                         [<$union Container>]::Conflicts(children) => {
+                            if let $union::Choose(choice) = op {
+                                return children
+                                    .iter()
+                                    .any(|child| child.__moirai_variant() == *choice)
+                                    .then_some(())
+                                    .ok_or([<$union Rejection>]::MissingVariant);
+                            }
+
                             let mut rejection = None;
                             for child in children {
                                 match (op, child) {
@@ -254,10 +256,65 @@ macro_rules! union {
                                 });
                             }
                         )*
+                        $union::Choose(choice) => {
+                            match &mut self.child {
+                                [<$union Container>]::Unset => {}
+                                [<$union Container>]::Value(existing_child) => {
+                                    if existing_child.__moirai_variant() != choice {
+                                        Self::__moirai_reset_child(existing_child, event.version());
+                                        if Self::__moirai_child_is_default(&existing_child) {
+                                            self.child = [<$union Container>]::Unset;
+                                        }
+                                    }
+                                }
+                                [<$union Container>]::Conflicts(children) => {
+                                    for mut child in children.iter_mut() {
+                                        if child.__moirai_variant() != choice {
+                                            Self::__moirai_reset_child(child, event.version());
+                                        }
+                                    }
+                                    let no_conflicts = children.iter().all(|child| child.__moirai_variant() == choice || Self::__moirai_child_is_default(child));
+                                    if no_conflicts {
+                                        let selected_child = children
+                                            .iter()
+                                            .find(|child| child.__moirai_variant() == choice)
+                                            .expect("there should be a child with the chosen variant");
+                                        self.child = [<$union Container>]::Value(Box::new(selected_child.clone()));
+                                    } else {
+                                        children.retain(|child| !Self::__moirai_child_is_default(child));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
-                fn stabilize(&mut self, _version: &$crate::moirai_protocol::clock::version_vector::Version) {}
+                fn stabilize(&mut self, _version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                    self.__moirai_read_cache.invalidate();
+                    match &mut self.child {
+                        [<$union Container>]::Unset => {}
+                        [<$union Container>]::Value(union_child) => {
+                            match union_child.as_mut() {
+                                $(
+                                    [<$union Child>]::$variant(log) => {
+                                        log.stabilize(_version);
+                                    }
+                                )*
+                            }
+                        },
+                        [<$union Container>]::Conflicts(union_childs) => {
+                            for union_child in union_childs {
+                                match union_child {
+                                    $(
+                                        [<$union Child>]::$variant(log) => {
+                                            log.stabilize(_version);
+                                        }
+                                    )*
+                                }
+                            }
+                        }
+                    }
+                }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
                     self.__moirai_read_cache.invalidate();
@@ -288,20 +345,10 @@ macro_rules! union {
                 fn is_default(&self) -> bool {
                     match &self.child {
                         [<$union Container>]::Unset => true,
-                        [<$union Container>]::Value(child) => match child.as_ref() {
-                            $(
-                                [<$union Child>]::$variant(log) => {
-                                    log.is_default()
-                                }
-                            )*
-                        },
-                        [<$union Container>]::Conflicts(children) => children.iter().all(|child| match child {
-                            $(
-                                [<$union Child>]::$variant(log) => {
-                                    log.is_default()
-                                }
-                            )*
-                        }),
+                        [<$union Container>]::Value(child) => Self::__moirai_child_is_default(child.as_ref()),
+                        [<$union Container>]::Conflicts(children) => children
+                            .iter()
+                            .all(Self::__moirai_child_is_default),
                     }
                 }
             }
@@ -325,39 +372,36 @@ macro_rules! union {
                 fn read_uncached(&self) -> [<$union Value>] {
                     match &self.child {
                         [<$union Container>]::Unset => [<$union Value>]::Unset,
-                        [<$union Container>]::Value(child) => match child.as_ref() {
-                            $(
-                                [<$union Child>]::$variant(log) => {
-                                    let value = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
-                                        log,
-                                        $crate::moirai_protocol::crdt::query::Read::new(),
-                                    );
-                                    [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
-                                }
-                            )*
+                        [<$union Container>]::Value(child) => {
+                            match child.as_ref() {
+                                $(
+                                    [<$union Child>]::$variant(log) => {
+                                        let value = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                            log,
+                                            $crate::moirai_protocol::crdt::query::Read::new(),
+                                        );
+                                        [<$union Value>]::Value(Box::new([<$union ChildValue>]::$variant(value)))
+                                    }
+                                )*
+                            }
                         },
                         [<$union Container>]::Conflicts(children) => {
                             let mut values = vec![];
                             for child in children {
-                                let maybe_value = match child {
+                                let value = match child {
                                     $(
                                         [<$union Child>]::$variant(log) => {
-                                            if <$log as $crate::moirai_protocol::state::log::IsLog>::is_default(log) {
-                                                None
-                                            } else {
-                                                let v = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
-                                                    log,
-                                                    $crate::moirai_protocol::crdt::query::Read::new(),
-                                                );
-                                                Some([<$union ChildValue>]::$variant(v))
-                                            }
+                                            let v = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                                log,
+                                                $crate::moirai_protocol::crdt::query::Read::new(),
+                                            );
+                                            [<$union ChildValue>]::$variant(v)
                                         }
                                     )*
                                 };
-                                if let Some(value) = maybe_value {
-                                    values.push(value);
-                                }
+                                values.push(value);
                             }
+                            // TODO: in which case conflict can be empty?
                             match values.len() {
                                 0 => [<$union Value>]::Unset,
                                 1 => [<$union Value>]::Value(Box::new(values.pop().unwrap())),
@@ -367,6 +411,95 @@ macro_rules! union {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            //* Deterministic ordering of child values */
+
+            #[repr(usize)]
+            enum [<$union ChildValueRank>] {
+                $(
+                    $variant,
+                )*
+            }
+
+            impl [<$union ChildValue>] {
+                fn rank(&self) -> usize {
+                    match self {
+                        $(
+                            Self::$variant(_) => [<$union ChildValueRank>]::$variant as usize,
+                        )*
+                    }
+                }
+            }
+
+            impl PartialEq for [<$union ChildValue>] {
+                fn eq(&self, other: &Self) -> bool {
+                    match (self, other) {
+                        $(
+                            (Self::$variant(left), Self::$variant(right)) => left == right,
+                        )*
+                        _ => false,
+                    }
+                }
+            }
+
+            impl Eq for [<$union ChildValue>] {}
+
+            impl PartialOrd for [<$union ChildValue>] {
+                fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                    Some(self.cmp(other))
+                }
+            }
+
+            impl Ord for [<$union ChildValue>] {
+                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                    self.rank().cmp(&other.rank())
+                }
+            }
+
+            //* Deepsize */
+
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$union Variant>] {
+                fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> usize {
+                    0
+                }
+            }
+
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for $union {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    match self {
+                        $(
+                            Self::$variant(value) => value.deep_size_of_children(context),
+                        )*
+                        Self::Choose(_) => 0,
+                    }
+                }
+            }
+
+            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $union {
+                fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+                    match self {
+                        $(
+                            Self::$variant(o) => Self::$variant(o.internalize(interner)),
+                        )*
+                        Self::Choose(variant) => Self::Choose(variant),
+                    }
+                }
+            }
+
+            impl std::fmt::Display for [<$union Rejection>] {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        Self::WrongVariant => write!(f, "operation does not match the active union variant"),
+                        Self::MissingVariant => write!(f, "chosen union variant is not currently set"),
+                        Self::NotConflict => write!(f, "choose is only enabled when the union is in conflict"),
+                        $(
+                            Self::$variant(error) => write!(f, "{}: {}", stringify!($variant), error),
+                        )*
                     }
                 }
             }
