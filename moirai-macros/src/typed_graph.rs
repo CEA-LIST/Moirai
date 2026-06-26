@@ -1,8 +1,12 @@
 /// Generates a complete typed graph CRDT from a schema definition.
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
+#[cfg(feature = "test_utils")]
+use deepsize::{Context, DeepSizeOf};
 use moirai_protocol::utils::intern_str::InternalizeOp;
+
+//* ARC *//
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Arc<S, T, E> {
@@ -11,61 +15,7 @@ pub struct Arc<S, T, E> {
     pub kind: E,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypedGraphRejection {
-    MissingVertex,
-    MissingArc,
-    MinCardinality,
-    MaxCardinality,
-}
-
-impl std::fmt::Display for TypedGraphRejection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingVertex => write!(f, "required vertex does not exist"),
-            Self::MissingArc => write!(f, "required arc does not exist"),
-            Self::MinCardinality => {
-                write!(
-                    f,
-                    "operation would violate a minimum cardinality constraint"
-                )
-            }
-            Self::MaxCardinality => {
-                write!(
-                    f,
-                    "operation would violate a maximum cardinality constraint"
-                )
-            }
-        }
-    }
-}
-
-#[cfg(feature = "test_utils")]
-impl<S, T, E> ::deepsize::DeepSizeOf for Arc<S, T, E>
-where
-    S: ::deepsize::DeepSizeOf,
-    T: ::deepsize::DeepSizeOf,
-{
-    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-        // Edge kinds are schema marker values. Only the endpoint identifiers can
-        // carry heap-backed state, such as interned object paths.
-        self.source.deep_size_of_children(context) + self.target.deep_size_of_children(context)
-    }
-}
-
-impl<S, T, E> InternalizeOp for Arc<S, T, E>
-where
-    S: InternalizeOp,
-    T: InternalizeOp,
-{
-    fn internalize(self, interner: &moirai_protocol::utils::intern_str::Interner) -> Self {
-        Self {
-            source: self.source.internalize(interner),
-            target: self.target.internalize(interner),
-            kind: self.kind,
-        }
-    }
-}
+//* VERTEX *//
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Vertex<T>
@@ -74,18 +24,6 @@ where
 {
     AddVertex { id: T },
     RemoveVertex { id: T },
-}
-
-#[cfg(feature = "test_utils")]
-impl<T> ::deepsize::DeepSizeOf for Vertex<T>
-where
-    T: Debug + Clone + PartialEq + Eq + Hash + ::deepsize::DeepSizeOf,
-{
-    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-        match self {
-            Self::AddVertex { id } | Self::RemoveVertex { id } => id.deep_size_of_children(context),
-        }
-    }
 }
 
 #[macro_export]
@@ -113,7 +51,7 @@ macro_rules! typed_graph {
             $( $conn:ident : $src:ident [$src_ty:path] -> $tgt:ident [$tgt_ty:path] ( $ety:ident ) ),* $(,)?
         } $(,)?
     ) => {
-        // Generate a vertex struct for each vertex variant
+        //* VERTEX TYPES *//
         $(
             #[derive(Debug, Clone, PartialEq, Eq, Hash)]
             pub struct $v(pub $crate::moirai_protocol::state::object_path::ObjectPath);
@@ -135,33 +73,7 @@ macro_rules! typed_graph {
             }
         )*
 
-        macro_rules! __typed_graph_min {
-            $(
-                ($edge_ty) => {
-                    $edge_min
-                };
-            )*
-        }
-
-        macro_rules! __typed_graph_max {
-            $(
-                ($edge_ty) => {
-                    $crate::typed_graph!(@max $edge_max)
-                };
-            )*
-        }
-
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        enum __TypedGraphEdgeType {
-            $( $edge_ty ),*
-        }
-
-        #[cfg(feature = "test_utils")]
-        impl ::deepsize::DeepSizeOf for __TypedGraphEdgeType {
-            fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> usize {
-                0
-            }
-        }
+        //* SET OF VERTEX TYPES *//
 
         // Enum of all vertices
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -198,6 +110,38 @@ macro_rules! typed_graph {
             }
         }
 
+        //* EDGE TYPES *//
+
+        macro_rules! __typed_graph_min {
+            $(
+                ($edge_ty) => {
+                    $edge_min
+                };
+            )*
+        }
+
+        macro_rules! __typed_graph_max {
+            $(
+                ($edge_ty) => {
+                    $crate::typed_graph!(@max $edge_max)
+                };
+            )*
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        enum __TypedGraphEdgeType {
+            $( $edge_ty ),*
+        }
+
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for __TypedGraphEdgeType {
+            fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> usize {
+                0
+            }
+        }
+
+        //* SET OF EDGE TYPES *//
+
         // Enum of all edge types
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $edge {
@@ -212,6 +156,8 @@ macro_rules! typed_graph {
                 }
             }
         }
+
+        //* SET OF ARC TYPES *//
 
         // Enum of all arcs
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -284,6 +230,8 @@ macro_rules! typed_graph {
             }
         }
 
+        //* TYPE GRAPH *//
+
         // Main graph operation enum
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $graph<P> {
@@ -294,22 +242,6 @@ macro_rules! typed_graph {
             RemoveArc($arcs),
             #[doc(hidden)]
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
-        }
-
-        #[cfg(feature = "test_utils")]
-        impl<P> ::deepsize::DeepSizeOf for $graph<P> {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-                match self {
-                    Self::AddVertex { id } | Self::RemoveVertex { id } => {
-                        id.deep_size_of_children(context)
-                    }
-                    Self::DeleteSubtree { prefix } => prefix.deep_size_of_children(context),
-                    Self::AddArc(arc) | Self::RemoveArc(arc) => {
-                        arc.deep_size_of_children(context)
-                    }
-                    Self::__Marker(never, _) => match *never {},
-                }
-            }
         }
 
         $crate::paste::paste! {
@@ -976,6 +908,24 @@ macro_rules! typed_graph {
                 graph
             }
         }
+
+        //* DEEP SIZE *//
+
+        #[cfg(feature = "test_utils")]
+        impl<P> ::deepsize::DeepSizeOf for $graph<P> {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                match self {
+                    Self::AddVertex { id } | Self::RemoveVertex { id } => {
+                        id.deep_size_of_children(context)
+                    }
+                    Self::DeleteSubtree { prefix } => prefix.deep_size_of_children(context),
+                    Self::AddArc(arc) | Self::RemoveArc(arc) => {
+                        arc.deep_size_of_children(context)
+                    }
+                    Self::__Marker(never, _) => match *never {},
+                }
+            }
+        }
     };
     // Public arm: block-style schema definition.
     (
@@ -1019,4 +969,78 @@ macro_rules! type_graph {
     ($($tt:tt)*) => {
         $crate::typed_graph! { $($tt)* }
     };
+}
+
+//* REJECTION *//
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypedGraphRejection {
+    MissingVertex,
+    MissingArc,
+    MinCardinality,
+    MaxCardinality,
+}
+
+impl Display for TypedGraphRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingVertex => write!(f, "required vertex does not exist"),
+            Self::MissingArc => write!(f, "required arc does not exist"),
+            Self::MinCardinality => {
+                write!(
+                    f,
+                    "operation would violate a minimum cardinality constraint"
+                )
+            }
+            Self::MaxCardinality => {
+                write!(
+                    f,
+                    "operation would violate a maximum cardinality constraint"
+                )
+            }
+        }
+    }
+}
+
+//* DEEP SIZE *//
+
+#[cfg(feature = "test_utils")]
+impl<S, T, E> DeepSizeOf for Arc<S, T, E>
+where
+    S: DeepSizeOf,
+    T: DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        // Edge kinds are schema marker values. Only the endpoint identifiers can
+        // carry heap-backed state, such as interned object paths.
+        self.source.deep_size_of_children(context) + self.target.deep_size_of_children(context)
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<T> DeepSizeOf for Vertex<T>
+where
+    T: Debug + Clone + PartialEq + Eq + Hash + ::deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+        match self {
+            Self::AddVertex { id } | Self::RemoveVertex { id } => id.deep_size_of_children(context),
+        }
+    }
+}
+
+//* INTERNALIZE *//
+
+impl<S, T, E> InternalizeOp for Arc<S, T, E>
+where
+    S: InternalizeOp,
+    T: InternalizeOp,
+{
+    fn internalize(self, interner: &moirai_protocol::utils::intern_str::Interner) -> Self {
+        Self {
+            source: self.source.internalize(interner),
+            target: self.target.internalize(interner),
+            kind: self.kind,
+        }
+    }
 }

@@ -305,6 +305,27 @@ where
         &self.graph
     }
 
+    /// Find the nearest cut (downward) to the given version.
+    pub fn nearest_cut(&self, _version: &Version) -> Version {
+        todo!()
+    }
+
+    /// V is a critical version iff every event in the
+    /// graph is either in V, or an ancestor of some event in V, or
+    /// happened after all of the events in V
+    ///
+    /// Fix any topological order
+    /// τ=(e_1,...,e_n).
+    /// A critical prefix P has a very useful property:
+    /// If P is critical, then P appears as a prefix in every topological order.
+    /// So we can search critical versions as indices i in a topological order:
+    /// P_i = {e_1,...,e_i}.
+    /// Then P_i is critical iff every event inside P_i happens-before every event outside P_i.
+    /// Equivalently, P_i is critical iff there is no concurrency crossing the boundary.
+    pub fn is_critical_cut(&self, _event_ids: &[EventId]) -> bool {
+        todo!()
+    }
+
     #[allow(clippy::mutable_key_type)]
     pub fn heads(&self) -> &HashSet<EventId> {
         &self.heads

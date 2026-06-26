@@ -1,3 +1,19 @@
+//! EgWalker list CRDT replay.
+//!
+//! Operations are generated against positional list states, but concurrent events
+//! may observe different positions. EgWalker resolves this by replaying the event
+//! graph in topological order while maintaining two views of the same internal
+//! item sequence:
+//!
+//! - the prepare view, which is moved to each event's parent version before the
+//!   event is interpreted;
+//! - the effect view, which accumulates the transformed operations that determine
+//!   the value returned by reads.
+//!
+//! The current implementation also accepts a stable list snapshot. Stable content
+//! is represented as compressed placeholder ranges and only materialized as items
+//! when an unstable operation targets a stable element directly.
+
 mod document;
 mod item;
 mod presence_state;
@@ -31,16 +47,27 @@ use rand::{Rng, RngExt};
 
 use crate::{
     HashMap,
-    list::eg_walker::{document::Document, item::Item},
+    list::eg_walker::{
+        document::{Document, Record},
+        item::{Item, ItemId, LifeDot},
+    },
 };
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum List<V> {
+    /// Insert `content` at the visible position observed by the issuing replica.
     Insert { content: V, pos: usize },
+    /// Delete the visible item at `pos` in the issuing replica's parent version.
     Delete { pos: usize },
+    /// Delete `len` visible items starting at `start`.
     DeleteRange { start: usize, len: usize },
+    /// Mark the item at `pos` as freshly alive without changing its payload.
+    ///
+    /// This operation models update-wins behavior for nested values: a concurrent
+    /// delete can only remove life dots it observed, so an unseen update dot keeps
+    /// the item visible.
     Update { pos: usize },
 }
 
@@ -52,15 +79,17 @@ impl<V> InternalizeOp for List<V> {
 
 #[derive(Clone, Debug)]
 struct DeleteEffect {
-    item_id: EventId,
+    item_id: ItemId,
     // A delete removes exactly the dots that were visible in its parent context.
     // Capturing them once avoids any reachability query during advance/retreat.
-    removed_dots: BTreeSet<EventId>,
+    removed_dots: BTreeSet<LifeDot>,
 }
 
 #[derive(Clone, Debug)]
 enum DeleteTarget {
+    /// A single-position delete and the dots it removed.
     Single(DeleteEffect),
+    /// A range delete represented as one delete effect per touched item.
     Range(Vec<DeleteEffect>),
 }
 
@@ -84,20 +113,33 @@ where
         Self::Update { pos }
     }
 
-    /// Where to insert the new item so that it appears at target_pos in the current visible document
-    fn find_by_current_pos(items: &[Item<V>], target_pos: usize) -> usize {
+    /// Find where to insert a new item in the current prepared document.
+    ///
+    /// `target_pos` is expressed in visible prepare-state positions. Stable ranges
+    /// count as visible content, so inserting inside one only splits the range at
+    /// the insertion boundary.
+    /// Stable ranges are split at the insertion boundary, but their elements remain placeholders.
+    fn find_insert_position(doc: &mut Document<V>, target_pos: usize) -> usize {
         let mut cur_pos = 0usize;
         let mut idx = 0usize;
 
-        while cur_pos < target_pos {
-            debug_assert!(
-                idx < items.len(),
-                "Target position {target_pos} is out of bounds for current document"
-            );
+        while idx < doc.records.len() {
+            if cur_pos == target_pos {
+                return idx;
+            }
 
-            let item = &items[idx];
-            if item.presence.is_visible() {
-                cur_pos += 1;
+            match &doc.records[idx] {
+                Record::StableRange { start, end } => {
+                    let len = end - start;
+                    if cur_pos + len >= target_pos {
+                        return doc.split_stable_range_at_boundary(idx, target_pos - cur_pos);
+                    }
+                    cur_pos += len;
+                }
+                Record::Item(item) if item.prepare.is_visible() => {
+                    cur_pos += 1;
+                }
+                Record::Item(_) => {}
             }
             idx += 1;
         }
@@ -105,43 +147,100 @@ where
         idx
     }
 
+    /// Find the concrete record for the visible item at `target_pos`.
+    ///
+    /// Deletes and updates need item-level dot state. If the target lies inside a
+    /// stable range, this materializes exactly that stable element and leaves the
+    /// rest of the range compressed.
+    fn find_visible_item(doc: &mut Document<V>, target_pos: usize) -> Option<usize> {
+        let mut cur_pos = 0usize;
+        let mut idx = 0usize;
+
+        while idx < doc.records.len() {
+            match &doc.records[idx] {
+                Record::StableRange { start, end } => {
+                    let len = end - start;
+                    if target_pos < cur_pos + len {
+                        return Some(doc.isolate_stable_item(idx, target_pos - cur_pos));
+                    }
+                    cur_pos += len;
+                }
+                Record::Item(item) if item.prepare.is_visible() => {
+                    if cur_pos == target_pos {
+                        return Some(idx);
+                    }
+                    cur_pos += 1;
+                }
+                Record::Item(_) => {}
+            }
+            idx += 1;
+        }
+
+        None
+    }
+
+    /// Nearest integrated item before `idx`, used as the left insertion origin.
+    fn previous_integrated_id(doc: &Document<V>, idx: usize) -> Option<ItemId> {
+        doc.records[..idx]
+            .iter()
+            .rev()
+            .find(|record| record.is_integrated())
+            .and_then(Record::last_id)
+    }
+
+    /// Nearest integrated item at or after `idx`, used as the right insertion origin.
+    fn next_integrated_id(doc: &Document<V>, idx: usize) -> Option<ItemId> {
+        doc.records[idx..]
+            .iter()
+            .find(|record| record.is_integrated())
+            .and_then(Record::first_id)
+    }
+
+    /// Insert a new item into the CRDT sequence.
+    ///
+    /// The visible position gives an initial location, but concurrent insertions
+    /// at the same position must be ordered deterministically. The origin-left and
+    /// origin-right anchors restrict the scan to the insertion window; the local
+    /// item id tie-breaker is the current deterministic ordering rule.
     fn integrate(doc: &mut Document<V>, new_item: Item<V>, mut idx: usize) {
         let mut scan_idx = idx;
 
         // If origin_left is None, we'll pretend there's an item at position -1 which we were inserted to the right of.
-        let left = scan_idx as isize - 1;
+        let left = new_item
+            .origin_left
+            .as_ref()
+            .and_then(|id| doc.position_of(id))
+            .map(|idx| idx as isize)
+            .unwrap_or(-1);
         let right = if let Some(e) = &new_item.origin_right {
-            *doc.items_by_idx
-                .get(e)
-                .expect("Could not find item by NodeIndex")
+            doc.position_of(e).expect("Could not find item by id")
         } else {
-            doc.items.len()
+            doc.records.len()
         };
 
         let mut scanning = false;
 
         while scan_idx < right {
-            let other = &doc.items[scan_idx];
+            let other = match &doc.records[scan_idx] {
+                Record::Item(item) => item,
+                Record::StableRange { .. } => break,
+            };
 
             // Only not-yet-integrated items participate in the Eg-Walker insertion walk.
-            if other.presence.is_integrated() {
+            if other.prepare.is_integrated() {
                 break;
             }
 
             let oleft = if let Some(ol) = &other.origin_left {
-                *doc.items_by_idx
-                    .get(ol)
-                    .expect("Could not find item by NodeIndex") as isize
+                doc.position_of(ol).expect("Could not find item by id") as isize
             } else {
                 -1
             };
 
             let oright = if let Some(or) = &other.origin_right {
-                *doc.items_by_idx
-                    .get(or)
-                    .expect("Could not find item by NodeIndex")
+                doc.position_of(or).expect("Could not find item by id")
             } else {
-                doc.items.len()
+                doc.records.len()
             };
 
             // TODO: use Fair Tag
@@ -158,49 +257,53 @@ where
             }
         }
 
-        doc.items.insert(idx, new_item);
-
-        // Update items_by_nx mapping for all shifted items at and after idx
-        for i in idx..doc.items.len() {
-            let n = doc.items[i].id.clone();
-            doc.items_by_idx.insert(n, i);
-        }
+        doc.records.insert(idx, Record::Item(new_item));
+        doc.rebuild_index();
     }
 
+    /// Move the prepare view backwards across `event_id`.
+    ///
+    /// During replay, consecutive events can have different parent versions. To
+    /// interpret the next event, EgWalker first retreats prepare-state effects
+    /// that are present in the current version but absent from the next event's
+    /// parents. The effect view is intentionally untouched.
     fn retreat<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
     where
         U: IsUnstableCore<List<V>>,
     {
         match &state.get(event_id).unwrap().op() {
             List::Insert { .. } => {
-                if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
-                    let item = &mut doc.items[item_idx];
-                    item.presence.born_dots.remove(event_id);
-                    item.presence.inserted = false;
+                let item_id = ItemId::event(event_id.clone());
+                let life_dot = LifeDot::event(event_id.clone());
+                if let Some(item_idx) = doc.position_of(&item_id) {
+                    let item = doc.item_mut(item_idx).unwrap();
+                    item.prepare.remove_life_dot(&life_dot);
+                    item.prepare.inserted = false;
                 }
             }
             List::Update { .. } => {
                 let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(&item_idx) = doc.items_by_idx.get(target) {
-                    let item = &mut doc.items[item_idx];
-                    item.presence.born_dots.remove(event_id);
+                if let Some(item_idx) = doc.position_of(target) {
+                    let item = doc.item_mut(item_idx).unwrap();
+                    item.prepare
+                        .remove_life_dot(&LifeDot::event(event_id.clone()));
                 }
             }
             List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets: Vec<&DeleteEffect> = doc
+                let targets: Vec<DeleteEffect> = doc
                     .delete_targets
                     .get(event_id)
                     .map(|t| match t {
-                        DeleteTarget::Single(effect) => vec![effect],
-                        DeleteTarget::Range(effects) => effects.iter().collect(),
+                        DeleteTarget::Single(effect) => vec![effect.clone()],
+                        DeleteTarget::Range(effects) => effects.clone(),
                     })
                     .unwrap();
 
-                for effect in targets {
-                    if let Some(&item_idx) = doc.items_by_idx.get(&effect.item_id) {
-                        let item = &mut doc.items[item_idx];
+                for effect in &targets {
+                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
+                        let item = doc.item_mut(item_idx).unwrap();
                         for dot in &effect.removed_dots {
-                            item.presence.remove_deleted(dot);
+                            item.prepare.undo_delete(dot);
                         }
                     }
                 }
@@ -208,40 +311,47 @@ where
         }
     }
 
+    /// Move the prepare view forwards across `event_id`.
+    ///
+    /// This is the inverse of `retreat`: it reapplies prepare-state effects that
+    /// are needed to reach the next event's parent version. The effect view remains
+    /// the final accumulated replay result.
     fn advance<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
     where
         U: IsUnstableCore<List<V>>,
     {
         match &state.get(event_id).unwrap().op() {
             List::Insert { .. } => {
-                if let Some(&item_idx) = doc.items_by_idx.get(event_id) {
-                    let item = &mut doc.items[item_idx];
-                    item.presence.inserted = true;
-                    item.presence.born_dots.insert(event_id.clone());
+                let item_id = ItemId::event(event_id.clone());
+                let life_dot = LifeDot::event(event_id.clone());
+                if let Some(item_idx) = doc.position_of(&item_id) {
+                    let item = doc.item_mut(item_idx).unwrap();
+                    item.prepare.inserted = true;
+                    item.prepare.add_life_dot(life_dot);
                 }
             }
             List::Update { .. } => {
                 let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(&item_idx) = doc.items_by_idx.get(target) {
-                    let item = &mut doc.items[item_idx];
-                    item.presence.born_dots.insert(event_id.clone());
+                if let Some(item_idx) = doc.position_of(target) {
+                    let item = doc.item_mut(item_idx).unwrap();
+                    item.prepare.add_life_dot(LifeDot::event(event_id.clone()));
                 }
             }
             List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets: Vec<&DeleteEffect> = doc
+                let targets: Vec<DeleteEffect> = doc
                     .delete_targets
                     .get(event_id)
                     .map(|t| match t {
-                        DeleteTarget::Single(effect) => vec![effect],
-                        DeleteTarget::Range(effects) => effects.iter().collect(),
+                        DeleteTarget::Single(effect) => vec![effect.clone()],
+                        DeleteTarget::Range(effects) => effects.clone(),
                     })
                     .unwrap();
 
-                for effect in targets {
-                    if let Some(&item_idx) = doc.items_by_idx.get(&effect.item_id) {
-                        let item = &mut doc.items[item_idx];
+                for effect in &targets {
+                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
+                        let item = doc.item_mut(item_idx).unwrap();
                         for dot in &effect.removed_dots {
-                            item.presence.add_deleted(dot);
+                            item.prepare.record_delete(dot);
                         }
                     }
                 }
@@ -249,64 +359,62 @@ where
         }
     }
 
+    /// Apply one event after the prepare view has been moved to its parent version.
+    ///
+    /// Positional indices are interpreted against `prepare`. The operation also
+    /// updates `effect`, which is the state eventually materialized by reads.
     fn apply(doc: &mut Document<V>, tagged_op: &TaggedOp<List<V>>) {
         match tagged_op.op() {
             List::Delete { pos } => {
-                let mut idx = Self::find_by_current_pos(&doc.items, *pos);
+                let Some(idx) = Self::find_visible_item(doc, *pos) else {
+                    debug_assert!(false, "No visible item found at position {pos}");
+                    return;
+                };
 
-                while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
-                    idx += 1;
-                }
-
-                debug_assert!(
-                    idx < doc.items.len(),
-                    "No visible item found at position {pos}"
-                );
-
-                let item = &mut doc.items[idx];
-                // The delete only removes dots that are visible in its prepared parent context.
-                #[allow(clippy::mutable_key_type)]
-                let removed_dots = item.presence.visible_dots();
-                for dot in &removed_dots {
-                    item.effect_live_dots.remove(dot);
-                }
-                for dot in &removed_dots {
-                    item.presence.add_deleted(dot);
-                }
+                let (item_id, removed_dots) = {
+                    let item = doc.item_mut(idx).unwrap();
+                    // The delete only removes dots that are visible in its prepared parent context.
+                    #[allow(clippy::mutable_key_type)]
+                    let removed_dots = item.prepare.visible_life_dots();
+                    for dot in &removed_dots {
+                        item.effect.remove_life_dot(dot);
+                    }
+                    for dot in &removed_dots {
+                        item.prepare.record_delete(dot);
+                    }
+                    (item.id.clone(), removed_dots)
+                };
                 doc.delete_targets.insert(
                     tagged_op.id().clone(),
                     DeleteTarget::Single(DeleteEffect {
-                        item_id: item.id.clone(),
+                        item_id,
                         removed_dots,
                     }),
                 );
             }
             List::DeleteRange { start, len } => {
-                let mut idx = Self::find_by_current_pos(&doc.items, *start);
                 let mut pos = 0usize;
                 let mut effects = Vec::new();
 
                 while pos < *len {
-                    while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
-                        idx += 1;
-                    }
-
-                    if idx >= doc.items.len() {
+                    let Some(idx) = Self::find_visible_item(doc, *start) else {
                         return;
-                    }
+                    };
 
-                    let item = &mut doc.items[idx];
-                    #[allow(clippy::mutable_key_type)]
-                    let removed_dots = item.presence.visible_dots();
-                    for dot in &removed_dots {
-                        item.effect_live_dots.remove(dot);
-                    }
-                    for dot in &removed_dots {
-                        item.presence.add_deleted(dot);
-                    }
-                    effects.push(DeleteEffect {
-                        item_id: item.id.clone(),
-                        removed_dots,
+                    effects.push({
+                        let item = doc.item_mut(idx).unwrap();
+                        #[allow(clippy::mutable_key_type)]
+                        let removed_dots = item.prepare.visible_life_dots();
+                        for dot in &removed_dots {
+                            item.effect.remove_life_dot(dot);
+                        }
+                        for dot in &removed_dots {
+                            item.prepare.record_delete(dot);
+                        }
+                        DeleteEffect {
+                            item_id: item.id.clone(),
+                            removed_dots,
+                        }
                     });
                     pos += 1;
                 }
@@ -315,48 +423,34 @@ where
                     .insert(tagged_op.id().clone(), DeleteTarget::Range(effects));
             }
             List::Update { pos } => {
-                let mut idx = Self::find_by_current_pos(&doc.items, *pos);
+                let Some(idx) = Self::find_visible_item(doc, *pos) else {
+                    debug_assert!(false, "No visible item found at position {pos}");
+                    return;
+                };
 
-                while idx < doc.items.len() && !doc.items[idx].presence.is_visible() {
-                    idx += 1;
-                }
-
-                debug_assert!(
-                    idx < doc.items.len(),
-                    "No visible item found at position {pos}"
-                );
-
-                let item = &mut doc.items[idx];
-                // Updating an existing element adds a fresh life dot for the same identity.
-                // If concurrent with a delete, that dot is not part of the delete effect.
-                item.effect_live_dots.insert(tagged_op.id().clone());
-                item.presence.born_dots.insert(tagged_op.id().clone());
-                doc.update_targets
-                    .insert(tagged_op.id().clone(), item.id.clone());
+                let item_id = {
+                    let item = doc.item_mut(idx).unwrap();
+                    // Updating an existing element adds a fresh life dot for the same identity.
+                    // If concurrent with a delete, that dot is not part of the delete effect.
+                    let update_dot = LifeDot::event(tagged_op.id().clone());
+                    item.effect.add_life_dot(update_dot.clone());
+                    item.prepare.add_life_dot(update_dot);
+                    item.id.clone()
+                };
+                doc.update_targets.insert(tagged_op.id().clone(), item_id);
             }
             List::Insert { content, pos } => {
-                let idx = Self::find_by_current_pos(&doc.items, *pos);
+                let idx = Self::find_insert_position(doc, *pos);
 
                 debug_assert!(
-                    idx == 0 || doc.items[idx - 1].presence.is_integrated(),
+                    idx == 0 || doc.records[idx - 1].is_integrated(),
                     "Item to the left is not integrated"
                 );
 
-                let origin_left = if idx == 0 {
-                    None
-                } else {
-                    Some(doc.items[idx - 1].id.clone())
-                };
+                let origin_left = Self::previous_integrated_id(doc, idx);
+                let origin_right = Self::next_integrated_id(doc, idx);
 
-                let mut origin_right = None;
-                for i in idx..doc.items.len() {
-                    if doc.items[i].presence.is_integrated() {
-                        origin_right = Some(doc.items[i].id.clone());
-                        break;
-                    }
-                }
-
-                let item = Item::new(
+                let item = Item::new_event(
                     tagged_op.id().clone(),
                     origin_left,
                     origin_right,
@@ -367,6 +461,11 @@ where
         }
     }
 
+    /// Compute how to move the prepare view from `current_version` to `parents`.
+    ///
+    /// The returned `a_only` events must be retreated, and `b_only` events must be
+    /// advanced. The search walks ancestors from both frontiers until all remaining
+    /// queued events are shared ancestors.
     fn diff<U>(
         state: &U,
         current_version: &Option<EventId>,
@@ -384,7 +483,8 @@ where
 
         #[allow(clippy::mutable_key_type)]
         let mut flags: HashMap<EventId, DiffFlag> = HashMap::default();
-        // PriorityQueue: prioritizing higher NodeIndex first
+        // Process newer events first so frontiers converge toward their nearest
+        // common ancestors.
         let mut queue: BinaryHeap<(usize, EventId)> = BinaryHeap::new();
         let mut num_shared = 0usize;
 
@@ -468,13 +568,18 @@ where
         (a_only, b_only)
     }
 
-    fn replay<'a, U, I>(unstable: &'a U, events: I) -> Vec<V>
+    /// Replay a topologically ordered event stream over an optional stable baseline.
+    ///
+    /// `events` can be the whole unstable log for `Read`, or a predecessor stream
+    /// for `ReadAt`. The document keeps its prepare view at the parent version of
+    /// each event, applies the event, and finally materializes the effect view.
+    fn replay<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Vec<V>
     where
         U: CausalReplay<List<V>> + 'a,
         I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
         V: 'a,
     {
-        let mut document = Document::default();
+        let mut document = Document::new(stable);
 
         for tagged_op in events {
             let parents = unstable.parents(tagged_op.id());
@@ -492,17 +597,13 @@ where
             document.current_version = Some(tagged_op.id().clone());
         }
 
-        document
-            .items
-            .iter()
-            .filter(|item| !item.effect_live_dots.is_empty())
-            .map(|item| item.content.clone())
-            .collect()
+        document.materialize()
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum ListRejection {
+    /// The operation refers to a visible position outside the current read state.
     OutOfBounds { pos: usize, len: usize },
 }
 
@@ -531,6 +632,11 @@ where
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_STABILIZE: bool = true;
 
+    /// Validate positional operations against the current visible document.
+    ///
+    /// EgWalker operations store user-facing positions, so enablement is checked by
+    /// reading the current state and comparing the requested position with its
+    /// length.
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
@@ -568,18 +674,17 @@ where
         unstable: &impl CausalReplay<Self>,
     ) -> CausalReset<Self> {
         if !conservative {
-            // TODO: implements non-conservative reset
-            panic!("EventGraph::redundant_by_parent non-conservative is not implemented");
+            return CausalReset::Prune;
         }
         let state = Self::execute_query(ReadAt::new(version), stable, unstable);
-        let op = List::DeleteRange {
+        CausalReset::Inject(vec![List::DeleteRange {
             start: 0,
             len: state.len(),
-        };
-        CausalReset::Inject(vec![op])
+        }])
     }
 }
 
+/// Normal read: replay all unstable events on top of the stable list snapshot.
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for List<V>
 where
     V: Debug + Clone,
@@ -587,13 +692,14 @@ where
 {
     fn execute_query(
         _q: Read<<Self as PureCRDT>::Value>,
-        _stable: &Self::StableState,
+        stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
-        Self::replay(unstable, unstable.iter())
+        Self::replay(stable, unstable, unstable.iter())
     }
 }
 
+/// Convenience read for character lists.
 impl<U> Eval<Read<String>, U> for List<char>
 where
     U: CausalReplay<Self>,
@@ -604,6 +710,10 @@ where
     }
 }
 
+/// Read the list at a historical version.
+///
+/// The unstable log supplies the predecessor events for the requested version,
+/// and the same replay algorithm is used on that restricted stream.
 pub struct ReadAt<'a, V> {
     version: &'a Version,
     _marker: std::marker::PhantomData<V>,
@@ -629,11 +739,11 @@ where
 {
     fn execute_query(
         q: ReadAt<<Self as PureCRDT>::Value>,
-        _stable: &Self::StableState,
+        stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
         let predecessors = unstable.predecessors(q.version);
-        Self::replay(unstable, predecessors)
+        Self::replay(stable, unstable, predecessors)
     }
 }
 
@@ -641,18 +751,34 @@ impl<V> IsStableState<List<V>> for Vec<V>
 where
     V: Debug + Clone,
 {
+    /// The stable state is the already-materialized snapshot used as replay baseline.
     fn is_default(&self) -> bool {
-        todo!()
+        self.is_empty()
     }
 
-    fn apply(&mut self, _value: List<V>) {
-        todo!()
+    /// Apply an operation to stable state using sequential list semantics.
+    ///
+    /// When a stable snapshot is built or supplied, it stores the plain list value.
+    /// Unstable replay then starts from this state and interprets only the remaining
+    /// events.
+    fn apply(&mut self, value: List<V>) {
+        match value {
+            List::Insert { content, pos } => self.insert(pos, content),
+            List::Delete { pos } => {
+                self.remove(pos);
+            }
+            List::DeleteRange { start, len } => {
+                self.drain(start..start + len);
+            }
+            List::Update { .. } => {}
+        }
     }
 
     fn clear(&mut self) {
-        todo!()
+        Vec::clear(self);
     }
 
+    /// Redundant-operation pruning for EgWalker stable state is still pending.
     fn prune_redundant_ops(
         &mut self,
         _rdnt: RedundancyRelation<List<V>>,
@@ -675,6 +801,9 @@ where
         stable: &Self::StableState,
         unstable: &impl CausalReplay<Self>,
     ) -> Self {
+        // Fuzzing generates only user operations that are enabled in the current
+        // visible document, because out-of-bounds operations are rejected before
+        // they enter the log.
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -723,10 +852,30 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{replica::IsReplica, state::graph_log::GraphLog};
+    use moirai_protocol::{
+        broadcast::tcsb::Tcsb,
+        replica::{IsReplica, Replica},
+        state::graph_log::GraphLog,
+    };
 
     use super::*;
     use crate::utils::membership::{triplet_log, twins_log};
+
+    type ListReplica = Replica<GraphLog<List<char>>, Tcsb<List<char>>>;
+
+    fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
+        let replica_a = Replica::bootstrap_with_state(
+            "a".to_string(),
+            &["a", "b"],
+            GraphLog::<List<char>>::from_stable(stable.clone()),
+        );
+        let replica_b = Replica::bootstrap_with_state(
+            "b".to_string(),
+            &["a", "b"],
+            GraphLog::<List<char>>::from_stable(stable),
+        );
+        (replica_a, replica_b)
+    }
 
     #[test]
     fn simple_insertion_egwalker() {
@@ -740,6 +889,90 @@ mod tests {
             replica_a.query(Read::<String>::new()),
             replica_b.query(Read::<String>::new())
         );
+    }
+
+    #[test]
+    fn starts_from_stable_document() {
+        let (replica_a, replica_b) = stable_twins(vec!['a', 'b', 'c']);
+
+        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
+        assert_eq!(replica_b.query(Read::<String>::new()), "abc");
+    }
+
+    #[test]
+    fn inserts_into_stable_document() {
+        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
+
+        let event = replica_a.send(List::insert('X', 1)).unwrap();
+        replica_b.receive(event);
+
+        assert_eq!(replica_a.query(Read::<String>::new()), "aXbc");
+        assert_eq!(replica_b.query(Read::<String>::new()), "aXbc");
+    }
+
+    #[test]
+    fn deletes_from_stable_document() {
+        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
+
+        let event = replica_a.send(List::delete(1)).unwrap();
+        replica_b.receive(event);
+
+        assert_eq!(replica_a.query(Read::<String>::new()), "ac");
+        assert_eq!(replica_b.query(Read::<String>::new()), "ac");
+    }
+
+    #[test]
+    fn delete_range_from_stable_document() {
+        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c', 'd']);
+
+        let event = replica_a.send(List::delete_range(1, 2)).unwrap();
+        replica_b.receive(event);
+
+        assert_eq!(replica_a.query(Read::<String>::new()), "ad");
+        assert_eq!(replica_b.query(Read::<String>::new()), "ad");
+    }
+
+    #[test]
+    fn read_at_uses_stable_document() {
+        let (mut replica_a, _) = stable_twins(vec!['a', 'b', 'c']);
+
+        let insert = replica_a.send(List::insert('X', 1)).unwrap();
+        let insert_version = insert.event().version().clone();
+        replica_a.send(List::delete(1)).unwrap();
+
+        assert_eq!(
+            replica_a.query(ReadAt::<Vec<char>>::new(&insert_version)),
+            vec!['a', 'X', 'b', 'c']
+        );
+        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
+    }
+
+    #[test]
+    fn concurrent_insertions_into_stable_document_converge() {
+        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
+
+        let event_a = replica_a.send(List::insert('X', 1)).unwrap();
+        let event_b = replica_b.send(List::insert('Y', 1)).unwrap();
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        let a = replica_a.query(Read::<String>::new());
+        let b = replica_b.query(Read::<String>::new());
+        assert_eq!(a, b);
+        assert!(a == "aXYbc" || a == "aYXbc", "unexpected result: {a}");
+    }
+
+    #[test]
+    fn stable_update_wins_over_concurrent_delete() {
+        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
+
+        let event_a = replica_a.send(List::delete(1)).unwrap();
+        let event_b = replica_b.send(List::update(1)).unwrap();
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
+
+        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
+        assert_eq!(replica_b.query(Read::<String>::new()), "abc");
     }
 
     #[test]

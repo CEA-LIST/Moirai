@@ -183,7 +183,7 @@ where
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        let positions = self.positions.eval(Read::new());
+        let positions = self.positions.read_ref();
         match op {
             NestedList::Insert { pos, op } => {
                 if *pos > positions.len() {
@@ -253,11 +253,11 @@ where
 {
     fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut list = Vec::new();
-        let positions = self.positions.execute_query(Read::new());
+        let positions = self.positions.read_ref();
         #[allow(clippy::mutable_key_type)]
         let map = self.children.read_ref();
         for eid in positions {
-            if let Some(child) = map.get(&eid) {
+            if let Some(child) = map.get(eid) {
                 list.push(child.clone());
             }
         }
@@ -281,7 +281,7 @@ where
         }
         let dist = WeightedIndex::new([2, 2, 1]).unwrap();
 
-        let positions = self.positions.eval(Read::new());
+        let positions = self.positions.read_ref();
         let choice = if positions.is_empty() {
             &Choice::Insert
         } else {
