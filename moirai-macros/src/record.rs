@@ -193,7 +193,7 @@ macro_rules! record {
 
             /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
             /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.
-            #[derive(Debug, Clone)]
+            #[derive(Debug)]
             pub enum [<$name Rejection>] {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Rejection),
