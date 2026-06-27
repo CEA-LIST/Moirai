@@ -10,11 +10,11 @@ use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerat
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{Get, QueryOperation, Read},
     },
     event::Event,
-    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog},
+    state::{effect_context::EffectContext, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -40,7 +40,6 @@ where
     L: IsLog,
 {
     children: HashMap<K, L>,
-    read_cache: CacheCell<HashMap<K, L::Value>>,
 }
 
 impl<K, L> Default for UWMapLog<K, L>
@@ -51,7 +50,6 @@ where
     fn default() -> Self {
         Self {
             children: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -132,8 +130,6 @@ where
                             .effect(child_op, ctx);
                     });
                 }
-
-                self.refresh_cached_key(&k);
             }
             UWMap::Remove(k) => {
                 if ctx.is_owned() {
@@ -143,10 +139,8 @@ where
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), true);
                 }
-                self.refresh_cached_key(&k);
             }
             UWMap::Clear => {
-                self.read_cache.invalidate();
                 if ctx.is_owned() {
                     ctx.delete();
                 }
@@ -158,14 +152,12 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         for child in self.children.values_mut() {
             child.stabilize(version);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         for child in self.children.values_mut() {
             child.redundant_by_parent(version, conservative);
         }
@@ -196,28 +188,6 @@ where
         &self,
         _q: Read<Self::Value>,
     ) -> <Read<Self::Value> as QueryOperation>::Response {
-        BorrowedRead::read_ref(self).clone()
-    }
-}
-
-impl<K, L> BorrowedRead for UWMapLog<K, L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache.get_or_compute(|| self.read_uncached())
-    }
-}
-
-impl<K, L> UWMapLog<K, L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
-{
-    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut map = HashMap::default();
         for (k, v) in &self.children {
             let val = v.execute_query(Read::new());
@@ -226,28 +196,6 @@ where
             }
         }
         map
-    }
-
-    fn refresh_cached_key(&mut self, key: &K) {
-        if self.read_cache.get().is_none() {
-            return;
-        }
-
-        let value = self.children.get(key).and_then(|child| {
-            let value = child.execute_query(Read::new());
-            (value != <L as IsLog>::Value::default()).then_some(value)
-        });
-
-        if let Some(cached) = self.read_cache.get_mut() {
-            match value {
-                Some(value) => {
-                    cached.insert(key.clone(), value);
-                }
-                None => {
-                    cached.remove(key);
-                }
-            }
-        }
     }
 }
 

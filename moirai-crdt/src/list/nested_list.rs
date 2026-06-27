@@ -11,7 +11,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{cache::CacheCell, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -49,7 +49,6 @@ where
     positions: GraphLog<SimpleList<EventId>>,
     /// Map from EventId to child CRDT instance
     children: UWMapLog<EventId, L>,
-    read_cache: CacheCell<Vec<L::Value>>,
 }
 
 impl<L> NestedListLog<L>
@@ -108,7 +107,6 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
                 let list_event = Event::new(
@@ -163,13 +161,11 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         self.children.stabilize(version);
         self.positions.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         self.children.redundant_by_parent(version, conservative);
         self.positions.redundant_by_parent(version, conservative);
     }
@@ -232,30 +228,10 @@ where
         &self,
         _q: Read<<Self as IsLog>::Value>,
     ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
-        BorrowedRead::read_ref(self).clone()
-    }
-}
-
-impl<L> BorrowedRead for NestedListLog<L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + PartialEq,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache.get_or_compute(|| self.read_uncached())
-    }
-}
-
-impl<L> NestedListLog<L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + PartialEq,
-{
-    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut list = Vec::new();
         let positions = self.positions.read_ref();
         #[allow(clippy::mutable_key_type)]
-        let map = self.children.read_ref();
+        let map = self.children.execute_query(Read::new());
         for eid in positions {
             if let Some(child) = map.get(eid) {
                 list.push(child.clone());
@@ -726,7 +702,6 @@ where
         Self {
             positions: GraphLog::default(),
             children: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }

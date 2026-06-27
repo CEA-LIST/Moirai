@@ -10,11 +10,11 @@ use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerat
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{Contains, Get, QueryOperation, Read},
     },
     event::Event,
-    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
     utils::{
         boxer::Boxer,
         intern_str::{InternalizeOp, Interner},
@@ -41,7 +41,6 @@ where
 {
     set: VecLog<RWSet<K>>,
     children: HashMap<K, L>,
-    read_cache: CacheCell<HashMap<K, L::Value>>,
 }
 
 impl<K, L> Default for RWMapLog<K, L>
@@ -53,7 +52,6 @@ where
         Self {
             set: Default::default(),
             children: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -98,7 +96,7 @@ where
         match event.op().clone() {
             RWMap::Update(k, v) => {
                 // Query the RWSet
-                let was_live = self.is_key_live(&k);
+                let was_live = self.set.execute_query(Contains(k.clone()));
                 let set_op = Event::unfold(event.clone(), RWSet::Add(k.clone()));
 
                 // Effect of the RWSet will determine whether the key is live or not, which in turn determines how we effect the child log
@@ -106,7 +104,7 @@ where
                 self.set.effect(set_op, &mut silent_ctx);
 
                 // If the child op is not redundant
-                if self.is_key_live(&k) {
+                if self.set.execute_query(Contains(k.clone())) {
                     let child_op = Event::unfold(event, v);
 
                     if ctx.is_owned() {
@@ -134,8 +132,6 @@ where
                         });
                     }
                 }
-
-                self.refresh_cached_key(&k);
             }
             RWMap::Remove(k) => {
                 let set_op = Event::unfold(event.clone(), RWSet::Remove(k.clone()));
@@ -149,10 +145,8 @@ where
                 if let Some(child) = self.children.get_mut(&k) {
                     child.redundant_by_parent(event.version(), false);
                 }
-                self.refresh_cached_key(&k);
             }
             RWMap::Clear => {
-                self.read_cache.invalidate();
                 let set_op = Event::unfold(event.clone(), RWSet::Clear);
                 let mut silent_ctx = EffectContext::silent();
                 self.set.effect(set_op, &mut silent_ctx);
@@ -168,7 +162,6 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         self.set.stabilize(version);
         for child in self.children.values_mut() {
             child.stabilize(version);
@@ -176,7 +169,6 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         self.set.redundant_by_parent(version, conservative);
         for child in self.children.values_mut() {
             child.redundant_by_parent(version, conservative);
@@ -190,7 +182,7 @@ where
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         match op {
             RWMap::Update(k, v) => {
-                if self.is_key_live(k) {
+                if self.set.execute_query(Contains(k.clone())) {
                     self.children
                         .get(k)
                         .map_or_else(|| L::default().is_enabled(v), |child| child.is_enabled(v))
@@ -213,31 +205,9 @@ where
         &self,
         _q: Read<Self::Value>,
     ) -> <Read<Self::Value> as QueryOperation>::Response {
-        BorrowedRead::read_ref(self).clone()
-    }
-}
-
-impl<K, L> BorrowedRead for RWMapLog<K, L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache.get_or_compute(|| self.read_uncached())
-    }
-}
-
-impl<K, L> RWMapLog<K, L>
-where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
-{
-    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut map = HashMap::default();
         for (k, v) in &self.children {
-            if self.is_key_live(k) {
+            if self.set.execute_query(Contains(k.clone())) {
                 let val = v.execute_query(Read::new());
                 if val != <L as IsLog>::Value::default() {
                     map.insert(k.clone(), val);
@@ -245,36 +215,6 @@ where
             }
         }
         map
-    }
-
-    fn refresh_cached_key(&mut self, key: &K) {
-        if self.read_cache.get().is_none() {
-            return;
-        }
-
-        let value = if self.is_key_live(key) {
-            self.children.get(key).and_then(|child| {
-                let value = child.execute_query(Read::new());
-                (value != <L as IsLog>::Value::default()).then_some(value)
-            })
-        } else {
-            None
-        };
-
-        if let Some(cached) = self.read_cache.get_mut() {
-            match value {
-                Some(value) => {
-                    cached.insert(key.clone(), value);
-                }
-                None => {
-                    cached.remove(key);
-                }
-            }
-        }
-    }
-
-    fn is_key_live(&self, key: &K) -> bool {
-        self.set.execute_query(Contains(key.clone()))
     }
 }
 
@@ -286,7 +226,7 @@ where
     <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
-        if !self.is_key_live(q.key) {
+        if !self.set.execute_query(Contains(q.key.clone())) {
             return None;
         }
 

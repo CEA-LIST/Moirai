@@ -4,6 +4,7 @@ use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::pure_crdt::PureCRDT,
     state::{
+        cache::CachedLog,
         graph_log::GraphLog,
         log::{IsLog, IsLogTest},
         po_log::POLog,
@@ -50,5 +51,14 @@ where
                 self.unstable(),
             )
         })
+    }
+}
+
+impl<L> OpGeneratorNested for CachedLog<L>
+where
+    L: OpGeneratorNested,
+{
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+        self.inner().generate(rng)
     }
 }

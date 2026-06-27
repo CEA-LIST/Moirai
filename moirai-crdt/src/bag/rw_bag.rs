@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{QueryOperation, Read},
     },
     event::Event,
@@ -85,16 +85,7 @@ where
         &self,
         _q: Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
-        self.read_ref().clone()
-    }
-}
-
-impl<V> BorrowedRead for RWBagLog<V>
-where
-    V: Clone + Debug + Hash + Eq + PartialEq,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.0.read_ref()
+        self.0.execute_query(Read::new())
     }
 }
 

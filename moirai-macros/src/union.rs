@@ -82,7 +82,6 @@ macro_rules! union {
             #[derive(Clone, Debug, Default)]
             pub struct [<$union Log>] {
                 pub child: [<$union Container>],
-                __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell<[<$union Value>]>,
             }
 
             /// Rejection reasons for union operations
@@ -202,7 +201,6 @@ macro_rules! union {
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
-                    self.__moirai_read_cache.invalidate();
                     match event.op().clone() {
                         $(
                             $union::$variant(o) => {
@@ -290,7 +288,6 @@ macro_rules! union {
                 }
 
                 fn stabilize(&mut self, _version: &$crate::moirai_protocol::clock::version_vector::Version) {
-                    self.__moirai_read_cache.invalidate();
                     match &mut self.child {
                         [<$union Container>]::Unset => {}
                         [<$union Container>]::Value(union_child) => {
@@ -317,7 +314,6 @@ macro_rules! union {
                 }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
-                    self.__moirai_read_cache.invalidate();
                     match &mut self.child {
                         [<$union Container>]::Unset => {}
                         [<$union Container>]::Value(union_child) => match union_child.as_mut() {
@@ -358,18 +354,6 @@ macro_rules! union {
                     &self,
                     _q: $crate::moirai_protocol::crdt::query::Read<Self::Value>,
                 ) -> <$crate::moirai_protocol::crdt::query::Read<Self::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
-                    self.read_uncached()
-                }
-            }
-
-            impl $crate::moirai_protocol::crdt::eval::BorrowedRead for [<$union Log>] {
-                fn read_ref(&self) -> &Self::Value {
-                    self.__moirai_read_cache.get_or_compute(|| self.read_uncached())
-                }
-            }
-
-            impl [<$union Log>] {
-                fn read_uncached(&self) -> [<$union Value>] {
                     match &self.child {
                         [<$union Container>]::Unset => [<$union Value>]::Unset,
                         [<$union Container>]::Value(child) => {

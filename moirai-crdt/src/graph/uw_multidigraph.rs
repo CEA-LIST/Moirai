@@ -6,11 +6,11 @@ use std::{
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog},
+    state::{effect_context::EffectContext, log::IsLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
@@ -52,7 +52,6 @@ where
 {
     arc_content: HashMap<(V, V, E), El>,
     vertex_content: HashMap<V, Vl>,
-    read_cache: CacheCell<LabeledMultidigraph<V, E, Vl, El>>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,7 +108,6 @@ where
 
     // TODO: add sink when vertex/arc creation/destruction
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
         match event.op().clone() {
             // Update the child at vertex `v`
             UWGraph::UpdateVertex { id: v, child: op } => {
@@ -163,7 +161,6 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         for v in self.arc_content.values_mut() {
             v.stabilize(version);
         }
@@ -174,7 +171,6 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         for v in self.arc_content.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
@@ -267,7 +263,6 @@ where
         Self {
             arc_content: HashMap::default(),
             vertex_content: HashMap::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -280,52 +275,22 @@ impl<V, E, No, Lo> InternalizeOp for UWGraph<V, E, No, Lo> {
 
 impl<V, E, Vl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E, Vl, El>
 where
-    Vl: BorrowedRead,
-    El: BorrowedRead,
+    Vl: IsLog + EvalNested<Read<<Vl as IsLog>::Value>>,
+    El: IsLog + EvalNested<Read<<El as IsLog>::Value>>,
     V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
     E: Clone + Debug + Eq + PartialEq + Hash,
-    <Vl as IsLog>::Value: Clone,
-    <El as IsLog>::Value: Clone,
 {
     fn execute_query(
         &self,
         _q: Read<Self::Value>,
     ) -> <Read<Self::Value> as QueryOperation>::Response {
-        self.read_ref().clone()
-    }
-}
-
-impl<V, E, Vl, El> BorrowedRead for UWGraphLog<V, E, Vl, El>
-where
-    Vl: BorrowedRead,
-    El: BorrowedRead,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
-    E: Clone + Debug + Eq + PartialEq + Hash,
-    <Vl as IsLog>::Value: Clone,
-    <El as IsLog>::Value: Clone,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache.get_or_compute(|| self.read_uncached())
-    }
-}
-
-impl<V, E, Vl, El> UWGraphLog<V, E, Vl, El>
-where
-    Vl: BorrowedRead,
-    El: BorrowedRead,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
-    E: Clone + Debug + Eq + PartialEq + Hash,
-    <Vl as IsLog>::Value: Clone,
-    <El as IsLog>::Value: Clone,
-{
-    fn read_uncached(&self) -> <Self as IsLog>::Value {
         let mut graph = <Self as IsLog>::Value::new();
         let mut node_idx = HashMap::default();
         for (v, child) in self.vertex_content.iter() {
             if child.is_default() {
                 continue;
             }
-            let idx = graph.add_node(Content::new(v.clone(), child.read_ref().clone()));
+            let idx = graph.add_node(Content::new(v.clone(), child.execute_query(Read::new())));
             node_idx.insert(v.clone(), idx);
         }
         for ((v1, v2, e), child) in self.arc_content.iter() {
@@ -341,7 +306,7 @@ where
                         *i2,
                         Content::new(
                             (v1.clone(), v2.clone(), e.clone()),
-                            child.read_ref().clone(),
+                            child.execute_query(Read::new()),
                         ),
                     );
                 }

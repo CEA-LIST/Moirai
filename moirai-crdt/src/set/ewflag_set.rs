@@ -3,11 +3,11 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{cache::CacheCell, effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
 
@@ -27,7 +27,6 @@ pub enum EWFlagSet<V> {
 #[derive(Clone, Debug)]
 pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
     inner: UWMapLog<V, VecLog<EWFlag>>,
-    read_cache: CacheCell<HashSet<V>>,
 }
 
 impl<V> Default for EWFlagSetLog<V>
@@ -37,7 +36,6 @@ where
     fn default() -> Self {
         Self {
             inner: UWMapLog::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -59,7 +57,6 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
             EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
@@ -72,12 +69,10 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         self.inner.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         self.inner.redundant_by_parent(version, conservative);
     }
 
@@ -94,28 +89,11 @@ where
         &self,
         _q: Read<HashSet<V>>,
     ) -> <Read<HashSet<V>> as QueryOperation>::Response {
-        self.read_ref().clone()
-    }
-}
-
-impl<V> BorrowedRead for EWFlagSetLog<V>
-where
-    V: Clone + Debug + Hash + Eq + PartialEq,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache.get_or_compute(|| self.read_uncached())
-    }
-}
-
-impl<V> EWFlagSetLog<V>
-where
-    V: Clone + Debug + Hash + Eq + PartialEq,
-{
-    fn read_uncached(&self) -> HashSet<V> {
         let mut set = HashSet::default();
-        for (k, val) in self.inner.read_ref() {
-            if *val {
-                set.insert(k.clone());
+        let values = self.inner.execute_query(Read::new());
+        for (k, val) in values {
+            if val {
+                set.insert(k);
             }
         }
         set

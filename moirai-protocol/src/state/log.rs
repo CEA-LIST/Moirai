@@ -48,8 +48,14 @@ pub trait IsLog: Default + Debug {
     fn stabilize(&mut self, version: &Version);
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
     fn is_default(&self) -> bool;
+}
+
+#[doc(hidden)]
+pub trait __DefaultSinkExpansion: IsLog {
     fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}
 }
+
+impl<L: IsLog> __DefaultSinkExpansion for L {}
 
 #[cfg(feature = "test_utils")]
 pub trait IsLogTest: IsLog

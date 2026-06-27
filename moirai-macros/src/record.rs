@@ -36,22 +36,37 @@ macro_rules! record {
                 )*
             }
 
-            /// Record log type, containing a log for each field and a cache store for the read value.
+            /// Record log type, containing a log for each field.
             #[derive(Debug, Default, Clone)]
             pub struct [<$name Log>] {
                 $(
                     $field: $T,
                 )*
-                __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell<[<$name Value>]>,
             }
 
             /// Accessor methods for each field log.
             impl [<$name Log>] {
                 $(
-                        pub fn $field(&self) -> &$T {
+                    pub fn $field(&self) -> &$T {
                         &self.$field
                     }
                 )*
+
+                #[doc(hidden)]
+                pub fn default_sink_expansion(
+                    &self,
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
+                ) {
+                    ctx.create();
+                    $(
+                        ctx.with_field(stringify!($field), |ctx| {
+                            use $crate::moirai_protocol::state::log::__DefaultSinkExpansion as _;
+
+                            <$T as $crate::moirai_protocol::state::log::IsLog>::new()
+                                .default_sink_expansion(ctx);
+                        });
+                    )*
+                }
             }
 
             /// Implementation of the Log trait for the record.
@@ -67,7 +82,6 @@ macro_rules! record {
                         $(
                             $field: <$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                         )*
-                        __moirai_read_cache: $crate::moirai_protocol::state::cache::CacheCell::new(),
                     }
                 }
 
@@ -76,7 +90,6 @@ macro_rules! record {
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
-                    self.__moirai_read_cache.invalidate();
                     match event.op().clone() {
                         $(
                             $name::[<$field:camel>](op) => {
@@ -104,14 +117,12 @@ macro_rules! record {
                 }
 
                 fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
-                    self.__moirai_read_cache.invalidate();
                     $(
                         self.$field.stabilize(version);
                     )*
                 }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
-                    self.__moirai_read_cache.invalidate();
                     $(
                         self.$field.redundant_by_parent(version, conservative);
                     )*
@@ -137,55 +148,27 @@ macro_rules! record {
                     }
                 }
 
-                fn default_sink_expansion(
-                    &self,
-                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
-                ) {
-                    ctx.create();
-                    $(
-                        ctx.with_field(stringify!($field), |ctx| {
-                            <$T as $crate::moirai_protocol::state::log::IsLog>::new()
-                                .default_sink_expansion(ctx);
-                        });
-                    )*
-                }
             }
 
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>]
             where
                 $(
-                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
+                    $T: $crate::moirai_protocol::state::log::IsLog
+                        + $crate::moirai_protocol::crdt::eval::EvalNested<
+                            $crate::moirai_protocol::crdt::query::Read<
+                                <$T as $crate::moirai_protocol::state::log::IsLog>::Value,
+                            >,
+                        >,
                     <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
                 )*
             {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
-                    $crate::moirai_protocol::crdt::eval::BorrowedRead::read_ref(self).clone()
-                }
-            }
-
-            impl $crate::moirai_protocol::crdt::eval::BorrowedRead for [<$name Log>]
-            where
-                $(
-                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
-                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
-                )*
-            {
-                fn read_ref(&self) -> &Self::Value {
-                    self.__moirai_read_cache.get_or_compute(|| self.read_uncached())
-                }
-            }
-
-            impl [<$name Log>]
-            where
-                $(
-                    $T: $crate::moirai_protocol::crdt::eval::BorrowedRead,
-                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
-                )*
-            {
-                fn read_uncached(&self) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: $crate::moirai_protocol::crdt::eval::BorrowedRead::read_ref(&self.$field).clone(),
+                            $field: $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                &self.$field,
+                                $crate::moirai_protocol::crdt::query::Read::new(),
+                            ),
                         )*
                     }
                 }

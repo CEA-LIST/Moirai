@@ -6,20 +6,24 @@ use crate::{
     HashMap,
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, Eval, EvalNested},
+        eval::{Eval, EvalNested},
         pure_crdt::{CausalReset, PureCRDT},
-        query::{QueryOperation, Read},
+        query::QueryOperation,
         redundancy::RedundancyRelation,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
-        cache::CacheCell, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
+        cache::CachedLog, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
         unstable_state::IsUnstableState,
     },
 };
 
-pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
-pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
+pub type RawVecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
+pub type RawMapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
+pub type CachedVecLog<O> = CachedLog<RawVecLog<O>>;
+pub type CachedMapLog<O> = CachedLog<RawMapLog<O>>;
+pub type VecLog<O> = CachedVecLog<O>;
+pub type MapLog<O> = CachedMapLog<O>;
 
 #[derive(Debug, Clone)]
 // #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -29,7 +33,6 @@ where
 {
     pub(crate) stable: O::StableState,
     pub(crate) unstable: U,
-    read_cache: CacheCell<O::Value>,
 }
 
 impl<O, U> IsLog for POLog<O, U>
@@ -45,7 +48,6 @@ where
         Self {
             stable: O::StableState::default(),
             unstable: U::default(),
-            read_cache: CacheCell::new(),
         }
     }
 
@@ -54,7 +56,6 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             if !O::DISABLE_R_WHEN_R {
@@ -80,7 +81,6 @@ where
         if O::DISABLE_STABILIZE {
             return;
         }
-        self.read_cache.invalidate();
         // 1. select all ops in unstable that are predecessors of a version
         // 2. for each of them, call stabilize, which may modify stable and/or unstable
         // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
@@ -97,7 +97,6 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         match O::causal_reset(version, conservative, &self.stable, &self.unstable) {
             CausalReset::Inject(ops) => {
                 for op in ops {
@@ -135,7 +134,6 @@ where
         Self {
             stable: Default::default(),
             unstable: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -163,17 +161,6 @@ where
                 new_tagged_op,
             )
         });
-    }
-}
-
-impl<O, U> BorrowedRead for POLog<O, U>
-where
-    O: PureCRDT + Clone + Debug + Eval<Read<<O as PureCRDT>::Value>, U>,
-    U: IsUnstableState<O> + Default + Debug,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache
-            .get_or_compute(|| O::execute_query(Read::new(), &self.stable, &self.unstable))
     }
 }
 
