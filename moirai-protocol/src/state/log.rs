@@ -147,7 +147,7 @@ impl<L: IsLog> BoxedLog<L> {
 
 impl<L: IsLog> Default for BoxedLog<L> {
     fn default() -> Self {
-        Self(Box::new(L::default()))
+        Self(Box::default())
     }
 }
 

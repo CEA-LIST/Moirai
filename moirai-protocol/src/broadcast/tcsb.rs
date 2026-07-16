@@ -6,16 +6,16 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "test_utils")]
 use crate::replica::ReplicaIdOwned;
 use crate::{
-    HashMap, HashSet,
     broadcast::{
         batch::Batch,
+        internalizer::{InternalizeOp, Interner},
         message::{BatchMessage, EventMessage, SinceMessage},
         since::Since,
     },
     clock::{matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
     replica::ReplicaIdx,
-    utils::intern_str::{InternalizeOp, Interner},
+    utils::hashmap::{HashMap, HashSet},
 };
 
 /// Services of the Tagged Causal Stable Broadcast communication protocol
@@ -253,6 +253,8 @@ where
             .retain(|_, events_by_seq| !events_by_seq.is_empty());
     }
 
+    // TODO: the following functions are redundant... they should be refactored
+
     /// Internalize an event by mapping its replica IDs to local indices.
     /// If a replica ID is unknown, it is added to the interner and the matrix clock.
     fn internalize_event(&mut self, message: EventMessage<O>) -> Event<O> {
@@ -267,6 +269,11 @@ where
         for idx in new_indices {
             self.matrix_clock.add_replica(idx);
         }
+
+        debug_assert!(
+            message.event().id().disambiguator().is_none(),
+            "Disambiguator should be None for received events"
+        );
 
         let event_id = EventId::new(
             from,
@@ -313,6 +320,10 @@ where
             .iter()
             .map(|e_id| {
                 let idx = self.interner.translate(from, e_id.idx());
+                debug_assert!(
+                    e_id.disambiguator().is_none(),
+                    "Disambiguator should be None for received events"
+                );
                 EventId::new(idx, e_id.seq(), self.interner.resolver().clone())
             })
             .collect();
@@ -348,6 +359,10 @@ where
         let mut events = Vec::with_capacity(batch.events().len());
         // For each event, translate its event ID and version to our local indices
         for event in batch.into_events() {
+            debug_assert!(
+                event.id().disambiguator().is_none(),
+                "Disambiguator should be None for received events"
+            );
             // Event origin idx in our mapping
             let event_origin_idx = self.interner.translate(from, event.id().idx());
             let event_id = EventId::new(

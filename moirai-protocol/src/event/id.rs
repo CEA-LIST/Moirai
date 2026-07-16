@@ -88,12 +88,11 @@ impl InternalizeOp for EventId {
                 self.origin_id()
             )
         });
-        EventId::new_with_disambiguator(
-            idx,
-            self.seq(),
-            interner.resolver().clone(),
-            self.disambiguator(),
-        )
+        debug_assert!(
+            self.disambiguator.is_none(),
+            "Disambiguator should be None for received events"
+        );
+        EventId::new(idx, self.seq(), interner.resolver().clone())
     }
 }
 
