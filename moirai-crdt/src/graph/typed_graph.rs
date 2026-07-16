@@ -38,6 +38,7 @@ typed_graph! {
 
     arcs {
         FooToBar: Foo -> Bar (FooBarEdge),
+        FooToFoo: Foo -> Foo (FooBarEdge),
         BarToBaz: Bar -> Baz (BarBazEdge),
         FooToBaz: Foo -> Baz (FooBazEdge),
     }
@@ -85,6 +86,66 @@ mod tests {
             petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]),
             petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]),
         );
+    }
+
+    // TODO: the current implementation exhibits "instability of arbitration".
+    // An arc that was hidden because of bound exceeding can be revived
+    #[test]
+    fn revive_arcs_that_exceed_bounds() {
+        let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
+
+        let a1 = replica_a
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Foo(foo(1)),
+            })
+            .unwrap();
+        replica_b.receive(a1);
+        let b1 = replica_b
+            .send(MyTypedGraph::AddVertex {
+                id: MyVertex::Bar(bar(1)),
+            })
+            .unwrap();
+        replica_a.receive(b1);
+
+        // Create concurrently two arcs
+        let a2 = replica_a
+            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+                source: foo(1),
+                target: bar(1),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+        let b2 = replica_b
+            .send(MyTypedGraph::AddArc(MyArcs::FooToFoo(Arc {
+                source: foo(1),
+                target: foo(1),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+
+        replica_a.receive(b2);
+        replica_b.receive(a2);
+
+        println!(
+            "A: {:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[])
+        );
+        assert_convergence(&replica_a, &replica_b);
+
+        let a3 = replica_a
+            .send(MyTypedGraph::RemoveArc(MyArcs::FooToFoo(Arc {
+                source: foo(1),
+                target: foo(1),
+                kind: FooBarEdge,
+            })))
+            .unwrap();
+        replica_b.receive(a3);
+
+        println!(
+            "A: {:?}",
+            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[])
+        );
+        assert_convergence(&replica_a, &replica_b);
     }
 
     #[test]
@@ -443,10 +504,10 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
     }
 
+    // this test reproduce this trace:
+    // digraph {  0 [ label="[AddVertex { id: User(User(13)) }@(1:1)]"]  1 [ label="[AddVertex { id: User(User(19)) }@(1:2)]"]  2 [ label="[AddVertex { id: Database(Database(7)) }@(0:1)]"]  3 [ label="[AddArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(1:3)]"]  4 [ label="[RemoveArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(1:4)]"]  5 [ label="[AddArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(0:2)]"]  1 -> 0 [ ]  2 -> 0 [ ]  3 -> 2 [ ]  3 -> 1 [ ]  4 -> 3 [ ]  5 -> 2 [ ]  5 -> 1 [ ]}
     #[test]
     fn concurrent_add_same_plus_remove() {
-        // this test reproduce this trace:
-        // digraph {  0 [ label="[AddVertex { id: User(User(13)) }@(1:1)]"]  1 [ label="[AddVertex { id: User(User(19)) }@(1:2)]"]  2 [ label="[AddVertex { id: Database(Database(7)) }@(0:1)]"]  3 [ label="[AddArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(1:3)]"]  4 [ label="[RemoveArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(1:4)]"]  5 [ label="[AddArc(UserToDb(Arc { source: User(13), target: Database(7), kind: UserToDbConnection }))@(0:2)]"]  1 -> 0 [ ]  2 -> 0 [ ]  3 -> 2 [ ]  3 -> 1 [ ]  4 -> 3 [ ]  5 -> 2 [ ]  5 -> 1 [ ]}
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_b_1 = replica_b
@@ -511,10 +572,10 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
     }
 
+    // this test reproduce this trace:
+    // digraph {  0 [ label="[AddVertex { id: User(User(15)) }@(1:1)]"]  1 [ label="[AddVertex { id: Database(Database(4)) }@(1:2)]"]  2 [ label="[AddArc(UserToDb(Arc { source: User(15), target: Database(4), kind: UserToDbConnection }))@(1:3)]"]  3 [ label="[AddVertex { id: Database(Database(17)) }@(0:1)]"]  4 [ label="[AddArc(UserToDb(Arc { source: User(15), target: Database(17), kind: UserToDbConnection }))@(0:2)]"]  0 -> 1 [ ]  1 -> 2 [ ]  0 -> 3 [ ]  3 -> 4 [ ]  0 -> 4 [ ]}
     #[test]
     fn concurrent_add_violates_max_constraint() {
-        // this test reproduce this trace:
-        // digraph {  0 [ label="[AddVertex { id: User(User(15)) }@(1:1)]"]  1 [ label="[AddVertex { id: Database(Database(4)) }@(1:2)]"]  2 [ label="[AddArc(UserToDb(Arc { source: User(15), target: Database(4), kind: UserToDbConnection }))@(1:3)]"]  3 [ label="[AddVertex { id: Database(Database(17)) }@(0:1)]"]  4 [ label="[AddArc(UserToDb(Arc { source: User(15), target: Database(17), kind: UserToDbConnection }))@(0:2)]"]  0 -> 1 [ ]  1 -> 2 [ ]  0 -> 3 [ ]  3 -> 4 [ ]  0 -> 4 [ ]}
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_b_1 = replica_b
@@ -569,10 +630,10 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
     }
 
+    // this test reproduce this trace:
+    // digraph {  0 [ label="[AddVertex { id: User(User(17)) }@(0:1)]"]  1 [ label="[AddVertex { id: Database(Database(3)) }@(0:2)]"]  2 [ label="[AddVertex { id: Database(Database(11)) }@(1:1)]"]  3 [ label="[AddArc(UserToDb(Arc { source: User(17), target: Database(3), kind: UserToDbConnection }))@(0:3)]"]  4 [ label="[AddArc(UserToDb(Arc { source: User(17), target: Database(11), kind: UserToDbConnection }))@(1:2)]"]  5 [ label="[RemoveVertex { id: Database(Database(11)) }@(1:3)]"]  0 -> 1 [ ]  0 -> 2 [ ]  1 -> 3 [ ]  2 -> 4 [ ]  0 -> 4 [ ]  4 -> 5 [ ]  0 -> 5 [ ]}
     #[test]
     fn concurrent_add_arc_plus_remove_vertex() {
-        // this test reproduce this trace:
-        // digraph {  0 [ label="[AddVertex { id: User(User(17)) }@(0:1)]"]  1 [ label="[AddVertex { id: Database(Database(3)) }@(0:2)]"]  2 [ label="[AddVertex { id: Database(Database(11)) }@(1:1)]"]  3 [ label="[AddArc(UserToDb(Arc { source: User(17), target: Database(3), kind: UserToDbConnection }))@(0:3)]"]  4 [ label="[AddArc(UserToDb(Arc { source: User(17), target: Database(11), kind: UserToDbConnection }))@(1:2)]"]  5 [ label="[RemoveVertex { id: Database(Database(11)) }@(1:3)]"]  0 -> 1 [ ]  0 -> 2 [ ]  1 -> 3 [ ]  2 -> 4 [ ]  0 -> 4 [ ]  4 -> 5 [ ]  0 -> 5 [ ]}
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_a_1 = replica_a

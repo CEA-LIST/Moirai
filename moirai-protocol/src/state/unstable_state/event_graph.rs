@@ -14,13 +14,13 @@ use petgraph::{
 };
 
 use crate::{
-    HashSet,
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
+    utils::hashmap::HashSet,
 };
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]

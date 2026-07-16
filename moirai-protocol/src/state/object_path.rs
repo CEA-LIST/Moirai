@@ -4,8 +4,8 @@ use std::fmt::{Display, Error, Formatter};
 use deepsize::DeepSizeOf;
 
 use crate::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     event::id::EventId,
-    utils::intern_str::{InternalizeOp, Interner},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

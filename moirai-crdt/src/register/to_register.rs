@@ -3,6 +3,7 @@ use std::{convert::Infallible, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::PureCRDT,
@@ -10,7 +11,6 @@ use moirai_protocol::{
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
-    utils::intern_str::{InternalizeOp, Interner},
 };
 
 #[derive(Clone, Debug)]

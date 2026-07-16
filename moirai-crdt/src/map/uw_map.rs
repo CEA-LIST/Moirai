@@ -8,6 +8,7 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -15,10 +16,7 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-    utils::{
-        boxer::Boxer,
-        intern_str::{InternalizeOp, Interner},
-    },
+    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -87,9 +85,8 @@ where
 
 impl<K, L> IsLog for UWMapLog<K, L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog,
     K: Clone + Debug + Hash + Eq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     type Value = HashMap<K, L::Value>;
     type Op = UWMap<K, L::Op>;

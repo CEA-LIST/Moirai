@@ -1,6 +1,7 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -8,7 +9,6 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
-    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::{

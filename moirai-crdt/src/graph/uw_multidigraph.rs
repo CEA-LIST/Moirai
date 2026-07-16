@@ -4,6 +4,7 @@ use std::{
 };
 
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -11,7 +12,6 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-    utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
 

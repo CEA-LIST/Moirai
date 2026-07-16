@@ -5,6 +5,7 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::{BorrowedRead, EvalNested},
@@ -12,10 +13,7 @@ use moirai_protocol::{
     },
     event::{Event, id::EventId},
     state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
-    utils::{
-        boxer::Boxer,
-        intern_str::{InternalizeOp, Interner},
-    },
+    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -95,12 +93,11 @@ where
 
 impl<L> IsLog for NestedListLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + PartialEq,
+    L: IsLog,
 {
     type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
-    type Rejection = NestedListRejection<L::Rejection>;
+    type Rejection = NestedListRejection<Box<L::Rejection>>;
 
     fn new() -> Self {
         Self::default()
@@ -190,7 +187,10 @@ where
                 }
                 L::default()
                     .is_enabled(op)
-                    .map_err(|error| NestedListRejection::ChildError { pos: *pos, error })
+                    .map_err(|error| NestedListRejection::ChildError {
+                        pos: *pos,
+                        error: Box::new(error),
+                    })
             }
             NestedList::Update { pos, op } => {
                 if *pos >= positions.len() {
@@ -203,7 +203,10 @@ where
                 let map_op = UWMap::Update(target, op.clone());
                 self.children
                     .is_enabled(&map_op)
-                    .map_err(|error| NestedListRejection::ChildError { pos: *pos, error })
+                    .map_err(|error| NestedListRejection::ChildError {
+                        pos: *pos,
+                        error: Box::new(error),
+                    })
             }
             NestedList::Delete { pos } => {
                 if *pos < positions.len() {

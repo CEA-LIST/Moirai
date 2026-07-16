@@ -1,9 +1,8 @@
 use moirai_protocol::{
-    broadcast::tcsb::Tcsb,
+    broadcast::{internalizer::InternalizeOp, tcsb::Tcsb},
     crdt::pure_crdt::PureCRDT,
     replica::{IsReplica, Replica},
     state::{log::IsLog, po_log::VecLog},
-    utils::intern_str::InternalizeOp,
 };
 
 pub type Twins<O, L> = (Replica<L, Tcsb<O>>, Replica<L, Tcsb<O>>);

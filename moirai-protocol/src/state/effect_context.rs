@@ -64,9 +64,29 @@ impl<'a> EffectContext<'a> {
         self.collect(Sink::create(self.path.clone()));
     }
 
+    pub fn create_typed(&mut self, kind: &'static str) {
+        #[cfg(feature = "sink")]
+        self.collect(Sink::create_typed(self.path.clone(), kind));
+
+        #[cfg(not(feature = "sink"))]
+        {
+            let _ = kind;
+        }
+    }
+
     pub fn update(&mut self) {
         #[cfg(feature = "sink")]
         self.collect(Sink::update(self.path.clone()));
+    }
+
+    pub fn update_typed(&mut self, kind: &'static str) {
+        #[cfg(feature = "sink")]
+        self.collect(Sink::update_typed(self.path.clone(), kind));
+
+        #[cfg(not(feature = "sink"))]
+        {
+            let _ = kind;
+        }
     }
 
     pub fn delete(&mut self) {

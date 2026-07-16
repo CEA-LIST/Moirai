@@ -1,7 +1,9 @@
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-use crate::{HashSet, clock::version_vector::Version, event::id::EventId, replica::ReplicaId};
+use crate::{
+    clock::version_vector::Version, event::id::EventId, replica::ReplicaId, utils::hashmap::HashSet,
+};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]

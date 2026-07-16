@@ -3,9 +3,9 @@
 
 use log::{debug, info, warn};
 use moirai_protocol::{
+    broadcast::internalizer::InternalizeOp,
     crdt::{eval::EvalNested, query::Read},
     state::log::IsLog,
-    utils::intern_str::InternalizeOp,
 };
 use serde::{Deserialize, Serialize};
 

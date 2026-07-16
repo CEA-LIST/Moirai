@@ -1,8 +1,7 @@
-use std::{
-    cell::OnceCell,
-    fmt,
-    fmt::Debug,
-};
+use std::{cell::OnceCell, fmt, fmt::Debug};
+
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 
 use crate::{
     clock::version_vector::Version,
@@ -13,18 +12,11 @@ use crate::{
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
 };
-
 #[cfg(feature = "test_utils")]
 use crate::{
     crdt::pure_crdt::PureCRDT,
-    state::{
-        log::IsLogTest,
-        stable_state::IsStableState,
-        unstable_state::CausalReplay,
-    },
+    state::{log::IsLogTest, stable_state::IsStableState, unstable_state::CausalReplay},
 };
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
 
 #[derive(Default)]
 pub struct CacheCell<V> {

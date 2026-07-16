@@ -11,6 +11,7 @@ use moirai_fuzz::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::PureCRDT,
@@ -18,7 +19,6 @@ use moirai_protocol::{
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::{CausalReplay, IsUnstableCore},
-    utils::intern_str::{InternalizeOp, Interner},
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -70,6 +70,8 @@ where
     E: Debug + Clone + PartialEq + Eq + Hash,
 {
     type Value = DiGraph<V, E>;
+    // TODO: We can use a more efficient representation of the stable state
+    // TODO: garbage collect dangling arcs
     type StableState = Vec<Self>;
     type Rejection = GraphRejection<V, E>;
 

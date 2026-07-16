@@ -3,6 +3,7 @@ use std::{convert::Infallible, fmt::Debug, marker::PhantomData};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         policy::Policy,
@@ -11,7 +12,6 @@ use moirai_protocol::{
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
-    utils::intern_str::{InternalizeOp, Interner},
 };
 
 use crate::policy::{FairPolicy, LwwPolicy};

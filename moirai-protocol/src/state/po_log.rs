@@ -3,7 +3,6 @@
 use std::fmt::Debug;
 
 use crate::{
-    HashMap,
     clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
@@ -16,6 +15,7 @@ use crate::{
         cache::CachedLog, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
         unstable_state::IsUnstableState,
     },
+    utils::hashmap::HashMap,
 };
 
 pub type RawVecLog<O> = POLog<O, Vec<TaggedOp<O>>>;

@@ -9,13 +9,13 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::PureCRDT,
         query::{QueryOperation, Read},
     },
     state::unstable_state::{CausalReplay, IsUnstableCore},
-    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;

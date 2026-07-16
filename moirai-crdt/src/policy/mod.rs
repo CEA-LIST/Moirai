@@ -130,9 +130,9 @@ mod tests {
     use std::cmp::Ordering;
 
     use moirai_protocol::{
+        broadcast::internalizer::Interner,
         event::{id::EventId, lamport::Lamport, tag::Tag},
         replica::ReplicaIdx,
-        utils::intern_str::Interner,
     };
 
     use crate::policy::Fair;

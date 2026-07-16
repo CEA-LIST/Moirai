@@ -3,6 +3,7 @@ use std::convert::Infallible;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -10,7 +11,6 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -27,40 +27,6 @@ where
     L: IsLog,
 {
     child: Option<L>,
-}
-
-impl<L> Default for OptionLog<L>
-where
-    L: IsLog,
-{
-    fn default() -> Self {
-        Self { child: None }
-    }
-}
-
-impl<L> OptionLog<L>
-where
-    L: IsLog,
-{
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn child(&self) -> Option<&L> {
-        self.child.as_ref()
-    }
-}
-
-impl<O> InternalizeOp for Optional<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            Optional::Set(o) => Optional::Set(o.internalize(interner)),
-            Optional::Unset => Optional::Unset,
-        }
-    }
 }
 
 impl<L> IsLog for OptionLog<L>
@@ -157,6 +123,40 @@ where
             Some(ref child) => Some(child.execute_query(Read::new())),
             None => Default::default(),
         }
+    }
+}
+
+impl<L> OptionLog<L>
+where
+    L: IsLog,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn child(&self) -> Option<&L> {
+        self.child.as_ref()
+    }
+}
+
+impl<O> InternalizeOp for Optional<O>
+where
+    O: InternalizeOp,
+{
+    fn internalize(self, interner: &Interner) -> Self {
+        match self {
+            Optional::Set(o) => Optional::Set(o.internalize(interner)),
+            Optional::Unset => Optional::Unset,
+        }
+    }
+}
+
+impl<L> Default for OptionLog<L>
+where
+    L: IsLog,
+{
+    fn default() -> Self {
+        Self { child: None }
     }
 }
 

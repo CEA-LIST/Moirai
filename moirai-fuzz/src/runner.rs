@@ -6,17 +6,18 @@ use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
-    broadcast::tcsb::{IsTcsbTest, Tcsb},
+    broadcast::{
+        internalizer::InternalizeOp,
+        tcsb::{IsTcsbTest, Tcsb},
+    },
     crdt::{eval::EvalNested, query::Read},
     replica::{IsReplica, ReplicaIdx},
     state::log::IsLog,
-    utils::intern_str::InternalizeOp,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
 
 use crate::{
-    HashMap,
     config::RunConfig,
     execution_graph::ExecutionGraph,
     metrics::{MetricsLog, set_disable_stability},
@@ -24,6 +25,7 @@ use crate::{
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, format_string_ellipsis, seed_to_hex},
+        hashmap::HashMap,
     },
 };
 

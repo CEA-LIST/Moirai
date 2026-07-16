@@ -31,14 +31,13 @@ impl Default for ReadAsJson {
 
 impl EvalNested<ReadAsJson> for NestedListLog<JsonLog> {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
-        // let mut list = Vec::new();
-        // let positions = self.positions().execute_query(Read::new());
-        // for id in positions.iter() {
-        //     let child = self.children().get(id).unwrap();
-        //     list.push(child.execute_query(ReadAsJson::new()));
-        // }
-        // Value::Array(list)
-        todo!()
+        let mut list = Vec::new();
+        let positions = self.positions().execute_query(Read::new());
+        for id in positions.iter() {
+            let child = self.children().children().get(id).unwrap();
+            list.push(child.execute_query(ReadAsJson::new()));
+        }
+        Value::Array(list)
     }
 }
 
@@ -68,9 +67,7 @@ impl EvalNested<ReadAsJson> for JsonLog {
     fn execute_query(&self, _q: ReadAsJson) -> <ReadAsJson as QueryOperation>::Response {
         fn eval_child(child: &JsonChildValue) -> Value {
             match child {
-                JsonChildValue::Number(value) => {
-                    Value::Number(Number::from_f64(*value).unwrap())
-                }
+                JsonChildValue::Number(value) => Value::Number(Number::from_f64(*value).unwrap()),
                 JsonChildValue::Boolean(value) => Value::Bool(*value),
                 JsonChildValue::String(value) => Value::String(value.iter().collect()),
                 JsonChildValue::Object(map) => {
@@ -80,9 +77,7 @@ impl EvalNested<ReadAsJson> for JsonLog {
                     }
                     Value::Object(object)
                 }
-                JsonChildValue::Array(list) => {
-                    Value::Array(list.iter().map(eval_value).collect())
-                }
+                JsonChildValue::Array(list) => Value::Array(list.iter().map(eval_value).collect()),
             }
         }
 

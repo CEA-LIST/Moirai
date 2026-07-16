@@ -4,9 +4,8 @@ use std::marker::PhantomData;
 use deepsize::DeepSizeOf;
 
 use crate::{
-    broadcast::{batch::Batch, since::Since},
+    broadcast::{batch::Batch, internalizer::Resolver, since::Since},
     event::Event,
-    utils::intern_str::Resolver,
 };
 
 pub mod kind {

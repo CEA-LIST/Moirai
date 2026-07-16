@@ -2,54 +2,69 @@ pub mod event_graph;
 pub mod hashmap;
 pub mod vec;
 
-use std::{fmt::Debug, hash::Hash};
+use std::fmt::Debug;
 
 use crate::{
-    HashMap,
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
 };
 
+/// Essential services for an unstable state implementation.
+/// Core services include appending, retrieving and iterating over tagged operations.
+/// As such, it is "grow-only".
 pub trait IsUnstableCore<O>: Debug {
+    /// Append an event to the unstable state.
     fn append(&mut self, event: Event<O>);
+    /// Get a tagged operation from the unstable state by its ID.
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
-    /// TODO: ideally should be Vec<&TaggedOp<O>>, but it causes lifetime issues in POLog::effect.
-    /// Maybe we can add a method `predecessors_cloned` that returns Vec<TaggedOp<O>>?
+    /// Returns a list of references to tagged operations that are predecessors of the given version.
     fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
     where
         O: Clone;
+    /// Returns a list of cloned tagged operations that are predecessors of the given version.
     fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
     where
         O: Clone;
+    /// Returns an iterator over all tagged operations in the unstable state.
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
     where
         O: 'a;
+    /// Returns the number of tagged operations in the unstable state.
     fn len(&self) -> usize;
+    /// Checks if the unstable state is empty.
     fn is_empty(&self) -> bool;
 }
 
-pub trait IsUnstableKeyed<O>: Debug {
-    type Key;
-
-    fn key_of(&self, tagged_op: &TaggedOp<O>) -> Self::Key;
-    fn get_by_key(&self, key: &Self::Key) -> Option<&TaggedOp<O>>;
-}
-
+/// Services for pruning an unstable state.
 pub trait IsUnstablePrune<O>: IsUnstableCore<O> {
+    /// Remove a tagged operation from the unstable state by its ID.
     fn remove(&mut self, event_id: &EventId);
+    /// Retain only the tagged operations that satisfy the given predicate.
     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T);
+    /// Clear all tagged operations from the unstable state.
     fn clear(&mut self);
 }
 
+/// Services for advanced causal information retrieval from an unstable state.
 pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
+    /// Returns a list of event IDs that are the direct parents of the given event ID.
+    /// # Note
+    /// The direct parents of an event are those events that are immediately causally before it, i.e.,
+    /// an event e' is the direct parent of event e if e' < e and there is no event e'' such that e' < e'' < e.
     fn parents(&self, event_id: &EventId) -> Vec<EventId>;
+    /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
+    /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
 }
 
+/// Services for retrieving the delivery order of events in an unstable state.
 pub trait IsUnstableDelivery<O>: IsUnstableCore<O> {
+    /// Returns the index of the given event ID in the delivery order, if it exists.
     fn delivery_order(&self, event_id: &EventId) -> Option<usize>;
 }
 
+/// Service for replaying events in an unstable state.
+/// Requires the unstable state to support core, causal, and delivery services.
 pub trait CausalReplay<O>: IsUnstableCore<O> + IsUnstableCausal<O> + IsUnstableDelivery<O> {}
 
 impl<O, T> CausalReplay<O> for T where
@@ -57,65 +72,7 @@ impl<O, T> CausalReplay<O> for T where
 {
 }
 
+/// Complete set of services for an unstable state implementation.
 pub trait IsUnstableState<O>: IsUnstablePrune<O> + CausalReplay<O> {}
 
 impl<O, T> IsUnstableState<O> for T where T: IsUnstablePrune<O> + CausalReplay<O> {}
-
-pub trait HasDerivedKey: Debug + Clone {
-    type DerivedKey: Clone + Eq + Hash + Debug;
-
-    fn derived_key(&self) -> Self::DerivedKey;
-}
-
-#[derive(Debug, Clone)]
-pub struct DerivedKeyState<O>
-where
-    O: HasDerivedKey,
-{
-    ops: HashMap<(EventId, O::DerivedKey), TaggedOp<O>>,
-    order: Vec<(EventId, O::DerivedKey)>,
-}
-
-impl<O> Default for DerivedKeyState<O>
-where
-    O: HasDerivedKey,
-{
-    fn default() -> Self {
-        Self {
-            ops: HashMap::default(),
-            order: Vec::new(),
-        }
-    }
-}
-
-#[cfg(feature = "test_utils")]
-impl<O> ::deepsize::DeepSizeOf for DerivedKeyState<O>
-where
-    O: HasDerivedKey + ::deepsize::DeepSizeOf,
-    O::DerivedKey: ::deepsize::DeepSizeOf,
-{
-    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-        // DerivedKeyState stores the same logical key in the map and in the
-        // delivery order. Count both owned copies, and delegate operation
-        // payload accounting to TaggedOp.
-        let ops_size = self
-            .ops
-            .iter()
-            .map(|((event_id, derived_key), tagged_op)| {
-                event_id.deep_size_of_children(context)
-                    + derived_key.deep_size_of_children(context)
-                    + tagged_op.deep_size_of_children(context)
-            })
-            .sum::<usize>();
-
-        let order_size = self
-            .order
-            .iter()
-            .map(|(event_id, derived_key)| {
-                event_id.deep_size_of_children(context) + derived_key.deep_size_of_children(context)
-            })
-            .sum::<usize>();
-
-        ops_size + order_size
-    }
-}

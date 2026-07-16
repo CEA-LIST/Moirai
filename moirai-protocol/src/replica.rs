@@ -7,6 +7,7 @@ use deepsize::DeepSizeOf;
 use crate::broadcast::tcsb::IsTcsbTest;
 use crate::{
     broadcast::{
+        internalizer::Interner,
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::IsTcsb,
     },
@@ -16,7 +17,6 @@ use crate::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
-    utils::intern_str::Interner,
 };
 
 pub type ReplicaId = str;
@@ -49,7 +49,7 @@ where
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where
         L: EvalNested<Q>;
-    /// Borrow the cached materialized value of the replica state.
+    /// Borrow the cached value of the replica state.
     fn read_ref(&self) -> &L::Value
     where
         L: BorrowedRead;

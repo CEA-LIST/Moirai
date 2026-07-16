@@ -5,6 +5,7 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
+    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::PureCRDT,
@@ -16,7 +17,6 @@ use moirai_protocol::{
         stable_state::IsStableState,
         unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune},
     },
-    utils::intern_str::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;

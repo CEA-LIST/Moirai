@@ -6,7 +6,7 @@ use moirai_protocol::{
     state::{
         cache::CachedLog,
         graph_log::GraphLog,
-        log::{IsLog, IsLogTest},
+        log::{BoxedLog, IsLog, IsLogTest},
         po_log::POLog,
         unstable_state::{CausalReplay, IsUnstableState},
     },
@@ -33,7 +33,7 @@ where
     O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
 {
     fn generate(&self, rng: &mut impl Rng) -> <GraphLog<O> as IsLog>::Op {
-        self.with_stable(|stable| O::generate(rng, &O::Config::default(), stable, self.unstable()))
+        O::generate(rng, &O::Config::default(), self.stable(), self.unstable())
     }
 }
 
@@ -43,14 +43,12 @@ where
     U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        self.with_stable(|stable| {
-            O::generate(
-                rng,
-                &<O as OpGenerator>::Config::default(),
-                stable,
-                self.unstable(),
-            )
-        })
+        O::generate(
+            rng,
+            &<O as OpGenerator>::Config::default(),
+            self.stable(),
+            self.unstable(),
+        )
     }
 }
 
@@ -60,5 +58,14 @@ where
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         self.inner().generate(rng)
+    }
+}
+
+impl<L> OpGeneratorNested for BoxedLog<L>
+where
+    L: OpGeneratorNested,
+{
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+        Box::new(self.inner().generate(rng))
     }
 }
