@@ -4,7 +4,7 @@ use std::hash::Hash;
 
 #[cfg(feature = "test_utils")]
 use deepsize::{Context, DeepSizeOf};
-use moirai_protocol::utils::intern_str::InternalizeOp;
+use moirai_protocol::broadcast::internalizer::InternalizeOp;
 
 //* ARC *//
 
@@ -29,7 +29,7 @@ where
 #[macro_export]
 macro_rules! typed_graph {
     (@max *) => {
-        usize::MAX
+        ::std::primitive::usize::MAX
     };
     (@max $e:expr) => {
         $e
@@ -58,17 +58,21 @@ macro_rules! typed_graph {
 
             #[cfg(feature = "test_utils")]
             impl ::deepsize::DeepSizeOf for $v {
-                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-                    self.0.deep_size_of_children(context)
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
+                    ::deepsize::DeepSizeOf::deep_size_of_children(&self.0, context)
                 }
             }
 
-            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $v {
+            impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $v {
                 fn internalize(
                     self,
-                    interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+                    interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
                 ) -> Self {
-                    Self(self.0.internalize(interner))
+                    Self(
+                        <$crate::moirai_protocol::state::object_path::ObjectPath as
+                            $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
+                        >::internalize(self.0, interner),
+                    )
                 }
             }
         )*
@@ -83,9 +87,9 @@ macro_rules! typed_graph {
 
         #[cfg(feature = "test_utils")]
         impl ::deepsize::DeepSizeOf for $vertex {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 match self {
-                    $( Self::$v(id) => id.deep_size_of_children(context) ),*
+                    $( Self::$v(id) => ::deepsize::DeepSizeOf::deep_size_of_children(id, context) ),*
                 }
             }
         }
@@ -99,13 +103,20 @@ macro_rules! typed_graph {
             }
         }
 
-        impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $vertex {
+        impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $vertex {
             fn internalize(
                 self,
-                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
+                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
             ) -> Self {
                 match self {
-                    $( $vertex::$v(id) => $vertex::$v(id.internalize(interner)) ),*
+                    $(
+                        $vertex::$v(id) => $vertex::$v(
+                            <$v as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
+                                id,
+                                interner,
+                            ),
+                        )
+                    ),*
                 }
             }
         }
@@ -135,7 +146,7 @@ macro_rules! typed_graph {
 
         #[cfg(feature = "test_utils")]
         impl ::deepsize::DeepSizeOf for __TypedGraphEdgeType {
-            fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> usize {
+            fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 0
             }
         }
@@ -150,9 +161,9 @@ macro_rules! typed_graph {
 
         #[cfg(feature = "test_utils")]
         impl ::deepsize::DeepSizeOf for $edge {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 match self {
-                    $( Self::$conn(edge) => edge.deep_size_of_children(context) ),*
+                    $( Self::$conn(edge) => ::deepsize::DeepSizeOf::deep_size_of_children(edge, context) ),*
                 }
             }
         }
@@ -165,59 +176,33 @@ macro_rules! typed_graph {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
 
-        #[cfg(feature = "test_utils")]
-        impl ::deepsize::DeepSizeOf for $arcs {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-                match self {
-                    $( Self::$conn(arc) => arc.deep_size_of_children(context) ),*
-                }
-            }
-        }
-
-        impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $arcs
-        where
-            $(
-                $src_ty: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
-                $tgt_ty: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
-            )*
-        {
-            fn internalize(
-                self,
-                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
-            ) -> Self {
-                match self {
-                    $( Self::$conn(arc) => Self::$conn(arc.internalize(interner)) ),*
-                }
-            }
-        }
-
         // Implement helper methods on the arcs enum to extract source, target, kind, and constraints
         impl $arcs {
             pub fn source(&self) -> $vertex {
                 match self {
-                    $( $arcs::$conn(arc) => $vertex::$src(arc.source.clone()) ),*
+                    $( $arcs::$conn(arc) => $vertex::$src(::std::clone::Clone::clone(&arc.source)) ),*
                 }
             }
 
             pub fn target(&self) -> $vertex {
                 match self {
-                    $( $arcs::$conn(arc) => $vertex::$tgt(arc.target.clone()) ),*
+                    $( $arcs::$conn(arc) => $vertex::$tgt(::std::clone::Clone::clone(&arc.target)) ),*
                 }
             }
 
             pub fn kind(&self) -> $edge {
                 match self {
-                    $( $arcs::$conn(arc) => $edge::$conn(arc.kind.clone()) ),*
+                    $( $arcs::$conn(arc) => $edge::$conn(::std::clone::Clone::clone(&arc.kind)) ),*
                 }
             }
 
-            pub fn max(&self) -> usize {
+            pub fn max(&self) -> ::std::primitive::usize {
                 match self {
                     $( $arcs::$conn(_) => __typed_graph_max!($ety) ),*
                 }
             }
 
-            pub fn min(&self) -> usize {
+            pub fn min(&self) -> ::std::primitive::usize {
                 match self {
                     $( $arcs::$conn(_) => __typed_graph_min!($ety) ),*
                 }
@@ -244,93 +229,19 @@ macro_rules! typed_graph {
             __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
         }
 
-        $crate::paste::paste! {
-            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-            pub enum [<$graph DerivedKey>] {
-                AddVertex($vertex),
-                RemoveVertex($vertex),
-                DeleteSubtree($crate::moirai_protocol::state::object_path::ObjectPath),
-                AddArc($arcs),
-                RemoveArc($arcs),
-            }
-
-            #[cfg(feature = "test_utils")]
-            impl ::deepsize::DeepSizeOf for [<$graph DerivedKey>] {
-                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-                    match self {
-                        Self::AddVertex(id) | Self::RemoveVertex(id) => {
-                            id.deep_size_of_children(context)
-                        }
-                        Self::DeleteSubtree(prefix) => prefix.deep_size_of_children(context),
-                        Self::AddArc(arc) | Self::RemoveArc(arc) => {
-                            arc.deep_size_of_children(context)
-                        }
-                    }
-                }
-            }
-
-            pub type [<$graph State>]<P> =
-                $crate::moirai_protocol::state::unstable_state::DerivedKeyState<$graph<P>>;
-
-            impl<P> $crate::moirai_protocol::state::unstable_state::HasDerivedKey for $graph<P>
-            where
-                P: Clone + ::std::fmt::Debug,
-            {
-                type DerivedKey = [<$graph DerivedKey>];
-
-                fn derived_key(&self) -> Self::DerivedKey {
-                    match self {
-                        Self::AddVertex { id } => Self::DerivedKey::AddVertex(id.clone()),
-                        Self::RemoveVertex { id } => Self::DerivedKey::RemoveVertex(id.clone()),
-                        Self::DeleteSubtree { prefix } => {
-                            Self::DerivedKey::DeleteSubtree(prefix.clone())
-                        }
-                        Self::AddArc(arc) => Self::DerivedKey::AddArc(arc.clone()),
-                        Self::RemoveArc(arc) => Self::DerivedKey::RemoveArc(arc.clone()),
-                        Self::__Marker(never, _) => match *never {},
-                    }
-                }
-            }
-        }
-
-        impl<P> $crate::moirai_protocol::utils::intern_str::InternalizeOp for $graph<P>
-        where
-            P: Clone,
-            $vertex: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
-            $arcs: $crate::moirai_protocol::utils::intern_str::InternalizeOp,
-        {
-            fn internalize(
-                self,
-                interner: &$crate::moirai_protocol::utils::intern_str::Interner,
-            ) -> Self {
-                match self {
-                    Self::AddVertex { id } => Self::AddVertex {
-                        id: id.internalize(interner),
-                    },
-                    Self::RemoveVertex { id } => Self::RemoveVertex {
-                        id: id.internalize(interner),
-                    },
-                    Self::DeleteSubtree { prefix } => Self::DeleteSubtree {
-                        prefix: prefix.internalize(interner),
-                    },
-                    Self::AddArc(arc) => Self::AddArc(arc.internalize(interner)),
-                    Self::RemoveArc(arc) => Self::RemoveArc(arc.internalize(interner)),
-                    Self::__Marker(never, marker) => unreachable!(),
-                }
-            }
-        }
+        //* HELPER FUNCTIONS */
 
         // Helper functions for schema validation and constraints computation
         fn possible_arcs_between(
             source: &$vertex,
             target: &$vertex,
-        ) -> Vec<$arcs> {
-            let mut result = Vec::new();
+        ) -> ::std::vec::Vec<$arcs> {
+            let mut result = ::std::vec::Vec::new();
             $(
                 if let ($vertex::$src(s), $vertex::$tgt(t)) = (source, target) {
                     result.push($arcs::$conn($crate::typed_graph::Arc {
-                        source: s.clone(),
-                        target: t.clone(),
+                        source: ::std::clone::Clone::clone(s),
+                        target: ::std::clone::Clone::clone(t),
                         kind: $ety,
                     }));
                 }
@@ -343,28 +254,28 @@ macro_rules! typed_graph {
             source: &$vertex,
             target: &$vertex,
             edge: &$edge,
-        ) -> Option<$arcs> {
+        ) -> ::std::option::Option<$arcs> {
             match (source, target, edge) {
                 $(
                     ($vertex::$src(s), $vertex::$tgt(t), $edge::$conn(e)) => {
-                        Some($arcs::$conn($crate::typed_graph::Arc {
-                            source: s.clone(),
-                            target: t.clone(),
-                            kind: e.clone(),
+                        ::std::option::Option::Some($arcs::$conn($crate::typed_graph::Arc {
+                            source: ::std::clone::Clone::clone(s),
+                            target: ::std::clone::Clone::clone(t),
+                            kind: ::std::clone::Clone::clone(e),
                         }))
                     }
                 )*
-                _ => None,
+                _ => ::std::option::Option::None,
             }
         }
 
         // Helper function to get the max edges allowed for a given source vertex and edge kind
-        fn max_edges_for(source: &$vertex, kind: &$edge) -> usize {
+        fn max_edges_for(source: &$vertex, kind: &$edge) -> ::std::primitive::usize {
             match (source, kind) {
                 $(
                     ($vertex::$src(_), $edge::$conn(_)) => __typed_graph_max!($ety),
                 )*
-                _ => usize::MAX,
+                _ => ::std::primitive::usize::MAX,
             }
         }
 
@@ -380,21 +291,34 @@ macro_rules! typed_graph {
             source: &$vertex,
             target: &$vertex,
             edge: &$edge,
-        ) -> Option<(usize, usize)> {
+        ) -> ::std::option::Option<(
+            ::std::primitive::usize,
+            ::std::primitive::usize,
+        )> {
             match (source, target, edge) {
                 $(
                     ($vertex::$src(_), $vertex::$tgt(_), $edge::$conn(_)) => {
-                        Some((__typed_graph_min!($ety), __typed_graph_max!($ety)))
+                        ::std::option::Option::Some((
+                            __typed_graph_min!($ety),
+                            __typed_graph_max!($ety),
+                        ))
                     },
                 )*
-                _ => None,
+                _ => ::std::option::Option::None,
             }
         }
 
         // Helper function to get the required edge type constraints for a given vertex
-        fn required_constraints_for(vertex: &$vertex) -> Vec<(__TypedGraphEdgeType, usize, usize)> {
-            let mut constraints = Vec::new();
-            let mut seen_edge_types: $crate::HashSet<__TypedGraphEdgeType> = $crate::HashSet::default();
+        fn required_constraints_for(
+            vertex: &$vertex,
+        ) -> ::std::vec::Vec<(
+            __TypedGraphEdgeType,
+            ::std::primitive::usize,
+            ::std::primitive::usize,
+        )> {
+            let mut constraints = ::std::vec::Vec::new();
+            let mut seen_edge_types: $crate::HashSet<__TypedGraphEdgeType> =
+                ::std::default::Default::default();
             $(
                 if let $vertex::$src(_) = vertex {
                     let edge_type = __TypedGraphEdgeType::$ety;
@@ -409,34 +333,40 @@ macro_rules! typed_graph {
         // Struct to hold the addable and removable arcs for a given graph state
         #[derive(Debug, Clone)]
         pub struct ArcConstraints {
-            pub addable: Vec<$arcs>,
-            pub removable: Vec<$arcs>,
+            pub addable: ::std::vec::Vec<$arcs>,
+            pub removable: ::std::vec::Vec<$arcs>,
         }
 
         // Function to compute the addable and removable arcs for a given graph state based on the schema constraints
         // Mainly used for the fuzzer
         pub fn compute_arc_constraints(
-            graph: &petgraph::graph::DiGraph<$vertex, $edge>,
+            graph: &::petgraph::graph::DiGraph<$vertex, $edge>,
         ) -> ArcConstraints {
-            use petgraph::visit::EdgeRef;
+            use ::petgraph::visit::EdgeRef;
 
-            let mut addable = Vec::new();
-            let mut removable = Vec::new();
+            let mut addable = ::std::vec::Vec::new();
+            let mut removable = ::std::vec::Vec::new();
 
             let existing_edges: $crate::HashSet<($vertex, $vertex, $edge)> = graph
                 .edge_indices()
                 .filter_map(|ei| {
                     let (si, ti) = graph.edge_endpoints(ei)?;
-                    Some((graph[si].clone(), graph[ti].clone(), graph[ei].clone()))
+                    ::std::option::Option::Some((
+                        ::std::clone::Clone::clone(&graph[si]),
+                        ::std::clone::Clone::clone(&graph[ti]),
+                        ::std::clone::Clone::clone(&graph[ei]),
+                    ))
                 })
                 .collect();
 
             for source_idx in graph.node_indices() {
                 let source = &graph[source_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<__TypedGraphEdgeType, usize> =
-                    $crate::HashMap::default();
-                for edge in graph.edges_directed(source_idx, petgraph::Direction::Outgoing) {
+                let mut outgoing_by_type: $crate::HashMap<
+                    __TypedGraphEdgeType,
+                    ::std::primitive::usize,
+                > = ::std::default::Default::default();
+                for edge in graph.edges_directed(source_idx, ::petgraph::Direction::Outgoing) {
                     *outgoing_by_type.entry(edge_type_of(edge.weight())).or_insert(0) += 1;
                 }
 
@@ -451,18 +381,24 @@ macro_rules! typed_graph {
                         let kind = candidate.kind();
                         let count = outgoing_by_type.get(&edge_type).copied().unwrap_or(0);
                         if count < candidate.max()
-                            && !existing_edges.contains(&(source.clone(), target.clone(), kind))
+                            && !existing_edges.contains(&(
+                                ::std::clone::Clone::clone(source),
+                                ::std::clone::Clone::clone(target),
+                                kind,
+                            ))
                         {
                             addable.push(candidate);
                         }
                     }
                 }
 
-                for edge in graph.edges_directed(source_idx, petgraph::Direction::Outgoing) {
+                for edge in graph.edges_directed(source_idx, ::petgraph::Direction::Outgoing) {
                     let target = &graph[edge.target()];
                     let kind = edge.weight();
 
-                    if let Some(arc) = arc_from_vertices_and_edge(source, target, kind) {
+                    if let ::std::option::Option::Some(arc) =
+                        arc_from_vertices_and_edge(source, target, kind)
+                    {
                         let count = outgoing_by_type
                             .get(&arc.edge_type())
                             .copied()
@@ -488,28 +424,28 @@ macro_rules! typed_graph {
             ExceedsMax {
                 source: $vertex,
                 edge_kind: $edge,
-                count: usize,
-                max: usize,
+                count: ::std::primitive::usize,
+                max: ::std::primitive::usize,
             },
             BelowMin {
                 source: $vertex,
                 edge_kind: $edge,
-                count: usize,
-                min: usize,
+                count: ::std::primitive::usize,
+                min: ::std::primitive::usize,
             },
         }
 
         impl ::std::fmt::Display for SchemaViolation {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 match self {
-                    SchemaViolation::InvalidEdge { source, target, edge } => write!(
+                    SchemaViolation::InvalidEdge { source, target, edge } => ::std::write!(
                         f, "Invalid edge {:?} between {:?} and {:?}", edge, source, target
                     ),
-                    SchemaViolation::ExceedsMax { source, edge_kind, count, max } => write!(
+                    SchemaViolation::ExceedsMax { source, edge_kind, count, max } => ::std::write!(
                         f, "Vertex {:?} has {} outgoing {:?} edges, exceeding max of {}",
                         source, count, edge_kind, max
                     ),
-                    SchemaViolation::BelowMin { source, edge_kind, count, min } => write!(
+                    SchemaViolation::BelowMin { source, edge_kind, count, min } => ::std::write!(
                         f, "Vertex {:?} has {} outgoing {:?} edges, below min of {}",
                         source, count, edge_kind, min
                     ),
@@ -520,23 +456,23 @@ macro_rules! typed_graph {
         // Function to validate a graph against the schema constraints, returning a list of violations if any are found
         // Mainly used for testing and debugging, but could also be used in the fuzzer to guide generation towards valid graphs
         pub fn validate_schema(
-            graph: &petgraph::graph::DiGraph<$vertex, $edge>,
-        ) -> Result<(), Vec<SchemaViolation>> {
-            use petgraph::visit::EdgeRef;
+            graph: &::petgraph::graph::DiGraph<$vertex, $edge>,
+        ) -> ::std::result::Result<(), ::std::vec::Vec<SchemaViolation>> {
+            use ::petgraph::visit::EdgeRef;
 
-            let mut violations = Vec::new();
+            let mut violations = ::std::vec::Vec::new();
 
             for edge_idx in graph.edge_indices() {
-                if let Some((si, ti)) = graph.edge_endpoints(edge_idx) {
+                if let ::std::option::Option::Some((si, ti)) = graph.edge_endpoints(edge_idx) {
                     let source = &graph[si];
                     let target = &graph[ti];
                     let edge = &graph[edge_idx];
 
                     if edge_constraints_for(source, target, edge).is_none() {
                         violations.push(SchemaViolation::InvalidEdge {
-                            source: source.clone(),
-                            target: target.clone(),
-                            edge: edge.clone(),
+                            source: ::std::clone::Clone::clone(source),
+                            target: ::std::clone::Clone::clone(target),
+                            edge: ::std::clone::Clone::clone(edge),
                         });
                     }
                 }
@@ -545,34 +481,36 @@ macro_rules! typed_graph {
             for node_idx in graph.node_indices() {
                 let source = &graph[node_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<__TypedGraphEdgeType, usize> =
-                    $crate::HashMap::default();
-                for edge in graph.edges_directed(node_idx, petgraph::Direction::Outgoing) {
+                let mut outgoing_by_type: $crate::HashMap<
+                    __TypedGraphEdgeType,
+                    ::std::primitive::usize,
+                > = ::std::default::Default::default();
+                for edge in graph.edges_directed(node_idx, ::petgraph::Direction::Outgoing) {
                     *outgoing_by_type.entry(edge_type_of(edge.weight())).or_insert(0) += 1;
                 }
 
                 for (edge_type, count) in &outgoing_by_type {
                     let max = graph
-                        .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                        .edges_directed(node_idx, ::petgraph::Direction::Outgoing)
                         .find_map(|e| {
                             if edge_type_of(e.weight()) == *edge_type {
                                 let target = &graph[e.target()];
                                 edge_constraints_for(source, target, e.weight()).map(|(_, m)| m)
                             } else {
-                                None
+                                ::std::option::Option::None
                             }
                         });
 
-                    if let Some(max) = max
+                    if let ::std::option::Option::Some(max) = max
                         && *count > max
                     {
                         let edge_kind = graph
-                            .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                            .edges_directed(node_idx, ::petgraph::Direction::Outgoing)
                             .find(|e| edge_type_of(e.weight()) == *edge_type)
-                            .map(|e| e.weight().clone())
+                            .map(|e| ::std::clone::Clone::clone(e.weight()))
                             .unwrap();
                         violations.push(SchemaViolation::ExceedsMax {
-                            source: source.clone(),
+                            source: ::std::clone::Clone::clone(source),
                             edge_kind,
                             count: *count,
                             max,
@@ -585,17 +523,17 @@ macro_rules! typed_graph {
                         let count = outgoing_by_type.get(&edge_type).copied().unwrap_or(0);
                         if count < min {
                             let edge_kind = graph
-                                .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                                .edges_directed(node_idx, ::petgraph::Direction::Outgoing)
                                 .find(|e| edge_type_of(e.weight()) == edge_type)
-                                .map(|e| e.weight().clone())
+                                .map(|e| ::std::clone::Clone::clone(e.weight()))
                                 .unwrap_or_else(|| match source {
                                     $(
                                         $vertex::$src(_) => $edge::$conn($ety),
                                     )*
-                                    _ => unreachable!(),
+                                    _ => ::std::unreachable!(),
                                 });
                             violations.push(SchemaViolation::BelowMin {
-                                source: source.clone(),
+                                source: ::std::clone::Clone::clone(source),
                                 edge_kind,
                                 count,
                                 min,
@@ -606,9 +544,9 @@ macro_rules! typed_graph {
             }
 
             if violations.is_empty() {
-                Ok(())
+                ::std::result::Result::Ok(())
             } else {
-                Err(violations)
+                ::std::result::Result::Err(violations)
             }
         }
 
@@ -617,20 +555,22 @@ macro_rules! typed_graph {
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
         {
-            type Value = petgraph::graph::DiGraph<$vertex, $edge>;
-            type StableState = Vec<Self>;
+            type Value = ::petgraph::graph::DiGraph<$vertex, $edge>;
+            type StableState = ::std::vec::Vec<Self>;
             type Rejection = $crate::typed_graph::TypedGraphRejection;
 
-            const DISABLE_R_WHEN_R: bool = false;
-            const DISABLE_R_WHEN_NOT_R: bool = false;
+            const DISABLE_R_WHEN_R: ::std::primitive::bool = false;
+            const DISABLE_R_WHEN_NOT_R: ::std::primitive::bool = false;
             // TODO: find a way to enable stabilize for this CRDT
-            const DISABLE_STABILIZE: bool = true;
+            const DISABLE_STABILIZE: ::std::primitive::bool = true;
 
             fn redundant_itself<'a>(
                 new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
                 _stable: &Self::StableState,
-                _unstable: impl Iterator<Item = &'a $crate::moirai_protocol::event::tagged_op::TaggedOp<Self>>,
-            ) -> bool
+                _unstable: impl ::std::iter::Iterator<
+                    Item = &'a $crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
+                >,
+            ) -> ::std::primitive::bool
             where
                 Self: 'a,
             {
@@ -639,16 +579,16 @@ macro_rules! typed_graph {
                     $graph::RemoveVertex { .. }
                     | $graph::DeleteSubtree { .. }
                     | $graph::RemoveArc(_) => true,
-                    $graph::__Marker(_, _) => unreachable!(),
+                    $graph::__Marker(_, _) => ::std::unreachable!(),
                 }
             }
 
             fn redundant_by_when_redundant(
                 old_op: &Self,
-                _old_tag: Option<&$crate::moirai_protocol::event::tag::Tag>,
-                is_conc: bool,
+                _old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
+                is_conc: ::std::primitive::bool,
                 new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-            ) -> bool {
+            ) -> ::std::primitive::bool {
                 !is_conc
                     && match (old_op, new_tagged_op.op()) {
                         ($graph::AddArc(arc), $graph::RemoveVertex { id: v }) => {
@@ -679,24 +619,29 @@ macro_rules! typed_graph {
 
             fn redundant_by_when_not_redundant(
                 old_op: &Self,
-                old_tag: Option<&$crate::moirai_protocol::event::tag::Tag>,
-                is_conc: bool,
+                old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
+                is_conc: ::std::primitive::bool,
                 new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-            ) -> bool {
-                Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
+            ) -> ::std::primitive::bool {
+                <Self as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::redundant_by_when_redundant(
+                    old_op,
+                    old_tag,
+                    is_conc,
+                    new_tagged_op,
+                )
             }
 
             fn is_enabled(
                 op: &Self,
                 stable: &Self::StableState,
                 unstable: &impl $crate::moirai_protocol::state::unstable_state::CausalReplay<Self>,
-            ) -> Result<(), Self::Rejection> {
+            ) -> ::std::result::Result<(), Self::Rejection> {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;
 
                 let graph = Self::execute_query(Read::new(), stable, unstable);
                 match op {
-                    $graph::AddVertex { .. } => Ok(()),
+                    $graph::AddVertex { .. } => ::std::result::Result::Ok(()),
                     $graph::RemoveVertex { id } => graph
                         .node_weights()
                         .any(|node| node == id)
@@ -717,11 +662,15 @@ macro_rules! typed_graph {
 
                         let source_idx = graph
                             .node_indices()
-                            .find(|&idx| graph.node_weight(idx) == Some(&source))
+                            .find(|&idx| {
+                                graph.node_weight(idx) == ::std::option::Option::Some(&source)
+                            })
                             .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
                         let target_idx = graph
                             .node_indices()
-                            .find(|&idx| graph.node_weight(idx) == Some(&target))
+                            .find(|&idx| {
+                                graph.node_weight(idx) == ::std::option::Option::Some(&target)
+                            })
                             .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
                         // if both vertices exist but the specific edge doesn't exist,
                         // then it's not enabled (can't remove an edge that isn't there)
@@ -729,11 +678,13 @@ macro_rules! typed_graph {
                             .edges_connecting(source_idx, target_idx)
                             .any(|edge| edge.weight() == &kind)
                         {
-                            return Err($crate::typed_graph::TypedGraphRejection::MissingArc);
+                            return ::std::result::Result::Err(
+                                $crate::typed_graph::TypedGraphRejection::MissingArc,
+                            );
                         }
 
                         let count = graph
-                            .edges_directed(source_idx, petgraph::Direction::Outgoing)
+                            .edges_directed(source_idx, ::petgraph::Direction::Outgoing)
                             .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
                         // if the edge exists, then we can remove it as long as it doesn't violate the min constraint
@@ -758,7 +709,7 @@ macro_rules! typed_graph {
                             .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)?;
 
                         let count = graph
-                            .edges_directed(source_idx, petgraph::Direction::Outgoing)
+                            .edges_directed(source_idx, ::petgraph::Direction::Outgoing)
                             .filter(|edge| edge_type_of(edge.weight()) == edge_type)
                             .count();
 
@@ -767,7 +718,7 @@ macro_rules! typed_graph {
                             .then_some(())
                             .ok_or($crate::typed_graph::TypedGraphRejection::MaxCardinality)
                     }
-                    $graph::__Marker(_, _) => unreachable!(),
+                    $graph::__Marker(_, _) => ::std::unreachable!(),
                 }
             }
         }
@@ -787,17 +738,20 @@ macro_rules! typed_graph {
                 stable: &<Self as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::StableState,
                 unstable: &U) -> <$crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::pure_crdt::PureCRDT>::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response
             {
-                let tagged_ops: Vec<(
+                let tagged_ops: ::std::vec::Vec<(
                     &Self,
-                    Option<&$crate::moirai_protocol::event::tag::Tag>,
+                    ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
                 )> = stable
                     .iter()
-                    .map(|op| (op, None))
-                    .chain(unstable.iter().map(|t| (t.op(), Some(t.tag()))))
+                    .map(|op| (op, ::std::option::Option::None))
+                    .chain(unstable.iter().map(|t| {
+                        (t.op(), ::std::option::Option::Some(t.tag()))
+                    }))
                     .collect();
 
-                let mut graph = petgraph::graph::DiGraph::new();
-                let mut node_index: $crate::HashMap<$vertex, _> = $crate::HashMap::default();
+                let mut graph = ::petgraph::graph::DiGraph::new();
+                let mut node_index: $crate::HashMap<$vertex, _> =
+                    ::std::default::Default::default();
 
                 // First add all vertices
                 // TODO: if the backend log is ordered, we could add vertices and arcs in one pass
@@ -805,8 +759,8 @@ macro_rules! typed_graph {
                     if let $graph::AddVertex { id } = op
                         && !node_index.contains_key(id)
                     {
-                        let idx = graph.add_node(id.clone());
-                        node_index.insert(id.clone(), idx);
+                        let idx = graph.add_node(::std::clone::Clone::clone(id));
+                        node_index.insert(::std::clone::Clone::clone(id), idx);
                     }
                 }
 
@@ -814,8 +768,8 @@ macro_rules! typed_graph {
                 // TODO: if the backend log is ordered, we could add arcs in one pass and skip this deduplication step
                 let mut deduped_arcs: $crate::HashMap<
                     ($vertex, $vertex, $edge),
-                    Option<&$crate::moirai_protocol::event::tag::Tag>,
-                > = $crate::HashMap::default();
+                    ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
+                > = ::std::default::Default::default();
 
                 for (op, tag) in &tagged_ops {
                     if let $graph::AddArc(arcs) = op {
@@ -830,11 +784,11 @@ macro_rules! typed_graph {
                                 }
                                 ::std::collections::hash_map::Entry::Occupied(mut entry) => {
                                     let replace = match (entry.get(), tag) {
-                                        (None, None) => false,
-                                        (None, Some(_)) => true,
-                                        (Some(_), None) => false,
-                                        (Some(old_tag), Some(new_tag)) => {
-                                            P::compare(old_tag, new_tag)
+                                        (::std::option::Option::None, ::std::option::Option::None) => false,
+                                        (::std::option::Option::None, ::std::option::Option::Some(_)) => true,
+                                        (::std::option::Option::Some(_), ::std::option::Option::None) => false,
+                                        (::std::option::Option::Some(old_tag), ::std::option::Option::Some(new_tag)) => {
+                                            <P as $crate::moirai_protocol::crdt::policy::Policy>::compare(old_tag, new_tag)
                                                 == ::std::cmp::Ordering::Less
                                         }
                                     };
@@ -851,28 +805,30 @@ macro_rules! typed_graph {
                     }
                 }
 
-                let mut arc_entries: Vec<(
+                let mut arc_entries: ::std::vec::Vec<(
                     $vertex,
                     $vertex,
                     $edge,
-                    Option<&$crate::moirai_protocol::event::tag::Tag>,
+                    ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
                 )> = deduped_arcs
                     .into_iter()
                     .map(|((v1, v2, e), tag)| (v1, v2, e, tag))
                     .collect();
 
                 // MAX enforcement per (source, edge_type) group
-                let mut groups: $crate::HashMap<($vertex, __TypedGraphEdgeType), Vec<usize>> =
-                    $crate::HashMap::default();
+                let mut groups: $crate::HashMap<
+                    ($vertex, __TypedGraphEdgeType),
+                    ::std::vec::Vec<::std::primitive::usize>,
+                > = ::std::default::Default::default();
                 for (i, (source, _target, kind, _tag)) in arc_entries.iter().enumerate() {
                     groups
-                        .entry((source.clone(), edge_type_of(kind)))
+                        .entry((::std::clone::Clone::clone(source), edge_type_of(kind)))
                         .or_default()
                         .push(i);
                 }
 
                 // Determine surviving arcs based on MAX constraints and tags
-                let mut surviving = vec![true; arc_entries.len()];
+                let mut surviving = ::std::vec![true; arc_entries.len()];
 
                 for ((_source, _family), indices) in &groups {
                     if indices.is_empty() {
@@ -880,13 +836,15 @@ macro_rules! typed_graph {
                     }
                     let max = max_edges_for(&arc_entries[indices[0]].0, &arc_entries[indices[0]].2);
                     if indices.len() > max {
-                        let mut sorted_indices = indices.clone();
+                        let mut sorted_indices = ::std::clone::Clone::clone(indices);
                         sorted_indices.sort_by(|&a, &b| {
                             match (&arc_entries[a].3, &arc_entries[b].3) {
-                                (None, None) => ::std::cmp::Ordering::Equal,
-                                (None, Some(_)) => ::std::cmp::Ordering::Less,
-                                (Some(_), None) => ::std::cmp::Ordering::Greater,
-                                (Some(ta), Some(tb)) => P::compare(ta, tb),
+                                (::std::option::Option::None, ::std::option::Option::None) => ::std::cmp::Ordering::Equal,
+                                (::std::option::Option::None, ::std::option::Option::Some(_)) => ::std::cmp::Ordering::Less,
+                                (::std::option::Option::Some(_), ::std::option::Option::None) => ::std::cmp::Ordering::Greater,
+                                (::std::option::Option::Some(ta), ::std::option::Option::Some(tb)) => {
+                                    <P as $crate::moirai_protocol::crdt::policy::Policy>::compare(ta, tb)
+                                },
                             }
                         });
                         let losers = sorted_indices.len() - max;
@@ -899,9 +857,12 @@ macro_rules! typed_graph {
                 // Add surviving arcs to the graph
                 for (i, (v1, v2, e, _)) in arc_entries.iter().enumerate() {
                     if surviving[i]
-                        && let (Some(&a), Some(&b)) = (node_index.get(v1), node_index.get(v2))
+                        && let (
+                            ::std::option::Option::Some(&a),
+                            ::std::option::Option::Some(&b),
+                        ) = (node_index.get(v1), node_index.get(v2))
                     {
-                        graph.add_edge(a, b, e.clone());
+                        graph.add_edge(a, b, ::std::clone::Clone::clone(e));
                     }
                 }
 
@@ -909,20 +870,101 @@ macro_rules! typed_graph {
             }
         }
 
-        //* DEEP SIZE *//
+        //* INTERNALIZE */
+
+        impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $arcs
+        where
+            $(
+                $src_ty: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
+                $tgt_ty: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
+            )*
+        {
+            fn internalize(
+                self,
+                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
+            ) -> Self {
+                match self {
+                    $(
+                        Self::$conn(arc) => Self::$conn(
+                            <$crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety> as
+                                $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
+                            >::internalize(arc, interner),
+                        )
+                    ),*
+                }
+            }
+        }
+
+        impl<P> $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $graph<P>
+        where
+            P: ::std::clone::Clone,
+            $vertex: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
+            $arcs: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
+        {
+            fn internalize(
+                self,
+                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
+            ) -> Self {
+                match self {
+                    Self::AddVertex { id } => Self::AddVertex {
+                        id: <$vertex as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
+                            id,
+                            interner,
+                        ),
+                    },
+                    Self::RemoveVertex { id } => Self::RemoveVertex {
+                        id: <$vertex as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
+                            id,
+                            interner,
+                        ),
+                    },
+                    Self::DeleteSubtree { prefix } => Self::DeleteSubtree {
+                        prefix: <$crate::moirai_protocol::state::object_path::ObjectPath as
+                            $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
+                        >::internalize(prefix, interner),
+                    },
+                    Self::AddArc(arc) => Self::AddArc(
+                        <$arcs as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
+                            arc,
+                            interner,
+                        ),
+                    ),
+                    Self::RemoveArc(arc) => Self::RemoveArc(
+                        <$arcs as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
+                            arc,
+                            interner,
+                        ),
+                    ),
+                    Self::__Marker(_never, _marker) => ::std::unreachable!(),
+                }
+            }
+        }
+
+        //* DEEP SIZE */
 
         #[cfg(feature = "test_utils")]
         impl<P> ::deepsize::DeepSizeOf for $graph<P> {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 match self {
                     Self::AddVertex { id } | Self::RemoveVertex { id } => {
-                        id.deep_size_of_children(context)
+                        ::deepsize::DeepSizeOf::deep_size_of_children(id, context)
                     }
-                    Self::DeleteSubtree { prefix } => prefix.deep_size_of_children(context),
+                    Self::DeleteSubtree { prefix } => {
+                        ::deepsize::DeepSizeOf::deep_size_of_children(prefix, context)
+                    },
                     Self::AddArc(arc) | Self::RemoveArc(arc) => {
-                        arc.deep_size_of_children(context)
+                        ::deepsize::DeepSizeOf::deep_size_of_children(arc, context)
                     }
                     Self::__Marker(never, _) => match *never {},
+                }
+            }
+        }
+
+        #[cfg(feature = "test_utils")]
+        impl ::deepsize::DeepSizeOf for $arcs {
+            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
+                match self {
+                    $( Self::$conn(arc) => ::deepsize::DeepSizeOf::deep_size_of_children(arc, context) ),*
                 }
             }
         }
@@ -1036,7 +1078,7 @@ where
     S: InternalizeOp,
     T: InternalizeOp,
 {
-    fn internalize(self, interner: &moirai_protocol::utils::intern_str::Interner) -> Self {
+    fn internalize(self, interner: &moirai_protocol::broadcast::internalizer::Interner) -> Self {
         Self {
             source: self.source.internalize(interner),
             target: self.target.internalize(interner),

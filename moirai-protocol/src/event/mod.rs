@@ -36,6 +36,15 @@ impl<O> Event<O> {
         Event::new(self.id, self.lamport, op, self.version)
     }
 
+    pub fn unfold_with_disambiguator<N>(self, disambiguator: u32, op: N) -> Event<N> {
+        Event::new(
+            self.id.with_disambiguator(disambiguator),
+            self.lamport,
+            op,
+            self.version,
+        )
+    }
+
     pub fn id(&self) -> &EventId {
         &self.id
     }

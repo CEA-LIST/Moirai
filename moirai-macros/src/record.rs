@@ -8,7 +8,6 @@ macro_rules! record {
             /// Set of operations that can be applied to the record.
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
             #[derive(Clone, Debug)]
-            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum $name {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),
@@ -16,12 +15,32 @@ macro_rules! record {
                 New,
             }
 
-            /// Internalize an operation, i.e., convert any contained event id from a remote replica into the local interner's mapping.
-            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $name {
-                fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for $name {
+                fn deep_size_of_children(
+                    &self,
+                    context: &mut ::deepsize::Context,
+                ) -> ::std::primitive::usize {
                     match self {
                         $(
-                            Self::[<$field:camel>](o) => Self::[<$field:camel>](o.internalize(interner)),
+                            Self::[<$field:camel>](op) =>
+                                ::deepsize::DeepSizeOf::deep_size_of_children(op, context),
+                        )*
+                        Self::New => 0,
+                    }
+                }
+            }
+
+            /// Internalize an operation, i.e., convert any contained event id from a remote replica into the local interner's mapping.
+            impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $name {
+                fn internalize(self, interner: &$crate::moirai_protocol::broadcast::internalizer::Interner) -> Self {
+                    match self {
+                        $(
+                            Self::[<$field:camel>](o) => Self::[<$field:camel>](
+                                <<$T as $crate::moirai_protocol::state::log::IsLog>::Op as
+                                    $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
+                                >::internalize(o, interner),
+                            ),
                         )*
                         Self::New => Self::New,
                     }
@@ -53,17 +72,17 @@ macro_rules! record {
                 )*
 
                 #[doc(hidden)]
-                pub fn default_sink_expansion(
+                pub fn __moirai_default_sink_expansion(
                     &self,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
                 ) {
-                    ctx.create();
+                    ctx.create_typed(::std::stringify!($name));
                     $(
-                        ctx.with_field(stringify!($field), |ctx| {
-                            use $crate::moirai_protocol::state::log::__DefaultSinkExpansion as _;
-
-                            <$T as $crate::moirai_protocol::state::log::IsLog>::new()
-                                .default_sink_expansion(ctx);
+                        ctx.with_field(::std::stringify!($field), |ctx| {
+                            <$T as $crate::moirai_protocol::state::log::__DefaultSinkExpansion>::default_sink_expansion(
+                                &<$T as $crate::moirai_protocol::state::log::IsLog>::new(),
+                                ctx,
+                            );
                         });
                     )*
                 }
@@ -90,78 +109,92 @@ macro_rules! record {
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
-                    match event.op().clone() {
+                    match ::std::clone::Clone::clone(event.op()) {
                         $(
                             $name::[<$field:camel>](op) => {
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
 
                                 if is_default {
-                                    self.default_sink_expansion(ctx);
+                                    Self::__moirai_default_sink_expansion(self, ctx);
                                 } else {
-                                    ctx.update();
+                                    ctx.update_typed(::std::stringify!($name));
                                 }
 
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                ctx.with_field(stringify!($field), |ctx| {
+                                ctx.with_field(::std::stringify!($field), |ctx| {
                                     if !is_default {
                                         ctx.update();
                                     }
-                                    self.$field.effect(child_op, ctx);
+                                    <$T as $crate::moirai_protocol::state::log::IsLog>::effect(
+                                        &mut self.$field,
+                                        child_op,
+                                        ctx,
+                                    );
                                 });
                             }
                         )*
                         $name::New => {
-                            self.default_sink_expansion(ctx);
+                            Self::__moirai_default_sink_expansion(self, ctx);
                         }
                     }
                 }
 
                 fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
                     $(
-                        self.$field.stabilize(version);
+                        <$T as $crate::moirai_protocol::state::log::IsLog>::stabilize(
+                            &mut self.$field,
+                            version,
+                        );
                     )*
                 }
 
-                fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
+                fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
                     $(
-                        self.$field.redundant_by_parent(version, conservative);
+                        <$T as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
+                            &mut self.$field,
+                            version,
+                            conservative,
+                        );
                     )*
                 }
 
-                fn is_default(&self) -> bool {
+                fn is_default(&self) -> ::std::primitive::bool {
                     $(
-                        if !self.$field.is_default() {
+                        if !<$T as $crate::moirai_protocol::state::log::IsLog>::is_default(
+                            &self.$field,
+                        ) {
                             return false;
                         }
                     )*
                     true
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+                fn is_enabled(
+                    &self,
+                    op: &Self::Op,
+                ) -> ::std::result::Result<(), Self::Rejection> {
                     match op {
                         $(
-                            $name::[<$field:camel>](o) => self.$field.is_enabled(o).map_err(Self::Rejection::[<$field:camel>]),
+                            $name::[<$field:camel>](o) =>
+                                <$T as $crate::moirai_protocol::state::log::IsLog>::is_enabled(
+                                    &self.$field,
+                                    o,
+                                )
+                                .map_err([<$name Rejection>]::[<$field:camel>]),
                         )*
                         // "New" can only be applied if the record is in its default state
-                        $name::New => if self.is_default() { Ok(()) } else { Err(Self::Rejection::AlreadyInitialized) },
-                        _ => unreachable!(),
+                        $name::New => if <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self) {
+                            ::std::result::Result::Ok(())
+                        } else {
+                            ::std::result::Result::Err([<$name Rejection>]::AlreadyInitialized)
+                        },
+                        _ => ::std::unreachable!(),
                     }
                 }
 
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>]
-            where
-                $(
-                    $T: $crate::moirai_protocol::state::log::IsLog
-                        + $crate::moirai_protocol::crdt::eval::EvalNested<
-                            $crate::moirai_protocol::crdt::query::Read<
-                                <$T as $crate::moirai_protocol::state::log::IsLog>::Value,
-                            >,
-                        >,
-                    <$T as $crate::moirai_protocol::state::log::IsLog>::Value: Clone,
-                )*
-            {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
                 fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
@@ -184,13 +217,18 @@ macro_rules! record {
                 AlreadyInitialized,
             }
 
-            impl std::fmt::Display for [<$name Rejection>] {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            impl ::std::fmt::Display for [<$name Rejection>] {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                     match self {
                         $(
-                            Self::[<$field:camel>](e) => write!(f, "{}: {}", stringify!($field), e),
+                            Self::[<$field:camel>](e) => ::std::write!(
+                                f,
+                                "{}: {}",
+                                ::std::stringify!($field),
+                                e,
+                            ),
                         )*
-                        Self::AlreadyInitialized => write!(f, "Already initialized"),
+                        Self::AlreadyInitialized => ::std::write!(f, "Already initialized"),
                     }
                 }
             }
