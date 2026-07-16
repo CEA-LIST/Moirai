@@ -13,18 +13,32 @@ pub enum SinkEffect {
 pub struct Sink {
     object_path: ObjectPath,
     effect: SinkEffect,
+    kind: Option<&'static str>,
 }
 
 impl Sink {
     pub fn new(object_path: ObjectPath, effect: SinkEffect) -> Self {
+        Self::new_with_kind(object_path, effect, None)
+    }
+
+    pub fn new_with_kind(
+        object_path: ObjectPath,
+        effect: SinkEffect,
+        kind: Option<&'static str>,
+    ) -> Self {
         Self {
             object_path,
             effect,
+            kind,
         }
     }
 
     pub fn create(object_path: ObjectPath) -> Self {
         Self::new(object_path, SinkEffect::Create)
+    }
+
+    pub fn create_typed(object_path: ObjectPath, kind: &'static str) -> Self {
+        Self::new_with_kind(object_path, SinkEffect::Create, Some(kind))
     }
 
     pub fn delete(object_path: ObjectPath) -> Self {
@@ -35,12 +49,20 @@ impl Sink {
         Self::new(object_path, SinkEffect::Update)
     }
 
+    pub fn update_typed(object_path: ObjectPath, kind: &'static str) -> Self {
+        Self::new_with_kind(object_path, SinkEffect::Update, Some(kind))
+    }
+
     pub fn path(&self) -> &ObjectPath {
         &self.object_path
     }
 
     pub fn effect(&self) -> &SinkEffect {
         &self.effect
+    }
+
+    pub fn kind(&self) -> Option<&'static str> {
+        self.kind
     }
 }
 
