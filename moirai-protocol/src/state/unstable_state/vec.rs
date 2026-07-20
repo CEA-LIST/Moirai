@@ -3,9 +3,7 @@ use std::fmt::Debug;
 use crate::{
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
-    state::unstable_state::{
-        IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
-    },
+    state::unstable_state::{IsUnstableCore, IsUnstableDelivery, IsUnstablePrune},
 };
 
 impl<O> IsUnstableCore<O> for Vec<TaggedOp<O>>
@@ -26,16 +24,6 @@ where
     fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>> {
         self.iter()
             .filter(|to| to.id().is_predecessor_of(version))
-            .collect()
-    }
-
-    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
-    where
-        O: Clone,
-    {
-        self.iter()
-            .filter(|to| to.id().is_predecessor_of(version))
-            .cloned()
             .collect()
     }
 
@@ -72,19 +60,6 @@ where
 
     fn clear(&mut self) {
         Vec::clear(self);
-    }
-}
-
-impl<O> IsUnstableCausal<O> for Vec<TaggedOp<O>>
-where
-    O: Debug + Clone,
-{
-    fn parents(&self, _event_id: &EventId) -> Vec<EventId> {
-        unimplemented!()
-    }
-
-    fn frontier(&self) -> Vec<TaggedOp<O>> {
-        unimplemented!()
     }
 }
 

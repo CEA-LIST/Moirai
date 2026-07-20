@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod commit_log;
 pub mod effect_context;
 pub mod graph_log;
 pub mod log;

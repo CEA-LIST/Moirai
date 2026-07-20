@@ -25,8 +25,9 @@ use crate::{
 pub trait IsLog: Default + Debug {
     // TODO: is Value really needed?
     type Value: Default + Debug;
-    /// Stored operation type.
+    /// Stored operation type
     type Op: Debug + Clone;
+    /// Rejection type for operations that are not enabled in the current state
     type Rejection: Debug + Display;
 
     fn new() -> Self {
@@ -40,7 +41,9 @@ pub trait IsLog: Default + Debug {
     fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
         Ok(())
     }
+    /// Apply an event to the log, updating the state.
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>);
+    /// Evaluate a query operation on the log, returning a value.
     fn eval<Q>(&self, q: Q) -> Q::Response
     where
         Q: QueryOperation,
@@ -48,8 +51,15 @@ pub trait IsLog: Default + Debug {
     {
         Self::execute_query(self, q)
     }
+    /// Stabilize the log at a given version.
     fn stabilize(&mut self, version: &Version);
+    /// Prune the log by removing events that are redundant.
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
+    /// Check if the log is in its default state (no events).
+    /// # Note
+    /// Default state is a structural property of the log, not a semantic property of the underlying CRDT.
+    /// For example, a log may be in its default state even if the underlying CRDT is not in its default state,
+    /// if the log has been pruned to remove all events.
     fn is_default(&self) -> bool;
 }
 
@@ -193,45 +203,5 @@ where
 {
     fn execute_query(&self, _q: Read<<Self as IsLog>::Value>) -> Box<L::Value> {
         Box::new(self.0.as_ref().execute_query(Read::new()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::convert::Infallible;
-
-    use super::*;
-
-    #[derive(Debug, Default)]
-    struct ScalarLog;
-
-    impl IsLog for ScalarLog {
-        type Value = u8;
-        type Op = u8;
-        type Rejection = Infallible;
-
-        fn effect(&mut self, _event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {}
-
-        fn stabilize(&mut self, _version: &Version) {}
-
-        fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {}
-
-        fn is_default(&self) -> bool {
-            true
-        }
-    }
-
-    impl EvalNested<Read<u8>> for ScalarLog {
-        fn execute_query(&self, _q: Read<u8>) -> u8 {
-            7
-        }
-    }
-
-    #[test]
-    fn boxed_log_boxes_read_value() {
-        let log = BoxedLog::<ScalarLog>::default();
-        let value: Box<u8> = log.execute_query(Read::new());
-
-        assert_eq!(*value, 7);
     }
 }

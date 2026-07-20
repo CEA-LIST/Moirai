@@ -3,9 +3,7 @@ use std::fmt::Debug;
 use crate::{
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
-    state::unstable_state::{
-        IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
-    },
+    state::unstable_state::{IsUnstableCore, IsUnstablePrune},
     utils::hashmap::HashMap,
 };
 
@@ -45,16 +43,6 @@ where
             .collect()
     }
 
-    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
-    where
-        O: Clone,
-    {
-        self.values()
-            .filter(|to| to.id().is_predecessor_of(version))
-            .cloned()
-            .collect()
-    }
-
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
     where
         O: 'a,
@@ -68,27 +56,5 @@ where
 
     fn is_empty(&self) -> bool {
         self.is_empty()
-    }
-}
-
-impl<O> IsUnstableCausal<O> for HashMap<EventId, TaggedOp<O>>
-where
-    O: Debug + Clone,
-{
-    fn parents(&self, _event_id: &EventId) -> Vec<EventId> {
-        unimplemented!()
-    }
-
-    fn frontier(&self) -> Vec<TaggedOp<O>> {
-        unimplemented!()
-    }
-}
-
-impl<O> IsUnstableDelivery<O> for HashMap<EventId, TaggedOp<O>>
-where
-    O: Debug + Clone,
-{
-    fn delivery_order(&self, _event_id: &EventId) -> Option<usize> {
-        unimplemented!()
     }
 }

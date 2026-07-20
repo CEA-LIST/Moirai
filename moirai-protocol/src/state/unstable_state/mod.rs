@@ -21,10 +21,6 @@ pub trait IsUnstableCore<O>: Debug {
     fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
     where
         O: Clone;
-    /// Returns a list of cloned tagged operations that are predecessors of the given version.
-    fn predecessors_cloned(&self, version: &Version) -> Vec<TaggedOp<O>>
-    where
-        O: Clone;
     /// Returns an iterator over all tagged operations in the unstable state.
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
     where
@@ -55,6 +51,8 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
+    /// Returns a list of references to tagged operations that are predecessors of the given event ID.
+    fn predecessors_by_id(&self, event_id: &EventId) -> Vec<&TaggedOp<O>>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.
