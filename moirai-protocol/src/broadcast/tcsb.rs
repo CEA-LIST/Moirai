@@ -18,7 +18,7 @@ use crate::{
     utils::hashmap::{HashMap, HashSet},
 };
 
-/// Services of the Tagged Causal Stable Broadcast communication protocol
+/// Services of the Tagged Causal Stable Broadcast communication protocol.
 pub trait IsTcsb<O> {
     /// Create a new TCSB instance for a replica with the given id and interner.
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
@@ -36,6 +36,8 @@ pub trait IsTcsb<O> {
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
     /// Return the new stable version if it has advanced
     fn is_stable(&mut self) -> Option<&Version>;
+    /// Return the replica IDs of all members in the system
+    fn members(&self) -> Vec<ReplicaIdOwned>;
 }
 
 #[derive(Debug)]
@@ -166,6 +168,10 @@ where
         let version = self.matrix_clock.origin_version().clone();
         let since = Since::new(version, except);
         SinceMessage::new(since, self.interner.resolver().clone())
+    }
+
+    fn members(&self) -> Vec<ReplicaIdOwned> {
+        self.interner.resolver().into_vec()
     }
 }
 
@@ -389,7 +395,7 @@ where
 
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
-        O: 'a,
+        Self: 'a,
     {
         self.inbox.values()
     }
@@ -400,7 +406,7 @@ where
 
     fn outbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
-        O: 'a,
+        Self: 'a,
     {
         self.outbox
             .values()

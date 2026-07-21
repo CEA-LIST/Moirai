@@ -1,15 +1,11 @@
 use std::fmt::Debug;
 
-use moirai_protocol::{
-    broadcast::tcsb::IsTcsb,
-    replica::{IsReplica, Replica},
-    state::log::IsLog,
-};
+use moirai_protocol::{broadcast::tcsb::IsTcsb, replica::Replica, state::log::IsLog};
 
 pub fn bootstrap_n<L, T>(n: u8) -> Vec<Replica<L, T>>
 where
     L: IsLog,
-    T: IsTcsb<L::Op> + Debug,
+    T: IsTcsb<Payload = L::Op> + Debug,
 {
     let mut replicas = Vec::new();
     for i in 0..n {

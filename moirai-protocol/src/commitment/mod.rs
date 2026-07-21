@@ -1,379 +1,256 @@
-#![allow(clippy::mutable_key_type)]
+pub mod commit_log;
+pub mod commit_op;
+pub mod mixed_consistency_replica;
+pub mod oracle;
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Debug,
-};
+// use std::{
+//     collections::{BTreeMap, BTreeSet},
+//     fmt::Debug,
+//     marker::PhantomData,
+// };
 
-use crate::{
-    broadcast::{
-        internalizer::{InternalizeOp, Interner},
-        message::{BatchMessage, EventMessage, SinceMessage},
-        tcsb::IsTcsb,
-    },
-    crdt::{eval::EvalNested, query::QueryOperation, sequential::SequentialADT},
-    event::{id::EventId, tagged_op::TaggedOp},
-    replica::{IsReplica, Replica, ReplicaId, ReplicaIdOwned},
-    state::{
-        commit_log::CommitLog,
-        log::IsLog,
-        unstable_state::{IsUnstableCore, event_graph::EventGraph},
-    },
-};
+// #[cfg(feature = "test_utils")]
+// use crate::broadcast::tcsb::IsTcsbTest;
+// use crate::{
+//     broadcast::{
+//         internalizer::{InternalizeOp, Interner},
+//         message::{BatchMessage, EventMessage, SinceMessage},
+//         tcsb::{IsTcsb, Tcsb},
+//     },
+//     event::{id::EventId, tagged_op::TaggedOp},
+//     replica::{Replica, ReplicaId, ReplicaIdOwned, ReplicaIdx},
+//     state::{
+//         commit_log::CommitLog,
+//         log::IsLog,
+//         unstable_state::{IsUnstableCore, event_graph::EventGraph},
+//     },
+// };
 
-pub type CommitPosition = EventId;
-pub type CommitEntry<U> = TaggedOp<CommitOp<U>>;
+// pub type CommitPosition = EventId;
+// pub type CommitEntry<U> = TaggedOp<CommitOp<U>>;
+// pub type CommitTcsb<U, O> = OmegaTcsb<U, Tcsb<CommitOp<U>>, O>;
+// pub type CommittedReplica<A, C, O> =
+//     Replica<CommitLog<A, C>, CommitTcsb<<A as SequentialADT>::Update, O>>;
 
-/// Operation stored by a commitment log.
-#[derive(Clone, Debug)]
-pub struct CommitOp<U> {
-    pub update: U,
-    // TODO: replace with replicaIdx
-    pub leader: ReplicaIdOwned,
-}
+// /// Commitment metadata update performed when a new event is delivered.
+// pub trait CommitmentProtocol<U>: Debug {
+//     /// Record `delivered` and return commit positions that became newly pre-committed.
+//     fn on_deliver(
+//         &mut self,
+//         delivered: &EventId,
+//         log: &EventGraph<CommitOp<U>>,
+//         n_members: usize,
+//     ) -> Vec<EventId>
+//     where
+//         U: Clone + Debug;
 
-impl<U> CommitOp<U> {
-    pub fn new(update: U, leader: ReplicaIdOwned) -> Self {
-        Self { update, leader }
-    }
-}
+//     fn latest_committed(&self) -> Option<&EventId>;
+// }
 
-/// Replica facade for committed sequential data types.
-///
-/// The underlying replica still broadcasts `CommitOp<A::Update>`, but callers
-/// issue plain sequential updates; the facade attaches the current Omega leader.
-#[derive(Debug)]
-pub struct CommitReplica<A, C, T, O>
-where
-    A: SequentialADT,
-    C: CommitmentProtocol<A::Update>,
-    O: Omega,
-{
-    replica: Replica<CommitLog<A, C>, T>,
-    omega: O,
-}
+// /// No-op commitment protocol, useful while wiring a sequential log without
+// /// enabling the Omega majority algorithm.
+// #[derive(Clone, Debug, Default)]
+// pub struct NoCommitment;
 
-impl<A, C, T, O> CommitReplica<A, C, T, O>
-where
-    A: SequentialADT,
-    C: CommitmentProtocol<A::Update> + Default,
-    CommitLog<A, C>: IsLog<Op = CommitOp<A::Update>, Rejection = A::Rejection>,
-    T: IsTcsb<<CommitLog<A, C> as IsLog>::Op> + Debug,
-    O: Omega,
-{
-    pub fn new(id: ReplicaIdOwned, omega: O) -> Self {
-        Self {
-            replica: Replica::new(id),
-            omega,
-        }
-    }
+// impl<U> CommitmentProtocol<U> for NoCommitment {
+//     fn on_deliver(
+//         &mut self,
+//         _delivered: &EventId,
+//         _log: &EventGraph<CommitOp<U>>,
+//         _n_members: usize,
+//     ) -> Vec<EventId>
+//     where
+//         U: Clone + Debug,
+//     {
+//         Vec::new()
+//     }
 
-    pub fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId], omega: O) -> Self {
-        let state = CommitLog::<A, C>::with_members(members.len());
-        Self {
-            replica: Replica::bootstrap_with_state(id, members, state),
-            omega,
-        }
-    }
+//     fn latest_committed(&self) -> Option<&EventId> {
+//         None
+//     }
+// }
 
-    pub fn send_update(
-        &mut self,
-        update: A::Update,
-    ) -> Result<EventMessage<CommitOp<A::Update>>, A::Rejection> {
-        self.replica
-            .send(CommitOp::new(update, self.omega.leader()))
-    }
+// /// Majority/Omega commitment protocol.
+// ///
+// /// The structure mirrors the ad-hoc prototype:
+// /// - a potential leader keeps one boolean vote per replica that may validate it;
+// /// - `partial_leaders_hist` records the partial leaders visible when the vertex
+// ///   was detected;
+// /// - `pre_committed` is closed under that history relation.
+// #[derive(Clone, Debug, Default)]
+// pub struct MajorityOmegaCommitment {
+//     potential_leaders: BTreeMap<EventId, BTreeMap<ReplicaIdOwned, bool>>,
+//     partial_leaders_hist: BTreeMap<EventId, BTreeSet<EventId>>,
+//     pre_committed: BTreeSet<EventId>,
+//     latest_committed: Option<EventId>,
+// }
 
-    pub fn receive(&mut self, message: EventMessage<CommitOp<A::Update>>) {
-        self.replica.receive(message);
-    }
+// impl MajorityOmegaCommitment {
+//     pub fn potential_leaders(&self) -> &BTreeMap<EventId, BTreeMap<ReplicaIdOwned, bool>> {
+//         &self.potential_leaders
+//     }
 
-    pub fn receive_batch(&mut self, message: BatchMessage<CommitOp<A::Update>>) {
-        self.replica.receive_batch(message);
-    }
+//     pub fn pre_committed(&self) -> &BTreeSet<EventId> {
+//         &self.pre_committed
+//     }
 
-    pub fn pull(&mut self, since: SinceMessage) -> BatchMessage<CommitOp<A::Update>> {
-        self.replica.pull(since)
-    }
+//     fn quorum_size(n_members: usize) -> usize {
+//         (n_members / 2) + 1
+//     }
 
-    pub fn since(&self) -> SinceMessage {
-        self.replica.since()
-    }
+//     fn partial_leaders(
+//         &self,
+//         quorum_size: usize,
+//     ) -> impl Iterator<Item = (&EventId, &BTreeMap<ReplicaIdOwned, bool>)> {
+//         self.potential_leaders
+//             .iter()
+//             .filter(move |(_, votes)| votes.len() >= quorum_size)
+//     }
 
-    pub fn query<Q>(&self, q: Q) -> Q::Response
-    where
-        Q: QueryOperation,
-        CommitLog<A, C>: EvalNested<Q>,
-    {
-        self.replica.query(q)
-    }
+//     fn partial_leader_ids(&self, quorum_size: usize) -> BTreeSet<EventId> {
+//         self.partial_leaders(quorum_size)
+//             .map(|(event_id, _)| event_id.clone())
+//             .collect()
+//     }
 
-    pub fn id(&self) -> &ReplicaId {
-        self.replica.id()
-    }
+//     fn is_potential_leader<U>(
+//         &self,
+//         position: &EventId,
+//         log: &EventGraph<CommitOp<U>>,
+//         quorum_size: usize,
+//     ) -> Option<BTreeSet<ReplicaIdOwned>>
+//     where
+//         U: Clone + Debug,
+//     {
+//         let candidate = position.origin_id();
+//         let votes = self.votes(candidate, log.ancestors(position), log);
 
-    pub fn omega(&self) -> &O {
-        &self.omega
-    }
+//         (votes.len() >= quorum_size).then_some(votes)
+//     }
 
-    pub fn omega_mut(&mut self) -> &mut O {
-        &mut self.omega
-    }
+//     fn votes<U>(
+//         &self,
+//         candidate: &ReplicaId,
+//         positions: Vec<EventId>,
+//         log: &EventGraph<CommitOp<U>>,
+//     ) -> BTreeSet<ReplicaIdOwned>
+//     where
+//         U: Clone + Debug,
+//     {
+//         let mut replica_vote = BTreeMap::<ReplicaIdOwned, bool>::new();
 
-    pub fn inner(&self) -> &Replica<CommitLog<A, C>, T> {
-        &self.replica
-    }
+//         for position in positions {
+//             let Some(entry) = log.get(&position) else {
+//                 continue;
+//             };
 
-    pub fn inner_mut(&mut self) -> &mut Replica<CommitLog<A, C>, T> {
-        &mut self.replica
-    }
-}
+//             let sender = entry.id().origin_id().to_string();
+//             let vote = entry.op().leader == candidate;
+//             replica_vote
+//                 .entry(sender)
+//                 .and_modify(|current| *current = *current && vote)
+//                 .or_insert(vote);
+//         }
 
-/// Source of leader hints attached to newly issued updates.
-pub trait Omega: Debug {
-    fn leader(&self) -> ReplicaIdOwned;
-}
+//         replica_vote
+//             .into_iter()
+//             .filter_map(|(replica, voted)| voted.then_some(replica))
+//             .collect()
+//     }
 
-#[derive(Clone, Debug)]
-pub struct FixedOmega {
-    leader: ReplicaIdOwned,
-}
+//     fn update_leaders<U>(&mut self, delivered: &EventId, log: &EventGraph<CommitOp<U>>)
+//     where
+//         U: Clone + Debug,
+//     {
+//         let Some(entry) = log.get(delivered) else {
+//             return;
+//         };
+//         let sender = delivered.origin_id().to_string();
+//         let leader = entry.op().leader.clone();
 
-impl FixedOmega {
-    pub fn new(leader: ReplicaIdOwned) -> Self {
-        Self { leader }
-    }
+//         for (candidate, votes) in &mut self.potential_leaders {
+//             if *votes.get(&sender).unwrap_or(&true) {
+//                 continue;
+//             }
 
-    pub fn set_leader(&mut self, leader: ReplicaIdOwned) {
-        self.leader = leader;
-    }
-}
+//             if leader != candidate.origin_id() {
+//                 votes.remove(&sender);
+//             } else if log.happens_before(candidate, delivered)
+//                 && let Some(vote) = votes.get_mut(&sender)
+//             {
+//                 *vote = true;
+//             }
+//         }
+//     }
 
-impl Omega for FixedOmega {
-    fn leader(&self) -> ReplicaIdOwned {
-        self.leader.clone()
-    }
-}
+//     fn check_pre_committed(&mut self, quorum_size: usize) {
+//         let leaders: BTreeSet<EventId> = self
+//             .partial_leaders(quorum_size)
+//             .filter(|(_, votes)| votes.values().filter(|voted| **voted).count() >= quorum_size)
+//             .map(|(event_id, _)| event_id.clone())
+//             .collect();
 
-/// Commitment metadata update performed when a new event is delivered.
-pub trait CommitmentProtocol<U>: Debug {
-    /// Record `delivered` and return commit positions that became newly pre-committed.
-    fn on_deliver(
-        &mut self,
-        delivered: &EventId,
-        log: &EventGraph<CommitOp<U>>,
-        n_members: usize,
-    ) -> Vec<EventId>
-    where
-        U: Clone + Debug;
+//         self.pre_committed.extend(leaders);
 
-    fn latest_committed(&self) -> Option<&EventId>;
-}
+//         let mut closure = self.pre_committed.clone();
+//         loop {
+//             let before_len = closure.len();
+//             for pre_committed in closure.clone() {
+//                 if let Some(history) = self.partial_leaders_hist.get(&pre_committed) {
+//                     closure.extend(history.iter().cloned());
+//                 }
+//             }
 
-/// No-op commitment protocol, useful while wiring a sequential log without
-/// enabling the Omega majority algorithm.
-#[derive(Clone, Debug, Default)]
-pub struct NoCommitment;
+//             if closure.len() == before_len {
+//                 break;
+//             }
+//         }
 
-impl<U> CommitmentProtocol<U> for NoCommitment {
-    fn on_deliver(
-        &mut self,
-        _delivered: &EventId,
-        _log: &EventGraph<CommitOp<U>>,
-        _n_members: usize,
-    ) -> Vec<EventId>
-    where
-        U: Clone + Debug,
-    {
-        Vec::new()
-    }
+//         self.pre_committed = closure;
+//     }
+// }
 
-    fn latest_committed(&self) -> Option<&EventId> {
-        None
-    }
-}
+// impl<U> CommitmentProtocol<U> for MajorityOmegaCommitment {
+//     fn on_deliver(
+//         &mut self,
+//         delivered: &EventId,
+//         log: &EventGraph<CommitOp<U>>,
+//         n_members: usize,
+//     ) -> Vec<EventId>
+//     where
+//         U: Clone + Debug,
+//     {
+//         let quorum_size = Self::quorum_size(n_members);
 
-/// Majority/Omega commitment protocol.
-///
-/// The structure mirrors the ad-hoc prototype:
-/// - a potential leader keeps one boolean vote per replica that may validate it;
-/// - `partial_leaders_hist` records the partial leaders visible when the vertex
-///   was detected;
-/// - `pre_committed` is closed under that history relation.
-#[derive(Clone, Debug, Default)]
-pub struct MajorityOmegaCommitment {
-    potential_leaders: BTreeMap<EventId, BTreeMap<ReplicaIdOwned, bool>>,
-    partial_leaders_hist: BTreeMap<EventId, BTreeSet<EventId>>,
-    pre_committed: BTreeSet<EventId>,
-    latest_committed: Option<EventId>,
-}
+//         if let Some(votes) = self.is_potential_leader(delivered, log, quorum_size) {
+//             let partial_leaders = self.partial_leader_ids(quorum_size);
+//             self.partial_leaders_hist
+//                 .insert(delivered.clone(), partial_leaders);
+//             self.potential_leaders.insert(
+//                 delivered.clone(),
+//                 votes.into_iter().map(|replica| (replica, false)).collect(),
+//             );
+//         }
 
-impl MajorityOmegaCommitment {
-    pub fn potential_leaders(&self) -> &BTreeMap<EventId, BTreeMap<ReplicaIdOwned, bool>> {
-        &self.potential_leaders
-    }
+//         let previous_pre_committed = self.pre_committed.clone();
+//         self.update_leaders(delivered, log);
+//         self.check_pre_committed(quorum_size);
 
-    pub fn pre_committed(&self) -> &BTreeSet<EventId> {
-        &self.pre_committed
-    }
+//         let mut new_commits: Vec<EventId> = self
+//             .pre_committed
+//             .difference(&previous_pre_committed)
+//             .cloned()
+//             .collect();
+//         new_commits.sort();
 
-    fn quorum_size(n_members: usize) -> usize {
-        (n_members / 2) + 1
-    }
+//         if let Some(latest) = new_commits.last().cloned() {
+//             self.latest_committed = Some(latest);
+//         }
 
-    fn partial_leaders(
-        &self,
-        quorum_size: usize,
-    ) -> impl Iterator<Item = (&EventId, &BTreeMap<ReplicaIdOwned, bool>)> {
-        self.potential_leaders
-            .iter()
-            .filter(move |(_, votes)| votes.len() >= quorum_size)
-    }
+//         new_commits
+//     }
 
-    fn partial_leader_ids(&self, quorum_size: usize) -> BTreeSet<EventId> {
-        self.partial_leaders(quorum_size)
-            .map(|(event_id, _)| event_id.clone())
-            .collect()
-    }
-
-    fn is_potential_leader<U>(
-        &self,
-        position: &EventId,
-        log: &EventGraph<CommitOp<U>>,
-        quorum_size: usize,
-    ) -> Option<BTreeSet<ReplicaIdOwned>>
-    where
-        U: Clone + Debug,
-    {
-        let candidate = position.origin_id();
-        let votes = self.votes(candidate, log.ancestors(position), log);
-
-        (votes.len() >= quorum_size).then_some(votes)
-    }
-
-    fn votes<U>(
-        &self,
-        candidate: &ReplicaId,
-        positions: Vec<EventId>,
-        log: &EventGraph<CommitOp<U>>,
-    ) -> BTreeSet<ReplicaIdOwned>
-    where
-        U: Clone + Debug,
-    {
-        let mut replica_vote = BTreeMap::<ReplicaIdOwned, bool>::new();
-
-        for position in positions {
-            let Some(entry) = log.get(&position) else {
-                continue;
-            };
-
-            let sender = entry.id().origin_id().to_string();
-            let vote = entry.op().leader == candidate;
-            replica_vote
-                .entry(sender)
-                .and_modify(|current| *current = *current && vote)
-                .or_insert(vote);
-        }
-
-        replica_vote
-            .into_iter()
-            .filter_map(|(replica, voted)| voted.then_some(replica))
-            .collect()
-    }
-
-    fn update_leaders<U>(&mut self, delivered: &EventId, log: &EventGraph<CommitOp<U>>)
-    where
-        U: Clone + Debug,
-    {
-        let Some(entry) = log.get(delivered) else {
-            return;
-        };
-        let sender = delivered.origin_id().to_string();
-        let leader = entry.op().leader.clone();
-
-        for (candidate, votes) in &mut self.potential_leaders {
-            if *votes.get(&sender).unwrap_or(&true) {
-                continue;
-            }
-
-            if leader != candidate.origin_id() {
-                votes.remove(&sender);
-            } else if log.happens_before(candidate, delivered)
-                && let Some(vote) = votes.get_mut(&sender)
-            {
-                *vote = true;
-            }
-        }
-    }
-
-    fn check_pre_committed(&mut self, quorum_size: usize) {
-        let leaders: BTreeSet<EventId> = self
-            .partial_leaders(quorum_size)
-            .filter(|(_, votes)| votes.values().filter(|voted| **voted).count() >= quorum_size)
-            .map(|(event_id, _)| event_id.clone())
-            .collect();
-
-        self.pre_committed.extend(leaders);
-
-        let mut closure = self.pre_committed.clone();
-        loop {
-            let before_len = closure.len();
-            for pre_committed in closure.clone() {
-                if let Some(history) = self.partial_leaders_hist.get(&pre_committed) {
-                    closure.extend(history.iter().cloned());
-                }
-            }
-
-            if closure.len() == before_len {
-                break;
-            }
-        }
-
-        self.pre_committed = closure;
-    }
-}
-
-impl<U> CommitmentProtocol<U> for MajorityOmegaCommitment {
-    fn on_deliver(
-        &mut self,
-        delivered: &EventId,
-        log: &EventGraph<CommitOp<U>>,
-        n_members: usize,
-    ) -> Vec<EventId>
-    where
-        U: Clone + Debug,
-    {
-        let quorum_size = Self::quorum_size(n_members);
-
-        if let Some(votes) = self.is_potential_leader(delivered, log, quorum_size) {
-            let partial_leaders = self.partial_leader_ids(quorum_size);
-            self.partial_leaders_hist
-                .insert(delivered.clone(), partial_leaders);
-            self.potential_leaders.insert(
-                delivered.clone(),
-                votes.into_iter().map(|replica| (replica, false)).collect(),
-            );
-        }
-
-        let previous_pre_committed = self.pre_committed.clone();
-        self.update_leaders(delivered, log);
-        self.check_pre_committed(quorum_size);
-
-        let mut new_commits: Vec<EventId> = self
-            .pre_committed
-            .difference(&previous_pre_committed)
-            .cloned()
-            .collect();
-        new_commits.sort();
-
-        if let Some(latest) = new_commits.last().cloned() {
-            self.latest_committed = Some(latest);
-        }
-
-        new_commits
-    }
-
-    fn latest_committed(&self) -> Option<&EventId> {
-        self.latest_committed.as_ref()
-    }
-}
+//     fn latest_committed(&self) -> Option<&EventId> {
+//         self.latest_committed.as_ref()
+//     }
+// }

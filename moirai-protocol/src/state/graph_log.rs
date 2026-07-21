@@ -6,13 +6,12 @@ use crate::state::{log::IsLogTest, unstable_state::CausalReplay};
 use crate::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, Eval, EvalNested},
+        eval::{Eval, EvalNested},
         pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
-        query::{QueryOperation, Read},
+        query::QueryOperation,
     },
     event::{Event, id::EventId, lamport::Lamport},
     state::{
-        cache::CacheCell,
         effect_context::EffectContext,
         log::IsLog,
         stable_state::IsStableState,
@@ -27,7 +26,6 @@ where
 {
     stable: <O as PureCRDT>::StableState,
     unstable: EventGraph<O>,
-    read_cache: CacheCell<O::Value>,
 }
 
 impl<O> Clone for GraphLog<O>
@@ -39,7 +37,6 @@ where
         Self {
             stable: self.stable.clone(),
             unstable: self.unstable.clone(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -59,17 +56,14 @@ where
         Self {
             stable: <O as PureCRDT>::StableState::default(),
             unstable: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
         self.unstable.append(event);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.read_cache.invalidate();
         debug_assert!(self.unstable.graph().node_count() >= self.unstable.heads().len());
         match <O as UsesUnstableService<EventGraph<O>>>::causal_reset(
             version,
@@ -102,7 +96,6 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         self.unstable.stabilize(version);
     }
 }
@@ -115,7 +108,6 @@ where
         Self {
             stable: <O as PureCRDT>::StableState::default(),
             unstable: Default::default(),
-            read_cache: CacheCell::new(),
         }
     }
 }
@@ -136,21 +128,7 @@ where
         Self {
             stable,
             unstable: Default::default(),
-            read_cache: CacheCell::new(),
         }
-    }
-}
-
-impl<O> BorrowedRead for GraphLog<O>
-where
-    O: PureCRDT
-        + Clone
-        + Eval<Read<<O as PureCRDT>::Value>, EventGraph<O>>
-        + UsesUnstableService<EventGraph<O>>,
-{
-    fn read_ref(&self) -> &Self::Value {
-        self.read_cache
-            .get_or_compute(|| O::execute_query(Read::new(), &self.stable, &self.unstable))
     }
 }
 

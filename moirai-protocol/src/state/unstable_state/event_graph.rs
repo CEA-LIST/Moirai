@@ -10,7 +10,7 @@ use petgraph::{
     Direction,
     graph::NodeIndex,
     prelude::StableDiGraph,
-    visit::{Dfs, VisitMap, Visitable},
+    visit::{Dfs, Visitable},
 };
 
 use crate::{
@@ -254,15 +254,10 @@ impl<O> EventGraph<O>
 where
     O: Debug,
 {
-    pub fn contains_event(&self, event_id: &EventId) -> bool {
-        self.map.get_by_right(event_id).is_some()
-    }
-
     /// Return all ancestors of `event_id`, excluding `event_id` itself.
     ///
     /// Edges are stored from child to parent, so a DFS following outgoing edges
     /// walks backwards in causal time.
-    #[allow(clippy::mutable_key_type)]
     pub fn ancestors(&self, event_id: &EventId) -> Vec<EventId> {
         let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
             return Vec::new();
@@ -293,17 +288,15 @@ where
     }
 
     /// Return the inclusive causal cut of `event_id`.
-    #[allow(clippy::mutable_key_type)]
     pub fn causal_cut_ids(&self, event_id: &EventId) -> BTreeSet<EventId> {
         let mut cut: BTreeSet<EventId> = self.ancestors(event_id).into_iter().collect();
-        if self.contains_event(event_id) {
+        if self.map.get_by_right(event_id).is_some() {
             cut.insert(event_id.clone());
         }
         cut
     }
 
     /// Return the tagged operations in the inclusive causal cut of `event_id`.
-    #[allow(clippy::mutable_key_type)]
     pub fn causal_cut(&self, event_id: &EventId) -> Vec<&TaggedOp<O>> {
         let cut = self.causal_cut_ids(event_id);
         self.deterministic_causal_order(&cut)
@@ -317,49 +310,48 @@ where
     }
 
     /// Return `true` iff `ancestor` is causally before or equal to `descendant`.
-    pub fn happens_before_or_equal(&self, ancestor: &EventId, descendant: &EventId) -> bool {
-        if ancestor == descendant {
-            return self.contains_event(ancestor);
-        }
+    // pub fn happens_before_or_equal(&self, ancestor: &EventId, descendant: &EventId) -> bool {
+    //     if ancestor == descendant {
+    //         return self.contains_event(ancestor);
+    //     }
 
-        let (Some(ancestor_idx), Some(descendant_idx)) = (
-            self.map.get_by_right(ancestor).copied(),
-            self.map.get_by_right(descendant).copied(),
-        ) else {
-            return false;
-        };
+    //     let (Some(ancestor_idx), Some(descendant_idx)) = (
+    //         self.map.get_by_right(ancestor).copied(),
+    //         self.map.get_by_right(descendant).copied(),
+    //     ) else {
+    //         return false;
+    //     };
 
-        let mut stack = vec![descendant_idx];
-        let mut seen = self.graph.visit_map();
+    //     let mut stack = vec![descendant_idx];
+    //     let mut seen = self.graph.visit_map();
 
-        while let Some(node_idx) = stack.pop() {
-            if node_idx == ancestor_idx {
-                return true;
-            }
+    //     while let Some(node_idx) = stack.pop() {
+    //         if node_idx == ancestor_idx {
+    //             return true;
+    //         }
 
-            if !seen.visit(node_idx) {
-                continue;
-            }
+    //         if !seen.visit(node_idx) {
+    //             continue;
+    //         }
 
-            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
-        }
+    //         stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
+    //     }
 
-        false
-    }
+    //     false
+    // }
 
-    pub fn happens_before(&self, ancestor: &EventId, descendant: &EventId) -> bool {
-        ancestor != descendant && self.happens_before_or_equal(ancestor, descendant)
-    }
+    // pub fn happens_before(&self, ancestor: &EventId, descendant: &EventId) -> bool {
+    //     ancestor != descendant && self.happens_before_or_equal(ancestor, descendant)
+    // }
 
-    pub fn concurrent(&self, left: &EventId, right: &EventId) -> bool {
-        self.contains_event(left)
-            && self.contains_event(right)
-            && !self.happens_before_or_equal(left, right)
-            && !self.happens_before_or_equal(right, left)
-    }
+    // pub fn concurrent(&self, left: &EventId, right: &EventId) -> bool {
+    //     self.contains_event(left)
+    //         && self.contains_event(right)
+    //         && !self.happens_before_or_equal(left, right)
+    //         && !self.happens_before_or_equal(right, left)
+    // }
 
     /// Return the maximal event per replica inside `cut`.
-    #[allow(clippy::mutable_key_type)]
     pub fn tail_of_cut(&self, cut: &BTreeSet<EventId>) -> BTreeMap<ReplicaIdx, EventId> {
         let mut tail = BTreeMap::new();
         for event_id in cut {
@@ -378,7 +370,6 @@ where
     ///
     /// Parents always appear before children. Concurrent ready events are ordered by
     /// `EventId`, giving all replicas the same linear extension of the cut.
-    #[allow(clippy::mutable_key_type)]
     pub fn deterministic_causal_order(&self, cut: &BTreeSet<EventId>) -> Vec<EventId> {
         let mut emitted = BTreeSet::new();
         let mut remaining = cut.clone();
@@ -615,72 +606,5 @@ impl Display for Cutter {
 impl Default for Cutter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        broadcast::internalizer::Interner,
-        clock::version_vector::Version,
-        event::{Event, lamport::Lamport},
-        state::unstable_state::IsUnstableCore,
-    };
-
-    use super::*;
-
-    fn version(
-        origin_idx: ReplicaIdx,
-        resolver: crate::broadcast::internalizer::Resolver,
-        entries: &[(ReplicaIdx, usize)],
-    ) -> Version {
-        let mut version = Version::new(origin_idx, resolver);
-        for (idx, seq) in entries {
-            version.set_by_idx(*idx, *seq);
-        }
-        version
-    }
-
-    #[test]
-    fn causal_cut_is_returned_in_deterministic_topological_order() {
-        let mut interner = Interner::new();
-        let (a, _) = interner.intern("a");
-        let (b, _) = interner.intern("b");
-        let resolver = interner.resolver().clone();
-
-        let a1_version = version(a, resolver.clone(), &[(a, 1), (b, 0)]);
-        let b1_version = version(b, resolver.clone(), &[(a, 0), (b, 1)]);
-        let a2_version = version(a, resolver.clone(), &[(a, 2), (b, 1)]);
-
-        let a1 = EventId::new(a, 1, resolver.clone());
-        let b1 = EventId::new(b, 1, resolver.clone());
-        let a2 = EventId::new(a, 2, resolver.clone());
-
-        let mut graph = EventGraph::default();
-        graph.append(Event::new(
-            a1.clone(),
-            Lamport::from(&a1_version),
-            "a1",
-            a1_version,
-        ));
-        graph.append(Event::new(
-            b1.clone(),
-            Lamport::from(&b1_version),
-            "b1",
-            b1_version,
-        ));
-        graph.append(Event::new(
-            a2.clone(),
-            Lamport::from(&a2_version),
-            "a2",
-            a2_version,
-        ));
-
-        let cut = graph.causal_cut_ids(&a2);
-        let ordered = graph.deterministic_causal_order(&cut);
-
-        assert_eq!(ordered, vec![a1.clone(), b1.clone(), a2.clone()]);
-        assert!(graph.happens_before(&a1, &a2));
-        assert!(graph.concurrent(&a1, &b1));
     }
 }

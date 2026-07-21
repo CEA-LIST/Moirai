@@ -63,6 +63,7 @@ pub trait IsLog: Default + Debug {
     fn is_default(&self) -> bool;
 }
 
+// TODO: this is potentially garbage
 #[doc(hidden)]
 pub trait __DefaultSinkExpansion: IsLog {
     fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}

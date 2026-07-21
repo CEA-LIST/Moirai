@@ -11,10 +11,7 @@ use crate::{
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::IsTcsb,
     },
-    crdt::{
-        eval::{BorrowedRead, EvalNested},
-        query::QueryOperation,
-    },
+    crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
 };
@@ -31,41 +28,40 @@ pub trait IsReplica<L>
 where
     L: IsLog,
 {
-    /// Create a new replica with the given ID. The ID must be unique across all replicas in the system.
-    fn new(id: ReplicaIdOwned) -> Self;
+    /// Command is an abstraction of the inputs of the clients to the replica.
+    type Command;
+    type Payload;
+
     /// Return the ID of this replica.
     fn id(&self) -> &ReplicaId;
     /// Receive a message from the network.
-    fn receive(&mut self, message: EventMessage<L::Op>);
+    fn receive(&mut self, message: EventMessage<Self::Payload>);
     /// Receive a batch message from the network.
-    fn receive_batch(&mut self, message: BatchMessage<L::Op>);
+    fn receive_batch(&mut self, message: BatchMessage<Self::Payload>);
     /// Return a `since` message representing a request for all events causally after the given version.
     fn since(&self) -> SinceMessage;
-    /// Send an operation to the network. Returns the message to be sent, or `None` if the operation is not enabled.
-    fn send(&mut self, op: L::Op) -> Result<EventMessage<L::Op>, L::Rejection>;
+    /// Send a command to the network. Returns the message to be sent, or `None` if the command is not enabled.
+    fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection>;
     /// Return a batch message containing all events causally after the given version.
-    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
     /// Query the current state of the replica with the given query operation.
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where
         L: EvalNested<Q>;
-    /// Borrow the cached value of the replica state.
-    fn read_ref(&self) -> &L::Value
-    where
-        L: BorrowedRead;
     /// Update the state of the replica with the given operation.
-    fn update(&mut self, op: L::Op) -> Result<(), L::Rejection> {
-        self.send(op)?;
+    fn update(&mut self, cmd: Self::Command) -> Result<(), L::Rejection> {
+        self.send(cmd)?;
         Ok(())
     }
-    /// Bootstrap a new replica with the given ID and list of members. The ID must be included in the members list.
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
 }
 
 #[derive(Debug)]
 pub struct Replica<L, T> {
+    /// Replica ID (must be unique across all replicas in the system)
     id: ReplicaIdOwned,
+    /// Communication-layer
     tcsb: T,
+    /// Replica state
     state: L,
 }
 
@@ -74,15 +70,8 @@ where
     L: IsLog,
     T: IsTcsb<L::Op> + Debug,
 {
-    fn new(id: ReplicaIdOwned) -> Self {
-        let mut interner = Interner::new();
-        let idx = interner.intern(&id);
-        Self {
-            id,
-            tcsb: T::new(idx.0, interner),
-            state: L::new(),
-        }
-    }
+    type Command = L::Op;
+    type Payload = L::Op;
 
     fn receive(&mut self, message: EventMessage<L::Op>) {
         self.tcsb.receive(message);
@@ -98,15 +87,14 @@ where
         }
     }
 
-    fn send(&mut self, op: L::Op) -> Result<EventMessage<L::Op>, L::Rejection> {
-        self.state.is_enabled(&op)?;
-        let op = L::prepare(op);
-        let message = self.tcsb.send(op);
+    fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection> {
+        self.state.is_enabled(&cmd)?;
+        let message = self.tcsb.send(cmd);
         self.deliver(message.event().clone());
         Ok(message)
     }
 
-    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op> {
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload> {
         self.tcsb.pull(since)
     }
 
@@ -117,13 +105,6 @@ where
         self.state.eval(q)
     }
 
-    fn read_ref(&self) -> &L::Value
-    where
-        L: BorrowedRead,
-    {
-        self.state.read_ref()
-    }
-
     fn since(&self) -> SinceMessage {
         self.tcsb.since()
     }
@@ -131,8 +112,14 @@ where
     fn id(&self) -> &ReplicaId {
         &self.id
     }
+}
 
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+impl<L, T> Replica<L, T>
+where
+    L: IsLog,
+    T: IsTcsb<L::Op>,
+{
+    pub fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
         assert!(
             members.contains(&&(*id)),
             "Bootstrap replica ID {} must be included in members list {:?}",
@@ -147,16 +134,10 @@ where
         Self {
             id,
             tcsb: T::new(idx, interner),
-            state: L::new(),
+            state: L::default(),
         }
     }
-}
 
-impl<L, T> Replica<L, T>
-where
-    L: IsLog,
-    T: IsTcsb<L::Op>,
-{
     pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
         assert!(
             members.contains(&&(*id)),
@@ -177,6 +158,7 @@ where
     }
 
     fn deliver(&mut self, event: Event<L::Op>) {
+        // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)
         let mut sink = SinkCollector::new();
         let mut ctx = EffectContext::root("root", Some(&mut sink));
 
