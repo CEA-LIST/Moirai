@@ -12,11 +12,11 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::{CausalReplay, IsUnstableCore},
+    state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -65,6 +65,13 @@ where
     ) -> bool {
         !is_conc && matches!(new_tagged_op.op(), Counter::Reset)
     }
+}
+
+impl<V, U> UsesUnstableService<U> for Counter<V>
+where
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    U: IsUnstableCore<Self>,
+{
 }
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Counter<V>
@@ -120,7 +127,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         enum Choice {
             Inc,

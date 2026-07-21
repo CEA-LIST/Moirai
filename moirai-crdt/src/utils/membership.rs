@@ -1,7 +1,8 @@
 use moirai_protocol::{
     broadcast::{internalizer::InternalizeOp, tcsb::Tcsb},
-    crdt::pure_crdt::PureCRDT,
-    replica::{IsReplica, Replica},
+    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
+    event::tagged_op::TaggedOp,
+    replica::Replica,
     state::{log::IsLog, po_log::VecLog},
 };
 
@@ -20,7 +21,7 @@ pub type Quadruplet<O, L> = (
 
 pub fn twins<O>() -> Twins<O, VecLog<O>>
 where
-    O: PureCRDT + Clone + InternalizeOp,
+    O: PureCRDT + Clone + InternalizeOp + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b"]);
     let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b"]);
@@ -37,7 +38,10 @@ where
     (replica_a, replica_b)
 }
 
-pub fn triplet<O: PureCRDT + Clone + InternalizeOp>() -> Triplet<O, VecLog<O>> {
+pub fn triplet<O>() -> Triplet<O, VecLog<O>>
+where
+    O: PureCRDT + Clone + InternalizeOp + UsesUnstableService<Vec<TaggedOp<O>>>,
+{
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b", "c"]);
     let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b", "c"]);
     let replica_c = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("c".to_string(), &["a", "b", "c"]);

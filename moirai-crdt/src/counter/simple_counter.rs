@@ -12,10 +12,10 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
-    state::unstable_state::{CausalReplay, IsUnstableCore},
+    state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -44,6 +44,13 @@ where
 
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_R_WHEN_NOT_R: bool = true;
+}
+
+impl<V, U> UsesUnstableService<U> for Counter<V>
+where
+    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    U: IsUnstableCore<Self>,
+{
 }
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Counter<V>
@@ -87,7 +94,7 @@ impl OpGenerator for Counter<i32> {
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         let choice = ["Inc", "Dec"][rng.next_u32() as usize % 2];
         match choice {

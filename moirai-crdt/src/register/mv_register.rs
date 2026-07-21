@@ -6,7 +6,7 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -58,6 +58,13 @@ where
     ) -> bool {
         !is_conc
     }
+}
+
+impl<V, U> UsesUnstableService<U> for MVRegister<V>
+where
+    V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
+{
 }
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for MVRegister<V>

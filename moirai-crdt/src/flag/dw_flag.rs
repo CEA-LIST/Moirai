@@ -6,12 +6,14 @@ use deepsize::DeepSizeOf;
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
-    crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
-    event::{tag::Tag, tagged_op::TaggedOp},
-    state::{
-        stable_state::IsStableState,
-        unstable_state::{CausalReplay, IsUnstableCore},
+    crdt::{
+        eval::Eval,
+        pure_crdt::{PureCRDT, UsesUnstableService},
+        query::Read,
+        redundancy::RedundancyRelation,
     },
+    event::{tag::Tag, tagged_op::TaggedOp},
+    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -90,6 +92,8 @@ impl PureCRDT for DWFlag {
     }
 }
 
+impl<U> UsesUnstableService<U> for DWFlag where U: IsUnstableCore<Self> {}
+
 impl<U> Eval<Read<<Self as PureCRDT>::Value>, U> for DWFlag
 where
     U: IsUnstableCore<Self>,
@@ -132,7 +136,7 @@ impl OpGenerator for DWFlag {
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         let choice = rand::seq::IteratorRandom::choose(
             [DWFlag::Enable, DWFlag::Disable, DWFlag::Clear].iter(),

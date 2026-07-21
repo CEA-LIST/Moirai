@@ -6,14 +6,14 @@ use crate::{
     clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
-        pure_crdt::{CausalReset, PureCRDT},
+        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::QueryOperation,
         redundancy::RedundancyRelation,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
         cache::CachedLog, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
-        unstable_state::IsUnstableState,
+        unstable_state::IsUnstablePrune,
     },
     utils::hashmap::HashMap,
 };
@@ -37,8 +37,8 @@ where
 
 impl<O, U> IsLog for POLog<O, U>
 where
-    O: PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
+    O: PureCRDT + Clone + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
 {
     type Value = O::Value;
     type Op = O;
@@ -52,7 +52,7 @@ where
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        O::is_enabled(op, &self.stable, &self.unstable)
+        <O as UsesUnstableService<U>>::is_enabled(op, &self.stable, &self.unstable)
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
@@ -102,7 +102,12 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        match O::causal_reset(version, conservative, &self.stable, &self.unstable) {
+        match <O as UsesUnstableService<U>>::causal_reset(
+            version,
+            conservative,
+            &self.stable,
+            &self.unstable,
+        ) {
             CausalReset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);
@@ -146,7 +151,20 @@ where
 impl<O, U> POLog<O, U>
 where
     O: PureCRDT,
-    U: IsUnstableState<O>,
+{
+    pub fn stable(&self) -> &O::StableState {
+        &self.stable
+    }
+
+    pub fn unstable(&self) -> &U {
+        &self.unstable
+    }
+}
+
+impl<O, U> POLog<O, U>
+where
+    O: PureCRDT,
+    U: IsUnstablePrune<O>,
 {
     fn prune_redundant_ops(
         &mut self,
@@ -172,8 +190,8 @@ where
 impl<Q, O, U> EvalNested<Q> for POLog<O, U>
 where
     Q: QueryOperation,
-    O: PureCRDT + Clone + Debug + Eval<Q, U>,
-    U: IsUnstableState<O> + Default + Debug,
+    O: PureCRDT + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)

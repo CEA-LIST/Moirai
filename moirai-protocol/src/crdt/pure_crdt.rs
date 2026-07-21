@@ -6,7 +6,7 @@ use crate::{
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{
         stable_state::IsStableState,
-        unstable_state::{CausalReplay, IsUnstablePrune},
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
 
@@ -68,12 +68,17 @@ pub trait PureCRDT: Debug + Sized {
     {
         Self::execute_query(q, stable, unstable)
     }
+}
 
+pub trait UsesUnstableService<U>: PureCRDT
+where
+    U: IsUnstableCore<Self>,
+{
     fn causal_reset(
         _version: &Version,
         _conservative: bool,
         _stable: &Self::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &U,
     ) -> CausalReset<Self> {
         CausalReset::Prune
     }
@@ -82,7 +87,7 @@ pub trait PureCRDT: Debug + Sized {
     fn is_enabled(
         _op: &Self,
         _stable: &Self::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &U,
     ) -> Result<(), Self::Rejection> {
         Ok(())
     }

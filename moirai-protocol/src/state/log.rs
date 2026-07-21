@@ -14,7 +14,7 @@ use crate::{
 };
 #[cfg(feature = "test_utils")]
 use crate::{
-    crdt::pure_crdt::PureCRDT,
+    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
     state::{
         po_log::POLog,
         stable_state::IsStableState,
@@ -84,7 +84,7 @@ where
 #[cfg(feature = "test_utils")]
 impl<O, U> IsLogTest for POLog<O, U>
 where
-    O: PureCRDT + Clone + DeepSizeOf,
+    O: PureCRDT + Clone + DeepSizeOf + UsesUnstableService<U>,
     U: Default + Debug + DeepSizeOf + IsUnstableState<O>,
 {
     fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {

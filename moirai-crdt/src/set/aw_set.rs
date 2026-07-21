@@ -8,15 +8,12 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{Contains, QueryOperation, Read},
         redundancy::RedundancyRelation,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{
-        stable_state::IsStableState,
-        unstable_state::{CausalReplay, IsUnstableCore},
-    },
+    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
@@ -75,6 +72,13 @@ where
     ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
+}
+
+impl<V, U> UsesUnstableService<U> for AWSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self>,
+{
 }
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for AWSet<V>
@@ -162,7 +166,7 @@ impl OpGenerator for AWSet<usize> {
         rng: &mut impl Rng,
         config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl CausalReplay<Self>,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 

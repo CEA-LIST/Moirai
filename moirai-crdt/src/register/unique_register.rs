@@ -7,7 +7,7 @@ use moirai_protocol::{
     crdt::{
         eval::Eval,
         policy::Policy,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -66,6 +66,14 @@ where
             true
         }
     }
+}
+
+impl<V, P, U> UsesUnstableService<U> for Register<V, P>
+where
+    V: Default + Debug + Clone,
+    P: Policy,
+    U: IsUnstableCore<Self>,
+{
 }
 
 impl<V, P, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Register<V, P>

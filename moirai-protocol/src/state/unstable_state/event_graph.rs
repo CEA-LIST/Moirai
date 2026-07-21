@@ -29,7 +29,7 @@ pub struct EventGraph<O> {
     /// Directed Acyclic Graph (DAG) of update events.
     /// - Vertices are update operations tagged with their event id.
     /// - Arcs are direct causal predecessor relationships between events,
-    /// i.e., a directed edge from event A to event B indicates that A is a direct causal predecessor of B.
+    ///   i.e., a directed edge from event A to event B indicates that A is a direct causal predecessor of B.
     graph: StableDiGraph<TaggedOp<O>, ()>,
     /// Bidirectional map from graph's node index to event id
     map: BiMap<NodeIndex, EventId>,

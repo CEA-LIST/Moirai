@@ -631,10 +631,17 @@ macro_rules! typed_graph {
                 )
             }
 
+        }
+
+        impl<P, U> $crate::moirai_protocol::crdt::pure_crdt::UsesUnstableService<U> for $graph<P>
+        where
+            P: $crate::moirai_protocol::crdt::policy::Policy,
+            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<Self>,
+        {
             fn is_enabled(
                 op: &Self,
                 stable: &Self::StableState,
-                unstable: &impl $crate::moirai_protocol::state::unstable_state::CausalReplay<Self>,
+                unstable: &U,
             ) -> ::std::result::Result<(), Self::Rejection> {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;

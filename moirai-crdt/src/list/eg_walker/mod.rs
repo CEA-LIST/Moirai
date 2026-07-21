@@ -26,13 +26,13 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{op_generator::CausalOpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::Eval,
-        pure_crdt::{CausalReset, PureCRDT},
+        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
         redundancy::RedundancyRelation,
     },
@@ -631,7 +631,13 @@ where
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_STABILIZE: bool = true;
+}
 
+impl<V, U> UsesUnstableService<U> for List<V>
+where
+    V: Debug + Clone,
+    U: CausalReplay<Self>,
+{
     /// Validate positional operations against the current visible document.
     ///
     /// EgWalker operations store user-facing positions, so enablement is checked by
@@ -640,7 +646,7 @@ where
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
+        unstable: &U,
     ) -> Result<(), Self::Rejection> {
         let state = Self::execute_query(Read::new(), stable, unstable);
         match op {
@@ -671,7 +677,7 @@ where
         version: &Version,
         conservative: bool,
         stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
+        unstable: &U,
     ) -> CausalReset<Self> {
         if !conservative {
             return CausalReset::Prune;
@@ -789,13 +795,13 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for List<V>
+impl<V> CausalOpGenerator for List<V>
 where
     V: ValueGenerator + Debug + Clone,
 {
     type Config = ();
 
-    fn generate(
+    fn generate_causal(
         rng: &mut impl Rng,
         _config: &Self::Config,
         stable: &Self::StableState,

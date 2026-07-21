@@ -7,7 +7,7 @@ use crate::{
     clock::version_vector::Version,
     crdt::{
         eval::{BorrowedRead, Eval, EvalNested},
-        pure_crdt::{CausalReset, PureCRDT},
+        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId, lamport::Lamport},
@@ -46,7 +46,7 @@ where
 
 impl<O> IsLog for GraphLog<O>
 where
-    O: PureCRDT + Clone,
+    O: PureCRDT + Clone + UsesUnstableService<EventGraph<O>>,
 {
     type Value = <O as PureCRDT>::Value;
     type Op = O;
@@ -71,7 +71,12 @@ where
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         self.read_cache.invalidate();
         debug_assert!(self.unstable.graph().node_count() >= self.unstable.heads().len());
-        match O::causal_reset(version, conservative, &self.stable, &self.unstable) {
+        match <O as UsesUnstableService<EventGraph<O>>>::causal_reset(
+            version,
+            conservative,
+            &self.stable,
+            &self.unstable,
+        ) {
             CausalReset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);
@@ -93,7 +98,7 @@ where
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        O::is_enabled(op, &self.stable, &self.unstable)
+        <O as UsesUnstableService<EventGraph<O>>>::is_enabled(op, &self.stable, &self.unstable)
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -119,6 +124,14 @@ impl<O> GraphLog<O>
 where
     O: PureCRDT,
 {
+    pub fn stable(&self) -> &O::StableState {
+        &self.stable
+    }
+
+    pub fn unstable(&self) -> &EventGraph<O> {
+        &self.unstable
+    }
+
     pub fn from_stable(stable: <O as PureCRDT>::StableState) -> Self {
         Self {
             stable,
@@ -130,7 +143,10 @@ where
 
 impl<O> BorrowedRead for GraphLog<O>
 where
-    O: PureCRDT + Clone + Eval<Read<<O as PureCRDT>::Value>, EventGraph<O>>,
+    O: PureCRDT
+        + Clone
+        + Eval<Read<<O as PureCRDT>::Value>, EventGraph<O>>
+        + UsesUnstableService<EventGraph<O>>,
 {
     fn read_ref(&self) -> &Self::Value {
         self.read_cache
@@ -140,7 +156,7 @@ where
 
 impl<O, Q> EvalNested<Q> for GraphLog<O>
 where
-    O: PureCRDT + Clone + Eval<Q, EventGraph<O>>,
+    O: PureCRDT + Clone + Eval<Q, EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
     Q: QueryOperation,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
@@ -151,7 +167,7 @@ where
 #[cfg(feature = "test_utils")]
 impl<O> IsLogTest for GraphLog<O>
 where
-    O: PureCRDT + Clone + DeepSizeOf,
+    O: PureCRDT + Clone + DeepSizeOf + UsesUnstableService<EventGraph<O>>,
 {
     fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {
         &self.stable

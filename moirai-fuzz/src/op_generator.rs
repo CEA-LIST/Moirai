@@ -1,14 +1,13 @@
 use std::fmt::Debug;
 
-use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    crdt::pure_crdt::PureCRDT,
+    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
     state::{
         cache::CachedLog,
         graph_log::GraphLog,
-        log::{BoxedLog, IsLog, IsLogTest},
+        log::{BoxedLog, IsLog},
         po_log::POLog,
-        unstable_state::{CausalReplay, IsUnstableState},
+        unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune, event_graph::EventGraph},
     },
 };
 use rand::Rng;
@@ -20,8 +19,35 @@ pub trait OpGenerator: PureCRDT {
         rng: &mut impl Rng,
         config: &Self::Config,
         stable: &Self::StableState,
+        unstable: &impl IsUnstableCore<Self>,
+    ) -> Self;
+}
+
+pub trait CausalOpGenerator: PureCRDT {
+    type Config: Default;
+
+    fn generate_causal(
+        rng: &mut impl Rng,
+        config: &Self::Config,
+        stable: &Self::StableState,
         unstable: &impl CausalReplay<Self>,
     ) -> Self;
+}
+
+impl<O> CausalOpGenerator for O
+where
+    O: OpGenerator,
+{
+    type Config = <O as OpGenerator>::Config;
+
+    fn generate_causal(
+        rng: &mut impl Rng,
+        config: &Self::Config,
+        stable: &Self::StableState,
+        unstable: &impl CausalReplay<Self>,
+    ) -> Self {
+        O::generate(rng, config, stable, unstable)
+    }
 }
 
 pub trait OpGeneratorNested: IsLog {
@@ -30,17 +56,22 @@ pub trait OpGeneratorNested: IsLog {
 
 impl<O> OpGeneratorNested for GraphLog<O>
 where
-    O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
+    O: PureCRDT + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
 {
     fn generate(&self, rng: &mut impl Rng) -> <GraphLog<O> as IsLog>::Op {
-        O::generate(rng, &O::Config::default(), self.stable(), self.unstable())
+        O::generate_causal(
+            rng,
+            &<O as CausalOpGenerator>::Config::default(),
+            self.stable(),
+            self.unstable(),
+        )
     }
 }
 
 impl<O, U> OpGeneratorNested for POLog<O, U>
 where
-    O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
-    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
+    O: PureCRDT + Clone + OpGenerator + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
 {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op {
         O::generate(

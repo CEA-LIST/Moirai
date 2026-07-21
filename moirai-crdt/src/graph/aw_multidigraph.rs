@@ -14,11 +14,11 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
+        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::{CausalReplay, IsUnstableCore},
+    state::unstable_state::IsUnstableCore,
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -117,11 +117,18 @@ where
     ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
+}
 
+impl<V, E, U> UsesUnstableService<U> for Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<Self>,
+{
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
+        unstable: &U,
     ) -> Result<(), Self::Rejection> {
         let state = Self::execute_query(Read::new(), stable, unstable);
 
@@ -246,7 +253,7 @@ where
         rng: &mut impl rand::Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
+        unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
