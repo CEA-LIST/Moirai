@@ -2,6 +2,9 @@ use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
 use crate::event::{id::EventId, tag::Tag, tagged_op::TaggedOp};
 
+// TODO: rename this to CausalOrderPolicy?
+
+/// A policy defines a deterministic ordering of events in the system.
 pub trait Policy: Ord + Clone + Debug {
     fn compare(a: &Tag, b: &Tag) -> Ordering;
 }

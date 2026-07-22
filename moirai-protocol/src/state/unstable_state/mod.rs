@@ -1,3 +1,5 @@
+#![allow(clippy::mutable_key_type)]
+
 pub mod event_graph;
 pub mod hashmap;
 pub mod vec;
@@ -6,7 +8,9 @@ use std::fmt::Debug;
 
 use crate::{
     clock::version_vector::Version,
+    crdt::policy::Policy,
     event::{Event, id::EventId, tagged_op::TaggedOp},
+    utils::hashmap::HashSet,
 };
 
 /// Essential services for an unstable state implementation.
@@ -47,12 +51,18 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// # Note
     /// The direct parents of an event are those events that are immediately causally before it, i.e.,
     /// an event e' is the direct parent of event e if e' < e and there is no event e'' such that e' < e'' < e.
-    fn parents(&self, event_id: &EventId) -> Vec<EventId>;
+    fn direct_parents(&self, event_id: &EventId) -> Vec<EventId>;
+    fn parents(&self, event_id: &EventId) -> Vec<EventId> {
+        self.direct_parents(event_id)
+    }
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
-    /// Returns a list of references to tagged operations that are predecessors of the given event ID.
-    fn predecessors_by_id(&self, event_id: &EventId) -> Vec<&TaggedOp<O>>;
+    /// Returns the inclusive causal past of `event_id` in deterministic topological order.
+    /// The policy only breaks ties between events whose parents have already been emitted.
+    fn predecessors_by_id<P: Policy>(&self, event_id: &EventId) -> Vec<EventId>;
+    /// Returns the inclusive causal past of `event_id` without imposing a deterministic order.
+    fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.

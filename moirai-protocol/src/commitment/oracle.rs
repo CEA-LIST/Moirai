@@ -8,6 +8,7 @@ pub trait IsOracle: Debug + Clone {
 
 #[derive(Clone, Debug)]
 pub struct Omega {
+    // TODO: use replica idx
     leader: ReplicaIdOwned,
 }
 
@@ -16,6 +17,22 @@ impl Omega {
         Omega {
             leader: ReplicaIdOwned::default(),
         }
+    }
+
+    pub fn with_leader(leader: impl Into<ReplicaIdOwned>) -> Omega {
+        Omega {
+            leader: leader.into(),
+        }
+    }
+
+    pub fn set_leader(&mut self, leader: impl Into<ReplicaIdOwned>) {
+        self.leader = leader.into();
+    }
+}
+
+impl Default for Omega {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

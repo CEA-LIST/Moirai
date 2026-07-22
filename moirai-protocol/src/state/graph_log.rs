@@ -1,6 +1,7 @@
+use std::fmt::Debug;
+
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-use std::fmt::Debug;
 
 #[cfg(feature = "test_utils")]
 use crate::state::{log::IsLogTest, unstable_state::CausalReplay};

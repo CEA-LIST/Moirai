@@ -351,9 +351,8 @@ impl PartialOrd for Version {
 
 #[cfg(test)]
 mod tests {
-    use crate::broadcast::internalizer::Interner;
-
     use super::*;
+    use crate::broadcast::internalizer::Interner;
 
     #[test]
     fn concurrent_clock() {

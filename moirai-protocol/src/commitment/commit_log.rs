@@ -1,12 +1,22 @@
+#![allow(clippy::mutable_key_type)]
+
 use crate::{
     clock::version_vector::Version,
     commitment::commit_op::CommitOp,
-    crdt::sequential::SequentialDataType,
-    event::Event,
-    state::{
-        effect_context::EffectContext, event_graph::EventGraph, log::IsLog,
-        unstable_state::IsUnstableCore,
+    crdt::{
+        eval::EvalNested,
+        policy::{LwwPolicy, Policy},
+        query::QueryOperation,
+        sequential::{ExecuteQuery, SequentialDataType},
     },
+    event::{Event, id::EventId},
+    state::{
+        effect_context::EffectContext,
+        event_graph::EventGraph,
+        log::IsLog,
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
+    },
+    utils::hashmap::HashSet,
 };
 
 #[derive(Debug, Clone)]
@@ -14,7 +24,9 @@ pub struct CommitLog<A>
 where
     A: SequentialDataType,
 {
-    commited: A,
+    /// Committed operations that have been applied to the sequential state
+    committed: A,
+    /// Directed Acyclic Graph (DAG) of operations that have been delivered but not yet committed
     unstable: EventGraph<CommitOp<A::Update>>,
 }
 
@@ -24,7 +36,7 @@ where
 {
     fn default() -> Self {
         Self {
-            commited: A::default(),
+            committed: A::default(),
             unstable: EventGraph::default(),
         }
     }
@@ -39,26 +51,21 @@ where
     type Rejection = A::Rejection;
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        //   let state = self.materialize()?;
-        //   state.is_enabled(&op.update)
-        todo!()
+        self.replay().is_enabled(&op.update)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         self.unstable.append(event);
-        // commitment protocol updates here
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        todo!()
-    }
+    // TODO: How to use both committment and causal stability?
+    fn stabilize(&mut self, _version: &Version) {}
 
-    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        todo!()
-    }
+    // TODO: useless?
+    fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {}
 
     fn is_default(&self) -> bool {
-        todo!()
+        self.unstable.is_empty()
     }
 }
 
@@ -70,7 +77,48 @@ where
         &self.unstable
     }
 
-    pub fn unstable_mut(&mut self) -> &mut EventGraph<CommitOp<A::Update>> {
-        &mut self.unstable
+    /// Commit every operation from the unstable state that is causally before the given frontier.
+    /// Returns the list of committed event IDs.
+    pub fn commit_frontier<P: Policy>(&mut self, frontier: &HashSet<EventId>) -> Vec<EventId> {
+        let predecessors = self.unstable.predecessors_by_ids::<P>(frontier);
+        self.commit(predecessors)
+    }
+
+    /// Commit the operations whose event IDs are in the given list, in the same order as the list.
+    /// Returns the list of committed event IDs.
+    fn commit(&mut self, ordered: Vec<EventId>) -> Vec<EventId> {
+        let mut committed = Vec::new();
+
+        for id in ordered {
+            if let Some(entry) = self.unstable.get(&id) {
+                self.committed.apply(&entry.op().update);
+                self.unstable.remove(&id);
+                committed.push(id);
+            }
+        }
+
+        committed
+    }
+
+    /// Replay the operations from the log on the committed state to produce the current state.
+    /// It applies the operations from the unstable state to the committed state, sorted in a deterministic topological order.
+    fn replay(&self) -> A {
+        let mut state = self.committed.clone();
+
+        for (_, tagged_op) in self.unstable.linearize::<LwwPolicy>() {
+            state.apply(&tagged_op.op().update);
+        }
+
+        state
+    }
+}
+
+impl<Q, A> EvalNested<Q> for CommitLog<A>
+where
+    Q: QueryOperation,
+    A: SequentialDataType + ExecuteQuery<Q>,
+{
+    fn execute_query(&self, q: Q) -> Q::Response {
+        self.replay().execute_query(q)
     }
 }

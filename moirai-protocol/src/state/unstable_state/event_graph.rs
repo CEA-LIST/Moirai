@@ -1,6 +1,10 @@
+#![allow(clippy::mutable_key_type)]
+
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     fmt::{Debug, Display},
+    marker::PhantomData,
 };
 
 use bimap::BiMap;
@@ -15,12 +19,13 @@ use petgraph::{
 
 use crate::{
     clock::version_vector::Version,
-    event::{Event, id::EventId, tagged_op::TaggedOp},
+    crdt::policy::Policy,
+    event::{Event, id::EventId, tag::Tag, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
-    utils::hashmap::HashSet,
+    utils::hashmap::{HashMap, HashSet},
 };
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -152,7 +157,7 @@ impl<O> IsUnstableCausal<O> for EventGraph<O>
 where
     O: Debug + Clone,
 {
-    fn parents(&self, event_id: &EventId) -> Vec<EventId> {
+    fn direct_parents(&self, event_id: &EventId) -> Vec<EventId> {
         let maybe_idx = self.map.get_by_right(event_id);
         if let Some(idx) = maybe_idx {
             self.graph
@@ -171,26 +176,12 @@ where
             .collect()
     }
 
-    fn predecessors_by_id(&self, event_id: &EventId) -> Vec<&TaggedOp<O>> {
-        let maybe_idx = self.map.get_by_right(event_id);
+    fn predecessors_by_id<P: Policy>(&self, event_id: &EventId) -> Vec<EventId> {
+        self.predecessors_by_id_ordered::<P>(event_id)
+    }
 
-        if let Some(idx) = maybe_idx {
-            let mut collected = Vec::new();
-            let mut dfs = Dfs::new(&self.graph, *idx);
-
-            while let Some(nx) = dfs.next(&self.graph) {
-                let tagged_op = self.graph.node_weight(nx).unwrap();
-                collected.push((nx, tagged_op));
-            }
-
-            collected.sort_by_key(|(node_idx, _)| node_idx.index());
-            collected
-                .into_iter()
-                .map(|(_, tagged_op)| tagged_op)
-                .collect()
-        } else {
-            vec![]
-        }
+    fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId> {
+        self.predecessor_set_by_id(event_id)
     }
 }
 
@@ -252,155 +243,104 @@ impl<O> Default for EventGraph<O> {
 
 impl<O> EventGraph<O>
 where
-    O: Debug,
+    O: Debug + Clone,
 {
-    /// Return all ancestors of `event_id`, excluding `event_id` itself.
-    ///
-    /// Edges are stored from child to parent, so a DFS following outgoing edges
-    /// walks backwards in causal time.
-    pub fn ancestors(&self, event_id: &EventId) -> Vec<EventId> {
-        let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
-            return Vec::new();
-        };
-
-        let mut ancestors = Vec::new();
-        let mut seen = BTreeSet::new();
-        let mut stack: Vec<NodeIndex> = self
-            .graph
-            .neighbors_directed(start_idx, Direction::Outgoing)
-            .collect();
-
-        while let Some(node_idx) = stack.pop() {
-            let Some(id) = self.map.get_by_left(&node_idx).cloned() else {
-                continue;
-            };
-
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-
-            ancestors.push(id);
-            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
-        }
-
-        ancestors.sort();
-        ancestors
-    }
-
-    /// Return the inclusive causal cut of `event_id`.
-    pub fn causal_cut_ids(&self, event_id: &EventId) -> BTreeSet<EventId> {
-        let mut cut: BTreeSet<EventId> = self.ancestors(event_id).into_iter().collect();
-        if self.map.get_by_right(event_id).is_some() {
-            cut.insert(event_id.clone());
-        }
-        cut
-    }
-
-    /// Return the tagged operations in the inclusive causal cut of `event_id`.
-    pub fn causal_cut(&self, event_id: &EventId) -> Vec<&TaggedOp<O>> {
-        let cut = self.causal_cut_ids(event_id);
-        self.deterministic_causal_order(&cut)
-            .into_iter()
-            .filter_map(|id| {
+    /// Return all retained events in deterministic causal order.
+    pub fn linearize<P: Policy>(&self) -> Vec<(EventId, &TaggedOp<O>)> {
+        let nodes = self.graph.node_indices().collect::<HashSet<_>>();
+        CausalOrderIter::<O, P>::new(self, nodes)
+            .filter_map(|(node_idx, tagged_op)| {
                 self.map
-                    .get_by_right(&id)
-                    .and_then(|node_idx| self.graph.node_weight(*node_idx))
+                    .get_by_left(&node_idx)
+                    .cloned()
+                    .map(|event_id| (event_id, tagged_op))
             })
             .collect()
     }
 
-    /// Return `true` iff `ancestor` is causally before or equal to `descendant`.
-    // pub fn happens_before_or_equal(&self, ancestor: &EventId, descendant: &EventId) -> bool {
-    //     if ancestor == descendant {
-    //         return self.contains_event(ancestor);
-    //     }
+    /// Return the inclusive causal past of `event_id` in one deterministic topological order.
+    fn predecessors_by_id_ordered<P: Policy>(&self, event_id: &EventId) -> Vec<EventId> {
+        let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
+            return Vec::new();
+        };
 
-    //     let (Some(ancestor_idx), Some(descendant_idx)) = (
-    //         self.map.get_by_right(ancestor).copied(),
-    //         self.map.get_by_right(descendant).copied(),
-    //     ) else {
-    //         return false;
-    //     };
-
-    //     let mut stack = vec![descendant_idx];
-    //     let mut seen = self.graph.visit_map();
-
-    //     while let Some(node_idx) = stack.pop() {
-    //         if node_idx == ancestor_idx {
-    //             return true;
-    //         }
-
-    //         if !seen.visit(node_idx) {
-    //             continue;
-    //         }
-
-    //         stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
-    //     }
-
-    //     false
-    // }
-
-    // pub fn happens_before(&self, ancestor: &EventId, descendant: &EventId) -> bool {
-    //     ancestor != descendant && self.happens_before_or_equal(ancestor, descendant)
-    // }
-
-    // pub fn concurrent(&self, left: &EventId, right: &EventId) -> bool {
-    //     self.contains_event(left)
-    //         && self.contains_event(right)
-    //         && !self.happens_before_or_equal(left, right)
-    //         && !self.happens_before_or_equal(right, left)
-    // }
-
-    /// Return the maximal event per replica inside `cut`.
-    pub fn tail_of_cut(&self, cut: &BTreeSet<EventId>) -> BTreeMap<ReplicaIdx, EventId> {
-        let mut tail = BTreeMap::new();
-        for event_id in cut {
-            tail.entry(event_id.idx())
-                .and_modify(|current: &mut EventId| {
-                    if *current < *event_id {
-                        *current = event_id.clone();
-                    }
-                })
-                .or_insert_with(|| event_id.clone());
-        }
-        tail
+        let nodes = self.predecessor_nodes_inclusive(start_idx);
+        self.linearize_nodes_by::<P>(nodes)
+            .into_iter()
+            .filter_map(|node_idx| self.map.get_by_left(&node_idx).cloned())
+            .collect()
     }
 
-    /// Deterministically sort a cut in topological order.
+    /// Return the inclusive causal past of `event_id` as an unordered set.
     ///
-    /// Parents always appear before children. Concurrent ready events are ordered by
-    /// `EventId`, giving all replicas the same linear extension of the cut.
-    pub fn deterministic_causal_order(&self, cut: &BTreeSet<EventId>) -> Vec<EventId> {
-        let mut emitted = BTreeSet::new();
-        let mut remaining = cut.clone();
-        let mut ordered = Vec::with_capacity(cut.len());
+    /// This is cheaper than `predecessors_by_id` when callers only need
+    /// membership tests and do not need a deterministic topological order.
+    pub fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId> {
+        let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
+            return HashSet::default();
+        };
 
-        while !remaining.is_empty() {
-            let ready = remaining.iter().find(|event_id| {
-                let Some(node_idx) = self.map.get_by_right(event_id).copied() else {
-                    return false;
-                };
+        let mut event_ids = HashSet::default();
+        let mut stack = vec![start_idx];
 
-                self.graph
-                    .neighbors_directed(node_idx, Direction::Outgoing)
-                    .filter_map(|parent_idx| self.map.get_by_left(&parent_idx))
-                    .all(|parent_id| !cut.contains(parent_id) || emitted.contains(parent_id))
-            });
-
-            let Some(event_id) = ready.cloned() else {
-                debug_assert!(
-                    false,
-                    "event graph cut contains a cycle or references missing events"
-                );
-                break;
+        while let Some(node_idx) = stack.pop() {
+            let Some(event_id) = self.map.get_by_left(&node_idx) else {
+                continue;
             };
 
-            remaining.remove(&event_id);
-            emitted.insert(event_id.clone());
-            ordered.push(event_id);
+            if !event_ids.insert(event_id.clone()) {
+                continue;
+            }
+
+            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
         }
 
-        ordered
+        event_ids
+    }
+
+    /// Return the union of the inclusive causal pasts of `event_ids` in one
+    /// deterministic topological order.
+    pub fn predecessors_by_ids<P: Policy>(&self, event_ids: &HashSet<EventId>) -> Vec<EventId> {
+        let mut nodes = HashSet::default();
+
+        for event_id in event_ids {
+            if let Some(start_idx) = self.map.get_by_right(event_id).copied() {
+                self.collect_predecessor_nodes_inclusive(start_idx, &mut nodes);
+            }
+        }
+
+        self.linearize_nodes_by::<P>(nodes)
+            .into_iter()
+            .filter_map(|node_idx| self.map.get_by_left(&node_idx).cloned())
+            .collect()
+    }
+
+    fn predecessor_nodes_inclusive(&self, start_idx: NodeIndex) -> HashSet<NodeIndex> {
+        let mut nodes = HashSet::default();
+        self.collect_predecessor_nodes_inclusive(start_idx, &mut nodes);
+        nodes
+    }
+
+    fn collect_predecessor_nodes_inclusive(
+        &self,
+        start_idx: NodeIndex,
+        nodes: &mut HashSet<NodeIndex>,
+    ) {
+        let mut stack = vec![start_idx];
+
+        while let Some(node_idx) = stack.pop() {
+            if !nodes.insert(node_idx) {
+                continue;
+            }
+
+            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
+        }
+    }
+
+    fn linearize_nodes_by<P: Policy>(&self, nodes: HashSet<NodeIndex>) -> Vec<NodeIndex> {
+        CausalOrderIter::<_, P>::new(self, nodes)
+            .map(|(node_idx, _)| node_idx)
+            .collect()
     }
 
     /// Find the immediate predecessors of the given version in the DAG.
@@ -458,30 +398,157 @@ where
         &self.graph
     }
 
-    /// Find the nearest cut (downward) to the given version.
-    pub fn nearest_cut(&self, _version: &Version) -> Version {
-        todo!()
-    }
-
-    /// V is a critical version iff every event in the
-    /// graph is either in V, or an ancestor of some event in V, or
-    /// happened after all of the events in V
-    ///
-    /// Fix any topological order
-    /// τ=(e_1,...,e_n).
-    /// A critical prefix P has a very useful property:
-    /// If P is critical, then P appears as a prefix in every topological order.
-    /// So we can search critical versions as indices i in a topological order:
-    /// P_i = {e_1,...,e_i}.
-    /// Then P_i is critical iff every event inside P_i happens-before every event outside P_i.
-    /// Equivalently, P_i is critical iff there is no concurrency crossing the boundary.
-    pub fn is_critical_cut(&self, _event_ids: &[EventId]) -> bool {
-        todo!()
-    }
-
     #[allow(clippy::mutable_key_type)]
     pub fn heads(&self) -> &HashSet<EventId> {
         &self.heads
+    }
+}
+
+/// Kahn-style topological iterator over a subset of the event graph.
+///
+/// The graph stores edges from child to parent (child -> parent). For replay we need the opposite
+/// direction: every parent must be linearized before its children. The iterator therefore tracks, for
+/// each included node, how many included parents are still not emitted. A node becomes "ready" when
+/// that count reaches zero.
+pub struct CausalOrderIter<'a, O, P>
+where
+    O: Debug + Clone,
+    P: Policy,
+{
+    event_graph: &'a EventGraph<O>,
+    /// Node subset to linearize
+    included: HashSet<NodeIndex>,
+    /// Number of included parents that still need to be emitted for each included node.
+    remaining_parents: HashMap<NodeIndex, usize>,
+    /// Nodes whose included parents have all been emitted, ordered by the policy tie-breaker.
+    ready: BTreeSet<ReadyNode<P>>,
+}
+
+impl<'a, O, P> CausalOrderIter<'a, O, P>
+where
+    O: Debug + Clone,
+    P: Policy,
+{
+    fn new(event_graph: &'a EventGraph<O>, included: HashSet<NodeIndex>) -> Self {
+        let mut remaining_parents = HashMap::default();
+        let mut ready = BTreeSet::new();
+
+        for node_idx in included.iter().copied() {
+            // Outgoing edges point to causal parents. Only parents that are inside the requested
+            // subset block this node from being emitted.
+            let parent_count = event_graph
+                .graph
+                .neighbors_directed(node_idx, Direction::Outgoing)
+                .filter(|parent_idx| included.contains(parent_idx))
+                .count();
+
+            remaining_parents.insert(node_idx, parent_count);
+
+            // Roots of the induced subgraph have no remaining included parents, so they can be
+            // emitted immediately.
+            if parent_count == 0
+                && let Some(tagged_op) = event_graph.graph.node_weight(node_idx)
+            {
+                ready.insert(ReadyNode::new(node_idx, tagged_op.tag().clone()));
+            }
+        }
+
+        Self {
+            event_graph,
+            included,
+            remaining_parents,
+            ready,
+        }
+    }
+}
+
+impl<'a, O, P> Iterator for CausalOrderIter<'a, O, P>
+where
+    O: Debug + Clone,
+    P: Policy,
+{
+    type Item = (NodeIndex, &'a TaggedOp<O>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Pick the next causally ready node. If several nodes are ready, applies
+        // the chosen policy and then deterministic fallbacks
+        let ready = self.ready.pop_first()?;
+        let tagged_op = self.event_graph.graph.node_weight(ready.node_idx)?;
+
+        // Incoming edges are causal children
+        for child_idx in self
+            .event_graph
+            .graph
+            .neighbors_directed(ready.node_idx, Direction::Incoming)
+        {
+            if !self.included.contains(&child_idx) {
+                continue;
+            }
+
+            let Some(parent_count) = self.remaining_parents.get_mut(&child_idx) else {
+                continue;
+            };
+
+            debug_assert!(*parent_count > 0);
+            *parent_count = parent_count.saturating_sub(1);
+
+            if *parent_count == 0
+                && let Some(child_tagged_op) = self.event_graph.graph.node_weight(child_idx)
+            {
+                self.ready
+                    .insert(ReadyNode::new(child_idx, child_tagged_op.tag().clone()));
+            }
+        }
+
+        Some((ready.node_idx, tagged_op))
+    }
+}
+
+/// Sort key stored in the ready frontier of `CausalOrderIter`.
+///
+/// `BTreeSet` requires owned values with a stable `Ord` implementation. We therefore copy the
+/// node's `Tag` into the ready set when the node becomes ready. The tag is immutable once the event
+/// is inserted in the graph, so the ordering remains stable while the node waits in the set.
+#[derive(Clone)]
+struct ReadyNode<P> {
+    node_idx: NodeIndex,
+    tag: Tag,
+    _marker: PhantomData<P>,
+}
+
+impl<P> ReadyNode<P> {
+    fn new(node_idx: NodeIndex, tag: Tag) -> Self {
+        Self {
+            node_idx,
+            tag,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<P> Eq for ReadyNode<P> {}
+
+impl<P> PartialEq for ReadyNode<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.node_idx == other.node_idx
+    }
+}
+
+impl<P> Ord for ReadyNode<P>
+where
+    P: Policy,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        P::compare(&self.tag, &other.tag)
+    }
+}
+
+impl<P> PartialOrd for ReadyNode<P>
+where
+    P: Policy,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(Ord::cmp(self, other))
     }
 }
 
