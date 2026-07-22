@@ -1,15 +1,36 @@
-use std::collections::BTreeSet;
+use std::{cmp::Ordering, collections::BTreeSet};
 
 use moirai_protocol::event::id::EventId;
 
 use crate::list::eg_walker::presence_state::PreparePresence;
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ItemKey {
     /// Character that belongs to the stable baseline materialized outside the event graph.
     Stable(usize),
     /// Character or life dot introduced by an unstable event.
     Event(EventId),
+}
+
+impl Ord for ItemKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Stable(left), Self::Stable(right)) => left.cmp(right),
+            (Self::Stable(_), Self::Event(_)) => Ordering::Less,
+            (Self::Event(_), Self::Stable(_)) => Ordering::Greater,
+            (Self::Event(left), Self::Event(right)) => left
+                .origin_id()
+                .cmp(right.origin_id())
+                .then_with(|| left.seq().cmp(&right.seq()))
+                .then_with(|| left.disambiguator().cmp(&right.disambiguator())),
+        }
+    }
+}
+
+impl PartialOrd for ItemKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(Ord::cmp(self, other))
+    }
 }
 
 /// Identity of the list item used for anchoring and lookup.

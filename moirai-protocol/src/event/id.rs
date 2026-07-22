@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     fmt::Display,
     hash::{Hash, Hasher},
 };
@@ -114,26 +113,6 @@ impl Hash for EventId {
     }
 }
 
-// TODO: Should be removed and replaced by a policy
-
-impl PartialOrd for EventId {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for EventId {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.origin_id().cmp(other.origin_id()) {
-            Ordering::Equal => match self.seq.cmp(&other.seq) {
-                Ordering::Equal => self.disambiguator.cmp(&other.disambiguator),
-                ord => ord,
-            },
-            ord => ord,
-        }
-    }
-}
-
 impl PartialEq for EventId {
     fn eq(&self, other: &Self) -> bool {
         self.origin_id() == other.origin_id()
@@ -147,35 +126,6 @@ impl Eq for EventId {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn disambiguator_is_part_of_identity_but_not_causality() {
-        let mut interner = Interner::new();
-        let (idx, _) = interner.intern(&"a".to_string());
-        let base = EventId::new(idx, 54, interner.resolver().clone());
-        let derived_1 =
-            EventId::new_with_disambiguator(idx, 54, interner.resolver().clone(), Some(1));
-        let derived_2 =
-            EventId::new_with_disambiguator(idx, 54, interner.resolver().clone(), Some(2));
-
-        assert_ne!(base, derived_1);
-        assert_ne!(derived_1, derived_2);
-        assert!(base < derived_1);
-        assert!(derived_1 < derived_2);
-
-        let mut ids = std::collections::HashSet::new();
-        ids.insert(base.clone());
-        ids.insert(derived_1.clone());
-        ids.insert(derived_2.clone());
-        assert_eq!(ids.len(), 3);
-
-        let mut version = Version::new(idx, interner.resolver().clone());
-        version.set_by_idx(idx, 54);
-        assert!(base.is_predecessor_of(&version));
-        assert!(derived_1.is_predecessor_of(&version));
-        assert!(derived_2.is_predecessor_of(&version));
-        assert_eq!(format!("{}", derived_2), "(a:54#2)");
-    }
 
     #[cfg(feature = "test_utils")]
     #[test]

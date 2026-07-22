@@ -38,6 +38,8 @@ pub trait IsTcsb<O> {
     fn is_stable(&mut self) -> Option<&Version>;
     /// Return the replica IDs of all members in the system
     fn members(&self) -> Vec<ReplicaIdOwned>;
+    /// Return the number of members in the system.
+    fn members_len(&self) -> usize;
 }
 
 #[derive(Debug)]
@@ -172,6 +174,10 @@ where
 
     fn members(&self) -> Vec<ReplicaIdOwned> {
         self.interner.resolver().into_vec()
+    }
+
+    fn members_len(&self) -> usize {
+        self.interner.resolver().len()
     }
 }
 
@@ -311,7 +317,7 @@ where
                 event.id().seq(),
                 self.interner.resolver().clone(),
             );
-            let version = self.rebuild_version(event_origin_idx, event.version());
+            let version = self.internalize_version_from(event_origin_idx, from, event.version());
             let op = event.op().clone().internalize(&self.interner);
             let e = Event::new(event_id, *event.lamport(), op, version);
             events.push(e);
@@ -342,17 +348,26 @@ where
             self.matrix_clock.add_replica(idx);
         }
 
-        let version = self.rebuild_version(from, foreign_version);
+        let version = self.internalize_version(from, foreign_version);
 
         (from, version)
     }
 
-    fn rebuild_version(&self, from: ReplicaIdx, foreign_version: &Version) -> Version {
+    fn internalize_version(&self, from: ReplicaIdx, foreign_version: &Version) -> Version {
+        self.internalize_version_from(from, from, foreign_version)
+    }
+
+    fn internalize_version_from(
+        &self,
+        origin_idx: ReplicaIdx,
+        translation_from: ReplicaIdx,
+        foreign_version: &Version,
+    ) -> Version {
         // Rebuild the batch version with local indices
-        let mut version = Version::new(from, self.interner.resolver().clone());
+        let mut version = Version::new(origin_idx, self.interner.resolver().clone());
 
         for (remote_idx, seq) in foreign_version.iter() {
-            let idx = self.interner.translate(from, remote_idx);
+            let idx = self.interner.translate(translation_from, remote_idx);
             version.set_by_idx(idx, seq);
         }
 
@@ -364,7 +379,6 @@ where
 pub trait IsTcsbTest<O>: IsTcsb<O> {
     fn matrix_clock(&self) -> &MatrixClock;
     fn last_stable_version(&self) -> &Version;
-    fn members(&self) -> Vec<ReplicaIdOwned>;
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
         O: 'a;
@@ -387,10 +401,6 @@ where
 
     fn last_stable_version(&self) -> &Version {
         &self.last_stable_version
-    }
-
-    fn members(&self) -> Vec<ReplicaIdOwned> {
-        self.interner.resolver().into_vec()
     }
 
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>

@@ -1,5 +1,6 @@
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+use std::fmt::Debug;
 
 #[cfg(feature = "test_utils")]
 use crate::state::{log::IsLogTest, unstable_state::CausalReplay};
@@ -12,6 +13,7 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport},
     state::{
+        cache::CachedLog,
         effect_context::EffectContext,
         log::IsLog,
         stable_state::IsStableState,
@@ -19,8 +21,11 @@ use crate::{
     },
 };
 
+// TODO: This should be renamed CachedGraphLog
+pub type GraphLog<O> = CachedLog<RawGraphLog<O>>;
+
 #[derive(Debug)]
-pub struct GraphLog<O>
+pub struct RawGraphLog<O>
 where
     O: PureCRDT,
 {
@@ -28,7 +33,7 @@ where
     unstable: EventGraph<O>,
 }
 
-impl<O> Clone for GraphLog<O>
+impl<O> Clone for RawGraphLog<O>
 where
     O: PureCRDT + Clone,
     O::StableState: Clone,
@@ -41,9 +46,9 @@ where
     }
 }
 
-impl<O> IsLog for GraphLog<O>
+impl<O> IsLog for RawGraphLog<O>
 where
-    O: PureCRDT + Clone + UsesUnstableService<EventGraph<O>>,
+    O: PureCRDT + Clone + std::fmt::Debug + UsesUnstableService<EventGraph<O>>,
 {
     type Value = <O as PureCRDT>::Value;
     type Op = O;
@@ -100,7 +105,7 @@ where
     }
 }
 
-impl<O> Default for GraphLog<O>
+impl<O> Default for RawGraphLog<O>
 where
     O: PureCRDT,
 {
@@ -112,7 +117,7 @@ where
     }
 }
 
-impl<O> GraphLog<O>
+impl<O> RawGraphLog<O>
 where
     O: PureCRDT,
 {
@@ -132,7 +137,24 @@ where
     }
 }
 
-impl<O, Q> EvalNested<Q> for GraphLog<O>
+impl<O> GraphLog<O>
+where
+    O: PureCRDT + Clone + Debug + UsesUnstableService<EventGraph<O>>,
+{
+    pub fn stable(&self) -> &O::StableState {
+        self.inner().stable()
+    }
+
+    pub fn unstable(&self) -> &EventGraph<O> {
+        self.inner().unstable()
+    }
+
+    pub fn from_stable(stable: <O as PureCRDT>::StableState) -> Self {
+        Self::from_inner(RawGraphLog::from_stable(stable))
+    }
+}
+
+impl<O, Q> EvalNested<Q> for RawGraphLog<O>
 where
     O: PureCRDT + Clone + Eval<Q, EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
     Q: QueryOperation,
@@ -143,7 +165,7 @@ where
 }
 
 #[cfg(feature = "test_utils")]
-impl<O> IsLogTest for GraphLog<O>
+impl<O> IsLogTest for RawGraphLog<O>
 where
     O: PureCRDT + Clone + DeepSizeOf + UsesUnstableService<EventGraph<O>>,
 {

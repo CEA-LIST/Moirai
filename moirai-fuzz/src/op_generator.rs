@@ -4,7 +4,7 @@ use moirai_protocol::{
     crdt::pure_crdt::{PureCRDT, UsesUnstableService},
     state::{
         cache::CachedLog,
-        graph_log::GraphLog,
+        graph_log::RawGraphLog,
         log::{BoxedLog, IsLog},
         po_log::POLog,
         unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune, event_graph::EventGraph},
@@ -54,11 +54,11 @@ pub trait OpGeneratorNested: IsLog {
     fn generate(&self, rng: &mut impl Rng) -> Self::Op;
 }
 
-impl<O> OpGeneratorNested for GraphLog<O>
+impl<O> OpGeneratorNested for RawGraphLog<O>
 where
     O: PureCRDT + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
 {
-    fn generate(&self, rng: &mut impl Rng) -> <GraphLog<O> as IsLog>::Op {
+    fn generate(&self, rng: &mut impl Rng) -> <RawGraphLog<O> as IsLog>::Op {
         O::generate_causal(
             rng,
             &<O as CausalOpGenerator>::Config::default(),

@@ -342,13 +342,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
+    use moirai_protocol::{
+        crdt::{policy::LwwPolicy, query::Read},
+        replica::IsReplica,
+        state::po_log::VecLog,
+    };
     use petgraph::graph::DiGraph;
 
     use crate::{
         counter::resettable_counter::Counter,
         graph::uw_multidigraph::{UWGraph, UWGraphLog},
-        policy::LwwPolicy,
         register::unique_register::Register,
         utils::membership::{triplet_log, twins_log},
     };

@@ -50,7 +50,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableCore};
     use moirai_protocol::{
-        crdt::query::Read,
+        crdt::{policy::LwwPolicy, query::Read},
         replica::IsReplica,
         state::{object_path::ObjectPath, po_log::VecLog},
     };
@@ -72,7 +72,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::{graph::typed_graph::MyTypedGraph, policy::LwwPolicy, utils::membership::twins};
+    use crate::{graph::typed_graph::MyTypedGraph, utils::membership::twins};
 
     fn assert_convergence<R: IsReplica<VecLog<MyTypedGraph<LwwPolicy>>>>(
         replica_a: &R,

@@ -1,24 +1,9 @@
-//! EgWalker list CRDT replay.
-//!
-//! Operations are generated against positional list states, but concurrent events
-//! may observe different positions. EgWalker resolves this by replaying the event
-//! graph in topological order while maintaining two views of the same internal
-//! item sequence:
-//!
-//! - the prepare view, which is moved to each event's parent version before the
-//!   event is interpreted;
-//! - the effect view, which accumulates the transformed operations that determine
-//!   the value returned by reads.
-//!
-//! The current implementation also accepts a stable list snapshot. Stable content
-//! is represented as compressed placeholder ranges and only materialized as items
-//! when an unstable operation targets a stable element directly.
-
 mod document;
 mod item;
 mod presence_state;
 
 use std::{
+    cmp::Ordering,
     collections::{BTreeSet, BinaryHeap},
     fmt::{Debug, Display},
 };
@@ -481,17 +466,43 @@ where
             Shared,
         }
 
+        #[derive(Clone, Eq, PartialEq)]
+        struct DiffQueueEntry {
+            event_idx: usize,
+            event_id: EventId,
+        }
+
+        impl Ord for DiffQueueEntry {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.event_idx
+                    .cmp(&other.event_idx)
+                    .then_with(|| self.event_id.origin_id().cmp(other.event_id.origin_id()))
+                    .then_with(|| self.event_id.seq().cmp(&other.event_id.seq()))
+                    .then_with(|| {
+                        self.event_id
+                            .disambiguator()
+                            .cmp(&other.event_id.disambiguator())
+                    })
+            }
+        }
+
+        impl PartialOrd for DiffQueueEntry {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(Ord::cmp(self, other))
+            }
+        }
+
         #[allow(clippy::mutable_key_type)]
         let mut flags: HashMap<EventId, DiffFlag> = HashMap::default();
         // Process newer events first so frontiers converge toward their nearest
         // common ancestors.
-        let mut queue: BinaryHeap<(usize, EventId)> = BinaryHeap::new();
+        let mut queue: BinaryHeap<DiffQueueEntry> = BinaryHeap::new();
         let mut num_shared = 0usize;
 
         #[allow(clippy::mutable_key_type)]
         fn enq(
             flags: &mut HashMap<EventId, DiffFlag>,
-            queue: &mut BinaryHeap<(usize, EventId)>,
+            queue: &mut BinaryHeap<DiffQueueEntry>,
             num_shared: &mut usize,
             event_id: EventId,
             event_idx: usize,
@@ -500,7 +511,10 @@ where
             let prev = flags.get(&event_id).copied();
             match prev {
                 None => {
-                    queue.push((event_idx, event_id.clone()));
+                    queue.push(DiffQueueEntry {
+                        event_idx,
+                        event_id: event_id.clone(),
+                    });
                     if flag == DiffFlag::Shared {
                         *num_shared += 1;
                     }
@@ -542,7 +556,7 @@ where
         let mut b_only = Vec::new();
 
         while queue.len() > num_shared {
-            let (_, id) = queue.pop().unwrap();
+            let id = queue.pop().unwrap().event_id;
             let flag = flags.get(&id).copied().unwrap();
             match flag {
                 DiffFlag::Shared => {

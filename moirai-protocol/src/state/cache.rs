@@ -76,6 +76,13 @@ pub struct CachedLog<L: IsLog> {
 }
 
 impl<L: IsLog> CachedLog<L> {
+    pub fn from_inner(inner: L) -> Self {
+        Self {
+            inner,
+            read_cache: CacheCell::new(),
+        }
+    }
+
     pub fn inner(&self) -> &L {
         &self.inner
     }

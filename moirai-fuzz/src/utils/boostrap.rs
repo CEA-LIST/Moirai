@@ -5,7 +5,7 @@ use moirai_protocol::{broadcast::tcsb::IsTcsb, replica::Replica, state::log::IsL
 pub fn bootstrap_n<L, T>(n: u8) -> Vec<Replica<L, T>>
 where
     L: IsLog,
-    T: IsTcsb<Payload = L::Op> + Debug,
+    T: IsTcsb<L::Op> + Debug,
 {
     let mut replicas = Vec::new();
     for i in 0..n {

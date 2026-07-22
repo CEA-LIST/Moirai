@@ -259,12 +259,8 @@ mod tests {
         let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        // assert_eq!(replica_b.state().stable().len(), 1);
-
         let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
-
-        // assert_eq!(replica_a.state().stable().len(), 2);
 
         let event = replica_a.send(AWSet::Clear).unwrap();
         replica_b.receive(event);
@@ -281,12 +277,8 @@ mod tests {
         let event = replica_a.send(AWSet::Add("a")).unwrap();
         replica_b.receive(event);
 
-        // assert_eq!(replica_b.state().stable().len(), 1);
-
         let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
-
-        // assert_eq!(replica_a.state().stable().len(), 2);
 
         let event_a = replica_a.send(AWSet::Add("a")).unwrap();
         let event_b = replica_b.send(AWSet::Remove("a")).unwrap();
@@ -305,12 +297,8 @@ mod tests {
         let event = replica_a.send(AWSet::Add("c")).unwrap();
         replica_b.receive(event);
 
-        // assert_eq!(replica_b.state().stable().len(), 1);
-
         let event = replica_b.send(AWSet::Add("b")).unwrap();
         replica_a.receive(event);
-
-        // assert_eq!(replica_a.state().stable().len(), 2);
 
         let event_a = replica_a.send(AWSet::Add("a")).unwrap();
         let event_b = replica_b.send(AWSet::Add("a")).unwrap();

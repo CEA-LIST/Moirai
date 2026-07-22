@@ -6,15 +6,13 @@ use moirai_protocol::{
     broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
-        policy::Policy,
+        policy::{FairPolicy, LwwPolicy, Policy},
         pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
 };
-
-use crate::policy::{FairPolicy, LwwPolicy};
 
 pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
@@ -119,10 +117,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{
+        crdt::{
+            policy::{FairPolicy, LwwPolicy},
+            query::Read,
+        },
+        replica::IsReplica,
+    };
 
     use crate::{
-        policy::{FairPolicy, LwwPolicy},
         register::unique_register::Register,
         utils::membership::{triplet, twins},
     };
