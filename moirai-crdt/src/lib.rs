@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 
 pub mod bag;
 pub mod counter;
