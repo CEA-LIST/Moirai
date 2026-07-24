@@ -3,7 +3,6 @@ use std::convert::Infallible;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -136,18 +135,6 @@ where
 
     pub fn child(&self) -> Option<&L> {
         self.child.as_ref()
-    }
-}
-
-impl<O> InternalizeOp for Optional<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            Optional::Set(o) => Optional::Set(o.internalize(interner)),
-            Optional::Unset => Optional::Unset,
-        }
     }
 }
 

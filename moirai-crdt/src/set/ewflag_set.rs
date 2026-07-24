@@ -1,7 +1,6 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -97,12 +96,6 @@ where
             }
         }
         set
-    }
-}
-
-impl<V> InternalizeOp for EWFlagSet<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

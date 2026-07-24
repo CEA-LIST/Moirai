@@ -5,7 +5,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::{BorrowedRead, EvalNested},
@@ -293,25 +292,6 @@ where
         };
         assert!(self.is_enabled(&op).is_ok());
         op
-    }
-}
-
-impl<O> InternalizeOp for NestedList<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            NestedList::Insert { pos, op } => NestedList::Insert {
-                pos,
-                op: op.internalize(interner),
-            },
-            NestedList::Update { pos, op } => NestedList::Update {
-                pos,
-                op: op.internalize(interner),
-            },
-            NestedList::Delete { pos } => NestedList::Delete { pos },
-        }
     }
 }
 

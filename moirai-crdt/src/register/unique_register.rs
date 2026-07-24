@@ -3,7 +3,6 @@ use std::{convert::Infallible, fmt::Debug, marker::PhantomData};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         policy::{FairPolicy, LwwPolicy, Policy},
@@ -93,12 +92,6 @@ where
             }
         }
         value
-    }
-}
-
-impl<V, P> InternalizeOp for Register<V, P> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

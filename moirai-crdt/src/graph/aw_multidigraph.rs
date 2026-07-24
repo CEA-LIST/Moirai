@@ -11,7 +11,6 @@ use moirai_fuzz::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -227,17 +226,6 @@ where
             }
         }
         graph
-    }
-}
-
-impl<V, E> InternalizeOp for Graph<V, E>
-where
-    V: Debug + Clone + PartialEq + Eq + Hash,
-    E: Debug + Clone + PartialEq + Eq + Hash,
-{
-    // TODO: we assume that V and E are already interned
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

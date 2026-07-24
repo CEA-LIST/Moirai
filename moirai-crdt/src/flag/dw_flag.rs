@@ -5,7 +5,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -144,12 +143,6 @@ impl OpGenerator for DWFlag {
         )
         .unwrap();
         choice.clone()
-    }
-}
-
-impl InternalizeOp for DWFlag {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

@@ -5,10 +5,12 @@ use crate::{
     clock::version_vector::Version, event::id::EventId, replica::ReplicaId, utils::hashmap::HashSet,
 };
 
+/// Request all events since the given version, except for the events in the `except` set.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Since {
     version: Version,
+    /// Except the events in this set
     except: HashSet<EventId>,
 }
 

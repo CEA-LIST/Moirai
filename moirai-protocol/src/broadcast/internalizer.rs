@@ -165,17 +165,3 @@ impl Interner {
         &self.int_to_str
     }
 }
-
-/// Trait for operations that can be internalized by an interner.
-/// # Note
-/// Some (nested) operations may contain replica IDs that need to be converted to replica indices for efficient storage and comparison.
-/// This trait defines a method to internalize such operations, replacing replica indices from the remote source with their corresponding indices in the local interner.
-pub trait InternalizeOp {
-    fn internalize(self, interner: &Interner) -> Self;
-}
-
-impl<T: InternalizeOp> InternalizeOp for Box<T> {
-    fn internalize(self, interner: &Interner) -> Self {
-        Box::new((*self).internalize(interner))
-    }
-}

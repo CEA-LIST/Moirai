@@ -3,7 +3,6 @@
 
 use log::{debug, info, warn};
 use moirai_protocol::{
-    broadcast::internalizer::InternalizeOp,
     crdt::{eval::EvalNested, query::Read},
     state::log::IsLog,
 };
@@ -21,7 +20,6 @@ use crate::{
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Op: InternalizeOp,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {

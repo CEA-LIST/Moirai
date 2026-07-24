@@ -6,10 +6,7 @@ use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
-    broadcast::{
-        internalizer::InternalizeOp,
-        tcsb::{IsTcsbTest, Tcsb},
-    },
+    broadcast::tcsb::{IsTcsbTest, Tcsb},
     crdt::{eval::EvalNested, query::Read},
     replica::{IsReplica, ReplicaIdx},
     state::log::IsLog,
@@ -54,7 +51,6 @@ pub fn runner<L>(
 ) -> RunData
 where
     L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Op: InternalizeOp,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {

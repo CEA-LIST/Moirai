@@ -3,7 +3,6 @@ use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -90,12 +89,6 @@ where
             }
         }
         set
-    }
-}
-
-impl<V> InternalizeOp for PORegister<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

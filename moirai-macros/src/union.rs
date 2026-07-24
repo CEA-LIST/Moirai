@@ -496,22 +496,6 @@ macro_rules! union {
                 }
             }
 
-            impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $union {
-                fn internalize(self, interner: &$crate::moirai_protocol::broadcast::internalizer::Interner) -> Self {
-                    match self {
-                        $(
-                            Self::$variant(o) => Self::$variant(
-                                <$ty as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                                    o,
-                                    interner,
-                                ),
-                            ),
-                        )*
-                        Self::Choose(variant) => Self::Choose(variant),
-                    }
-                }
-            }
-
             impl ::std::fmt::Display for [<$union Rejection>] {
                 fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                     match self {

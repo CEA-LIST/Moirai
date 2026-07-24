@@ -8,7 +8,7 @@ use crate::replica::ReplicaIdOwned;
 use crate::{
     broadcast::{
         batch::Batch,
-        internalizer::{InternalizeOp, Interner, Resolver},
+        internalizer::{Interner, Resolver},
         message::{BatchMessage, EventMessage, SinceMessage},
         since::Since,
     },
@@ -66,7 +66,7 @@ pub struct Tcsb<O> {
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug + InternalizeOp,
+    O: Clone + Debug,
 {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
@@ -183,7 +183,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone + InternalizeOp,
+    O: Debug + Clone,
 {
     /// Record a received event in the inbox and outbox if it is valid.
     fn record(&mut self, event: Event<O>) {
@@ -273,7 +273,7 @@ where
         let (from, version) =
             self.internalize(event.version(), event.id().origin_id(), message.resolver());
 
-        let op = event.op().clone().internalize(&self.interner);
+        let op = event.op().clone();
 
         let event_id = EventId::new(from, event.id().seq(), self.interner.resolver().clone());
 
@@ -318,7 +318,7 @@ where
                 self.interner.resolver().clone(),
             );
             let version = self.internalize_version_from(event_origin_idx, from, event.version());
-            let op = event.op().clone().internalize(&self.interner);
+            let op = event.op().clone();
             let e = Event::new(event_id, *event.lamport(), op, version);
             events.push(e);
         }
@@ -393,7 +393,7 @@ pub trait IsTcsbTest<O>: IsTcsb<O> {
 #[cfg(feature = "test_utils")]
 impl<O> IsTcsbTest<O> for Tcsb<O>
 where
-    O: Debug + Clone + InternalizeOp,
+    O: Debug + Clone,
 {
     fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock

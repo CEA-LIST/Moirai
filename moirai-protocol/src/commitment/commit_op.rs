@@ -1,7 +1,4 @@
-use crate::{
-    broadcast::internalizer::{InternalizeOp, Interner},
-    replica::ReplicaIdOwned,
-};
+use crate::replica::ReplicaIdOwned;
 
 /// Operation stored by a commitment log.
 #[derive(Clone, Debug)]
@@ -14,17 +11,5 @@ pub struct CommitOp<U> {
 impl<U> CommitOp<U> {
     pub fn new(update: U, leader: ReplicaIdOwned) -> Self {
         Self { update, leader }
-    }
-}
-
-impl<U> InternalizeOp for CommitOp<U>
-where
-    U: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        Self {
-            update: self.update.internalize(interner),
-            leader: self.leader,
-        }
     }
 }

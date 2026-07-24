@@ -8,7 +8,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -573,19 +572,6 @@ impl<K, O> Boxer<RWMap<K, Box<O>>> for RWMap<K, O> {
     fn boxer(self) -> RWMap<K, Box<O>> {
         match self {
             RWMap::Update(k, v) => RWMap::Update(k, Box::new(v)),
-            RWMap::Remove(k) => RWMap::Remove(k),
-            RWMap::Clear => RWMap::Clear,
-        }
-    }
-}
-
-impl<K, O> InternalizeOp for RWMap<K, O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            RWMap::Update(k, v) => RWMap::Update(k, v.internalize(interner)),
             RWMap::Remove(k) => RWMap::Remove(k),
             RWMap::Clear => RWMap::Clear,
         }

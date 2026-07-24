@@ -5,7 +5,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -170,12 +169,6 @@ where
     V: Debug + Clone + Hash + Eq,
     U: IsUnstableCore<Self>,
 {
-}
-
-impl<V> InternalizeOp for RWSet<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
 }
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for RWSet<V>

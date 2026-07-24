@@ -7,9 +7,9 @@ use std::{
 use deepsize::DeepSizeOf;
 
 use crate::{
-    broadcast::internalizer::{InternalizeOp, Interner, Resolver},
+    broadcast::internalizer::{Interner, Resolver},
     clock::version_vector::{Seq, Version},
-    replica::{ReplicaId, ReplicaIdx},
+    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
 };
 
 /// Represents the unique identifier for an event.
@@ -79,19 +79,85 @@ impl EventId {
     }
 }
 
-impl InternalizeOp for EventId {
-    fn internalize(self, interner: &Interner) -> Self {
-        let idx = interner.get(self.origin_id()).unwrap_or_else(|| {
+/// Resolver-independent event identifier.
+///
+/// `EventId` stores a local `ReplicaIdx`, which is only meaningful with the
+/// replica's own interner. `ResolvedEventId` stores the resolved replica id
+/// instead, so it can safely be embedded in operation payloads.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+pub struct ResolvedEventId {
+    origin_id: ReplicaIdOwned,
+    seq: Seq,
+    disambiguator: Option<u32>,
+}
+
+impl ResolvedEventId {
+    pub fn new(origin_id: ReplicaIdOwned, seq: Seq) -> Self {
+        Self::new_with_disambiguator(origin_id, seq, None)
+    }
+
+    pub fn new_with_disambiguator(
+        origin_id: ReplicaIdOwned,
+        seq: Seq,
+        disambiguator: Option<u32>,
+    ) -> Self {
+        Self {
+            origin_id,
+            seq,
+            disambiguator,
+        }
+    }
+
+    pub fn origin_id(&self) -> &ReplicaId {
+        &self.origin_id
+    }
+
+    pub fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    pub fn disambiguator(&self) -> Option<u32> {
+        self.disambiguator
+    }
+}
+
+impl From<&EventId> for ResolvedEventId {
+    fn from(event_id: &EventId) -> Self {
+        Self::new_with_disambiguator(
+            event_id.origin_id().to_string(),
+            event_id.seq(),
+            event_id.disambiguator(),
+        )
+    }
+}
+
+impl From<EventId> for ResolvedEventId {
+    fn from(event_id: EventId) -> Self {
+        Self::from(&event_id)
+    }
+}
+
+impl From<(&ResolvedEventId, &Interner)> for EventId {
+    fn from((event_id, interner): (&ResolvedEventId, &Interner)) -> Self {
+        let idx = interner.get(event_id.origin_id()).unwrap_or_else(|| {
             panic!(
                 "Cannot translate embedded EventId for unknown replica origin {}",
-                self.origin_id()
+                event_id.origin_id()
             )
         });
-        debug_assert!(
-            self.disambiguator.is_none(),
-            "Disambiguator should be None for received events"
-        );
-        EventId::new(idx, self.seq(), interner.resolver().clone())
+        EventId::new_with_disambiguator(
+            idx,
+            event_id.seq(),
+            interner.resolver().clone(),
+            event_id.disambiguator(),
+        )
+    }
+}
+
+impl From<(ResolvedEventId, &Interner)> for EventId {
+    fn from((event_id, interner): (ResolvedEventId, &Interner)) -> Self {
+        Self::from((&event_id, interner))
     }
 }
 
@@ -122,6 +188,16 @@ impl PartialEq for EventId {
 }
 
 impl Eq for EventId {}
+
+impl Display for ResolvedEventId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Some(disambiguator) = self.disambiguator {
+            write!(f, "({}:{}#{})", self.origin_id, self.seq, disambiguator)
+        } else {
+            write!(f, "({}:{})", self.origin_id, self.seq)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -31,22 +31,6 @@ macro_rules! record {
                 }
             }
 
-            /// Internalize an operation, i.e., convert any contained event id from a remote replica into the local interner's mapping.
-            impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $name {
-                fn internalize(self, interner: &$crate::moirai_protocol::broadcast::internalizer::Interner) -> Self {
-                    match self {
-                        $(
-                            Self::[<$field:camel>](o) => Self::[<$field:camel>](
-                                <<$T as $crate::moirai_protocol::state::log::IsLog>::Op as
-                                    $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
-                                >::internalize(o, interner),
-                            ),
-                        )*
-                        Self::New => Self::New,
-                    }
-                }
-            }
-
             /// Returned value when reading the record, containing the values of all fields.
             #[derive(Debug, Clone, Default, PartialEq)]
             pub struct [<$name Value>] {

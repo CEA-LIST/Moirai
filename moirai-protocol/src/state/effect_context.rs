@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "sink")]
 use crate::state::{object_path::ObjectPath, sink::Sink};
-use crate::{event::id::EventId, state::sink::SinkCollector};
+use crate::{event::id::ResolvedEventId, state::sink::SinkCollector};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EffectPathMode {
@@ -141,11 +141,14 @@ impl<'a> EffectContext<'a> {
         }
     }
 
-    pub fn with_list_element<R>(
+    pub fn with_list_element<R, I>(
         &mut self,
-        id: impl FnOnce() -> EventId,
+        id: impl FnOnce() -> I,
         f: impl FnOnce(&mut EffectContext<'_>) -> R,
-    ) -> R {
+    ) -> R
+    where
+        I: Into<ResolvedEventId>,
+    {
         #[cfg(feature = "sink")]
         {
             let path = self.path.clone().list_element(id());

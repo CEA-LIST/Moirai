@@ -4,7 +4,6 @@ use std::{
 };
 
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -264,12 +263,6 @@ where
             arc_content: HashMap::default(),
             vertex_content: HashMap::default(),
         }
-    }
-}
-
-impl<V, E, No, Lo> InternalizeOp for UWGraph<V, E, No, Lo> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

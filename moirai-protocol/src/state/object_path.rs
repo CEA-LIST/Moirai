@@ -3,16 +3,13 @@ use std::fmt::{Display, Error, Formatter};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-use crate::{
-    broadcast::internalizer::{InternalizeOp, Interner},
-    event::id::EventId,
-};
+use crate::event::id::ResolvedEventId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PathSegment {
     Field(&'static str),
-    ListElement(EventId),
+    ListElement(ResolvedEventId),
     MapEntry(String),
     Variant(&'static str),
 }
@@ -52,8 +49,8 @@ impl ObjectPath {
         self
     }
 
-    pub fn list_element(mut self, id: EventId) -> Self {
-        self.segments.push(PathSegment::ListElement(id));
+    pub fn list_element(mut self, id: impl Into<ResolvedEventId>) -> Self {
+        self.segments.push(PathSegment::ListElement(id.into()));
         self
     }
 
@@ -86,24 +83,5 @@ impl ObjectPath {
 
     pub fn segments(&self) -> &[PathSegment] {
         &self.segments
-    }
-}
-
-impl InternalizeOp for ObjectPath {
-    fn internalize(self, interner: &Interner) -> Self {
-        let segments = self
-            .segments
-            .into_iter()
-            .map(|segment| match segment {
-                PathSegment::Field(name) => PathSegment::Field(name),
-                PathSegment::ListElement(id) => PathSegment::ListElement(id.internalize(interner)),
-                PathSegment::MapEntry(key) => PathSegment::MapEntry(key.clone()),
-                PathSegment::Variant(name) => PathSegment::Variant(name),
-            })
-            .collect();
-        ObjectPath {
-            root: self.root,
-            segments,
-        }
     }
 }

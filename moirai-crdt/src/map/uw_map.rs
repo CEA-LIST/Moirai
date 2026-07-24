@@ -8,7 +8,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -67,19 +66,6 @@ where
 
     pub fn get_child(&self, key: &K) -> Option<&L> {
         self.children.get(key)
-    }
-}
-
-impl<K, O> InternalizeOp for UWMap<K, O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            UWMap::Update(k, v) => UWMap::Update(k, v.internalize(interner)),
-            UWMap::Remove(k) => UWMap::Remove(k),
-            UWMap::Clear => UWMap::Clear,
-        }
     }
 }
 

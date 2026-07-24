@@ -5,7 +5,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -115,12 +114,6 @@ where
             || unstable
                 .iter()
                 .any(|o| matches!(o.op(), AWSet::Add(v) if v == &q.0))
-    }
-}
-
-impl<V> InternalizeOp for AWSet<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

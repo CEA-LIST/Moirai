@@ -1,7 +1,6 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::EvalNested,
@@ -86,15 +85,6 @@ where
         _q: Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
         self.0.execute_query(Read::new())
-    }
-}
-
-impl<V> InternalizeOp for RWBag<V>
-where
-    V: Clone + Hash + Debug + Eq,
-{
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 

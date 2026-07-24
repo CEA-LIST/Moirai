@@ -5,10 +5,7 @@ use std::{
 };
 
 use crate::{
-    broadcast::{
-        internalizer::{InternalizeOp, Interner},
-        tcsb::Tcsb,
-    },
+    broadcast::tcsb::Tcsb,
     commitment::{
         commit_op::CommitOp, mixed_consistency_replica::MixedConsistencyReplica, oracle::Omega,
     },
@@ -24,12 +21,6 @@ use crate::{
 enum SetUpdate<V> {
     Add(V),
     Remove(V),
-}
-
-impl<V> InternalizeOp for SetUpdate<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

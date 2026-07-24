@@ -13,7 +13,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{op_generator::CausalOpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     clock::version_vector::Version,
     crdt::{
         eval::Eval,
@@ -54,12 +53,6 @@ pub enum List<V> {
     /// delete can only remove life dots it observed, so an unseen update dot keeps
     /// the item visible.
     Update { pos: usize },
-}
-
-impl<V> InternalizeOp for List<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
 }
 
 #[derive(Clone, Debug)]

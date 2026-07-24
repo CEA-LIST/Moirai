@@ -4,7 +4,6 @@ use std::hash::Hash;
 
 #[cfg(feature = "test_utils")]
 use deepsize::{Context, DeepSizeOf};
-use moirai_protocol::broadcast::internalizer::InternalizeOp;
 
 //* ARC *//
 
@@ -63,18 +62,6 @@ macro_rules! typed_graph {
                 }
             }
 
-            impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $v {
-                fn internalize(
-                    self,
-                    interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
-                ) -> Self {
-                    Self(
-                        <$crate::moirai_protocol::state::object_path::ObjectPath as
-                            $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
-                        >::internalize(self.0, interner),
-                    )
-                }
-            }
         )*
 
         //* SET OF VERTEX TYPES *//
@@ -99,24 +86,6 @@ macro_rules! typed_graph {
             pub fn vertex_path(&self) -> &$crate::moirai_protocol::state::object_path::ObjectPath {
                 match self {
                     $( $vertex::$v(id) => &id.0 ),*
-                }
-            }
-        }
-
-        impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $vertex {
-            fn internalize(
-                self,
-                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
-            ) -> Self {
-                match self {
-                    $(
-                        $vertex::$v(id) => $vertex::$v(
-                            <$v as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                                id,
-                                interner,
-                            ),
-                        )
-                    ),*
                 }
             }
         }
@@ -877,76 +846,6 @@ macro_rules! typed_graph {
             }
         }
 
-        //* INTERNALIZE */
-
-        impl $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $arcs
-        where
-            $(
-                $src_ty: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
-                $tgt_ty: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
-            )*
-        {
-            fn internalize(
-                self,
-                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
-            ) -> Self {
-                match self {
-                    $(
-                        Self::$conn(arc) => Self::$conn(
-                            <$crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety> as
-                                $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
-                            >::internalize(arc, interner),
-                        )
-                    ),*
-                }
-            }
-        }
-
-        impl<P> $crate::moirai_protocol::broadcast::internalizer::InternalizeOp for $graph<P>
-        where
-            P: ::std::clone::Clone,
-            $vertex: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
-            $arcs: $crate::moirai_protocol::broadcast::internalizer::InternalizeOp,
-        {
-            fn internalize(
-                self,
-                interner: &$crate::moirai_protocol::broadcast::internalizer::Interner,
-            ) -> Self {
-                match self {
-                    Self::AddVertex { id } => Self::AddVertex {
-                        id: <$vertex as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                            id,
-                            interner,
-                        ),
-                    },
-                    Self::RemoveVertex { id } => Self::RemoveVertex {
-                        id: <$vertex as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                            id,
-                            interner,
-                        ),
-                    },
-                    Self::DeleteSubtree { prefix } => Self::DeleteSubtree {
-                        prefix: <$crate::moirai_protocol::state::object_path::ObjectPath as
-                            $crate::moirai_protocol::broadcast::internalizer::InternalizeOp
-                        >::internalize(prefix, interner),
-                    },
-                    Self::AddArc(arc) => Self::AddArc(
-                        <$arcs as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                            arc,
-                            interner,
-                        ),
-                    ),
-                    Self::RemoveArc(arc) => Self::RemoveArc(
-                        <$arcs as $crate::moirai_protocol::broadcast::internalizer::InternalizeOp>::internalize(
-                            arc,
-                            interner,
-                        ),
-                    ),
-                    Self::__Marker(_never, _marker) => ::std::unreachable!(),
-                }
-            }
-        }
-
         //* DEEP SIZE */
 
         #[cfg(feature = "test_utils")]
@@ -1074,22 +973,6 @@ where
     fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
         match self {
             Self::AddVertex { id } | Self::RemoveVertex { id } => id.deep_size_of_children(context),
-        }
-    }
-}
-
-//* INTERNALIZE *//
-
-impl<S, T, E> InternalizeOp for Arc<S, T, E>
-where
-    S: InternalizeOp,
-    T: InternalizeOp,
-{
-    fn internalize(self, interner: &moirai_protocol::broadcast::internalizer::Interner) -> Self {
-        Self {
-            source: self.source.internalize(interner),
-            target: self.target.internalize(interner),
-            kind: self.kind,
         }
     }
 }

@@ -9,7 +9,6 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
-    broadcast::internalizer::{InternalizeOp, Interner},
     crdt::{
         eval::Eval,
         pure_crdt::{PureCRDT, UsesUnstableService},
@@ -102,15 +101,6 @@ impl OpGenerator for Counter<i32> {
             "Dec" => Counter::Dec(rng.next_u32() as i32),
             _ => unreachable!(),
         }
-    }
-}
-
-impl<V> InternalizeOp for Counter<V>
-where
-    V: Add + AddAssign + SubAssign + Default + Copy,
-{
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 
