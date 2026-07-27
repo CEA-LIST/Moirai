@@ -80,3 +80,87 @@ jobs:
         # it reports left: 2662 / right: 5252. It is not a replication defect.
         # TODO(ci): drop this --skip once the assertion is fixed or #[ignore]d.
         run: cargo test --workspace -- --skip size_event_id
+
+  e2e:
+    name: End-to-end convergence
+    runs-on: ubuntu-latest
+    # Deliberately blocking. Unlike `fmt` and `clippy` there is no backlog to
+    # burn down here: the suite is green the day it lands, so it gates from
+    # day one. Do not add `continue-on-error`.
+    #
+    # Assumptions this job makes explicit, because they are not obvious:
+    #
+    #  1. The replica binary is NOT in this repository. It is
+    #     `examples/network_node` from the Arachne-generated `json_crdt`
+    #     crate, which depends on this workspace through relative path
+    #     dependencies (`../../../moirai/...`). Both checkouts must therefore
+    #     sit side by side under the same parent directory, which is why the
+    #     two `checkout` steps below use explicit `path:` values.
+    #  2. `ARACHNE_REPO` is the sibling repository holding that crate. If it
+    #     is private, the second checkout also needs a token with read access.
+    #  3. GitHub-hosted runners ship a usable Docker daemon for the runner
+    #     user, so the container-backed scenario (S4, a real network
+    #     partition) needs no extra privileges here. On a developer machine
+    #     the test process must carry the `docker` group itself — see the
+    #     header of `moirai-network/tests/e2e_convergence.rs`.
+    #  4. Scenarios whose backend is missing skip rather than fail, so a
+    #     broken assumption above turns the suite green-but-empty instead of
+    #     red. The "assert the suite actually ran" step below exists to catch
+    #     precisely that.
+    env:
+      ARACHNE_REPO: CEA-LIST/Arachne
+      ARACHNE_REF: main
+      E2E_IMAGE: moirai-json-crdt:test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: moirai
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ARACHNE_REPO }}
+          ref: ${{ env.ARACHNE_REF }}
+          path: arachne
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            moirai/target
+            arachne/generated/json_crdt/target
+          key: ${{ runner.os }}-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-e2e-
+
+      - name: Build the replica binary (process backend)
+        run: cargo build --manifest-path arachne/generated/json_crdt/Cargo.toml
+             --example network_node
+
+      - name: Build the replica image (container backend)
+        # The build context is the parent of both checkouts, because the
+        # Dockerfile copies `moirai/` and `arachne/generated/json_crdt/`.
+        run: docker build -f moirai/docker/e2e/Dockerfile -t "$E2E_IMAGE" .
+
+      - name: cargo test --test e2e_convergence
+        # `--test-threads=1` while the suite settles: each scenario starts two
+        # replicas, and the container scenarios also create Docker networks.
+        # Relax it once the suite has run clean for a while — the harness
+        # already allocates ports dynamically and names every network per run,
+        # so nothing collides by construction.
+        env:
+          MOIRAI_E2E_NODE_BIN: >-
+            ${{ github.workspace }}/arachne/generated/json_crdt/target/debug/examples/network_node
+          MOIRAI_E2E_IMAGE: ${{ env.E2E_IMAGE }}
+        run: cargo test --manifest-path moirai/Cargo.toml
+             -p moirai-network --test e2e_convergence
+             -- --test-threads=1 --nocapture
+             | tee e2e.log
+
+      - name: Assert the suite actually ran
+        # A skipped scenario prints `E2E-SKIP <name>: <why>` and reports as a
+        # pass, so a missing binary or image would otherwise look like success.
+        run: |
+          if grep -q 'E2E-SKIP ' e2e.log; then
+            echo "::error::e2e scenarios were skipped; the job's assumptions do not hold"
+            grep 'E2E-SKIP ' e2e.log
+            exit 1
+          fi
