@@ -1,0 +1,13 @@
+# BuildKit honours `<dockerfile>.dockerignore` in preference to a context-root
+# `.dockerignore`, which matters here: the context root is the parent of the
+# moirai and arachne checkouts and is not a directory either repository owns.
+#
+# Excluding the target directories is not an optimisation — they hold several
+# gigabytes of build artefacts that would otherwise be uploaded to the daemon
+# on every build.
+#
+# `README.md` is deliberately *not* excluded: the workspace manifest declares
+# `readme = "README.md"` and Cargo refuses to build without it.
+**/target
+**/.git
+**/.github
