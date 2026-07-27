@@ -95,12 +95,25 @@ where
                 match line {
                     Ok(data) => {
                         if let Ok(msg) = serde_json::from_str::<TransportMessage<O>>(&data) {
-                            // Update peer ID from Hello message
-                            if let TransportMessage::Hello { ref id, .. } = msg {
+                            // A Hello reveals the real identity behind an
+                            // inbound connection, which was registered under a
+                            // temporary id. Forward it under the *temporary*
+                            // id so `try_recv` can rekey the stored connection,
+                            // then adopt the real id for every later message.
+                            //
+                            // Renaming before the send would hide the temporary
+                            // id from `try_recv`, leaving the connection keyed
+                            // under `temp-conn-N` forever: the replica could
+                            // then receive from that peer but never send to it.
+                            let from_id = if let TransportMessage::Hello { ref id, .. } = msg {
+                                let previous = current_peer_id.clone();
                                 current_peer_id = id.clone();
-                            }
+                                previous
+                            } else {
+                                current_peer_id.clone()
+                            };
 
-                            if tx.send((current_peer_id.clone(), msg)).is_err() {
+                            if tx.send((from_id, msg)).is_err() {
                                 break;
                             }
                         }
