@@ -142,33 +142,63 @@ impl Interner {
         *local_idx
     }
 
+    /// Bring the cached translation of `from`'s indices up to date with the
+    /// resolver it just sent, returning the replicas this call learned about.
+    ///
+    /// # Why this verifies instead of appending
+    ///
+    /// A row caches "the sender's index `i` means my index `row[i]`". That used
+    /// to be extended by length alone: equal lengths meant nothing to do. The
+    /// assumption underneath was that a replica's own index ordering only ever
+    /// grows by appending, which held for as long as the only way to learn a
+    /// member was to receive a message from it.
+    ///
+    /// State transfer breaks it. A fresh joiner adopts its donor's ordering
+    /// wholesale, so its resolver is *reordered*, usually without changing
+    /// length. A peer that had already cached a row for it would then keep
+    /// translating by the old ordering — and this fails silently, in the worst
+    /// possible way: every column of every incoming clock lands on the wrong
+    /// replica, so operations are neither rejected nor delivered, they simply
+    /// wait in the inbox for a causal predecessor that will never arrive.
+    /// Measured exactly that way, as a joiner whose first write after adopting
+    /// never became causally ready anywhere.
+    ///
+    /// So the row is verified against the incoming resolver and rebuilt from
+    /// the first position that disagrees. The cost is one string comparison per
+    /// member per message, on a path that already walks the sender's whole
+    /// version vector — no change in complexity.
     pub fn update_translation(
         &mut self,
         from: ReplicaIdx,
         incoming_resolver: &Resolver,
     ) -> Vec<ReplicaIdx> {
-        if self.translator.inner.get(from.0).unwrap().len() == incoming_resolver.len() {
-            // No need to update
-            Vec::new()
-        } else if self.translator.inner.get(from.0).unwrap().len() < incoming_resolver.len() {
-            let mut new_indices = Vec::new();
-            let row_len = self.translator.inner.get_mut(from.0).unwrap().len();
-            for i in row_len..incoming_resolver.len() {
-                let id = incoming_resolver.resolve(ReplicaIdx(i)).unwrap();
-                let (local_idx, is_new) = self.intern(id);
-                self.translator
-                    .inner
-                    .get_mut(from.0)
-                    .unwrap()
-                    .push(local_idx);
-                if is_new {
-                    new_indices.push(local_idx);
-                }
+        let row_len = self.translator.inner.get(from.0).unwrap().len();
+        let mut agreed = 0;
+        while agreed < row_len && agreed < incoming_resolver.len() {
+            let cached = self.translator.inner[from.0][agreed];
+            if self.int_to_str.resolve(cached) != incoming_resolver.resolve(ReplicaIdx(agreed)) {
+                break;
             }
-            new_indices
-        } else {
-            panic!("Inconsistent state: incoming resolver is smaller than the known one");
+            agreed += 1;
         }
+        if agreed < row_len {
+            self.translator.inner[from.0].truncate(agreed);
+        }
+
+        let mut new_indices = Vec::new();
+        for i in agreed..incoming_resolver.len() {
+            let id = incoming_resolver.resolve(ReplicaIdx(i)).unwrap();
+            let (local_idx, is_new) = self.intern(id);
+            self.translator
+                .inner
+                .get_mut(from.0)
+                .unwrap()
+                .push(local_idx);
+            if is_new {
+                new_indices.push(local_idx);
+            }
+        }
+        new_indices
     }
 
     pub fn intern(&mut self, id: &ReplicaId) -> (ReplicaIdx, bool) {

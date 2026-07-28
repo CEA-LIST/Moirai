@@ -93,7 +93,24 @@ where
             for line in reader.lines() {
                 match line {
                     Ok(data) => {
-                        if let Ok(msg) = serde_json::from_str::<TransportMessage<O>>(&data) {
+                        // A message that will not parse used to vanish without
+                        // a trace, which turns a serialization defect into a
+                        // silent stall: the sender logs a successful send and
+                        // the receiver logs nothing at all. Say so instead.
+                        let parsed = match serde_json::from_str::<TransportMessage<O>>(&data) {
+                            Ok(msg) => Some(msg),
+                            Err(e) => {
+                                eprintln!(
+                                    "[{}] Dropping an unparseable message from {} ({} bytes): {}",
+                                    local_id,
+                                    current_peer_id,
+                                    data.len(),
+                                    e
+                                );
+                                None
+                            }
+                        };
+                        if let Some(msg) = parsed {
                             // A Hello reveals the real identity behind an
                             // inbound connection, which was registered under a
                             // temporary id. Forward it under the *temporary*
@@ -117,7 +134,13 @@ where
                             }
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        eprintln!(
+                            "[{}] Read error on the link with {}: {}",
+                            local_id, current_peer_id, e
+                        );
+                        break;
+                    }
                 }
             }
 

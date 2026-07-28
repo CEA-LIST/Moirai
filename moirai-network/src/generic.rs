@@ -10,7 +10,7 @@
 use std::fmt::{Debug, Display};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -30,6 +30,21 @@ use crate::HashMap;
 
 /// Convenience alias
 pub type TcpNode<L> = GenericNode<L, TcpTransport<<L as IsLog>::Op>>;
+
+/// How often a replica that still has no history re-asks its peers for one.
+///
+/// Asking once, on connect, is not enough, and not because the network is
+/// unreliable. A peer that has written nothing yet has nothing to transfer and
+/// says so; the replicas of a session that starts together are all in that
+/// state until the first operation is applied, and the one that arrives second
+/// must be able to ask again afterwards. It also covers T5 — a donor that dies
+/// mid-transfer — without any special handling: the next round simply reaches a
+/// different peer.
+///
+/// Same reasoning as P1-D9, where the node re-dials on every roster rather than
+/// only on a changed one: a first attempt can legitimately fail, and gating the
+/// retry on an event that will not recur reintroduces ask-once.
+const STATE_TRANSFER_RETRY: Duration = Duration::from_secs(2);
 
 // Alias for these bounds, needed to transport operations over the network (e.g. via HTTP API).
 pub trait NetworkOp:
@@ -89,6 +104,9 @@ where
     /// keep working.
     export_log: Option<fn(&L) -> serde_json::Value>,
     import_log: Option<fn(serde_json::Value) -> Option<L>>,
+    /// When the last round of `StateRequest`s went out. See
+    /// [`STATE_TRANSFER_RETRY`].
+    last_state_request: Option<Instant>,
 }
 
 /// Envelope for ops submitted, with a oneshot reply channel.
@@ -180,6 +198,7 @@ where
             discovery: None,
             export_log: None,
             import_log: None,
+            last_state_request: None,
         }
     }
 
@@ -228,7 +247,17 @@ where
     /// `since()` -> `SyncRequest` -> `send()` that used to exist cannot drift
     /// apart.
     fn request_sync(&mut self, peer: &PeerId) {
-        self.request_delta_sync(peer);
+        // A replica that has been in the session asks for the delta, which is
+        // what its peers can actually answer from their outboxes. A replica
+        // that has not needs the compacted state as well, and asking for a
+        // delta would get it a correct answer to the wrong question: an empty
+        // batch from a healthy peer, because everything it needs has already
+        // been pruned.
+        if self.import_log.is_some() && self.has_no_history() {
+            self.request_state_transfer(peer);
+        } else {
+            self.request_delta_sync(peer);
+        }
     }
 
     /// Ask `peer` for the events it holds above what this replica has already
@@ -262,19 +291,52 @@ where
         }
     }
 
-    /// `true` while this replica has delivered nothing and knows nobody.
+    /// `true` while this replica has delivered nothing at all.
     ///
     /// The whole precondition for adopting a donor's state wholesale, in one
-    /// place, because it is checked twice: once when deciding what to ask a new
-    /// peer for, and again when a response arrives — two donors can answer the
+    /// place, because it is checked twice: once when deciding what to ask a peer
+    /// for, and again when a response arrives — several donors can answer the
     /// same request, and the second answer must not undo the first.
+    ///
+    /// Deliberately *not* "and knows no other replica", which the plan proposed
+    /// and which does not work: a peer's `SyncRequest` is internalised, so being
+    /// asked for a delta adds the asker to the member set. A replica that has
+    /// merely been spoken to would then look like one with history, and — as
+    /// measured — a joiner would receive its donors' state transfers and
+    /// silently discard every one of them. Knowing who the members are is not
+    /// history. Having delivered something is.
     fn has_no_history(&self) -> bool {
-        let stability = self.replica.stability();
-        stability.delivered == 0 && stability.known_replicas <= 1
+        self.replica.stability().delivered == 0
     }
 
     /// Build the answer to a `StateRequest` from `id`.
+    ///
+    /// The refusal below is the whole reason returning-member merge stays out
+    /// of this phase rather than half-happening by accident. A requester this
+    /// replica already has operations from is *returning* — evicted, or long
+    /// partitioned — and it may hold operations the session has never seen.
+    /// Adopting a snapshot is a replace, not a merge, so serving one would
+    /// discard them silently. Refusing costs the requester one round trip and
+    /// gives phase 3 a defined starting point.
     fn state_response_for(&self, id: &str) -> TransportMessage<L::Op> {
+        // Two replicas that start together are both empty and both ask. Serving
+        // an empty snapshot would work, but it would make one of them adopt the
+        // other's index ordering for nothing; saying there is nothing to give
+        // lets both fall back to a delta sync, which is the right shape for
+        // peers that are equals rather than donor and joiner.
+        if self.replica.stability().delivered == 0 {
+            return TransportMessage::StateUnavailable {
+                reason: "this replica has no history to transfer".to_string(),
+            };
+        }
+        if self.replica.has_history_for(id) {
+            return TransportMessage::StateUnavailable {
+                reason: format!(
+                    "`{id}` is a returning member, not a fresh one; merging its \
+                     history with a snapshot is not implemented"
+                ),
+            };
+        }
         let Some(export) = self.export_log else {
             return TransportMessage::StateUnavailable {
                 reason: "state transfer is not enabled on this replica".to_string(),
@@ -450,6 +512,9 @@ where
             // --- Peers the bootnode has told us about since the last pass ---
             self.reconcile_discovered_peers();
 
+            // --- Still nothing? Ask again. ---
+            self.retry_state_transfer();
+
             // --- Accept new inbound TCP connections ---
             self.transport.accept_connections().ok();
 
@@ -459,6 +524,45 @@ where
             }
 
             thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Re-ask every connected peer for a state transfer while this replica
+    /// still has nothing.
+    ///
+    /// Asking *all* of them rather than one is deliberate. It costs a refusal
+    /// per peer that has nothing to give, and it means a donor that dies
+    /// mid-transfer does not strand the joiner — another peer answers on the
+    /// next round. The second answer to arrive is discarded by the freshness
+    /// re-check in `adopt_state`, so there is no race between two donors.
+    ///
+    /// Stops by itself: the moment anything is delivered — adopted, replayed or
+    /// locally applied — `has_no_history` goes false and this becomes one
+    /// comparison per loop iteration.
+    fn retry_state_transfer(&mut self) {
+        if self.import_log.is_none() || !self.has_no_history() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_state_request
+            .is_some_and(|last| now.duration_since(last) < STATE_TRANSFER_RETRY)
+        {
+            return;
+        }
+        let peers: Vec<PeerId> = self
+            .transport
+            .peers()
+            .into_iter()
+            .filter(|p| p.status == crate::transport::PeerStatus::Connected)
+            .map(|p| p.id)
+            .collect();
+        if peers.is_empty() {
+            return;
+        }
+        self.last_state_request = Some(now);
+        for peer in peers {
+            self.request_state_transfer(&peer);
         }
     }
 

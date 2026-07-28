@@ -1681,17 +1681,17 @@ fn e1_discovery_forms_a_mesh_with_no_static_peers() {
     assert_eq!(read_number(&state, "age").unwrap(), 7.0, "state: {state}");
 }
 
-/// **E2** — a replica that joins after the others have done work.
+/// **E2 / T1** — a replica that joins after the others have done work.
 ///
-/// **This fails today, and the failure is the finding.** There is no state
-/// transfer in the protocol. `SyncRequest` is served from the TCSB outbox,
-/// which holds only events that are *not yet causally stable*: `prune_outbox`
-/// drops everything at or below the stable version, because by then it has
-/// been folded into the compacted stable state. So a joiner can replay the
+/// **The acceptance test for phase 2**, and the phase-1 exit criterion that
+/// could not be met. It was `#[ignore]`d as an executable report of the gap:
+/// `SyncRequest` is served from the TCSB outbox, and `prune_outbox` drops
+/// everything at or below the causally stable version, because by then it has
+/// been folded into the compacted stable state. A joiner could replay the
 /// unstable suffix and nothing else.
 ///
-/// Measured on two replicas that exchanged five operations each and converged,
-/// immediately before a third joined:
+/// Measured before the fix, on two replicas that exchanged five operations each
+/// and converged, immediately before a third joined:
 ///
 /// ```text
 /// a: {"stable_prefix":10, "retained_ops":0, ...}
@@ -1699,28 +1699,32 @@ fn e1_discovery_forms_a_mesh_with_no_static_peers() {
 /// c: {"delivered_ops":0, "pending_ops":1, ...}   state: "Unset"
 /// ```
 ///
-/// `a` had nothing left to send. `c` received `b`'s single unstable event, and
-/// could not deliver it, correctly, because it depends on history `c` will
+/// `a` had nothing left to send. `c` received `b`'s single unstable event and
+/// could not deliver it, correctly, because it depends on history `c` would
 /// never receive.
 ///
-/// This is why `s6_late_joiner_catches_up` passes and this does not: there,
-/// `a` runs alone, so `b`'s column never advances, so nothing ever becomes
-/// stable and the whole history is still in `a`'s outbox. The step-1 fix is
-/// necessary and it is not sufficient.
+/// # Why this cannot pass for the wrong reason
 ///
-/// It is also the exact dual of the problem this phase exists to measure. The
-/// stable prefix cannot advance while a member is silent (E4); and once it
-/// *has* advanced, the operations behind it are unreachable to anyone who was
-/// not there. Both are consequences of membership being implicit.
+/// `s6_late_joiner_catches_up` passes even without state transfer, because
+/// there `a` runs alone: `b`'s column never advances, so nothing ever becomes
+/// stable, so nothing is pruned and the entire history is still replayable out
+/// of the outbox. A test that passes because compaction never ran has not
+/// tested state transfer.
 ///
-/// Fixing it means a state-transfer message carrying the compacted log plus
-/// the matrix clock, which needs the generated composite logs to be
-/// serialisable — an Arachne codegen change. Sized as phase 2, tracked in the
-/// Dev State, and left here as an executable report rather than deleted.
+/// So the middle section below is not decoration. It waits until the stable
+/// frontier has advanced past almost everything and asserts, on `/api/metrics`,
+/// that what remains replayable is a small fraction of what was applied. Only
+/// then does the joiner start. Measured on a passing run: the joiner adopted a
+/// stable prefix of 19 with a single event above it, out of 20 operations —
+/// i.e. 19 of them existed nowhere as operations any more.
 #[test]
-#[ignore = "known gap: no state transfer, so a joiner can only replay the \
-            unstable suffix; anything already causally stable is unreachable"]
 fn e2_a_replica_joining_late_catches_up() {
+    /// Operations applied before the joiner arrives, half on each replica.
+    const APPLIED: u64 = 20;
+    /// How much of that must be causally stable — and therefore unreachable by
+    /// replay — before the joiner is allowed to start.
+    const MUST_BE_STABLE: u64 = 15;
+
     let Some(mut cluster) = discovered_cluster("E2", &["a", "b", "c"]) else {
         return;
     };
@@ -1728,10 +1732,10 @@ fn e2_a_replica_joining_late_catches_up() {
     cluster.start("b").expect("E2: start b");
     await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E2: initial mesh");
 
-    for pos in 0..10 {
+    for pos in 0..(APPLIED / 2) {
         apply_ok(
             cluster.node("a"),
-            ops::object_update("name", ops::string_insert('x', pos)),
+            ops::object_update("name", ops::string_insert('x', pos as usize)),
         );
         apply_ok(
             cluster.node("b"),
@@ -1742,12 +1746,70 @@ fn e2_a_replica_joining_late_catches_up() {
     assert_eq!(read_string(&before, "name").unwrap().len(), 10);
     assert_eq!(read_number(&before, "age").unwrap(), 10.0);
 
+    // --- the precondition that makes this test mean anything ---
+    //
+    // Stability lags convergence by one message in each direction: a replica
+    // learns an operation is stable only once it sees every peer's clock move
+    // past it. Poll for it rather than sleeping.
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    poll_until(CONVERGE_TIMEOUT, || {
+        let stable = metric(a, "stable_prefix")?.min(metric(b, "stable_prefix")?);
+        Ok((stable >= MUST_BE_STABLE).then_some(stable))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the stable frontier never passed {MUST_BE_STABLE} of {APPLIED} operations{}, so \
+             nothing was compacted away and this scenario would prove nothing; a: {:?}, b: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(a),
+            metrics_of(b),
+        )
+    });
+    for node in [a, b] {
+        let retained = metric(node, "retained_ops").unwrap();
+        let delivered = metric(node, "delivered_ops").unwrap();
+        assert_eq!(
+            delivered,
+            APPLIED,
+            "`{}`: {:?}",
+            node.id(),
+            metrics_of(node)
+        );
+        assert!(
+            retained <= APPLIED - MUST_BE_STABLE,
+            "`{}` still holds {retained} of {delivered} operations in its outbox, so a joiner \
+             could reach the state by plain replay and this scenario would prove nothing; \
+             metrics: {:?}",
+            node.id(),
+            metrics_of(node)
+        );
+    }
+
+    // --- the joiner ---
     cluster.start("c").expect("E2: start c");
     await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("E2: directory");
     await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E2: mesh after c joined");
 
     let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
     assert_eq!(after, before, "the joiner did not reach the existing state");
+
+    // Converging on the rendered value is not quite enough: an empty log and a
+    // full one can render alike if the value happens to be default. The joiner
+    // must also account for every operation, or its own next write would look
+    // causally concurrent with history it has already folded in.
+    let c = cluster.node("c");
+    assert_eq!(
+        metric(c, "delivered_ops").unwrap(),
+        APPLIED,
+        "the joiner rendered the right state but does not account for the history behind it; \
+         metrics: {:?}",
+        metrics_of(c)
+    );
+    assert_eq!(
+        metric(c, "ops_applied").unwrap(),
+        0,
+        "the joiner originated operations of its own; this scenario is about adoption"
+    );
 }
 
 /// **E3** — a replica leaves the directory and the session carries on.
