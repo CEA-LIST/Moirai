@@ -10,7 +10,7 @@ use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwner
 use crate::{
     broadcast::{
         message::{BatchMessage, EventMessage, SinceMessage},
-        tcsb::IsTcsb,
+        tcsb::{IsTcsb, StabilitySnapshot},
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
@@ -138,6 +138,14 @@ where
     L: IsLog,
     T: IsTcsb<L::Op>,
 {
+    /// Current causal-stability bookkeeping. See [`StabilitySnapshot`].
+    ///
+    /// Available without `test_utils` on purpose: this is what a running
+    /// replica has to expose for causal stability to be measurable at all.
+    pub fn stability(&self) -> StabilitySnapshot {
+        self.tcsb.stability()
+    }
+
     fn deliver(&mut self, event: Event<L::Op>) {
         #[cfg(feature = "sink")]
         let mut sink = SinkCollector::new();

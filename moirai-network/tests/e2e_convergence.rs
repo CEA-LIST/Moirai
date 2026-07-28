@@ -780,6 +780,19 @@ fn state_of(node: &dyn Node) -> Result<Value> {
     get_json(node, "/api/state")
 }
 
+fn metrics_of(node: &dyn Node) -> Result<Value> {
+    get_json(node, "/api/metrics")
+}
+
+/// Reads one unsigned counter out of `/api/metrics`.
+fn metric(node: &dyn Node, field: &str) -> Result<u64> {
+    let metrics = metrics_of(node)?;
+    metrics
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("`{}` has no `{field}` in {metrics}", node.id()))
+}
+
 /// Cuts `node` off from every peer using the in-process pause flag.
 ///
 /// This is a *simulated* partition: `transport.rs` buffers outbound messages
@@ -1315,6 +1328,118 @@ fn s6_late_joiner_catches_up() {
     let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
     assert_eq!(read_string(&state, "name").unwrap(), "Bo", "state: {state}");
     assert_eq!(read_number(&state, "age").unwrap(), 30.0, "state: {state}");
+}
+
+// ---------------------------------------------------------------------------
+// S8 — causal stability is observable, and stalls on a silent member
+// ---------------------------------------------------------------------------
+
+/// `/api/metrics` reports a stable prefix that advances while both replicas
+/// talk, freezes while one is silent, and resumes when it comes back.
+///
+/// This is the phase-1 measuring instrument under test, not the CRDT. The
+/// whole membership problem reduces to that middle sentence: `stable_prefix`
+/// is a column-wise minimum over every *known* replica, so a single member
+/// that stops acknowledging pins it forever, and nothing can be compacted out
+/// of the log behind it. E4 is this scenario without the resume.
+///
+/// The freeze assertion is not a timing guess. The pause is in force, and the
+/// operations are confirmed to have landed locally (`retained_ops` grew), so
+/// any advance in `stable_prefix` would require a message to have crossed a
+/// severed link.
+#[test]
+fn s8_stable_prefix_stalls_while_a_peer_is_silent() {
+    let Some(cluster) = started_pair("S8") else {
+        return;
+    };
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+
+    // Both replicas must contribute: a column-wise minimum over a matrix where
+    // one replica has never sent anything is pinned at zero regardless.
+    apply_ok(a, ops::object_update("name", ops::string_insert('B', 0)));
+    apply_ok(b, ops::object_update("city", ops::string_insert('P', 0)));
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // Stability needs one more round trip than convergence does: a replica
+    // learns an operation is stable only once it sees the peer's clock move
+    // past it, which happens on the next message.
+    let baseline = poll_until(CONVERGE_TIMEOUT, || {
+        let sa = metric(a, "stable_prefix")?;
+        let sb = metric(b, "stable_prefix")?;
+        Ok((sa > 0 && sb > 0).then_some(sa.min(sb)))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "stable_prefix never advanced on a healthy pair{}; a: {:?}, b: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(a),
+            metrics_of(b),
+        )
+    });
+
+    // --- one member goes silent ---
+    pause_all(a).unwrap();
+    pause_all(b).unwrap();
+
+    let retained_before = metric(b, "retained_ops").unwrap();
+    let frozen_at = metric(b, "stable_prefix").unwrap();
+
+    for pos in 1..=5 {
+        apply_ok(b, ops::object_update("city", ops::string_insert('x', pos)));
+    }
+
+    // The operations are on B: the replication buffer grew by exactly five.
+    let retained_after = metric(b, "retained_ops").unwrap();
+    assert_eq!(
+        retained_after,
+        retained_before + 5,
+        "B applied five operations but its retained buffer went {retained_before} -> \
+         {retained_after}; metrics: {:?}",
+        metrics_of(b)
+    );
+
+    // And none of them can ever become stable, because A cannot acknowledge.
+    assert_eq!(
+        metric(b, "stable_prefix").unwrap(),
+        frozen_at,
+        "stable_prefix advanced across a severed link; metrics: {:?}",
+        metrics_of(b)
+    );
+
+    // --- the member comes back ---
+    resume_all(a).unwrap();
+    resume_all(b).unwrap();
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // Converged is not the same as stable, and the gap is a protocol property
+    // worth stating: a replica learns the peer's clock only from a message the
+    // peer sends. There is no acknowledgement or heartbeat. So after the heal
+    // B has A's operations, but B's own column stays pinned until A speaks
+    // again — measured directly here: without this operation, B sat at
+    // `stable_version {a: 1, b: 0}` indefinitely.
+    //
+    // Consequence for the measurement runs: an E4 baseline in which only some
+    // replicas write does not produce an advancing stable prefix for the
+    // silent ones, and would be mistaken for the very stall under study. Every
+    // replica must write.
+    apply_ok(a, ops::object_update("name", ops::string_insert('C', 1)));
+
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((metric(b, "stable_prefix")? > frozen_at).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "stable_prefix stayed at {frozen_at} after the peer returned{}; metrics: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(b)
+        )
+    });
+
+    // `ops_applied` counts what this replica originated, and is exact — unlike
+    // `/api/operations`, which double-counts remote deliveries.
+    assert_eq!(metric(a, "ops_applied").unwrap(), 2);
+    assert_eq!(metric(b, "ops_applied").unwrap(), 6);
+    assert!(baseline > 0);
 }
 
 // ---------------------------------------------------------------------------

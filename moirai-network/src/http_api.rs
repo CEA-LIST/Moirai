@@ -19,7 +19,9 @@ use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
 /// - `GET  /api/health`          health check
 /// - `GET  /api/state`           query current CRDT state as JSON
+/// - `GET  /api/metrics`         causal-stability and log-size counters
 /// - `GET  /api/operations`      list operations delivered to this replica
+///   (display only — it double-counts remote deliveries; use `/api/metrics`)
 /// - `POST /api/pause/<peer>`    pause a peer connection
 /// - `POST /api/resume/<peer>`   resume a peer connection
 /// - `POST /api/pause-all`       pause all peers
@@ -70,6 +72,19 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                     let _ = ctrl.send(ControlCmd::Query { reply: reply_tx });
                     let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
                         Ok(state) => Response::from_string(state.to_string()).with_header(
+                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
+                        ),
+                        Err(_) => {
+                            Response::from_string(r#"{"error":"timeout"}"#).with_status_code(504)
+                        }
+                    };
+                    let _ = request.respond(add_cors(resp));
+                }
+                (&Method::Get, "/api/metrics") => {
+                    let (reply_tx, reply_rx) = mpsc::channel();
+                    let _ = ctrl.send(ControlCmd::Metrics { reply: reply_tx });
+                    let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
+                        Ok(metrics) => Response::from_string(metrics.to_string()).with_header(
                             Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
                         ),
                         Err(_) => {

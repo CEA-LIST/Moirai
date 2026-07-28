@@ -67,6 +67,12 @@ where
     query_fn: Option<fn(&Replica<L, Tcsb<L::Op>>) -> serde_json::Value>,
     /// Log of all operations delivered to this replica (for operation log endpoint)
     operation_log: Vec<L::Op>,
+    /// Operations *originated* here and accepted by the CRDT.
+    ///
+    /// Separate from `operation_log`, which counts deliveries and over-counts
+    /// remote operations while both peers dial each other. This one is exact,
+    /// so `/api/metrics` can be trusted as a test oracle.
+    local_ops: usize,
 }
 
 /// Envelope for ops submitted, with a oneshot reply channel.
@@ -98,6 +104,9 @@ pub(crate) enum ControlCmd {
         reply: Sender<serde_json::Value>,
     },
     Operations {
+        reply: Sender<serde_json::Value>,
+    },
+    Metrics {
         reply: Sender<serde_json::Value>,
     },
 }
@@ -148,6 +157,7 @@ where
             ctrl_tx,
             query_fn: None,
             operation_log: Vec::new(),
+            local_ops: 0,
         }
     }
 
@@ -213,6 +223,7 @@ where
             Some(event_msg) => {
                 // Record the operation
                 self.operation_log.push(op);
+                self.local_ops += 1;
 
                 let transport_msg = TransportMessage::Event { event: event_msg };
                 if let Err(e) = self.transport.broadcast(transport_msg) {
@@ -399,7 +410,49 @@ where
                     "count": operations.len()
                 }));
             }
+            ControlCmd::Metrics { reply } => {
+                let _ = reply.send(self.metrics());
+            }
         }
+    }
+
+    /// Everything an observer needs to plot causal stability over time.
+    ///
+    /// Field notes, because the names are easy to misread:
+    ///
+    /// - `stable_prefix` only advances when *every* known replica has
+    ///   acknowledged. One silent member freezes it, and that freeze is the
+    ///   phenomenon the phase-1 rig exists to measure.
+    /// - `retained_ops` is the replication buffer, pruned only as
+    ///   `stable_prefix` advances. It is the growth curve, and the closest
+    ///   observable proxy for PO-Log length — the Arachne-generated composite
+    ///   logs do not expose their unstable length through `IsLog`.
+    /// - `ops_applied` counts operations *originated* here. Use it, never
+    ///   `/api/operations`, which double-counts remote deliveries.
+    fn metrics(&self) -> serde_json::Value {
+        let stability = self.replica.stability();
+        let peers = self.transport.peers();
+        let stable_version: serde_json::Map<String, serde_json::Value> = stability
+            .stable_version
+            .iter()
+            .map(|(id, seq)| (id.clone(), json!(seq)))
+            .collect();
+
+        json!({
+            "replica_id": self.replica_id,
+            "stable_prefix": stability.stable_prefix,
+            "stable_version": stable_version,
+            "delivered_ops": stability.delivered,
+            "retained_ops": stability.retained,
+            "pending_ops": stability.pending,
+            "known_replicas": stability.known_replicas,
+            "ops_applied": self.local_ops,
+            "peer_count": peers
+                .iter()
+                .filter(|p| p.status == crate::transport::PeerStatus::Connected)
+                .count(),
+            "peers_known": peers.len(),
+        })
     }
 }
 
