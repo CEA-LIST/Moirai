@@ -169,10 +169,41 @@ where
         );
     }
 
-    /// Connect to known peers
+    /// Ask `peer` for everything this replica has not seen yet.
+    ///
+    /// The single place that turns "we have a link to `peer`" into a history
+    /// pull. Every path that needs one — an accepted `Hello`, a resumed peer, a
+    /// freshly dialled peer — funnels through here, so the four copies of
+    /// `since()` -> `SyncRequest` -> `send()` that used to exist cannot drift
+    /// apart.
+    fn request_sync(&mut self, peer: &PeerId) {
+        let since = self.replica.since();
+        let msg = TransportMessage::SyncRequest { since };
+        if let Err(e) = self.transport.send(peer, msg) {
+            eprintln!(
+                "[{}] Failed to request sync from {}: {}",
+                self.replica_id, peer, e
+            );
+        }
+    }
+
+    /// Connect to known peers, then pull history from each new link.
+    ///
+    /// The pull is what makes a late joiner work. `Hello` travels dialer ->
+    /// acceptor and the *acceptor* answers it with a `SyncRequest`, so without
+    /// this the dialer pushes its history and receives none. A symmetric
+    /// `PEERS` list hides that — both replicas are dialer and acceptor at once
+    /// — but a node that starts after the others is only ever a dialer.
     pub fn connect(&mut self) {
-        if let Err(e) = self.transport.connect_to_peers() {
-            eprintln!("[{}] Some peer connections failed: {}", self.replica_id, e);
+        match self.transport.connect_to_peers() {
+            Ok(new_peers) => {
+                for peer in new_peers {
+                    self.request_sync(&peer);
+                }
+            }
+            Err(e) => {
+                eprintln!("[{}] Some peer connections failed: {}", self.replica_id, e);
+            }
         }
     }
 
@@ -224,14 +255,7 @@ where
             }
             TransportMessage::Hello { id, .. } => {
                 eprintln!("[{}] Peer connected: {}", self.replica_id, id);
-                let since = self.replica.since();
-                let msg = TransportMessage::SyncRequest { since };
-                if let Err(e) = self.transport.send(&id, msg) {
-                    eprintln!(
-                        "[{}] Failed to request sync from {}: {}",
-                        self.replica_id, id, e
-                    );
-                }
+                self.request_sync(&id);
             }
             TransportMessage::Goodbye { id } => {
                 eprintln!("[{}] Peer disconnected: {}", self.replica_id, id);
@@ -287,14 +311,7 @@ where
                             self.handle_transport_message(peer_id.clone(), msg);
                         }
                         // Request delta sync from the peer
-                        let since = self.replica.since();
-                        let sync_msg = TransportMessage::SyncRequest { since };
-                        if let Err(e) = self.transport.send(&peer_id, sync_msg) {
-                            eprintln!(
-                                "[{}] Failed to request sync from {}: {}",
-                                self.replica_id, peer_id, e
-                            );
-                        }
+                        self.request_sync(&peer_id);
                         OpResult {
                             success: true,
                             message: format!(
@@ -336,9 +353,7 @@ where
                     for msg in buffered {
                         self.handle_transport_message(peer_id.clone(), msg);
                     }
-                    let since = self.replica.since();
-                    let sync_msg = TransportMessage::SyncRequest { since };
-                    let _ = self.transport.send(peer_id, sync_msg);
+                    self.request_sync(peer_id);
                 }
                 let _ = reply.send(OpResult {
                     success: true,

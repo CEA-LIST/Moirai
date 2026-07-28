@@ -1284,39 +1284,27 @@ fn s6_late_joiner_joins_mesh() {
     await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("S6: mesh after b joined");
 }
 
-/// A runs alone and accumulates operations; B starts afterwards and should
-/// catch up from nothing, through `Hello` -> `SyncRequest` -> `Batch`.
+/// A runs alone and accumulates operations; B starts afterwards and must catch
+/// up from nothing.
 ///
-/// **This fails today**, and the failure is the point: it is an executable
-/// report of a second defect in the join path, distinct from the one
-/// `s6_late_joiner_joins_mesh` covers.
+/// This was `#[ignore]`d as an executable bug report until phase 1 step 1.
 ///
-/// Measured behaviour: B connects, both replicas list each other as
-/// `Connected`, and B's `/api/state` stays `"Unset"` indefinitely — it never
-/// receives the three operations A applied before it existed. Operations A
-/// applies *after* B joins do not land either, which is correct causal
-/// delivery on B's side: they depend on history B never received.
+/// The defect: only the *dialling* side sends a `Hello`, and the *accepting*
+/// side is the one that answers it with a `SyncRequest`. So the acceptor
+/// pulled the dialer's history and the dialer pulled none. When both replicas
+/// start together each is dialer and acceptor at once, which masks it; a late
+/// joiner is only ever a dialer, which exposes it. Measured before the fix: B
+/// connected, both replicas listed each other as `Connected`, and B's
+/// `/api/state` stayed `"Unset"` indefinitely.
 ///
-/// Root cause: only the *dialling* side sends a `Hello`. The accepting side
-/// answers a `Hello` with a `SyncRequest`, which asks the newcomer for what
-/// *it* has — nothing — and never introduces itself, so the newcomer has no
-/// trigger to issue a `SyncRequest` of its own. When both replicas start
-/// together this is masked, because each dials the other and so each sends a
-/// `Hello`. It is only exposed when one side's dial fails, which by design is
-/// exactly what happens to a late joiner.
+/// The fix needed no protocol change. `connect_to_peers()` already returns the
+/// peers it newly connected to, so the dialer now issues its own `SyncRequest`
+/// per new link — the same three lines the resume path already used.
 ///
-/// Fixing it is a protocol change — either a `Hello` reply on accepted
-/// connections, with the loop termination that implies, or carrying the
-/// sender's version in `Hello` so one round trip suffices. That belongs with
-/// the M1 membership work rather than in a test commit, so the scenario is
-/// recorded here and left `#[ignore]`d.
-///
-/// Do not "fix" this by calling `/api/resume/<peer>`, which does emit a
-/// `SyncRequest`: that endpoint exists for partition simulation and using it
-/// here would hide the defect behind the harness.
+/// Do not "fix" a regression here by calling `/api/resume/<peer>`, which also
+/// emits a `SyncRequest`: that endpoint exists for partition simulation and
+/// using it would hide the join path behind the harness.
 #[test]
-#[ignore = "known defect: an accepted connection is never answered with a Hello, \
-            so a late joiner never requests history"]
 fn s6_late_joiner_catches_up() {
     let Some(mut cluster) = s6_seeded_solo_cluster("S6-catchup") else {
         return;
