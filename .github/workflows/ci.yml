@@ -22,11 +22,9 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
-    # TODO(ci): flip to blocking once the formatting backlog is cleared.
-    # Baseline on 26-network at the time this workflow was added: 49 files
-    # are not rustfmt-clean. Landing `cargo fmt --all` is a separate,
-    # mechanical PR so it stays reviewable on its own.
-    continue-on-error: true
+    # Blocking. The 49-diff backlog this was pinned open for is cleared by
+    # the `cargo fmt --all` commit on this branch, kept separate so it stays
+    # reviewable on its own.
     steps:
       - uses: actions/checkout@v4
       - name: Install rustfmt
