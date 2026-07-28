@@ -185,19 +185,25 @@ where
         let since = self.internalize_since(since);
         let mut events = Vec::new();
 
-        // Iterate over replicas in the version vector and only fetch needed ranges
-        for (replica_idx, req_seq) in since.version().iter() {
+        // Iterate over what *we* hold, not over what the requester knows
+        // about. Driving the loop from the requester's version vector silently
+        // limited a pull to replicas the requester had already heard of, so a
+        // replica that joins knowing nobody — which is every replica once
+        // peers come from a directory rather than a static list — asked for
+        // everything and received an empty batch. An absent entry in the
+        // requester's version reads as sequence 0, which is the right meaning:
+        // "I have none of this replica's operations".
+        for (replica_idx, events_by_seq) in self.outbox.iter() {
             // Skip events originating from the requesting replica itself
-            if replica_idx == since.version().origin_idx() {
+            if *replica_idx == since.version().origin_idx() {
                 continue;
             }
 
-            if let Some(events_by_seq) = self.outbox.get(&replica_idx) {
-                // Range query: get all events with sequence > req_seq
-                for (_, event) in events_by_seq.range((req_seq + 1)..) {
-                    if !since.except().contains(event.id()) {
-                        events.push(event.clone());
-                    }
+            let req_seq = since.version().seq_by_idx(*replica_idx);
+            // Range query: get all events with sequence > req_seq
+            for (_, event) in events_by_seq.range((req_seq + 1)..) {
+                if !since.except().contains(event.id()) {
+                    events.push(event.clone());
                 }
             }
         }

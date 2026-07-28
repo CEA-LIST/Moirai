@@ -21,6 +21,7 @@ use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
 use moirai_protocol::utils::intern_str::InternalizeOp;
 
+use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
 use crate::tcp_transport::TcpTransport;
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
@@ -73,6 +74,11 @@ where
     /// remote operations while both peers dial each other. This one is exact,
     /// so `/api/metrics` can be trusted as a test oracle.
     local_ops: usize,
+    /// Bootnode poller, when `BOOTNODE_URL` was configured.
+    ///
+    /// `None` is the pre-phase-1 behaviour in full: peers come from `PEERS`,
+    /// are dialled once, and nothing is ever discovered.
+    discovery: Option<Discovery>,
 }
 
 /// Envelope for ops submitted, with a oneshot reply channel.
@@ -108,6 +114,9 @@ pub(crate) enum ControlCmd {
     },
     Metrics {
         reply: Sender<serde_json::Value>,
+    },
+    Leave {
+        reply: Sender<OpResult>,
     },
 }
 
@@ -158,7 +167,27 @@ where
             query_fn: None,
             operation_log: Vec::new(),
             local_ops: 0,
+            discovery: None,
         }
+    }
+
+    /// Start discovering peers through a bootnode.
+    ///
+    /// Purely additive: not calling this leaves the node exactly as it was
+    /// before phase 1. `PEERS` keeps working either way and takes effect
+    /// immediately, so a static list and a discovered one compose — the static
+    /// entries are simply already in the address book when the first roster
+    /// arrives.
+    pub fn enable_discovery(&mut self, config: DiscoveryConfig) {
+        eprintln!(
+            "[{}] discovery on: {} session `{}` as {} every {:?}",
+            self.replica_id,
+            config.bootnode_url,
+            config.session,
+            config.advertise_addr,
+            config.interval
+        );
+        self.discovery = Some(Discovery::spawn(config));
     }
 
     /// Get a sender that can be used to submit ops from other threads.
@@ -290,6 +319,9 @@ where
                 self.handle_control_cmd(cmd);
             }
 
+            // --- Peers the bootnode has told us about since the last pass ---
+            self.reconcile_discovered_peers();
+
             // --- Accept new inbound TCP connections ---
             self.transport.accept_connections().ok();
 
@@ -300,6 +332,35 @@ where
 
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Fold the newest bootnode roster into the transport's address book and
+    /// dial whatever is new.
+    ///
+    /// Cheap when nothing arrived, which is every iteration but one per
+    /// interval: the poll thread does the waiting, this only drains a channel.
+    /// `connect()` skips peers already connected, so a roster that has not
+    /// changed costs one `HashMap` lookup per member.
+    fn reconcile_discovered_peers(&mut self) {
+        let Some(discovery) = &self.discovery else {
+            return;
+        };
+        let Some(roster) = discovery.latest_roster() else {
+            return;
+        };
+
+        for peer in roster {
+            self.transport.add_peer(peer.id, peer.addr);
+        }
+
+        // Dial on *every* roster, not only when the roster changed. A first
+        // dial can fail because the peer is not listening yet, and gating the
+        // retry on a membership change would reintroduce dial-once for exactly
+        // the peers that need retrying. `connect_to_peers()` skips anything
+        // already connected, so a settled mesh costs one map lookup per member
+        // per interval, and `connect()` carries the `SyncRequest` that gives a
+        // newly dialled peer our history and asks for theirs.
+        self.connect();
     }
 
     /// Process a control command from the HTTP thread.
@@ -412,6 +473,33 @@ where
             }
             ControlCmd::Metrics { reply } => {
                 let _ = reply.send(self.metrics());
+            }
+            ControlCmd::Leave { reply } => {
+                // A replica has no shutdown path — `run()` never returns and
+                // the process is killed from outside — so departure cannot be
+                // announced on the way out. This is the announcement: stop
+                // re-registering and tell the directory to drop us, while the
+                // replica keeps running and keeps answering its peers.
+                //
+                // It is deliberately *only* a directory departure. Every peer
+                // still has this replica in its matrix clock, so causal
+                // stability keeps waiting for it exactly as it would for a
+                // crash. Making a leave advance stability is phase 2.
+                let result = match &self.discovery {
+                    Some(discovery) => {
+                        discovery.leave();
+                        self.discovery = None;
+                        OpResult {
+                            success: true,
+                            message: "deregistered from the bootnode session".to_string(),
+                        }
+                    }
+                    None => OpResult {
+                        success: false,
+                        message: "discovery is not enabled; nothing to leave".to_string(),
+                    },
+                };
+                let _ = reply.send(result);
             }
         }
     }

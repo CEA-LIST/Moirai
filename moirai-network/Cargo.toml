@@ -19,13 +19,15 @@ rustc-hash = "2.1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.133"
 tiny_http = "0.12"
-
-[dev-dependencies]
-anyhow = "1.0"
-# `blocking` keeps the e2e tests plain `#[test]` functions: no runtime to set
-# up, and the harness is a sequence of request/poll steps anyway.
+# `blocking` keeps every call site a plain function: no runtime to set up, and
+# both users — the e2e harness and the bootnode poll thread in `discovery.rs`
+# — are sequences of request/poll steps. This was a dev-dependency until
+# discovery needed an HTTP client at run time.
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",
 ] }
+
+[dev-dependencies]
+anyhow = "1.0"
 serde_json = "1.0.133"

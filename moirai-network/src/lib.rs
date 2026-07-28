@@ -10,10 +10,12 @@
 //! - `transport.rs` - Transport-agnostic trait for CRDT replication
 //! - `tcp_transport.rs` - TCP implementation for Docker/server environments
 //! - `http_api.rs` - HTTP adapter built on generic node channels
+//! - `discovery.rs` - optional bootnode peer discovery; off unless configured
 //!
 //! Future transports (WebRTC, WebSocket) can implement the same trait.
 
 // --- Generic layer (always available) ---
+pub mod discovery;
 pub mod generic;
 pub mod http_api;
 pub mod query;

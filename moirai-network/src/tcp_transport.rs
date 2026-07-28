@@ -368,6 +368,21 @@ where
         Ok(new_peers)
     }
 
+    fn add_peer(&mut self, peer: PeerId, addr: String) -> bool {
+        // Never overwrite our own entry: a bootnode roster that echoes this
+        // replica back would otherwise make it dial itself.
+        if peer == self.local_id {
+            return false;
+        }
+        match self.peer_addresses.get(&peer) {
+            Some(known) if *known == addr => false,
+            _ => {
+                self.peer_addresses.insert(peer, addr);
+                true
+            }
+        }
+    }
+
     fn connect_to_peers(&mut self) -> TransportResult<Vec<PeerId>> {
         let mut connected = Vec::new();
 

@@ -87,6 +87,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Number of log lines quoted in a failure report.
 const LOG_TAIL_LINES: usize = 40;
 
+/// `(peer_id, address)` pairs, or `(env_var, value)` pairs — the two lists a
+/// replica is launched with.
+type Pairs = Vec<(String, String)>;
+
 // ---------------------------------------------------------------------------
 // Operation payloads
 // ---------------------------------------------------------------------------
@@ -228,12 +232,15 @@ trait Backend {
     /// Fix `id`'s addresses. Called for every replica before any is started.
     fn reserve(&mut self, id: &str) -> Result<Endpoint>;
 
-    /// Launch `id` with a hardcoded peer list of `(peer_id, host:port)`.
+    /// Launch `id` with a hardcoded peer list of `(peer_id, host:port)` and
+    /// any extra environment the scenario needs — `BOOTNODE_URL` and friends
+    /// for the discovery scenarios, empty for every other.
     fn start(
         &mut self,
         id: &str,
         endpoint: &Endpoint,
         peers: &[(String, String)],
+        extra_env: &[(String, String)],
     ) -> Result<Box<dyn Node>>;
 
     /// Sever `id` from the network at the infrastructure level — a genuine
@@ -313,6 +320,7 @@ impl Backend for ProcessBackend {
         id: &str,
         endpoint: &Endpoint,
         peers: &[(String, String)],
+        extra_env: &[(String, String)],
     ) -> Result<Box<dyn Node>> {
         let peers_env = peers
             .iter()
@@ -330,6 +338,7 @@ impl Backend for ProcessBackend {
             .env("LISTEN_PORT", endpoint.listen_port.to_string())
             .env("HTTP_PORT", endpoint.http_port.to_string())
             .env("PEERS", &peers_env)
+            .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err))
@@ -518,6 +527,7 @@ impl Backend for ContainerBackend {
         id: &str,
         endpoint: &Endpoint,
         peers: &[(String, String)],
+        extra_env: &[(String, String)],
     ) -> Result<Box<dyn Node>> {
         let (container, alias) = self.names_of(id)?.clone();
         let peers_env = peers
@@ -526,7 +536,7 @@ impl Backend for ContainerBackend {
             .collect::<Vec<_>>()
             .join(",");
 
-        docker(&[
+        let mut args: Vec<String> = [
             "run",
             "--detach",
             "--name",
@@ -545,8 +555,16 @@ impl Backend for ContainerBackend {
             &format!("PEERS={peers_env}"),
             "--publish",
             &format!("127.0.0.1::{}", endpoint.http_port),
-            &self.image,
-        ])?;
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for (key, value) in extra_env {
+            args.push("--env".to_string());
+            args.push(format!("{key}={value}"));
+        }
+        args.push(self.image.clone());
+        docker(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
 
         // Join the replication network only now, so that disconnecting it
         // later leaves the control network — and the published port — intact.
@@ -631,6 +649,111 @@ impl Drop for ContainerNode {
 }
 
 // ---------------------------------------------------------------------------
+// Bootnode
+// ---------------------------------------------------------------------------
+
+/// A `moirai-bootnode` running as a child process, killed on drop.
+///
+/// Process-backed even for container scenarios would not work — a container
+/// cannot reach the test host's loopback — so the discovery scenarios below
+/// use the process backend only. The Compose rig is where discovery is
+/// exercised across containers.
+struct Bootnode {
+    base_url: String,
+    /// Session name, unique per run so concurrent test binaries do not share a
+    /// roster through a bootnode one of them left behind.
+    session: String,
+    child: Child,
+}
+
+impl Bootnode {
+    /// Starts a bootnode, or returns the reason the scenario should be skipped.
+    fn start() -> Result<Self> {
+        // Built by the same workspace as this test, so its path is derivable;
+        // the environment override exists for a split target directory.
+        let binary = match std::env::var("MOIRAI_E2E_BOOTNODE_BIN") {
+            Ok(path) => PathBuf::from(path),
+            Err(_) => {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/moirai-bootnode")
+            }
+        };
+        if !binary.is_file() {
+            bail!(
+                "no bootnode binary at `{}`; build it with \
+                 `cargo build -p moirai-bootnode`, or point \
+                 MOIRAI_E2E_BOOTNODE_BIN at one",
+                binary.display()
+            );
+        }
+
+        let port = free_port()?;
+        // Short TTL, so a scenario that watches an entry expire does not have
+        // to wait 30 s for it.
+        let child = Command::new(&binary)
+            .env("BOOTNODE_PORT", port.to_string())
+            .env("BOOTNODE_TTL_SECS", "10")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("spawn {}", binary.display()))?;
+
+        let bootnode = Self {
+            base_url: format!("http://127.0.0.1:{port}"),
+            session: format!(
+                "e2e-{}-{}",
+                std::process::id(),
+                RUN_SEQ.fetch_add(1, Ordering::Relaxed)
+            ),
+            child,
+        };
+
+        poll_until(HEALTH_TIMEOUT, || {
+            let body = client()
+                .get(format!("{}/health", bootnode.base_url))
+                .send()?
+                .error_for_status()?
+                .text()?;
+            let value: Value = serde_json::from_str(&body)?;
+            Ok((value.get("status").and_then(Value::as_str) == Some("ok")).then_some(()))
+        })
+        .map_err(|e| {
+            anyhow!(
+                "bootnode never became healthy{}",
+                e.map(|e| format!(" ({e:#})")).unwrap_or_default()
+            )
+        })?;
+
+        Ok(bootnode)
+    }
+
+    /// The roster the directory currently holds, by replica id.
+    fn roster(&self) -> Result<BTreeSet<String>> {
+        let url = format!("{}/session/{}/peers", self.base_url, self.session);
+        let body = client().get(&url).send()?.error_for_status()?.text()?;
+        let value: Value = serde_json::from_str(&body)?;
+        Ok(value
+            .get("peers")
+            .and_then(Value::as_array)
+            .map(|peers| {
+                peers
+                    .iter()
+                    .filter_map(|p| p.get("id").and_then(Value::as_str))
+                    .map(ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
+impl Drop for Bootnode {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cluster
 // ---------------------------------------------------------------------------
 
@@ -645,6 +768,10 @@ struct Cluster {
     backend: Box<dyn Backend>,
     order: Vec<String>,
     endpoints: BTreeMap<String, Endpoint>,
+    /// When set, replicas are started with **no** `PEERS` at all and find each
+    /// other through the directory. Dropped after the replicas, like the
+    /// backend, so nothing is polling a dead bootnode during teardown.
+    bootnode: Option<Bootnode>,
 }
 
 impl Cluster {
@@ -655,6 +782,7 @@ impl Cluster {
             order: ids.iter().map(|s| s.to_string()).collect(),
             endpoints: BTreeMap::new(),
             running: BTreeMap::new(),
+            bootnode: None,
         };
         for id in ids {
             let endpoint = cluster.backend.reserve(id)?;
@@ -663,24 +791,57 @@ impl Cluster {
         Ok(cluster)
     }
 
-    /// Starts `id` with a hardcoded peer list naming every *other* replica of
-    /// the cluster, running or not, and waits for its HTTP API to answer.
+    /// Switches this cluster to discovery: replicas started from now on get an
+    /// empty `PEERS` and are told only where the bootnode is.
+    fn with_bootnode(mut self, bootnode: Bootnode) -> Self {
+        self.bootnode = Some(bootnode);
+        self
+    }
+
+    fn bootnode(&self) -> &Bootnode {
+        self.bootnode
+            .as_ref()
+            .expect("this cluster was not built with a bootnode")
+    }
+
+    /// Starts `id` and waits for its HTTP API to answer.
+    ///
+    /// Without a bootnode the replica gets a hardcoded peer list naming every
+    /// *other* replica of the cluster, running or not — the pre-phase-1 shape,
+    /// which every scenario below S8 relies on. With one, it gets no peers at
+    /// all and has to find them.
     fn start(&mut self, id: &str) -> Result<()> {
         let endpoint = self
             .endpoints
             .get(id)
             .ok_or_else(|| anyhow!("replica `{id}` is not part of this cluster"))?
             .clone();
-        let peers: Vec<(String, String)> = self
-            .order
-            .iter()
-            .filter(|other| other.as_str() != id)
-            .map(|other| (other.clone(), self.endpoints[other].sync_addr.clone()))
-            .collect();
+
+        let (peers, extra_env): (Pairs, Pairs) = match &self.bootnode {
+            Some(bootnode) => (
+                Vec::new(),
+                vec![
+                    ("BOOTNODE_URL".into(), bootnode.base_url.clone()),
+                    ("SESSION_ID".into(), bootnode.session.clone()),
+                    ("ADVERTISE_ADDR".into(), endpoint.sync_addr.clone()),
+                    // Faster than the 5 s default so a scenario is not gated
+                    // on the reconcile interval; still far below the TTL.
+                    ("RECONCILE_SECS".into(), "1".into()),
+                ],
+            ),
+            None => (
+                self.order
+                    .iter()
+                    .filter(|other| other.as_str() != id)
+                    .map(|other| (other.clone(), self.endpoints[other].sync_addr.clone()))
+                    .collect(),
+                Vec::new(),
+            ),
+        };
 
         let node = self
             .backend
-            .start(id, &endpoint, &peers)
+            .start(id, &endpoint, &peers, &extra_env)
             .with_context(|| format!("start `{id}` on the {} backend", self.backend.name()))?;
         await_healthy(node.as_ref(), HEALTH_TIMEOUT)?;
         self.running.insert(id.to_string(), node);
@@ -1440,6 +1601,197 @@ fn s8_stable_prefix_stalls_while_a_peer_is_silent() {
     assert_eq!(metric(a, "ops_applied").unwrap(), 2);
     assert_eq!(metric(b, "ops_applied").unwrap(), 6);
     assert!(baseline > 0);
+}
+
+// ---------------------------------------------------------------------------
+// E1–E3 — discovery through a bootnode, with no static peer configuration
+// ---------------------------------------------------------------------------
+
+/// Builds a cluster whose replicas are told nothing about each other.
+///
+/// A missing bootnode binary is a skip for the same reason a missing node
+/// binary is: it makes the suite runnable on a checkout that has not built
+/// everything.
+fn discovered_cluster(scenario: &str, ids: &[&str]) -> Option<Cluster> {
+    let cluster = process_cluster(scenario, ids)?;
+    match Bootnode::start() {
+        Ok(bootnode) => Some(cluster.with_bootnode(bootnode)),
+        Err(why) => {
+            eprintln!("\nE2E-SKIP {scenario}: {why:#}");
+            None
+        }
+    }
+}
+
+/// Asks a replica to deregister from its session while continuing to run.
+fn leave_session(node: &dyn Node) -> Result<()> {
+    let reply = post_json(node, "/api/leave", None)?;
+    if reply.get("success").and_then(Value::as_bool) != Some(true) {
+        bail!("{} refused to leave: {reply}", node.id());
+    }
+    Ok(())
+}
+
+/// Waits until the directory's roster is exactly `expected`.
+fn await_roster(bootnode: &Bootnode, expected: &[&str], timeout: Duration) -> Result<()> {
+    let want: BTreeSet<String> = expected.iter().map(ToString::to_string).collect();
+    poll_until(timeout, || Ok((bootnode.roster()? == want).then_some(()))).map_err(|e| {
+        anyhow!(
+            "directory roster never became {want:?} (last seen {:?}){}",
+            bootnode.roster(),
+            e.map(|e| format!("; last error: {e:#}"))
+                .unwrap_or_default()
+        )
+    })
+}
+
+/// **E1** — three replicas start together with an empty `PEERS` and find each
+/// other through the directory.
+///
+/// This is what the whole phase is for. Every scenario above hardcodes the
+/// full peer list at launch, which is only possible because the membership is
+/// known before anything starts. Here nothing knows anything: each replica
+/// registers its own address, reads back the others, and dials them.
+#[test]
+fn e1_discovery_forms_a_mesh_with_no_static_peers() {
+    let Some(mut cluster) = discovered_cluster("E1", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start_all().expect("E1: start cluster");
+
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("E1: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E1: mesh");
+
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("name", ops::string_insert('B', 0)),
+    );
+    apply_ok(
+        cluster.node("b"),
+        ops::object_update("city", ops::string_insert('P', 0)),
+    );
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("age", ops::number_inc(7.0)),
+    );
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&state, "name").unwrap(), "B", "state: {state}");
+    assert_eq!(read_string(&state, "city").unwrap(), "P", "state: {state}");
+    assert_eq!(read_number(&state, "age").unwrap(), 7.0, "state: {state}");
+}
+
+/// **E2** — a replica that joins after the others have done work.
+///
+/// **This fails today, and the failure is the finding.** There is no state
+/// transfer in the protocol. `SyncRequest` is served from the TCSB outbox,
+/// which holds only events that are *not yet causally stable*: `prune_outbox`
+/// drops everything at or below the stable version, because by then it has
+/// been folded into the compacted stable state. So a joiner can replay the
+/// unstable suffix and nothing else.
+///
+/// Measured on two replicas that exchanged five operations each and converged,
+/// immediately before a third joined:
+///
+/// ```text
+/// a: {"stable_prefix":10, "retained_ops":0, ...}
+/// b: {"stable_prefix": 9, "retained_ops":1, ...}
+/// c: {"delivered_ops":0, "pending_ops":1, ...}   state: "Unset"
+/// ```
+///
+/// `a` had nothing left to send. `c` received `b`'s single unstable event, and
+/// could not deliver it, correctly, because it depends on history `c` will
+/// never receive.
+///
+/// This is why `s6_late_joiner_catches_up` passes and this does not: there,
+/// `a` runs alone, so `b`'s column never advances, so nothing ever becomes
+/// stable and the whole history is still in `a`'s outbox. The step-1 fix is
+/// necessary and it is not sufficient.
+///
+/// It is also the exact dual of the problem this phase exists to measure. The
+/// stable prefix cannot advance while a member is silent (E4); and once it
+/// *has* advanced, the operations behind it are unreachable to anyone who was
+/// not there. Both are consequences of membership being implicit.
+///
+/// Fixing it means a state-transfer message carrying the compacted log plus
+/// the matrix clock, which needs the generated composite logs to be
+/// serialisable — an Arachne codegen change. Sized as phase 2, tracked in the
+/// Dev State, and left here as an executable report rather than deleted.
+#[test]
+#[ignore = "known gap: no state transfer, so a joiner can only replay the \
+            unstable suffix; anything already causally stable is unreachable"]
+fn e2_a_replica_joining_late_catches_up() {
+    let Some(mut cluster) = discovered_cluster("E2", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start("a").expect("E2: start a");
+    cluster.start("b").expect("E2: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E2: initial mesh");
+
+    for pos in 0..10 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("name", ops::string_insert('x', pos)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("age", ops::number_inc(1.0)),
+        );
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&before, "name").unwrap().len(), 10);
+    assert_eq!(read_number(&before, "age").unwrap(), 10.0);
+
+    cluster.start("c").expect("E2: start c");
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("E2: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E2: mesh after c joined");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(after, before, "the joiner did not reach the existing state");
+}
+
+/// **E3** — a replica leaves the directory and the session carries on.
+///
+/// Note what this does *not* assert, because it is the finding phase 2 is
+/// about: after `c` leaves, the remaining replicas keep converging, but their
+/// stable prefix is still waiting on `c`. Leaving the directory is not being
+/// evicted from the causal member set, and `stable_version` still carries a
+/// column for `c`. Making that column go away is the phase-2 contribution.
+#[test]
+fn e3_a_replica_leaves_and_the_session_continues() {
+    let Some(mut cluster) = discovered_cluster("E3", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start_all().expect("E3: start cluster");
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("E3: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("E3: mesh");
+
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("name", ops::string_insert('B', 0)),
+    );
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    leave_session(cluster.node("c")).expect("E3: c leaves");
+    await_roster(cluster.bootnode(), &["a", "b"], MESH_TIMEOUT).expect("E3: c left the directory");
+
+    // The survivors still replicate to each other.
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("city", ops::string_insert('P', 0)),
+    );
+    let survivors = [cluster.node("a"), cluster.node("b")];
+    let state = assert_converged(&survivors, CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&state, "city").unwrap(), "P", "state: {state}");
+
+    // And they are still carrying `c` in their causal member set, which is
+    // exactly the cost this rig exists to measure.
+    let metrics = metrics_of(cluster.node("a")).unwrap();
+    assert!(
+        metrics.pointer("/stable_version/c").is_some(),
+        "leaving the directory silently evicted `c` from the causal member \
+         set; that would make E4 unmeasurable. metrics: {metrics}"
+    );
 }
 
 // ---------------------------------------------------------------------------

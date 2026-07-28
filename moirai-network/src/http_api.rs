@@ -27,6 +27,7 @@ use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
 /// - `POST /api/pause-all`       pause all peers
 /// - `POST /api/resume-all`      resume all peers
 /// - `GET  /api/peers`           list peers and status
+/// - `POST /api/leave`           deregister from the bootnode session
 pub(crate) fn start_http_api<O: NetworkOp>(
     port: u16,
     replica_id: String,
@@ -220,6 +221,21 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                         (&Method::Post, "/api/resume-all") => {
                             let (reply_tx, reply_rx) = mpsc::channel();
                             let _ = ctrl.send(ControlCmd::ResumeAll { reply: reply_tx });
+                            let result =
+                                reply_rx
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap_or(OpResult {
+                                        success: false,
+                                        message: "timeout".into(),
+                                    });
+                            let resp =
+                                Response::from_string(serde_json::to_string(&result).unwrap())
+                                    .with_header(json_header);
+                            let _ = request.respond(add_cors(resp));
+                        }
+                        (&Method::Post, "/api/leave") => {
+                            let (reply_tx, reply_rx) = mpsc::channel();
+                            let _ = ctrl.send(ControlCmd::Leave { reply: reply_tx });
                             let result =
                                 reply_rx
                                     .recv_timeout(Duration::from_secs(5))

@@ -180,6 +180,20 @@ pub trait CrdtTransport {
     /// Accept new incoming connections (if applicable)
     fn accept_connections(&mut self) -> TransportResult<Vec<PeerId>>;
 
+    /// Learn how to reach `peer`, so the next [`connect_to_peers`] can dial it.
+    ///
+    /// Returns `true` when this is new information — a peer that was unknown,
+    /// or one whose address changed — so a caller can tell a discovery round
+    /// that changed the roster from one that did not.
+    ///
+    /// The default is a no-op returning `false`, for transports that find
+    /// their peers themselves and have no address book to update.
+    ///
+    /// [`connect_to_peers`]: CrdtTransport::connect_to_peers
+    fn add_peer(&mut self, _peer: PeerId, _addr: String) -> bool {
+        false
+    }
+
     /// Connect to configured/known peers.
     ///
     /// Necessary for transports that require explicit connections (e.g. TCP)
