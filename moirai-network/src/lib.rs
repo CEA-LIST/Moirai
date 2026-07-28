@@ -11,11 +11,14 @@
 //! - `tcp_transport.rs` - TCP implementation for Docker/server environments
 //! - `http_api.rs` - HTTP adapter built on generic node channels
 //! - `discovery.rs` - optional bootnode peer discovery; off unless configured
+//! - `dashboard.rs` - optional outbound reporting to a monitoring dashboard; off unless configured
+//! - `workload.rs` - the operation shapes the rig drives, and a seeded generator over them
 //! - `state_transfer.rs` - handing a compacted log to a replica that joins late
 //!
 //! Future transports (WebRTC, WebSocket) can implement the same trait.
 
 // --- Generic layer (always available) ---
+pub mod dashboard;
 pub mod discovery;
 pub mod generic;
 pub mod http_api;
@@ -23,6 +26,7 @@ pub mod query;
 pub mod state_transfer;
 pub mod tcp_transport;
 pub mod transport;
+pub mod workload;
 
 pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSet<V> = rustc_hash::FxHashSet<V>;

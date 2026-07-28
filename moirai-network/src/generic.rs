@@ -21,6 +21,7 @@ use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
 use moirai_protocol::utils::intern_str::InternalizeOp;
 
+use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
 use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
 use crate::state_transfer::TransferableLog;
@@ -107,6 +108,64 @@ where
     /// When the last round of `StateRequest`s went out. See
     /// [`STATE_TRANSFER_RETRY`].
     last_state_request: Option<Instant>,
+    /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
+    /// pre-existing behaviour in full: no thread, no request, and the delivery
+    /// trace left switched off.
+    dashboard: Option<DashboardSink<L::Op>>,
+    /// The operations behind events not yet reported. Empty and untouched while
+    /// `dashboard` is `None`.
+    ops_by_event: OpsByEvent<L::Op>,
+    last_report: Option<Instant>,
+    started_at: Instant,
+}
+
+/// The operations behind recently delivered events, keyed `origin:seq`.
+///
+/// The delivery trace names *which* event a log resolved; it deliberately does
+/// not carry the operation, because `moirai-protocol` has no serialisation
+/// bound on it. The network layer does — every operation it sends or receives
+/// has just been through serde — so the join happens here.
+///
+/// Bounded and FIFO. An event whose operation has already been evicted is still
+/// reported, without its payload: a feed missing a body is better than a buffer
+/// that grows for as long as the replica runs.
+#[derive(Debug)]
+struct OpsByEvent<O> {
+    by_id: crate::HashMap<String, O>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl<O> Default for OpsByEvent<O> {
+    fn default() -> Self {
+        Self {
+            by_id: crate::HashMap::default(),
+            order: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl<O> OpsByEvent<O> {
+    /// Roughly one second of a busy rig at 100 operations per second, per
+    /// replica. Reports flush several times a second, so nothing that is going
+    /// to be reported is ever evicted first in practice.
+    const CAPACITY: usize = 1024;
+
+    fn remember(&mut self, key: String, op: O) {
+        if self.by_id.contains_key(&key) {
+            return;
+        }
+        if self.order.len() >= Self::CAPACITY {
+            if let Some(oldest) = self.order.pop_front() {
+                self.by_id.remove(&oldest);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.by_id.insert(key, op);
+    }
+
+    fn take(&mut self, key: &str) -> Option<O> {
+        self.by_id.remove(key)
+    }
 }
 
 /// Envelope for ops submitted, with a oneshot reply channel.
@@ -199,7 +258,22 @@ where
             export_log: None,
             import_log: None,
             last_state_request: None,
+            dashboard: None,
+            ops_by_event: OpsByEvent::default(),
+            last_report: None,
+            started_at: Instant::now(),
         }
+    }
+
+    /// Start reporting to a dashboard.
+    ///
+    /// Purely additive, exactly like [`enable_discovery`]: not calling this
+    /// leaves the replica as it was, with no thread, no outbound request, and
+    /// the delivery trace switched off.
+    ///
+    /// [`enable_discovery`]: GenericNode::enable_discovery
+    pub fn enable_dashboard(&mut self, config: DashboardConfig) {
+        self.dashboard = Some(DashboardSink::spawn(config));
     }
 
     /// Start discovering peers through a bootnode.
@@ -424,6 +498,7 @@ where
                 // Record the operation
                 self.operation_log.push(op);
                 self.local_ops += 1;
+                self.remember_op(event_msg.event());
 
                 let transport_msg = TransportMessage::Event { event: event_msg };
                 if let Err(e) = self.transport.broadcast(transport_msg) {
@@ -446,11 +521,13 @@ where
         match msg {
             TransportMessage::Event { event } => {
                 self.operation_log.push(event.event().op().clone());
+                self.remember_op(event.event());
                 self.replica.receive(event);
             }
             TransportMessage::Batch { batch } => {
                 for event in batch.batch().events() {
                     self.operation_log.push(event.op().clone());
+                    self.remember_op(event);
                 }
                 self.replica.receive_batch(batch);
             }
@@ -494,8 +571,110 @@ where
         }
     }
 
+    /// Keep the operation behind `event`, so a delivery record can be joined
+    /// with what was actually applied. No-op unless a dashboard is attached.
+    fn remember_op(&mut self, event: &moirai_protocol::event::Event<L::Op>) {
+        if self.dashboard.is_none() {
+            return;
+        }
+        let id = event.id();
+        self.ops_by_event.remember(
+            format!("{}:{}", id.origin_id(), id.seq()),
+            event.op().clone(),
+        );
+    }
+
+    /// Hand everything the CRDT decided since the last pass to the sender
+    /// thread.
+    ///
+    /// The whole cost paid here is: drain a `Vec`, build one small owned struct
+    /// per delivery, and `try_send` it. No JSON is encoded, no HTTP happens,
+    /// and the operation is *moved* out of the pending map rather than cloned.
+    /// Called once per event-loop iteration, so a record's timestamp trails the
+    /// delivery by at most one iteration — 10 ms, which is the resolution of
+    /// any propagation time computed from these and is stated rather than
+    /// papered over.
+    fn collect_deliveries(&mut self) {
+        let Some(sink) = &self.dashboard else {
+            return;
+        };
+        let deliveries = moirai_protocol::state::trace::drain();
+        if deliveries.is_empty() {
+            return;
+        }
+        let ts_ms = now_ms();
+        for delivery in deliveries {
+            let id = format!("{}:{}", delivery.origin, delivery.seq);
+            let op = self.ops_by_event.take(&id);
+            sink.offer_event(EventRecord {
+                local: delivery.origin == self.replica_id,
+                superseded: delivery
+                    .superseded
+                    .into_iter()
+                    .map(|s| (s.id, s.concurrent))
+                    .collect(),
+                id,
+                origin: delivery.origin,
+                seq: delivery.seq,
+                lamport: delivery.lamport,
+                ts_ms,
+                applied: delivery.applied,
+                redundant_on_arrival: delivery.redundant_on_arrival,
+                reset: delivery.reset,
+                op,
+            });
+        }
+    }
+
+    /// Hand over a fresh view of this replica, if one is due.
+    ///
+    /// Rendering the state is the one non-trivial thing reporting does, which
+    /// is why it happens on an interval rather than per delivery, and why the
+    /// digest over it is computed on the sender thread rather than here.
+    fn report_to_dashboard(&mut self) {
+        let Some(sink) = &self.dashboard else {
+            return;
+        };
+        let interval = sink.interval();
+        let now = Instant::now();
+        if self
+            .last_report
+            .is_some_and(|last| now.duration_since(last) < interval)
+        {
+            return;
+        }
+        self.last_report = Some(now);
+
+        let state = match &self.query_fn {
+            Some(f) => f(&self.replica),
+            None => json!(null),
+        };
+        let peers = self
+            .transport
+            .peers()
+            .into_iter()
+            .map(|p| (p.id, format!("{:?}", p.status)))
+            .collect();
+        let snapshot = SnapshotRecord {
+            uptime_ms: now.duration_since(self.started_at).as_millis() as u64,
+            metrics: self.metrics(),
+            state,
+            peers,
+        };
+        // Borrow again: `metrics()` needs `&self`, so the sink reference above
+        // cannot still be alive.
+        if let Some(sink) = &self.dashboard {
+            sink.offer_snapshot(snapshot);
+        }
+    }
+
     /// Run the main event loop.
     pub fn run(&mut self) {
+        // The delivery trace is thread-local and delivery happens on this
+        // thread, so it can only be switched on from here.
+        if self.dashboard.is_some() {
+            moirai_protocol::state::trace::set_enabled(true);
+        }
         eprintln!("[{}] Entering main event loop", self.replica_id);
         loop {
             // --- Adapter-submitted operations ---
@@ -522,6 +701,10 @@ where
             while let Ok(Some((from, msg))) = self.transport.try_recv() {
                 self.handle_transport_message(from, msg);
             }
+
+            // --- Monitoring, if anyone asked for it ---
+            self.collect_deliveries();
+            self.report_to_dashboard();
 
             thread::sleep(Duration::from_millis(10));
         }

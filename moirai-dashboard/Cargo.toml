@@ -1,0 +1,27 @@
+[package]
+name = "moirai-dashboard"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Live view of a running Moirai session: who wrote what, what the CRDT did with it, and who agrees"
+
+[[bin]]
+name = "moirai-dashboard"
+path = "src/main.rs"
+
+# No new runtime dependency. `tiny_http` is how `http_api.rs` and the bootnode
+# already serve HTTP, `reqwest/blocking` is how `discovery.rs` already dials
+# out, and the workload generator is shared with the e2e suite rather than
+# written twice — which is why `moirai-network` is a dependency at all.
+[dependencies]
+moirai-network = { path = "../moirai-network" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.133"
+tiny_http = "0.12"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "blocking",
+] }
