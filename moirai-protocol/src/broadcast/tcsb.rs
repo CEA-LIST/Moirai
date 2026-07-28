@@ -2,8 +2,10 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
-use crate::replica::ReplicaIdOwned;
+use crate::replica::{ReplicaId, ReplicaIdOwned};
 use crate::{
     HashMap, HashSet,
     broadcast::{
@@ -17,7 +19,7 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport},
     replica::ReplicaIdx,
-    utils::intern_str::{InternalizeOp, Interner},
+    utils::intern_str::{InternalizeOp, Interner, Resolver},
 };
 
 /// A read-only view of the causal-stability bookkeeping behind a replica.
@@ -54,6 +56,74 @@ pub struct StabilitySnapshot {
     pub retained: usize,
 }
 
+/// The causal bookkeeping a replica needs in order to join a session that has
+/// already compacted part of its history away.
+///
+/// # Why this is not `Serialize` on [`Tcsb`] itself
+///
+/// A `Tcsb` also holds an inbox, an outbox and an index translator. The first
+/// two are local delivery bookkeeping and the third is a private mapping
+/// between *this* replica's indices and every peer's; none of them mean
+/// anything to anybody else. What transfers is: who the members are, what each
+/// of them has delivered, where the stable frontier sits, and the events that
+/// are still above it.
+///
+/// # Indices
+///
+/// `MatrixClock`, `Version` and `EventId` are all keyed by [`ReplicaIdx`],
+/// which is assigned per replica in first-seen order and is therefore *local*.
+/// Rather than remap them — `Interner::update_translation` exists for the
+/// message path and nothing else should duplicate it — a joiner adopts the
+/// donor's ordering wholesale (see [`IsTcsb::adopt`]). That is only sound for a
+/// replica with no history of its own, which is exactly the case this phase
+/// implements.
+#[cfg(feature = "serde")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "O: Serialize",
+    deserialize = "O: serde::de::DeserializeOwned"
+))]
+pub struct StateSnapshot<O> {
+    /// The donor's index -> replica id vector. Defines the index space every
+    /// other field of this snapshot is expressed in.
+    resolver: Resolver,
+    /// What the donor believes every member has delivered.
+    matrix_clock: MatrixClock,
+    /// The donor's causally stable frontier. Everything at or below it has been
+    /// folded into the compacted state and is *not* in `suffix`.
+    last_stable_version: Version,
+    /// The donor's outbox: exactly the events above `last_stable_version`.
+    /// Without them a joiner would be caught up to the last stable point rather
+    /// than to now.
+    suffix: Vec<Event<O>>,
+}
+
+#[cfg(feature = "serde")]
+impl<O> StateSnapshot<O> {
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
+    }
+
+    pub fn matrix_clock(&self) -> &MatrixClock {
+        &self.matrix_clock
+    }
+
+    pub fn last_stable_version(&self) -> &Version {
+        &self.last_stable_version
+    }
+
+    pub fn suffix(&self) -> &[Event<O>] {
+        &self.suffix
+    }
+
+    /// Id of the replica this snapshot was taken on.
+    pub fn origin_id(&self) -> &ReplicaId {
+        self.resolver
+            .resolve(self.matrix_clock.origin_idx())
+            .expect("a snapshot resolver always resolves its own origin")
+    }
+}
+
 pub trait IsTcsb<O> {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
     fn receive(&mut self, message: EventMessage<O>);
@@ -66,6 +136,25 @@ pub trait IsTcsb<O> {
     fn update_version(&mut self, version: &Version);
     /// Current causal-stability bookkeeping. See [`StabilitySnapshot`].
     fn stability(&self) -> StabilitySnapshot;
+    /// `true` when this replica has already delivered at least one operation
+    /// *originated by* `id`.
+    ///
+    /// The donor-side guard for state transfer: a requester the donor already
+    /// has history from is a *returning* member, not a fresh one, and adopting
+    /// wholesale would silently discard whatever it did while it was away.
+    /// Merging the two is phase 3; refusing is phase 2.
+    fn has_history_for(&self, id: &ReplicaId) -> bool;
+    /// Everything a fresh replica needs to take over this session's causal
+    /// bookkeeping. See [`StateSnapshot`].
+    #[cfg(feature = "serde")]
+    fn snapshot(&self) -> StateSnapshot<O>;
+    /// Replace this replica's causal bookkeeping with a donor's.
+    ///
+    /// Only sound for a replica with no history of its own — see
+    /// [`StateSnapshot`] — because it takes over the donor's index ordering
+    /// instead of merging into its own.
+    #[cfg(feature = "serde")]
+    fn adopt(&mut self, snapshot: StateSnapshot<O>);
 }
 
 #[derive(Debug)]
@@ -244,6 +333,137 @@ where
             pending: self.inbox.len(),
             retained: self.outbox.values().map(BTreeMap::len).sum(),
         }
+    }
+
+    fn has_history_for(&self, id: &ReplicaId) -> bool {
+        match self.interner.get(id) {
+            Some(idx) => self
+                .matrix_clock
+                .version_by_idx(idx)
+                .is_some_and(|version| version.origin_seq() > 0),
+            None => false,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    fn snapshot(&self) -> StateSnapshot<O> {
+        // `prune_outbox` already keeps the outbox to exactly the events above
+        // `last_stable_version`, so the whole outbox *is* the suffix. Filtering
+        // again here would only duplicate that invariant in a second place.
+        let suffix = self
+            .outbox
+            .values()
+            .flat_map(BTreeMap::values)
+            .cloned()
+            .collect();
+
+        StateSnapshot {
+            resolver: self.interner.resolver().clone(),
+            matrix_clock: self.matrix_clock.clone(),
+            last_stable_version: self.last_stable_version.clone(),
+            suffix,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    fn adopt(&mut self, snapshot: StateSnapshot<O>) {
+        let StateSnapshot {
+            resolver,
+            matrix_clock,
+            last_stable_version,
+            suffix,
+        } = snapshot;
+
+        let local_id = self
+            .interner
+            .resolve(self.replica_idx)
+            .expect("a replica always resolves its own index")
+            .to_owned();
+        let donor_idx = matrix_clock.origin_idx();
+
+        // Take over the donor's index ordering verbatim: intern its ids first,
+        // in its order, so every index inside `matrix_clock`,
+        // `last_stable_version`, `suffix` — and inside the compacted log that
+        // travels beside them — keeps its meaning without being rewritten.
+        // Anything this replica happened to know already is appended after,
+        // which for a fresh joiner is only its own id.
+        let mut interner = Interner::new();
+        for i in 0..resolver.len() {
+            interner.intern(
+                resolver
+                    .resolve(ReplicaIdx(i))
+                    .expect("a resolver resolves every index below its length"),
+            );
+        }
+        let (local_idx, _) = interner.intern(&local_id);
+        let previous = self.interner.resolver().clone();
+        for i in 0..previous.len() {
+            interner.intern(
+                previous
+                    .resolve(ReplicaIdx(i))
+                    .expect("a resolver resolves every index below its length"),
+            );
+        }
+        // The donor's row of the translator, filled the same way every inbound
+        // message fills one. It is the identity here, but going through
+        // `update_translation` keeps a single owner of that invariant.
+        interner.update_translation(donor_idx, &resolver);
+        let local_resolver = interner.resolver().clone();
+
+        let mut clock = MatrixClock::new(local_idx, local_resolver.clone());
+        for i in 0..local_resolver.len() {
+            let idx = ReplicaIdx(i);
+            let mut row = Version::new(idx, local_resolver.clone());
+            if let Some(donor_row) = matrix_clock.version_by_idx(idx) {
+                for (col, seq) in donor_row.iter() {
+                    row.set_by_idx(col, seq);
+                }
+            }
+            clock.set_by_idx(idx, row);
+        }
+        // Our own row is the donor's view of *itself*: we have, as of now,
+        // delivered exactly what the donor had. Our own column stays at zero,
+        // which is what keeps the first operation we send causally *after* the
+        // state we just adopted rather than concurrent with it.
+        let mut own_row = Version::new(local_idx, local_resolver.clone());
+        for (col, seq) in matrix_clock.origin_version().iter() {
+            own_row.set_by_idx(col, seq);
+        }
+        clock.set_by_idx(local_idx, own_row);
+        debug_assert!(clock.is_valid());
+
+        let mut lsv = Version::new(local_idx, local_resolver.clone());
+        for (col, seq) in last_stable_version.iter() {
+            lsv.set_by_idx(col, seq);
+        }
+
+        // The suffix events are rebound to the local resolver. Their indices
+        // are unchanged — that is the point of adopting the donor's ordering —
+        // but a `Version` compares views by pointer identity, so an event
+        // carrying the donor's resolver would trip `partial_cmp` the first time
+        // it met a locally built one.
+        let mut outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>> = HashMap::default();
+        for event in suffix {
+            let id = EventId::new(event.id().idx(), event.id().seq(), local_resolver.clone());
+            let mut version = Version::new(event.version().origin_idx(), local_resolver.clone());
+            for (col, seq) in event.version().iter() {
+                version.set_by_idx(col, seq);
+            }
+            let lamport = *event.lamport();
+            let rebound = Event::new(id, lamport, event.op().clone(), version);
+            outbox
+                .entry(rebound.id().idx())
+                .or_default()
+                .insert(rebound.id().seq(), rebound);
+        }
+
+        self.inbox.clear();
+        self.outbox = outbox;
+        self.matrix_clock = clock;
+        self.last_stable_version = lsv;
+        self.replica_idx = local_idx;
+        self.interner = interner;
+        self.last_updated_columns = Vec::new();
     }
 }
 
@@ -495,5 +715,220 @@ where
 
     fn interner(&self) -> &Interner {
         &self.interner
+    }
+}
+
+/// State transfer, at the level where it can be reasoned about without a
+/// network: a donor's causal bookkeeping crossing a serialization boundary and
+/// being installed on a replica that has never delivered anything.
+///
+/// The three replicas here intern each other in *different* orders, which is
+/// what a real session does — a replica always interns itself first. So the
+/// snapshot is taken in one index space and adopted in another, which is the
+/// part that would corrupt silently if it were wrong.
+#[cfg(all(test, feature = "serde"))]
+mod state_transfer {
+    use std::cmp::Ordering;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+    use crate::utils::intern_str::Interner;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct Op(u32);
+
+    impl InternalizeOp for Op {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    /// A replica that interns itself first, then everybody else — the ordering
+    /// `Replica::bootstrap` produces.
+    fn tcsb(id: &str, members: &[&str]) -> Tcsb<Op> {
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(id);
+        for member in members {
+            interner.intern(member);
+        }
+        Tcsb::new(idx, interner)
+    }
+
+    /// What `Replica::deliver` does, minus the CRDT log.
+    fn drain(t: &mut Tcsb<Op>) {
+        while t.next_causally_ready().is_some() {
+            t.is_stable();
+        }
+    }
+
+    fn send(t: &mut Tcsb<Op>, n: u32) -> EventMessage<Op> {
+        let message = t.send(Op(n));
+        // A locally originated event is delivered by its own replica without
+        // going through the inbox, so the origin column has to be advanced the
+        // way `Replica::send` -> `deliver` does.
+        t.matrix_clock
+            .set_by_idx_incremental(t.replica_idx, message.event().version().clone());
+        message
+    }
+
+    fn stable_map(t: &Tcsb<Op>) -> Vec<(ReplicaIdOwned, Seq)> {
+        let mut v = t.stability().stable_version;
+        v.sort();
+        v
+    }
+
+    /// A seeded three-replica session, plus the very first operation `b`
+    /// originated — long since stable, and long since pruned out of every
+    /// outbox.
+    struct Session {
+        a: Tcsb<Op>,
+        b: Tcsb<Op>,
+        first_from_b: EventMessage<Op>,
+    }
+
+    /// Drives a three-replica session until the stable frontier has advanced,
+    /// so that the outbox no longer holds the whole history.
+    fn seeded_session() -> Session {
+        let mut a = tcsb("a", &["a", "b", "c"]);
+        let mut b = tcsb("b", &["a", "b", "c"]);
+        let mut c = tcsb("c", &["a", "b", "c"]);
+        let mut first_from_b = None;
+
+        for round in 0..4 {
+            let from_a = send(&mut a, round * 3);
+            b.receive(from_a.clone());
+            c.receive(from_a);
+            drain(&mut b);
+            drain(&mut c);
+
+            let from_b = send(&mut b, round * 3 + 1);
+            first_from_b.get_or_insert_with(|| from_b.clone());
+            a.receive(from_b.clone());
+            c.receive(from_b);
+            drain(&mut a);
+            drain(&mut c);
+
+            let from_c = send(&mut c, round * 3 + 2);
+            a.receive(from_c.clone());
+            b.receive(from_c);
+            drain(&mut a);
+            drain(&mut b);
+        }
+        Session {
+            a,
+            b,
+            first_from_b: first_from_b.unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_round_trips_and_installs_the_donors_clock() {
+        let Session { a, .. } = seeded_session();
+
+        // Precondition, not decoration: if the frontier had not advanced the
+        // outbox would still hold everything and this would be testing nothing.
+        assert!(
+            a.stability().stable_prefix > 0,
+            "the session never stabilised, so nothing was compacted away"
+        );
+        assert!(
+            a.stability().retained < a.stability().delivered,
+            "nothing was pruned: retained {} of {} delivered",
+            a.stability().retained,
+            a.stability().delivered
+        );
+
+        let json = serde_json::to_string(&a.snapshot()).expect("serialize snapshot");
+        let restored: StateSnapshot<Op> =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+        assert_eq!(restored.origin_id(), "a");
+
+        let mut d = tcsb("d", &["d"]);
+        d.adopt(restored);
+
+        assert_eq!(
+            stable_map(&d)
+                .into_iter()
+                .filter(|(_, seq)| *seq > 0)
+                .collect::<Vec<_>>(),
+            stable_map(&a)
+                .into_iter()
+                .filter(|(_, seq)| *seq > 0)
+                .collect::<Vec<_>>(),
+            "the joiner installed a different stable version"
+        );
+        assert_eq!(d.stability().stable_prefix, a.stability().stable_prefix);
+        assert_eq!(
+            d.stability().delivered,
+            a.stability().delivered,
+            "the joiner must count the donor's history as delivered, or it \
+             would ask for it again and apply it twice"
+        );
+        assert_eq!(d.stability().retained, a.stability().retained);
+        assert_eq!(d.stability().known_replicas, 4, "a, b, c and the joiner");
+        assert!(d.matrix_clock.is_valid());
+    }
+
+    /// Trap 1 of the design: the joiner installs a stable version it never
+    /// witnessed becoming stable, and must never afterwards deliver an
+    /// operation at or below it.
+    #[test]
+    fn an_operation_below_the_adopted_frontier_is_refused() {
+        let Session {
+            a,
+            mut b,
+            first_from_b,
+        } = seeded_session();
+
+        let mut d = tcsb("d", &["d"]);
+        d.adopt(a.snapshot());
+        let before = d.stability();
+
+        // Replay of the first operation `b` ever originated. It is stable
+        // everywhere, so it was folded into the compacted state the joiner just
+        // adopted. `pull` would never return it, but a peer that has not pruned
+        // yet — or the duplicate dial phase 1 left open — can.
+        d.receive(first_from_b);
+        drain(&mut d);
+
+        assert_eq!(
+            d.stability().delivered,
+            before.delivered,
+            "the joiner delivered an operation already folded into the state it adopted"
+        );
+
+        // Positive control: the rejection above is about *that* operation being
+        // stale, not about the joiner refusing everything from `b`.
+        let fresh = send(&mut b, 999);
+        d.receive(fresh);
+        drain(&mut d);
+        assert_eq!(
+            d.stability().delivered,
+            before.delivered + 1,
+            "the joiner refused a genuinely new operation, so the previous \
+             assertion proves nothing"
+        );
+    }
+
+    /// Trap 2 of the design: the joiner's own column starts at zero while every
+    /// other column starts at the donor's values, so its first operation must
+    /// come out causally *after* the state it adopted, not concurrent with it.
+    #[test]
+    fn the_joiners_first_operation_is_causally_after_the_adopted_state() {
+        let Session { a, .. } = seeded_session();
+
+        let mut d = tcsb("d", &["d"]);
+        d.adopt(a.snapshot());
+        let adopted = d.last_stable_version.clone();
+
+        let first = send(&mut d, 1);
+        assert_eq!(
+            first.event().version().partial_cmp(&adopted),
+            Some(Ordering::Greater),
+            "the joiner's first operation is not causally after the state it \
+             adopted: {} vs {adopted}",
+            first.event().version()
+        );
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     utils::intern_str::Resolver,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 struct ReplicaMap(Vec<Version>);
@@ -31,7 +31,7 @@ impl ReplicaMap {
 /// A matrix clock is a generalization in 2 dimensions of a vector clock. It is a square matrix of positive integers.
 /// Each row represents the last vector clock known by the local replica from each member of the view.
 /// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize, Tsify),
@@ -58,6 +58,11 @@ impl MatrixClock {
         };
         debug_assert!(matrix.is_valid());
         matrix
+    }
+
+    /// Index of the replica this clock belongs to.
+    pub fn origin_idx(&self) -> ReplicaIdx {
+        self.origin_idx
     }
 
     pub fn origin_version(&self) -> &Version {
