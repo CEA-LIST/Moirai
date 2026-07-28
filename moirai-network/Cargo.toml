@@ -28,6 +28,19 @@ reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
 ] }
 
+# Dev-only, and deliberately so: `testcontainers` pulls tokio, which must not
+# reach the library — the whole codebase is synchronous. The `blocking` feature
+# is its sync runner, which keeps the harness a sequence of plain function
+# calls like everything around it.
+#
+# `bollard` and `tokio` are not extra dependencies: `testcontainers` already
+# brings both, and they are named here only so the harness can use the one
+# operation the container library does not expose — attaching a container to a
+# *second* network, which is what makes a partition genuine while leaving the
+# replica observable. See the backend's header.
 [dev-dependencies]
 anyhow = "1.0"
+bollard = "0.20"
 serde_json = "1.0.133"
+testcontainers = { version = "0.27", features = ["blocking"] }
+tokio = { version = "1", features = ["rt"] }

@@ -21,22 +21,42 @@
 //!       cargo test -p moirai-network --test e2e_convergence -- --test-threads=1
 //!   ```
 //!
-//! - **container** — one container per replica, with replication traffic on a
-//!   network of its own so it can be cut for real. Needed by S4. Build the
-//!   image from `docker/e2e/Dockerfile` first, and note that the *test
-//!   process* talks to the Docker socket, so it must itself carry the `docker`
-//!   group:
+//! - **testcontainers** — one container per replica, with replication traffic
+//!   on a network of its own so it can be cut for real. Needed by S4, T5 and
+//!   C1–C4. Build the image first, and note that the *test process* talks to
+//!   the Docker socket, so it must itself carry the `docker` group:
 //!
 //!   ```bash
 //!   docker build -f moirai/docker/e2e/Dockerfile -t moirai-json-crdt:test .
 //!   sg docker -c "cargo test -p moirai-network --test e2e_convergence -- --test-threads=1"
 //!   ```
 //!
+//! `MOIRAI_E2E_BACKEND` selects: `testcontainers` (the default) or `process`.
+//! Under `process`, the scenarios that need a real partition skip rather than
+//! silently degrading to the in-process `pause` flag, which is a weaker claim
+//! wearing the same name.
+//!
+//! A third backend, driving `docker run` through the CLI, was removed once
+//! testcontainers covered it. It is worth saying why rather than leaving the
+//! absence to be rediscovered: its cleanup depended on the test process exiting
+//! tidily, so a panic between `docker run` and the end of a scenario leaked a
+//! container and two networks, and the next run collided with them.
+//!
+//! # Which scenarios run where, and why
+//!
+//! - The **discovery** scenarios (E1–E3, T2–T4, J1–J5) run on processes,
+//!   because they need a bootnode and a container cannot reach the test host's
+//!   loopback. They do not need a partition, so nothing is lost.
+//! - The **partition** scenarios (S4, T5, C1–C4) and the **randomised** one
+//!   (R1) run on containers. R1 is there because it is the scenario CI leans on
+//!   most and it should exercise the backend the shipped image runs under.
+//!
 //! A scenario whose backend is unavailable — no node binary, no daemon, no
-//! image — prints `E2E-SKIP <scenario>: <why>` and returns green rather than
-//! failing, so the suite stays runnable on a laptop with neither. Run with
-//! `--nocapture` to see the notice; CI greps for that marker and fails the
-//! job, because a silently skipped suite is worse than a red one.
+//! image, or a backend the environment has opted out of — prints
+//! `E2E-SKIP <scenario>: <why>` and returns green rather than failing, so the
+//! suite stays runnable on a laptop with neither. Run with `--nocapture` to see
+//! the notice; CI greps for that marker and fails the job, because a silently
+//! skipped suite is worse than a red one.
 //!
 //! # Rules the harness obeys
 //!
@@ -70,6 +90,12 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 
+// The operation builders and the seeded generator live in the library, because
+// the dashboard's `--random` driver needs exactly the same ones and a second
+// copy would drift. `ops` is re-exported under its old name so the scenarios
+// below read as they did.
+use moirai_network::workload::{ops, state_digest, Workload};
+
 /// How long a mesh may take to form. Generous: the node sleeps 2 s before its
 /// single dial attempt, and a debug-profile binary starts slowly under load.
 const MESH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -90,66 +116,6 @@ const LOG_TAIL_LINES: usize = 40;
 /// `(peer_id, address)` pairs, or `(env_var, value)` pairs — the two lists a
 /// replica is launched with.
 type Pairs = Vec<(String, String)>;
-
-// ---------------------------------------------------------------------------
-// Operation payloads
-// ---------------------------------------------------------------------------
-
-/// Builders for the wire format of `json_crdt`'s operation type.
-///
-/// The shapes follow serde's default externally-tagged enum representation of
-/// the generated types:
-///
-/// - `Json::JsonKind(JsonKind)` — `{"JsonKind": <kind>}`
-/// - `JsonKind::{Object,String,Number,Boolean,Array}(..)` — `{"Object": <op>}`
-/// - `UWMap::Update(K, O)` — `{"Update": [<key>, <op>]}`
-/// - `UWMap::Remove(K)` — `{"Remove": <key>}`
-/// - `List::Insert { content, pos }` — `{"Insert": {"content": .., "pos": ..}}`
-/// - `Counter::Inc(V)` — `{"Inc": <n>}`
-/// - `EWFlag::Enable` (a unit variant) — `"Enable"`
-/// - `NestedList::Insert { pos, op }` — `{"Insert": {"pos": .., "op": ..}}`
-///
-/// Every builder here has been executed against a live node; none is guessed.
-mod ops {
-    use serde_json::{json, Value};
-
-    /// `Json::JsonKind(JsonKind::Object(UWMap::Update(key, inner)))`.
-    pub fn object_update(key: &str, inner: Value) -> Value {
-        json!({ "JsonKind": { "Object": { "Update": [key, inner] } } })
-    }
-
-    /// `Json::JsonKind(JsonKind::Object(UWMap::Remove(key)))`.
-    ///
-    /// Note the observed semantics: `Remove` resets the child CRDT to its
-    /// default value rather than dropping the key from the rendered state, so
-    /// a removed string reads back as `[]`, not as an absent key.
-    pub fn object_remove(key: &str) -> Value {
-        json!({ "JsonKind": { "Object": { "Remove": key } } })
-    }
-
-    /// `JsonKind::String(List::Insert { content, pos })` — a sequence CRDT
-    /// insert of a single character.
-    pub fn string_insert(content: char, pos: usize) -> Value {
-        json!({ "String": { "Insert": { "content": content.to_string(), "pos": pos } } })
-    }
-
-    /// `JsonKind::Number(Counter::Inc(by))`.
-    pub fn number_inc(by: f64) -> Value {
-        json!({ "Number": { "Inc": by } })
-    }
-
-    /// `JsonKind::Boolean(EWFlag::Enable)` — an enable-wins flag.
-    #[allow(dead_code)]
-    pub fn bool_enable() -> Value {
-        json!({ "Boolean": "Enable" })
-    }
-
-    /// `JsonKind::Array(NestedList::Insert { pos, op })`.
-    #[allow(dead_code)]
-    pub fn array_insert(pos: usize, inner: Value) -> Value {
-        json!({ "Array": { "Insert": { "pos": pos, "op": inner } } })
-    }
-}
 
 // ---------------------------------------------------------------------------
 // State readers
@@ -397,128 +363,212 @@ impl Drop for ProcessNode {
 }
 
 // ---------------------------------------------------------------------------
-// Container backend
+// Container backend, on testcontainers
 // ---------------------------------------------------------------------------
 //
-// Driven through the `docker` CLI rather than a client library. The one thing
-// the process backend cannot do is a genuine partition, and that is precisely
-// `docker network disconnect` — an operation no Rust container crate exposes
-// as a first-class primitive anyway.
+// `testcontainers` owns the container lifecycle: create, wait for readiness,
+// map ports, read logs, and — the reason it is here — remove on drop. The
+// previous backend shelled out to `docker run` and relied on the test process
+// exiting tidily, so a panic between `docker run` and the end of the scenario
+// left a container and two networks behind. A `Container` cleans itself up as
+// part of unwinding, and the crate's session reaper covers the case where the
+// process does not unwind at all.
 //
-// # Two networks, on purpose
+// # Two networks, on purpose, and the one thing testcontainers cannot do
 //
 // Each replica joins two user-defined networks:
 //
-// - a **control** network, joined at `docker run` time, which carries the
-//   published HTTP port the test process drives the replica through;
+// - a **control** network, joined at creation, which carries the published
+//   HTTP port the test process drives the replica through;
 // - a **replication** network, joined afterwards, which carries peer-to-peer
 //   sync traffic and is the only network whose alias appears in `PEERS`.
 //
-// The split is what makes S4 possible. Disconnecting a container from its only
-// network also tears down its published port, so the test process loses the
-// ability to submit operations to — or even read the state of — the very
-// replica it just partitioned. Measured: with a single network, `/api/state`
-// on the partitioned replica stops answering entirely. Keeping the control
-// plane on a separate network that is never cut leaves the replica observable
-// and writable while it is genuinely severed from its peers.
+// The split is what makes a real partition testable. Measured on this host,
+// not assumed: a container on a single user-defined network with `-p
+// 127.0.0.1::8081` published stops answering that port entirely the moment it
+// is disconnected — `curl` gets connection refused. So cutting the only
+// network also cuts the test process off from the replica it just partitioned,
+// and nothing can be asserted about it. Keeping the control plane on a second
+// network that is never cut leaves the replica observable and writable while
+// it is genuinely severed from its peers.
 //
 // Peers are addressed by a replication-network **alias** rather than by the
 // container name, because Docker registers the container name for DNS on every
 // network it joins — including the control network. Using the alias guarantees
 // that peer traffic has no route once the replication network is cut.
+//
+// `testcontainers` attaches a container to exactly one network and exposes no
+// primitive for a second, so the replication network is administered through
+// `bollard` — which is not a new dependency but the Docker client
+// `testcontainers` is itself built on. That is four calls (`create`,
+// `connect`, `disconnect`, `remove`) against the Docker API, not a second
+// container lifecycle.
+
+use bollard::models::{
+    EndpointSettings, NetworkConnectRequest, NetworkCreateRequest, NetworkDisconnectRequest,
+};
+use bollard::Docker;
+use testcontainers::core::{IntoContainerPort, WaitFor};
+use testcontainers::runners::SyncRunner;
+use testcontainers::{Container, GenericImage, ImageExt};
+
+/// Ports inside a replica container. Fixed and private: only HTTP is published,
+/// and peers reach each other by alias on the replication network.
+const CONTAINER_LISTEN_PORT: u16 = 9001;
+const CONTAINER_HTTP_PORT: u16 = 8081;
+
+/// The line `network_node` prints once its HTTP API is bound. Readiness is
+/// still asserted by polling `/api/health`; this only avoids handing back a
+/// container whose port mapping is not published yet.
+const READY_LINE: &str = "HTTP API listening on";
+
+/// Blocking wrapper around the handful of Docker network calls the harness
+/// needs. Its own current-thread runtime, so every method is a plain function
+/// and the harness stays synchronous.
+struct Networks {
+    runtime: tokio::runtime::Runtime,
+    docker: Docker,
+}
+
+impl Networks {
+    fn new() -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("build the runtime the Docker client needs")?;
+        let docker = Docker::connect_with_local_defaults().context(
+            "the Docker daemon is not reachable; if the account was only just \
+             added to the `docker` group, run the tests under \
+             `sg docker -c \"cargo test ...\"` so the test process inherits it",
+        )?;
+        runtime
+            .block_on(docker.version())
+            .context("the Docker daemon did not answer")?;
+        Ok(Self { runtime, docker })
+    }
+
+    fn create(&self, name: &str) -> Result<()> {
+        self.runtime
+            .block_on(self.docker.create_network(NetworkCreateRequest {
+                name: name.to_string(),
+                ..Default::default()
+            }))
+            .with_context(|| format!("create network {name}"))?;
+        Ok(())
+    }
+
+    fn remove(&self, name: &str) -> Result<()> {
+        self.runtime
+            .block_on(self.docker.remove_network(name))
+            .with_context(|| format!("remove network {name}"))
+    }
+
+    fn connect(&self, network: &str, container: &str, alias: &str) -> Result<()> {
+        self.runtime
+            .block_on(self.docker.connect_network(
+                network,
+                NetworkConnectRequest {
+                    container: container.to_string(),
+                    endpoint_config: Some(EndpointSettings {
+                        aliases: Some(vec![alias.to_string()]),
+                        ..Default::default()
+                    }),
+                },
+            ))
+            .with_context(|| format!("attach {container} to {network} as {alias}"))
+    }
+
+    fn disconnect(&self, network: &str, container: &str) -> Result<()> {
+        self.runtime
+            .block_on(self.docker.disconnect_network(
+                network,
+                NetworkDisconnectRequest {
+                    container: container.to_string(),
+                    force: Some(true),
+                },
+            ))
+            .with_context(|| format!("detach {container} from {network}"))
+    }
+}
 
 /// Runs replicas as containers, with replication traffic isolated on its own
 /// network so that it can be cut for real.
 struct ContainerBackend {
     image: String,
+    networks: Networks,
     /// Never cut: carries the published HTTP port.
     control_net: String,
     /// Cut and restored by [`Backend::cut_network`] / [`Backend::restore_network`].
     replication_net: String,
-    /// `replica id -> (container name, replication-network alias)`.
-    containers: BTreeMap<String, (String, String)>,
-}
-
-/// Runs `docker` with `args`, returning stdout on success.
-fn docker(args: &[&str]) -> Result<String> {
-    let out = Command::new("docker")
-        .args(args)
-        .output()
-        .context("exec docker (is the CLI on PATH?)")?;
-    if !out.status.success() {
-        bail!(
-            "docker {} failed ({}): {}",
-            args.join(" "),
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    /// `replica id -> (replication alias, container id once started)`.
+    reserved: BTreeMap<String, (String, Option<String>)>,
 }
 
 impl ContainerBackend {
     /// Returns the backend, or the reason the scenario should be skipped.
-    ///
-    /// Note that the *test process itself* talks to the Docker socket, so it
-    /// must carry the `docker` group. A shell whose credentials predate being
-    /// added to the group will not, and neither will anything it spawns; run
-    /// the tests under `sg docker -c "cargo test ..."` in that case.
     fn new() -> Result<Self> {
-        docker(&["info", "--format", "{{.ServerVersion}}"]).context(
-            "the Docker daemon is not reachable; if the account was only just \
-             added to the `docker` group, run the tests under \
-             `sg docker -c \"cargo test ...\"` so the test process inherits it",
-        )?;
+        let networks = Networks::new()?;
 
         let image =
             std::env::var("MOIRAI_E2E_IMAGE").unwrap_or_else(|_| "moirai-json-crdt:test".into());
-        docker(&["image", "inspect", &image]).with_context(|| {
-            format!(
-                "the replica image `{image}` does not exist; build it with \
-                 `docker build -f moirai/docker/e2e/Dockerfile -t {image} .` \
-                 from the directory holding the moirai and arachne checkouts, \
-                 or point MOIRAI_E2E_IMAGE at an existing image"
-            )
-        })?;
+        // `testcontainers` would happily try to pull a missing image from a
+        // registry it is not in. Failing here instead turns a twenty-minute
+        // timeout into a one-line skip with the build command in it.
+        networks
+            .runtime
+            .block_on(networks.docker.inspect_image(&image))
+            .with_context(|| {
+                format!(
+                    "the replica image `{image}` does not exist; build it with \
+                     `docker build -f moirai/docker/e2e/Dockerfile -t {image} .` \
+                     from the directory holding the moirai and arachne checkouts, \
+                     or point MOIRAI_E2E_IMAGE at an existing image"
+                )
+            })?;
 
         let run = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
         let prefix = format!("moirai-e2e-{}-{run}", std::process::id());
         let control_net = format!("{prefix}-ctl");
         let replication_net = format!("{prefix}-repl");
-        docker(&["network", "create", &control_net]).context("create control network")?;
-        docker(&["network", "create", &replication_net]).context("create replication network")?;
+        networks.create(&control_net)?;
+        networks.create(&replication_net)?;
 
         Ok(Self {
             image,
+            networks,
             control_net,
             replication_net,
-            containers: BTreeMap::new(),
+            reserved: BTreeMap::new(),
         })
     }
 
-    fn names_of(&self, id: &str) -> Result<&(String, String)> {
-        self.containers
+    fn container_of(&self, id: &str) -> Result<String> {
+        self.reserved
             .get(id)
-            .ok_or_else(|| anyhow!("no container reserved for replica `{id}`"))
+            .and_then(|(_, container)| container.clone())
+            .ok_or_else(|| anyhow!("replica `{id}` is not running"))
+    }
+
+    fn alias_of(&self, id: &str) -> Result<String> {
+        self.reserved
+            .get(id)
+            .map(|(alias, _)| alias.clone())
+            .ok_or_else(|| anyhow!("no endpoint reserved for replica `{id}`"))
     }
 }
 
 impl Backend for ContainerBackend {
     fn name(&self) -> &'static str {
-        "container"
+        "testcontainers"
     }
 
     fn reserve(&mut self, id: &str) -> Result<Endpoint> {
-        let container = format!("{}-{id}", self.control_net);
         let alias = format!("{}-node-{id}", self.replication_net);
-        self.containers
-            .insert(id.to_string(), (container, alias.clone()));
-        // Inside a container the ports are fixed and private; peers address
-        // each other by replication alias, and only HTTP is published.
+        self.reserved.insert(id.to_string(), (alias.clone(), None));
         Ok(Endpoint {
-            sync_addr: format!("{alias}:9001"),
-            listen_port: 9001,
-            http_port: 8081,
+            sync_addr: format!("{alias}:{CONTAINER_LISTEN_PORT}"),
+            listen_port: CONTAINER_LISTEN_PORT,
+            http_port: CONTAINER_HTTP_PORT,
         })
     }
 
@@ -529,102 +579,85 @@ impl Backend for ContainerBackend {
         peers: &[(String, String)],
         extra_env: &[(String, String)],
     ) -> Result<Box<dyn Node>> {
-        let (container, alias) = self.names_of(id)?.clone();
+        let alias = self.alias_of(id)?;
         let peers_env = peers
             .iter()
             .map(|(peer, addr)| format!("{peer}:{addr}"))
             .collect::<Vec<_>>()
             .join(",");
 
-        let mut args: Vec<String> = [
-            "run",
-            "--detach",
-            "--name",
-            &container,
+        let (name, tag) = match self.image.rsplit_once(':') {
+            Some((name, tag)) => (name.to_string(), tag.to_string()),
+            None => (self.image.clone(), "latest".to_string()),
+        };
+        let mut request = GenericImage::new(name, tag)
+            .with_exposed_port(endpoint.http_port.tcp())
+            .with_wait_for(WaitFor::message_on_stderr(READY_LINE))
             // The control network is joined at creation, which is what binds
             // the published port; it is never disconnected.
-            "--network",
-            &self.control_net,
-            "--env",
-            &format!("REPLICA_ID={id}"),
-            "--env",
-            &format!("LISTEN_PORT={}", endpoint.listen_port),
-            "--env",
-            &format!("HTTP_PORT={}", endpoint.http_port),
-            "--env",
-            &format!("PEERS={peers_env}"),
-            "--publish",
-            &format!("127.0.0.1::{}", endpoint.http_port),
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+            .with_network(&self.control_net)
+            .with_env_var("REPLICA_ID", id)
+            .with_env_var("LISTEN_PORT", endpoint.listen_port.to_string())
+            .with_env_var("HTTP_PORT", endpoint.http_port.to_string())
+            .with_env_var("PEERS", &peers_env);
         for (key, value) in extra_env {
-            args.push("--env".to_string());
-            args.push(format!("{key}={value}"));
+            request = request.with_env_var(key, value);
         }
-        args.push(self.image.clone());
-        docker(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+
+        let container = request
+            .start()
+            .with_context(|| format!("start a container for replica `{id}`"))?;
+        let container_id = container.id().to_string();
 
         // Join the replication network only now, so that disconnecting it
         // later leaves the control network — and the published port — intact.
-        docker(&[
-            "network",
-            "connect",
-            "--alias",
-            &alias,
-            &self.replication_net,
-            &container,
-        ])?;
+        self.networks
+            .connect(&self.replication_net, &container_id, &alias)?;
+        if let Some(entry) = self.reserved.get_mut(id) {
+            entry.1 = Some(container_id);
+        }
 
-        // Ask Docker which ephemeral host port it chose.
-        let mapping = docker(&["port", &container, &format!("{}/tcp", endpoint.http_port)])?;
-        let host_addr = mapping
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow!("`docker port {container}` returned nothing"))?
-            .trim()
-            .to_string();
+        let host_port = container
+            .get_host_port_ipv4(endpoint.http_port.tcp())
+            .with_context(|| format!("read the published HTTP port of replica `{id}`"))?;
 
         Ok(Box::new(ContainerNode {
             id: id.to_string(),
-            http_base: format!("http://{host_addr}"),
+            http_base: format!("http://127.0.0.1:{host_port}"),
             container,
         }))
     }
 
     fn cut_network(&mut self, id: &str) -> Result<()> {
-        let (container, _) = self.names_of(id)?.clone();
-        docker(&["network", "disconnect", &self.replication_net, &container]).map(|_| ())
+        let container = self.container_of(id)?;
+        self.networks.disconnect(&self.replication_net, &container)
     }
 
     fn restore_network(&mut self, id: &str) -> Result<()> {
-        let (container, alias) = self.names_of(id)?.clone();
-        docker(&[
-            "network",
-            "connect",
-            "--alias",
-            &alias,
-            &self.replication_net,
-            &container,
-        ])
-        .map(|_| ())
+        let container = self.container_of(id)?;
+        let alias = self.alias_of(id)?;
+        self.networks
+            .connect(&self.replication_net, &container, &alias)
     }
 }
 
 impl Drop for ContainerBackend {
     fn drop(&mut self) {
         // The containers remove themselves in their own `Drop`, which runs
-        // first; a network cannot be removed while an endpoint is attached.
-        let _ = docker(&["network", "rm", &self.control_net, &self.replication_net]);
+        // first because `Cluster` declares them before the backend; a network
+        // cannot be removed while an endpoint is attached.
+        let _ = self.networks.remove(&self.control_net);
+        let _ = self.networks.remove(&self.replication_net);
     }
 }
 
-/// A replica running as a container. Force-removed on drop.
+/// A replica running as a container. Removed when this is dropped, including
+/// while a panic is unwinding — which is the difference from the `docker run`
+/// backend this replaced.
 struct ContainerNode {
     id: String,
     http_base: String,
-    container: String,
+    container: Container<GenericImage>,
 }
 
 impl Node for ContainerNode {
@@ -637,14 +670,16 @@ impl Node for ContainerNode {
     }
 
     fn log_tail(&self, lines: usize) -> String {
-        docker(&["logs", "--tail", &lines.to_string(), &self.container])
-            .unwrap_or_else(|e| format!("<{e:#}>"))
-    }
-}
-
-impl Drop for ContainerNode {
-    fn drop(&mut self) {
-        let _ = docker(&["rm", "--force", "--volumes", &self.container]);
+        // `network_node` logs to stderr, including the connection error every
+        // first-started replica emits when its single dial finds nobody
+        // listening yet. That is expected; see the header's readiness rule.
+        let text = self
+            .container
+            .stderr_to_vec()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_else(|e| format!("<{e}>"));
+        let all: Vec<&str> = text.lines().collect();
+        all[all.len().saturating_sub(lines)..].join("\n")
     }
 }
 
@@ -903,6 +938,24 @@ impl Cluster {
             .filter_map(|id| self.running.get(id))
             .map(AsRef::as_ref)
             .collect()
+    }
+
+    /// Stops `id`, keeping its reserved endpoint so it can be started again.
+    ///
+    /// The counterpart `Cluster` lacked, and the reason S7 says it lacked one:
+    /// a restarted *process* comes back empty, because there is no persistence.
+    /// That is exactly the shape the join scenarios want — J3 and J4 are about
+    /// a member that leaves and returns as a fresh replica under a familiar
+    /// name, which is a membership question and not a durability one.
+    fn stop(&mut self, id: &str) -> Result<()> {
+        self.running
+            .remove(id)
+            .map(|_| ())
+            .ok_or_else(|| anyhow!("replica `{id}` is not running"))
+    }
+
+    fn is_running(&self, id: &str) -> bool {
+        self.running.contains_key(id)
     }
 
     fn cut_network(&mut self, id: &str) -> Result<()> {
@@ -1210,9 +1263,42 @@ fn process_cluster(scenario: &str, ids: &[&str]) -> Option<Cluster> {
     }
 }
 
+/// Which backend a scenario that needs containers is allowed to use.
+///
+/// The env var exists so a developer without a daemon, or a CI job deliberately
+/// running the cheap half, can say so once instead of filtering test names. It
+/// does **not** let a partition scenario fall back to processes: the process
+/// backend cannot cut a network, and quietly substituting the in-process
+/// `pause` flag would turn "no route exists" into "outbound messages are
+/// buffered" while the test kept its name.
+fn container_backend_selected() -> std::result::Result<(), String> {
+    match std::env::var("MOIRAI_E2E_BACKEND").as_deref() {
+        Ok("testcontainers") | Err(_) => Ok(()),
+        Ok("process") => Err(
+            "MOIRAI_E2E_BACKEND=process, and this scenario needs a real network \
+             partition, which only the container backend can produce"
+                .to_string(),
+        ),
+        Ok("docker") => Err(
+            "MOIRAI_E2E_BACKEND=docker: the `docker` CLI backend was removed once \
+             testcontainers covered it — it leaked a container and two networks \
+             on any panic. Use `testcontainers`"
+                .to_string(),
+        ),
+        Ok(other) => Err(format!(
+            "MOIRAI_E2E_BACKEND=`{other}` is not a backend; use `testcontainers` \
+             or `process`"
+        )),
+    }
+}
+
 /// Same, for the container backend. An unreachable daemon or a missing replica
 /// image is a skip, with the command needed to fix it in the message.
 fn container_cluster(scenario: &str, ids: &[&str]) -> Option<Cluster> {
+    if let Err(why) = container_backend_selected() {
+        eprintln!("\nE2E-SKIP {scenario}: {why}");
+        return None;
+    }
     match ContainerBackend::new() {
         Ok(backend) => Some(
             Cluster::new(Box::new(backend), ids)
@@ -2228,6 +2314,881 @@ fn e3_a_replica_leaves_and_the_session_continues() {
         metrics.pointer("/stable_version/c").is_some(),
         "leaving the directory silently evicted `c` from the causal member \
          set; that would make E4 unmeasurable. metrics: {metrics}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C1–C4 — automatic conflict resolution across a genuine partition
+// ---------------------------------------------------------------------------
+//
+// S1–S5 established these shapes on two replicas, mostly behind the in-process
+// `pause` flag. These are their three-replica, real-network counterparts: `c`
+// is disconnected with a Docker network operation, so while the operations are
+// applied there is no route at all between the two sides. That difference
+// matters for exactly one reason — the pause flag buffers *outbound* messages
+// inside the replica, so a defect that only shows when a message is genuinely
+// lost rather than delayed cannot appear behind it.
+
+/// Reserves, starts and meshes a container-backed cluster. `None` when the
+/// scenario must be skipped.
+fn started_container_cluster(scenario: &str, ids: &[&str]) -> Option<Cluster> {
+    let mut cluster = container_cluster(scenario, ids)?;
+    cluster
+        .start_all()
+        .unwrap_or_else(|e| panic!("{scenario}: start containers: {e:#}"));
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).unwrap_or_else(|e| panic!("{scenario}: {e:#}"));
+    Some(cluster)
+}
+
+/// **C1** — three replicas, concurrent updates to *different* keys.
+///
+/// The base case, and the one that would still pass under almost any merge
+/// strategy: disjoint keys cannot conflict. It is here as the positive control
+/// for C2–C4 — if C1 failed, the partition machinery rather than the resolution
+/// policy would be the thing under suspicion.
+#[test]
+fn c1_disjoint_keys_across_a_partition() {
+    let Some(mut cluster) = started_container_cluster("C1", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.cut_network("c").expect("C1: sever c");
+
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("alpha", ops::string_insert('A', 0)),
+    );
+    apply_ok(
+        cluster.node("b"),
+        ops::object_update("beta", ops::string_insert('B', 0)),
+    );
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("gamma", ops::string_insert('C', 0)),
+    );
+    assert_diverged(cluster.node("a"), cluster.node("c"), CONVERGE_TIMEOUT);
+
+    cluster.restore_network("c").expect("C1: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("C1: mesh after heal");
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&state, "alpha").unwrap(), "A", "state: {state}");
+    assert_eq!(read_string(&state, "beta").unwrap(), "B", "state: {state}");
+    assert_eq!(read_string(&state, "gamma").unwrap(), "C", "state: {state}");
+}
+
+/// **C2** — three replicas, concurrent updates to the *same* key.
+///
+/// Counter increments commute, so the only correct healed value is the sum. A
+/// single scalar is the cleanest convergence oracle there is: a store that
+/// dropped one side's write would still "converge", on 5 or on 8, and the
+/// assertion catches it.
+///
+/// Distinct from S2, which is two replicas behind the in-process pause flag.
+/// Here the third replica's increment crosses a link that does not exist while
+/// it is applied.
+#[test]
+fn c2_same_key_concurrent_updates_converge() {
+    let Some(mut cluster) = started_container_cluster("C2", &["a", "b", "c"]) else {
+        return;
+    };
+    // A common ancestor, so every replica has the key before the split.
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("gamma", ops::number_inc(1.0)),
+    );
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.cut_network("c").expect("C2: sever c");
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("gamma", ops::number_inc(2.0)),
+    );
+    apply_ok(
+        cluster.node("b"),
+        ops::object_update("gamma", ops::number_inc(4.0)),
+    );
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("gamma", ops::number_inc(8.0)),
+    );
+    assert_diverged(cluster.node("a"), cluster.node("c"), CONVERGE_TIMEOUT);
+
+    cluster.restore_network("c").expect("C2: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("C2: mesh after heal");
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_number(&state, "gamma").unwrap(),
+        15.0,
+        "increments commute, so every one of them must survive; state: {state}"
+    );
+}
+
+/// **C3** — concurrent insert at the *same* list position.
+///
+/// The no-silent-loss assertion, and the one a last-writer-wins store fails
+/// while still converging. All three replicas insert a different character at
+/// position 0 of the same string while `c` has no route to the others. After
+/// healing every character must be present, exactly once, and — the part that
+/// makes it a sequence CRDT rather than a set — in the *same order* on every
+/// replica.
+#[test]
+fn c3_concurrent_inserts_at_the_same_position() {
+    let Some(mut cluster) = started_container_cluster("C3", &["a", "b", "c"]) else {
+        return;
+    };
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("alpha", ops::string_insert('.', 0)),
+    );
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.cut_network("c").expect("C3: sever c");
+    for (id, ch) in [("a", 'X'), ("b", 'Y'), ("c", 'Z')] {
+        apply_ok(
+            cluster.node(id),
+            ops::object_update("alpha", ops::string_insert(ch, 0)),
+        );
+    }
+    assert_diverged(cluster.node("a"), cluster.node("c"), CONVERGE_TIMEOUT);
+
+    cluster.restore_network("c").expect("C3: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("C3: mesh after heal");
+
+    // `assert_converged` compares parsed JSON, and the string CRDT renders as
+    // an *array*, so agreement here already includes agreement on the order.
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    let alpha = read_string(&state, "alpha").unwrap();
+    for ch in ['X', 'Y', 'Z', '.'] {
+        assert!(
+            alpha.contains(ch),
+            "insert `{ch}` was silently discarded: alpha = {alpha:?}"
+        );
+    }
+    assert_eq!(
+        alpha.len(),
+        4,
+        "an operation was applied twice or lost: alpha = {alpha:?}"
+    );
+}
+
+/// **C4** — update versus concurrent remove, across a real partition.
+///
+/// Under an Update-Wins map a concurrent update survives the removal, and an
+/// update the removal causally dominates does not. The precise expectation,
+/// verified against a live cluster: `gamma` is incremented to 3 before the
+/// split, so that increment is dominated and goes; the concurrent `+9` on the
+/// severed replica survives; the healed value is 9 exactly.
+///
+/// This asserts a *policy*, not merely convergence — a last-writer-wins map
+/// would converge just as happily on 0, and be wrong. It is also the resolution
+/// the dashboard renders as a `superseded` chip, from the same bookkeeping.
+#[test]
+fn c4_update_wins_over_a_concurrent_remove() {
+    let Some(mut cluster) = started_container_cluster("C4", &["a", "b", "c"]) else {
+        return;
+    };
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("gamma", ops::number_inc(3.0)),
+    );
+    let seeded = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_number(&seeded, "gamma").unwrap(), 3.0);
+
+    cluster.cut_network("c").expect("C4: sever c");
+    // `c` updates; `a` removes. Neither can see the other.
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("gamma", ops::number_inc(9.0)),
+    );
+    apply_ok(cluster.node("a"), ops::object_remove("gamma"));
+    assert_diverged(cluster.node("a"), cluster.node("c"), CONVERGE_TIMEOUT);
+
+    cluster.restore_network("c").expect("C4: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("C4: mesh after heal");
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_number(&state, "gamma").unwrap(),
+        9.0,
+        "update-wins violated: the concurrent increment must survive the remove, \
+         and the causally-prior one must not; state: {state}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// J1–J4 — joining, leaving, and coming back
+// ---------------------------------------------------------------------------
+//
+// These run on the process backend with a process bootnode, for the reason
+// recorded on `Bootnode`: a container cannot reach the test host's loopback.
+// None of them needs a real partition — a member that has left is not a member
+// that is unreachable — so nothing is lost by it, and the scenarios stay fast
+// enough to run a churn loop.
+
+/// Waits until every running replica reports `expected` known replicas.
+///
+/// The causal member set, not the directory: a replica is a member as soon as
+/// anything it originated has been delivered, and leaving the directory does
+/// not remove it. Separating those two is the whole subject of J2.
+fn await_known_replicas(nodes: &[&dyn Node], expected: u64, timeout: Duration) -> Result<()> {
+    poll_until(timeout, || {
+        for node in nodes {
+            if metric(*node, "known_replicas")? != expected {
+                return Ok(None);
+            }
+        }
+        Ok(Some(()))
+    })
+    .map_err(|e| {
+        anyhow!(
+            "not every replica reached {expected} known replicas{}: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            nodes
+                .iter()
+                .map(|n| (n.id().to_string(), metrics_of(*n).ok()))
+                .collect::<Vec<_>>()
+        )
+    })
+}
+
+/// Waits until `node` holds a rendered state at all, i.e. it is no longer
+/// `"Unset"`.
+///
+/// The honest "has this joiner received anything yet" gate. `delivered_ops`
+/// would do as well, but a joiner that adopted a snapshot has delivered nothing
+/// in its own reckoning until the delta sync behind it lands, and this is the
+/// question every caller actually means.
+fn await_state(node: &dyn Node, timeout: Duration) -> Result<Value> {
+    poll_until(timeout, || {
+        let state = state_of(node)?;
+        Ok((!moirai_network::workload::is_unset(&state)).then_some(state))
+    })
+    .map_err(|e| {
+        anyhow!(
+            "`{}` still reports no state at all{}",
+            node.id(),
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default()
+        )
+    })
+}
+
+/// **J1** — a replica joins a running session and becomes a full member.
+///
+/// E2 and T2 already assert that a joiner *catches up*. What neither asserts is
+/// the property that makes it a member rather than an observer: once it has
+/// joined, the session's causal stability has to keep advancing *through* it.
+/// A joiner that received the history but never had its own column recognised
+/// would read correctly and silently freeze compaction for everybody — the E4
+/// failure, arrived at through the join path instead of through a severed link.
+///
+/// So the assertion is on `stable_prefix` after the join, measured against the
+/// value before it, with every member writing. Every member has to write: the
+/// stable frontier is a column-wise minimum, and a member that has never sent
+/// anything pins it regardless of whether it joined or was there all along.
+#[test]
+fn j1_a_joiner_becomes_a_full_member() {
+    let Some(mut cluster) = discovered_cluster("J1", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start("a").expect("J1: start a");
+    cluster.start("b").expect("J1: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J1: initial mesh");
+
+    for round in 0..3 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("alpha", ops::string_insert('a', round)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("beta", ops::string_insert('b', round)),
+        );
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // --- the joiner ---
+    cluster.start("c").expect("J1: start c");
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("J1: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J1: mesh after c joined");
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // Everybody, the joiner included, is in everybody's causal member set.
+    await_known_replicas(&cluster.nodes(), 3, MESH_TIMEOUT).expect("J1: member set");
+
+    let before = metric(cluster.node("a"), "stable_prefix").expect("J1: stable_prefix");
+
+    // Every member writes, the joiner too.
+    for round in 3..6 {
+        for (id, key) in [("a", "alpha"), ("b", "beta"), ("c", "gamma")] {
+            apply_ok(
+                cluster.node(id),
+                ops::object_update(key, ops::string_insert('x', round - 3)),
+            );
+        }
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((metric(cluster.node("a"), "stable_prefix")? > before).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "causal stability did not advance past the join{}; the joiner is being \
+             carried as a member that never acknowledges, which freezes compaction \
+             for the whole session. before: {before}, now: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(cluster.node("a"))
+        )
+    });
+}
+
+/// **J2** — a graceful leave does *not* let causal stability advance past the
+/// leaver.
+///
+/// **This is expected to fail**, and it is `#[ignore]`d as an executable report
+/// of the gap phase 3 exists to close, in the same spirit as
+/// `s7_restart_recovers_state`.
+///
+/// The plan asked for "node leaves gracefully; the rest continue and stability
+/// advances past it". The first half holds and E3 already asserts it. The
+/// second does not and cannot yet: `POST /api/leave` is a *directory*
+/// departure. It stops the replica re-registering so nobody dials it again, and
+/// it changes nothing about any peer's matrix clock — `stable_version` keeps a
+/// column for the leaver, and the column-wise minimum keeps waiting on it
+/// exactly as it would for a crash. E3 asserts that the column is still there;
+/// this asserts what has to become true instead.
+///
+/// Un-ignoring this is the regression test for epoch-based eviction.
+#[test]
+#[ignore = "expected to fail: leaving the directory is not causal eviction (phase 3)"]
+fn j2_stability_advances_past_a_departed_member() {
+    let Some(mut cluster) = discovered_cluster("J2", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start_all().expect("J2: start cluster");
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("J2: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J2: mesh");
+
+    // Every member writes, so the frontier is moving before anyone leaves.
+    for (id, key) in [("a", "alpha"), ("b", "beta"), ("c", "gamma")] {
+        apply_ok(
+            cluster.node(id),
+            ops::object_update(key, ops::number_inc(1.0)),
+        );
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    leave_session(cluster.node("c")).expect("J2: c leaves");
+    await_roster(cluster.bootnode(), &["a", "b"], MESH_TIMEOUT).expect("J2: c left the directory");
+    cluster.stop("c").expect("J2: stop c");
+
+    // The survivors keep writing to each other.
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    let frozen_at = metric(a, "stable_prefix").unwrap();
+    for _ in 0..5 {
+        apply_ok(a, ops::object_update("alpha", ops::number_inc(1.0)));
+        apply_ok(b, ops::object_update("beta", ops::number_inc(1.0)));
+    }
+    assert_converged(&[a, b], CONVERGE_TIMEOUT);
+
+    poll_until(Duration::from_secs(20), || {
+        Ok((metric(a, "stable_prefix")? > frozen_at + 5).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "stable_prefix stayed at {frozen_at} after `c` left gracefully{}. A \
+             departure that does not release the causal member set leaves every \
+             survivor unable to compact anything; metrics: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(a)
+        )
+    });
+}
+
+/// **J3** — a member leaves, the session carries on, and it comes back.
+///
+/// It comes back under a **new id**, and that is the finding rather than a
+/// convenience. Spec open question 2 asks whether a returning member needs a
+/// fresh replica id; measured here, it does. A replica restarting under its old
+/// name is refused a state transfer — `state_response_for` will not serve a
+/// snapshot to a replica the donor already has history from, because adopting
+/// replaces rather than merges and would discard whatever the returning member
+/// did while away (T6) — and the delta sync it falls back to leaves it holding
+/// nothing at all. That half is
+/// `j3b_a_returning_member_under_its_old_id_is_stranded`, ignored as an
+/// executable report.
+///
+/// What this asserts, all of it green:
+///
+/// 1. The survivors keep converging with a member gone.
+/// 2. Their causal stability **freezes** while it is away, and their
+///    replication buffer grows by exactly what they applied — the departed
+///    member is still a column in every matrix clock, so the column-wise
+///    minimum waits on it exactly as it would for a crash. E3 asserts the
+///    column is still there; this measures what it costs.
+/// 3. The returning replica, under a fresh id, reaches the state the session
+///    held while it was away — **including** the operation the departed replica
+///    originated before it left, which no longer exists anywhere as an
+///    operation but is folded into what the survivors hold.
+#[test]
+fn j3_a_member_leaves_and_comes_back() {
+    /// Applied before anyone leaves: one per replica.
+    const BEFORE_DEPARTURE: u64 = 3;
+    /// Applied by the survivors while the third replica is gone.
+    const WHILE_AWAY: u64 = 12;
+
+    let Some(mut cluster) = discovered_cluster("J3", &["a", "b", "c", "c-again"]) else {
+        return;
+    };
+    for id in ["a", "b", "c"] {
+        cluster
+            .start(id)
+            .unwrap_or_else(|e| panic!("J3: start {id}: {e:#}"));
+    }
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("J3: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J3: mesh");
+
+    for (id, key) in [("a", "alpha"), ("b", "beta"), ("c", "gamma")] {
+        apply_ok(
+            cluster.node(id),
+            ops::object_update(key, ops::number_inc(1.0)),
+        );
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // --- the departure ---
+    leave_session(cluster.node("c")).expect("J3: c leaves");
+    await_roster(cluster.bootnode(), &["a", "b"], MESH_TIMEOUT).expect("J3: c left the directory");
+    cluster.stop("c").expect("J3: stop c");
+
+    // Deliberately *not* a sample taken here: causal stability lags the last
+    // message by a round trip, so reading `stable_prefix` the instant `c` stops
+    // catches it still rising and any equality assertion would be a race. What
+    // can be stated exactly is the bound — three operations existed before `c`
+    // left, so nothing above three can ever become stable once it is gone.
+    for _ in 0..(WHILE_AWAY / 2) {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("alpha", ops::number_inc(1.0)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("beta", ops::number_inc(1.0)),
+        );
+    }
+    let survivors_state =
+        assert_converged(&[cluster.node("a"), cluster.node("b")], CONVERGE_TIMEOUT);
+
+    // The absence is measurable, and it is what the phase-3 contribution has to
+    // remove.
+    let a = cluster.node("a");
+    assert_eq!(
+        metric(a, "delivered_ops").unwrap(),
+        BEFORE_DEPARTURE + WHILE_AWAY,
+        "`a` did not deliver what the scenario applied; metrics: {:?}",
+        metrics_of(a)
+    );
+    assert!(
+        metric(a, "stable_prefix").unwrap() <= BEFORE_DEPARTURE,
+        "`c` is gone and cannot acknowledge, so nothing applied after it left may \
+         become stable; metrics: {:?}",
+        metrics_of(a)
+    );
+    assert!(
+        metric(a, "retained_ops").unwrap() >= WHILE_AWAY,
+        "every operation applied while `c` was away is unacknowledgeable and must \
+         still be in the replication buffer; metrics: {:?}",
+        metrics_of(a)
+    );
+
+    // --- the return, under a fresh id ---
+    cluster
+        .start("c-again")
+        .expect("J3: start the returning member");
+    await_roster(cluster.bootnode(), &["a", "b", "c-again"], MESH_TIMEOUT)
+        .expect("J3: the returning member is in the directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J3: mesh after the return");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, survivors_state,
+        "the returning member did not reach the state the session held while it \
+         was away"
+    );
+    assert_eq!(
+        read_number(&after, "gamma").unwrap(),
+        1.0,
+        "the departed replica's own pre-departure write was lost; it exists \
+         nowhere as an operation any more, so this is the state transfer being \
+         load-bearing. state: {after}"
+    );
+}
+
+/// **J3b** — a member that comes back under its *old* id is stranded.
+///
+/// **This is expected to fail**, and is ignored as an executable report of the
+/// gap. It is J3 with one thing changed: the returning replica keeps its name.
+///
+/// Observed, in full, on the run that produced this test: every donor answers
+/// `StateUnavailable` — "`c` is a returning member, not a fresh one; merging
+/// its history with a snapshot is not implemented" — the replica falls back to
+/// a delta sync, and its `/api/state` stays `"Unset"` indefinitely. Not
+/// partially caught up. Nothing.
+///
+/// The refusal itself is deliberate and right (T6 asserts it): serving a
+/// snapshot to a replica the donor has history from would silently discard
+/// whatever that replica did while away. What is missing is the other branch —
+/// a returning member needs a merge, or an eviction that makes it fresh again.
+/// Both are phase 3.
+///
+/// So the answer to spec open question 2, "does a returning evicted member need
+/// a fresh replica id", is currently **yes, it has no choice**. Un-ignoring
+/// this is the regression test for whichever mechanism removes that constraint.
+#[test]
+#[ignore = "expected to fail: a returning member is refused a transfer and a delta sync gives it nothing (phase 3)"]
+fn j3b_a_returning_member_under_its_old_id_is_stranded() {
+    let Some(mut cluster) = discovered_cluster("J3b", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start_all().expect("J3b: start cluster");
+    await_roster(cluster.bootnode(), &["a", "b", "c"], MESH_TIMEOUT).expect("J3b: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J3b: mesh");
+
+    for (id, key) in [("a", "alpha"), ("b", "beta"), ("c", "gamma")] {
+        apply_ok(
+            cluster.node(id),
+            ops::object_update(key, ops::number_inc(1.0)),
+        );
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    leave_session(cluster.node("c")).expect("J3b: c leaves");
+    await_roster(cluster.bootnode(), &["a", "b"], MESH_TIMEOUT).expect("J3b: c left");
+    cluster.stop("c").expect("J3b: stop c");
+
+    for _ in 0..6 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("alpha", ops::number_inc(1.0)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("beta", ops::number_inc(1.0)),
+        );
+    }
+    let survivors_state =
+        assert_converged(&[cluster.node("a"), cluster.node("b")], CONVERGE_TIMEOUT);
+
+    // Same id as before.
+    cluster.start("c").expect("J3b: restart c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J3b: mesh after the return");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, survivors_state,
+        "a replica returning under its old id did not reach the session's state"
+    );
+}
+
+/// **J4** — rolling churn while writes never stop.
+///
+/// One member at a time leaves and is replaced, three times round, with `a` and
+/// `b` writing throughout. Nothing here is a new mechanism — it is J1 and J3
+/// repeatedly and without the session ever going quiet, which is the case that
+/// exposes ordering assumptions the one-shot scenarios cannot: a joiner
+/// adopting while another member is mid-departure, a roster that is wrong for a
+/// moment in both directions at once.
+///
+/// The assertion is deliberately the strong one — full convergence of every
+/// replica still running at the end, including the last joiner — rather than a
+/// per-round check, which would let the session limp between rounds and still
+/// pass.
+#[test]
+fn j4_rolling_churn_while_writes_continue() {
+    /// Replicas that come and go, one per round. Fresh ids rather than a reused
+    /// one: J3 covers the return of a familiar name, and a rejoin under a new
+    /// id is the other lifecycle, the one a fresh member has.
+    const CHURNING: [&str; 3] = ["c1", "c2", "c3"];
+
+    let Some(mut cluster) = discovered_cluster("J4", &["a", "b", "c1", "c2", "c3"]) else {
+        return;
+    };
+    cluster.start("a").expect("J4: start a");
+    cluster.start("b").expect("J4: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J4: initial mesh");
+
+    let mut pos = 0usize;
+    let mut previous: Option<&str> = None;
+    for id in CHURNING {
+        // Writes continue across the churn, not between bursts of it.
+        for _ in 0..2 {
+            apply_ok(
+                cluster.node("a"),
+                ops::object_update("alpha", ops::string_insert('a', pos)),
+            );
+            apply_ok(
+                cluster.node("b"),
+                ops::object_update("beta", ops::string_insert('b', pos)),
+            );
+            pos += 1;
+        }
+
+        cluster
+            .start(id)
+            .unwrap_or_else(|e| panic!("J4: start {id}: {e:#}"));
+        // The previous joiner leaves only once its successor is up, so the
+        // session is briefly four replicas and the roster is stale in both
+        // directions at the same time.
+        if let Some(leaving) = previous {
+            leave_session(cluster.node(leaving))
+                .unwrap_or_else(|e| panic!("J4: {leaving} leaves: {e:#}"));
+            cluster
+                .stop(leaving)
+                .unwrap_or_else(|e| panic!("J4: stop {leaving}: {e:#}"));
+        }
+        previous = Some(id);
+
+        // The joiner must hold the session's history *before* it writes.
+        // Writing first is not a harness convenience being avoided — it is a
+        // defect, and it has its own scenario: see
+        // `j5_a_joiner_that_writes_before_adopting_is_stranded`. Until that is
+        // fixed, a joiner here that wrote immediately would never receive a
+        // state transfer and J4 would be reporting that defect rather than
+        // testing churn.
+        await_state(cluster.node(id), CONVERGE_TIMEOUT)
+            .unwrap_or_else(|e| panic!("J4: {id} never received the session's state: {e:#}"));
+        apply_ok(
+            cluster.node(id),
+            ops::object_update("gamma", ops::number_inc(1.0)),
+        );
+    }
+
+    for _ in 0..2 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("alpha", ops::string_insert('a', pos)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("beta", ops::string_insert('b', pos)),
+        );
+        pos += 1;
+    }
+
+    let survivors: Vec<&dyn Node> = cluster.nodes();
+    assert_eq!(
+        survivors.len(),
+        3,
+        "expected `a`, `b` and the last joiner to still be running; got {:?}",
+        survivors.iter().map(|n| n.id()).collect::<Vec<_>>()
+    );
+    let state = assert_converged(&survivors, CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_string(&state, "alpha").unwrap().len(),
+        pos,
+        "a write applied during churn was lost or duplicated; state: {state}"
+    );
+    assert_eq!(
+        read_number(&state, "gamma").unwrap(),
+        CHURNING.len() as f64,
+        "every joiner's own write must survive its departure; state: {state}"
+    );
+    assert!(
+        cluster.is_running("c3"),
+        "the last joiner should still be running"
+    );
+}
+
+/// **J5** — a joiner that writes before its state transfer arrives is
+/// stranded, permanently.
+///
+/// **This is expected to fail.** It is an executable report of a defect J4
+/// found, in the same spirit as `opcount_double_delivery` — the assertion is
+/// the *correct* behaviour, so un-ignoring it is the regression test.
+///
+/// The mechanism, traced to two lines that are each right on their own:
+///
+/// - `retry_state_transfer` and `request_sync` both ask for a snapshot only
+///   while `has_no_history()` — "this replica has delivered nothing".
+/// - `adopt_state` re-checks the same condition before installing one, and
+///   correctly so: `adopt` replaces rather than merges, and a second donor's
+///   answer arriving after the first must not roll the replica back (T4).
+///
+/// A locally applied operation is a delivery. So a joiner that writes before a
+/// donor has answered flips `has_no_history()` itself, and from then on it will
+/// neither ask for a transfer nor accept one that is already in flight. It
+/// falls back to a delta sync for ever — which replays only what its peers have
+/// not compacted away, and in a healthy session that is almost nothing.
+///
+/// Measured on the four-replica churn scenario before it was made to wait: the
+/// last joiner ended with `beta` one character long against the session's
+/// eight, and no `alpha` at all, while every other replica agreed.
+///
+/// This is not the same as T3, which is a joiner writing immediately *after*
+/// adopting and is green. The window here is before, and nothing closes it: the
+/// replica cannot know a transfer is coming, and a client has no way to ask.
+/// The fix is a protocol decision, not a harness one — either a joiner refuses
+/// local writes until it has state, or `adopt` learns to merge — which is why
+/// this is reported rather than patched.
+#[test]
+#[ignore = "known defect: a local write before the transfer lands makes the joiner ineligible for one, for ever"]
+fn j5_a_joiner_that_writes_before_adopting_is_stranded() {
+    /// Enough that the stable frontier passes most of it, so a delta sync
+    /// cannot substitute for a transfer.
+    const APPLIED: u64 = 20;
+
+    let Some(mut cluster) = discovered_cluster("J5", &["a", "b", "c"]) else {
+        return;
+    };
+    cluster.start("a").expect("J5: start a");
+    cluster.start("b").expect("J5: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J5: initial mesh");
+
+    for pos in 0..(APPLIED / 2) {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("alpha", ops::string_insert('x', pos as usize)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("gamma", ops::number_inc(1.0)),
+        );
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // The same precondition E2 uses: without a frontier that has moved, a delta
+    // sync would carry the whole history and the scenario would prove nothing.
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    poll_until(CONVERGE_TIMEOUT, || {
+        let stable = metric(a, "stable_prefix")?.min(metric(b, "stable_prefix")?);
+        Ok((stable >= APPLIED - 5).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the stable frontier never advanced{}; a: {:?}, b: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(a),
+            metrics_of(b)
+        )
+    });
+
+    // --- the joiner writes first ---
+    //
+    // `start` returns once `/api/health` answers, and the node sleeps two
+    // seconds before it dials anybody, so this write lands well inside the
+    // window. No race: the operation is applied before any peer knows `c`
+    // exists.
+    cluster.start("c").expect("J5: start c");
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("beta", ops::string_insert('!', 0)),
+    );
+
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("J5: mesh after c joined");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_string(&after, "alpha").unwrap(),
+        read_string(&before, "alpha").unwrap(),
+        "the joiner never received the history it wrote on top of"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R1 — seeded random operations
+// ---------------------------------------------------------------------------
+
+/// **R1** — a seeded random workload across three replicas, then convergence.
+///
+/// The scenario that finds what hand-written cases miss, and the reason the
+/// workload generator lives in the library: this and the dashboard's `--random`
+/// driver produce the identical sequence for a given seed, so a run somebody
+/// watched can be replayed here from the seed it printed.
+///
+/// The seed is fresh on every run unless `MOIRAI_E2E_SEED` pins it, and it is
+/// printed on the way in and again in the failure message. A fixed seed would
+/// make CI deterministic and useless — it would re-run the same twelve hundred
+/// operations for ever. A random one that failed silently would be worse. This
+/// is the pair that works: vary it, and make a failure carry its reproduction.
+///
+/// Runs on containers rather than processes because this is the scenario CI
+/// leans on most, and it should exercise the same backend the shipped image
+/// runs under.
+#[test]
+fn r1_seeded_random_operations_converge() {
+    /// Enough to interleave, short enough to keep the suite under a minute.
+    const OPERATIONS: usize = 180;
+
+    let seed: u64 = std::env::var("MOIRAI_E2E_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1)
+        });
+    let reproduce = format!(
+        "MOIRAI_E2E_SEED={seed} cargo test -p moirai-network \
+                             --test e2e_convergence -- --test-threads=1 r1_"
+    );
+    eprintln!("\nR1 seed {seed} — reproduce with:\n  {reproduce}\n");
+
+    let Some(cluster) = started_container_cluster("R1", &["a", "b", "c"]) else {
+        return;
+    };
+    let nodes = cluster.nodes();
+    let mut workload = Workload::new(seed, nodes.len());
+
+    for (n, step) in workload.take(OPERATIONS).into_iter().enumerate() {
+        let node = nodes[step.replica];
+        apply(node, &step.op).unwrap_or_else(|e| {
+            panic!(
+                "R1 seed {seed}: step {n} (`{}` on `{}`) was refused: {e:#}\n\
+                 reproduce with:\n  {reproduce}",
+                step.label,
+                node.id()
+            )
+        });
+    }
+
+    // `assert_converged` panics with every state and every log on failure, and
+    // the seed has already been printed above it, so a CI failure carries both
+    // the diff and the way to replay it.
+    let state = assert_converged(&nodes, CONVERGE_TIMEOUT);
+    eprintln!(
+        "R1 seed {seed} converged on digest {}",
+        state_digest(&state)
+    );
+
+    // Convergence on `Unset` would be vacuous: three replicas that applied
+    // nothing agree perfectly.
+    let object = root_object(&state)
+        .unwrap_or_else(|e| panic!("R1 seed {seed}: {e:#}\nreproduce with:\n  {reproduce}"));
+    assert!(
+        !object.is_empty(),
+        "R1 seed {seed}: the replicas agree on an empty state, which proves \
+         nothing; state: {state}\nreproduce with:\n  {reproduce}"
+    );
+
+    // Every replica must also account for the same number of deliveries.
+    // Agreeing on a rendered value while holding different histories is the
+    // failure mode E2 had to be strengthened against.
+    let delivered: Vec<(String, u64)> = nodes
+        .iter()
+        .map(|n| (n.id().to_string(), metric(*n, "delivered_ops").unwrap_or(0)))
+        .collect();
+    assert!(
+        delivered.windows(2).all(|w| w[0].1 == w[1].1),
+        "R1 seed {seed}: the replicas render the same state but do not account \
+         for the same history: {delivered:?}\nreproduce with:\n  {reproduce}"
+    );
+    assert_eq!(
+        delivered[0].1, OPERATIONS as u64,
+        "R1 seed {seed}: {} of {OPERATIONS} operations were delivered\n\
+         reproduce with:\n  {reproduce}",
+        delivered[0].1
     );
 }
 
