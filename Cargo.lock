@@ -898,6 +898,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-bootnode"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tiny_http",
+]
+
+[[package]]
 name = "moirai-crdt"
 version = "0.1.0"
 dependencies = [

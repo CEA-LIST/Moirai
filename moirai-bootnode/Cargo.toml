@@ -1,0 +1,22 @@
+[package]
+name = "moirai-bootnode"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Session directory for Moirai replicas: hands out peer addresses, nothing else"
+
+[[bin]]
+name = "moirai-bootnode"
+path = "src/main.rs"
+
+# No CRDT dependency on purpose: the bootnode never sees an operation, so it
+# must not be able to link against the replication layer at all. `tiny_http`
+# and `serde_json` are the same versions `moirai-network` already uses, which
+# keeps the build graph unchanged.
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.133"
+tiny_http = "0.12"
