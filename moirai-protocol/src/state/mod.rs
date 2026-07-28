@@ -5,4 +5,5 @@ pub mod po_log;
 #[cfg(feature = "sink")]
 pub mod sink;
 pub mod stable_state;
+pub mod trace;
 pub mod unstable_state;

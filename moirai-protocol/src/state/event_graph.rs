@@ -23,7 +23,7 @@ use crate::{
         query::QueryOperation,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
-    state::{log::IsLog, unstable_state::IsUnstableState},
+    state::{log::IsLog, trace, unstable_state::IsUnstableState},
 };
 
 // TODO: use Daggy?
@@ -70,9 +70,14 @@ where
         #[cfg(feature = "sink")] _ownership: SinkOwnership,
     ) {
         IsUnstableState::append(self, event);
+        // A sequence CRDT never discards on arrival — concurrent inserts at the
+        // same position both survive, which is precisely what C3 asserts — so
+        // there is one outcome to record and no relation to consult.
+        trace::note_applied();
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        trace::note_reset();
         debug_assert!(self.graph.node_count() >= self.heads.len());
         match O::causal_reset(
             version,

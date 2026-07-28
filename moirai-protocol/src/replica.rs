@@ -181,6 +181,11 @@ where
     }
 
     fn deliver(&mut self, event: Event<L::Op>) {
+        // The single point every delivery passes through, local and remote
+        // alike, and therefore the only honest place to open a trace record.
+        // A no-op unless someone has called `trace::set_enabled` — see the
+        // module header for why this costs nothing when nobody is watching.
+        crate::state::trace::begin(event.id(), event.lamport());
         #[cfg(feature = "sink")]
         let mut sink = SinkCollector::new();
         #[cfg(feature = "sink")]

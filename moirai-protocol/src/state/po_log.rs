@@ -14,7 +14,7 @@ use crate::{
         redundancy::RedundancyRelation,
     },
     event::{Event, id::EventId, tagged_op::TaggedOp},
-    state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{log::IsLog, stable_state::IsStableState, trace, unstable_state::IsUnstableState},
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,7 @@ where
     ) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
+            trace::note_redundant_on_arrival();
             if !O::DISABLE_R_WHEN_R {
                 self.prune_redundant_ops(
                     O::redundant_by_when_redundant,
@@ -77,6 +78,7 @@ where
                 );
             }
             self.unstable.append(event);
+            trace::note_applied();
         }
     }
 
@@ -101,11 +103,27 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
+        // A parent resetting a child is update-wins being enforced: whatever is
+        // causally below the removal goes, whatever is concurrent with it stays.
+        // Recording which ids went is the difference between showing a viewer
+        // "the key was removed" and showing them which edits it took with it.
+        trace::note_reset();
         self.stable.clear();
         if conservative {
-            self.unstable
-                .retain(|tagged_op| !tagged_op.id().is_predecessor_of(version))
+            self.unstable.retain(|tagged_op| {
+                let dominated = tagged_op.id().is_predecessor_of(version);
+                if dominated {
+                    trace::note_superseded(tagged_op.id(), false);
+                }
+                !dominated
+            })
         } else {
+            if trace::is_enabled() {
+                let removed: Vec<EventId> = self.unstable.iter().map(|t| t.id().clone()).collect();
+                for id in &removed {
+                    trace::note_superseded(id, false);
+                }
+            }
             self.unstable.clear();
         }
     }
@@ -146,12 +164,18 @@ where
             // Note: the new operation is not in the log at this point.
             let is_conc = !old_tagged_op.id().is_predecessor_of(version);
 
-            !rdnt(
+            let redundant = rdnt(
                 old_tagged_op.op(),
                 Some(old_tagged_op.tag()),
                 is_conc,
                 new_tagged_op,
-            )
+            );
+            if redundant {
+                // The relation has already decided; this only writes down which
+                // operation lost, and whether it lost to concurrency or to time.
+                trace::note_superseded(old_tagged_op.id(), is_conc);
+            }
+            !redundant
         });
     }
 }
