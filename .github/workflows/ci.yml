@@ -108,15 +108,15 @@ jobs:
     #     red. The "assert the suite actually ran" step below exists to catch
     #     precisely that.
     env:
-      # Verified against the configured git remote, not guessed.
-      # NOTE: this repo is PRIVATE, so the second checkout below needs a token
-      # with read access — add an ARACHNE_TOKEN secret and pass it as `token:`,
-      # mirroring what Arachne's own CI does for Moirai.
-      # NOTE: ARACHNE_REF must point at a branch carrying the relative-path fix
-      # for the generated crate's Cargo.toml. Until that merges, that is
+      # Defaults target upstream; a fork overrides them with repository
+      # variables so the same commit runs in both places without editing.
+      # Arachne is PRIVATE, so the second checkout needs ARACHNE_TOKEN, a
+      # secret with read access — mirroring what Arachne's CI does for Moirai.
+      # ARACHNE_REF must point at a branch carrying the relative-path fix for
+      # the generated crate's Cargo.toml. Until that merges upstream, that is
       # `akira/e2e-convergence-tests`, not `main`.
-      ARACHNE_REPO: Marcosddf/Arachne-mddf
-      ARACHNE_REF: main
+      ARACHNE_REPO: ${{ vars.ARACHNE_REPO || 'Marcosddf/Arachne-mddf' }}
+      ARACHNE_REF: ${{ vars.ARACHNE_REF || 'main' }}
       E2E_IMAGE: moirai-json-crdt:test
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +126,7 @@ jobs:
         with:
           repository: ${{ env.ARACHNE_REPO }}
           ref: ${{ env.ARACHNE_REF }}
+          token: ${{ secrets.ARACHNE_TOKEN }}
           path: arachne
       - uses: actions/cache@v4
         with:
