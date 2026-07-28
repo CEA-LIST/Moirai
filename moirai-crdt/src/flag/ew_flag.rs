@@ -182,14 +182,7 @@ mod tests {
         let runs = vec![run.clone(); 1];
 
         let config =
-            FuzzerConfig::<VecLog<EWFlag>>::new(
-                "ew_flag",
-                runs,
-                true,
-                |a, b| a == b,
-                false,
-                None,
-            );
+            FuzzerConfig::<VecLog<EWFlag>>::new("ew_flag", runs, true, |a, b| a == b, false, None);
 
         fuzzer::<VecLog<EWFlag>>(config);
     }

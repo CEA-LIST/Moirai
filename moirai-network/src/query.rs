@@ -15,7 +15,5 @@ use moirai_protocol::state::log::IsLog;
 /// The impl calls `replica.query(Read::new())` to evaluate the full CRDT
 /// state via the `EvalNested<Read<Value>>` chain, then serializes the result.
 pub trait QueryableLog: IsLog {
-    fn query_state_json(
-        replica: &Replica<Self, Tcsb<Self::Op>>,
-    ) -> serde_json::Value;
+    fn query_state_json(replica: &Replica<Self, Tcsb<Self::Op>>) -> serde_json::Value;
 }

@@ -70,13 +70,13 @@ use moirai_crdt::set::aw_set::AWSet;
 use moirai_network::generic::GenericNode;
 use moirai_network::tcp_transport::TcpTransport;
 use moirai_network::HashMap;
-use moirai_protocol::state::po_log::VecLog;
-use moirai_protocol::state::log::IsLog;
-use moirai_protocol::crdt::query::Read;
-use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::broadcast::tcsb::Tcsb;
-use moirai_protocol::event::Event;
 use moirai_protocol::clock::version_vector::Version;
+use moirai_protocol::crdt::query::Read;
+use moirai_protocol::event::Event;
+use moirai_protocol::replica::{IsReplica, Replica};
+use moirai_protocol::state::log::IsLog;
+use moirai_protocol::state::po_log::VecLog;
 
 // Newtype wrapper to implement QueryableLog (Rust orphan rules require a local type)
 #[derive(Debug, Clone, Default)]
@@ -123,9 +123,9 @@ where
 impl moirai_network::query::QueryableLog for AWSetLog {
     fn query_state_json(replica: &Replica<Self, Tcsb<Self::Op>>) -> serde_json::Value {
         let value = replica.query(Read::new());
-        serde_json::to_value(&value).unwrap_or_else(|e| {
-            serde_json::json!({ "error": format!("Failed to serialize state: {}", e) })
-        })
+        serde_json::to_value(&value).unwrap_or_else(
+            |e| serde_json::json!({ "error": format!("Failed to serialize state: {}", e) }),
+        )
     }
 }
 
@@ -182,7 +182,11 @@ fn main() {
         replica_id,
         http_port.unwrap_or(0)
     );
-    eprintln!("[{}] Query state at http://localhost:{}/api/state", replica_id, http_port.unwrap_or(0));
+    eprintln!(
+        "[{}] Query state at http://localhost:{}/api/state",
+        replica_id,
+        http_port.unwrap_or(0)
+    );
     eprintln!("[{}] Example: curl -X POST http://localhost:{}/api/op -H 'Content-Type: application/json' -d '{{\"Add\":\"apple\"}}'", 
         replica_id, http_port.unwrap_or(0));
 

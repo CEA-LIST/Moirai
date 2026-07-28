@@ -1085,15 +1085,14 @@ mod tests {
         // let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
         // let runs = vec![run; 10_000];
 
-        let config =
-            FuzzerConfig::<EventGraph<List<char>>>::new(
-                "list",
-                runs,
-                true,
-                |a, b| a == b,
-                true,
-                None,
-            );
+        let config = FuzzerConfig::<EventGraph<List<char>>>::new(
+            "list",
+            runs,
+            true,
+            |a, b| a == b,
+            true,
+            None,
+        );
 
         fuzzer::<EventGraph<List<char>>>(config);
     }

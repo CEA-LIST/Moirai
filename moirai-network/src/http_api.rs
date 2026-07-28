@@ -39,8 +39,7 @@ pub(crate) fn start_http_api<O: NetworkOp>(
         let add_cors = |mut resp: Response<std::io::Cursor<Vec<u8>>>| {
             resp.add_header(Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap());
             resp.add_header(
-                Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS")
-                    .unwrap(),
+                Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS").unwrap(),
             );
             resp.add_header(
                 Header::from_bytes(b"Access-Control-Allow-Headers", b"Content-Type").unwrap(),
@@ -95,9 +94,8 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                 (&Method::Post, "/api/op") => {
                     let mut body = String::new();
                     if Read::read_to_string(&mut request.as_reader(), &mut body).is_err() {
-                        let resp =
-                            Response::from_string(r#"{"error":"Failed to read body"}"#)
-                                .with_status_code(400);
+                        let resp = Response::from_string(r#"{"error":"Failed to read body"}"#)
+                            .with_status_code(400);
                         let _ = request.respond(add_cors(resp));
                         continue;
                     }
@@ -112,12 +110,16 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                             if sender.send(envelope).is_ok() {
                                 let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
                                     Ok(result) => {
-                                        let resp_body = serde_json::to_string(&result).unwrap_or_else(
-                                            |_| r#"{"error":"serialize"}"#.to_string(),
-                                        );
+                                        let resp_body = serde_json::to_string(&result)
+                                            .unwrap_or_else(|_| {
+                                                r#"{"error":"serialize"}"#.to_string()
+                                            });
                                         Response::from_string(resp_body).with_header(
-                                            Header::from_bytes(b"Content-Type", b"application/json")
-                                                .unwrap(),
+                                            Header::from_bytes(
+                                                b"Content-Type",
+                                                b"application/json",
+                                            )
+                                            .unwrap(),
                                         )
                                     }
                                     Err(_) => Response::from_string(r#"{"error":"timeout"}"#)
@@ -125,9 +127,8 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                                 };
                                 let _ = request.respond(add_cors(resp));
                             } else {
-                                let resp =
-                                    Response::from_string(r#"{"error":"channel closed"}"#)
-                                        .with_status_code(500);
+                                let resp = Response::from_string(r#"{"error":"channel closed"}"#)
+                                    .with_status_code(500);
                                 let _ = request.respond(add_cors(resp));
                             }
                         }
@@ -155,12 +156,13 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                                 peer_id,
                                 reply: reply_tx,
                             });
-                            let result = reply_rx
-                                .recv_timeout(Duration::from_secs(5))
-                                .unwrap_or(OpResult {
-                                    success: false,
-                                    message: "timeout".into(),
-                                });
+                            let result =
+                                reply_rx
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap_or(OpResult {
+                                        success: false,
+                                        message: "timeout".into(),
+                                    });
                             let resp =
                                 Response::from_string(serde_json::to_string(&result).unwrap())
                                     .with_header(json_header);
@@ -173,12 +175,13 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                                 peer_id,
                                 reply: reply_tx,
                             });
-                            let result = reply_rx
-                                .recv_timeout(Duration::from_secs(5))
-                                .unwrap_or(OpResult {
-                                    success: false,
-                                    message: "timeout".into(),
-                                });
+                            let result =
+                                reply_rx
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap_or(OpResult {
+                                        success: false,
+                                        message: "timeout".into(),
+                                    });
                             let resp =
                                 Response::from_string(serde_json::to_string(&result).unwrap())
                                     .with_header(json_header);
@@ -187,12 +190,13 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                         (&Method::Post, "/api/pause-all") => {
                             let (reply_tx, reply_rx) = mpsc::channel();
                             let _ = ctrl.send(ControlCmd::PauseAll { reply: reply_tx });
-                            let result = reply_rx
-                                .recv_timeout(Duration::from_secs(5))
-                                .unwrap_or(OpResult {
-                                    success: false,
-                                    message: "timeout".into(),
-                                });
+                            let result =
+                                reply_rx
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap_or(OpResult {
+                                        success: false,
+                                        message: "timeout".into(),
+                                    });
                             let resp =
                                 Response::from_string(serde_json::to_string(&result).unwrap())
                                     .with_header(json_header);
@@ -201,12 +205,13 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                         (&Method::Post, "/api/resume-all") => {
                             let (reply_tx, reply_rx) = mpsc::channel();
                             let _ = ctrl.send(ControlCmd::ResumeAll { reply: reply_tx });
-                            let result = reply_rx
-                                .recv_timeout(Duration::from_secs(5))
-                                .unwrap_or(OpResult {
-                                    success: false,
-                                    message: "timeout".into(),
-                                });
+                            let result =
+                                reply_rx
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap_or(OpResult {
+                                        success: false,
+                                        message: "timeout".into(),
+                                    });
                             let resp =
                                 Response::from_string(serde_json::to_string(&result).unwrap())
                                     .with_header(json_header);

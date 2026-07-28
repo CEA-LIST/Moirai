@@ -142,17 +142,25 @@ fn run_results(run_data: &RunData) -> RunResults {
         .sum::<f64>()
         / (run_data.config.num_replicas as f64);
 
-    let total_query_ms_per_replica = run_data.total_time_in_query_per_replica.as_ref().map(|times| {
-        let mut vec = vec![0u128; run_data.config.num_replicas as usize];
-        for (idx, duration) in times {
-            vec[idx.0] = duration.as_millis();
-        }
-        vec
-    });
+    let total_query_ms_per_replica =
+        run_data
+            .total_time_in_query_per_replica
+            .as_ref()
+            .map(|times| {
+                let mut vec = vec![0u128; run_data.config.num_replicas as usize];
+                for (idx, duration) in times {
+                    vec[idx.0] = duration.as_millis();
+                }
+                vec
+            });
 
-    let avg_query_ms = run_data.total_time_in_query_per_replica.as_ref().map(|times| {
-        times.values().map(|d| d.as_millis() as f64).sum::<f64>() / run_data.config.num_replicas as f64
-    });
+    let avg_query_ms = run_data
+        .total_time_in_query_per_replica
+        .as_ref()
+        .map(|times| {
+            times.values().map(|d| d.as_millis() as f64).sum::<f64>()
+                / run_data.config.num_replicas as f64
+        });
 
     RunResults {
         final_state: run_data.first_value.clone(),

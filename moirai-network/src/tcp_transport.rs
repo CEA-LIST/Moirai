@@ -1,12 +1,11 @@
-
 //! This module provides a TCP-based implementation of the CrdtTransport trait,
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -122,10 +121,7 @@ where
                 }
             }
 
-            eprintln!(
-                "[{}] Connection closed from {}",
-                local_id, current_peer_id
-            );
+            eprintln!("[{}] Connection closed from {}", local_id, current_peer_id);
         });
     }
 
@@ -166,7 +162,10 @@ where
 }
 
 /// Send a raw JSON message over a stream
-fn send_raw<O: Serialize + DeserializeOwned>(stream: &mut TcpStream, msg: &TransportMessage<O>) -> TransportResult<()> {
+fn send_raw<O: Serialize + DeserializeOwned>(
+    stream: &mut TcpStream,
+    msg: &TransportMessage<O>,
+) -> TransportResult<()> {
     let json = serde_json::to_string(msg)?;
     writeln!(stream, "{}", json)?;
     stream.flush()?;
@@ -186,10 +185,7 @@ where
     fn send(&mut self, peer: &PeerId, msg: TransportMessage<Self::Op>) -> TransportResult<()> {
         // Sends only if not paused
         if self.paused_peers.contains(peer) {
-            eprintln!(
-                "[{}] Skipping send to paused peer {}",
-                self.local_id, peer
-            );
+            eprintln!("[{}] Skipping send to paused peer {}", self.local_id, peer);
             return Ok(());
         }
 
@@ -211,10 +207,7 @@ where
 
             if let Some(stream) = self.connections.get_mut(&peer_id) {
                 if let Err(e) = send_raw(stream, &msg) {
-                    eprintln!(
-                        "[{}] Failed to send to {}: {}",
-                        self.local_id, peer_id, e
-                    );
+                    eprintln!("[{}] Failed to send to {}: {}", self.local_id, peer_id, e);
                 }
             }
         }
@@ -225,19 +218,22 @@ where
     fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage<Self::Op>)>> {
         match self.incoming_rx.try_recv() {
             Ok((from_id, msg)) => {
-                // Check if this is a Hello message 
+                // Check if this is a Hello message
                 if let TransportMessage::Hello { ref id, .. } = msg {
                     if from_id != *id && self.connections.contains_key(&from_id) {
                         // Remap it to the real peer ID now
                         if let Some(stream) = self.connections.remove(&from_id) {
-                            eprintln!("[{}] Remapping connection: {} -> {}", self.local_id, from_id, id);
+                            eprintln!(
+                                "[{}] Remapping connection: {} -> {}",
+                                self.local_id, from_id, id
+                            );
                             self.connections.insert(id.clone(), stream);
                         }
                         // Update from_id to the real peer ID for the rest of processing
                         return Ok(Some((id.clone(), msg)));
                     }
                 }
-                
+
                 // If peer is paused, buffer the message
                 if self.paused_peers.contains(&from_id) {
                     eprintln!(
@@ -348,10 +344,7 @@ where
             let listener = self.listener.as_ref().unwrap();
             match listener.accept() {
                 Ok((stream, addr)) => {
-                    eprintln!(
-                        "[{}] Accepted connection from {}",
-                        self.local_id, addr
-                    );
+                    eprintln!("[{}] Accepted connection from {}", self.local_id, addr);
                     // Unique temporary ID to avoid collisions if multiple connections arrive
                     let temp_id = format!(
                         "temp-conn-{}",
@@ -385,10 +378,7 @@ where
 
             match TcpStream::connect(addr) {
                 Ok(stream) => {
-                    eprintln!(
-                        "[{}] Connected to {} at {}",
-                        self.local_id, peer_id, addr
-                    );
+                    eprintln!("[{}] Connected to {} at {}", self.local_id, peer_id, addr);
 
                     // Register the connection and send Hello to identify ourselves
                     self.register_connection(peer_id.clone(), stream, true)?;

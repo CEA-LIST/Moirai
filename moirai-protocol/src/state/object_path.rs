@@ -50,7 +50,9 @@ mod path_segment_serde {
                 PathSegmentHelper::Field(s) => PathSegment::Field(Box::leak(s.into_boxed_str())),
                 PathSegmentHelper::ListElement(id) => PathSegment::ListElement(id),
                 PathSegmentHelper::MapEntry(s) => PathSegment::MapEntry(s),
-                PathSegmentHelper::Variant(s) => PathSegment::Variant(Box::leak(s.into_boxed_str())),
+                PathSegmentHelper::Variant(s) => {
+                    PathSegment::Variant(Box::leak(s.into_boxed_str()))
+                }
             })
         }
     }

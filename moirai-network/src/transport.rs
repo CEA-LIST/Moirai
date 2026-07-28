@@ -35,25 +35,42 @@ pub type PeerId = String;
 
 /// Messages that can be sent over any transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", bound(serialize = "O: Serialize", deserialize = "O: DeserializeOwned"))]
+#[serde(
+    tag = "type",
+    bound(serialize = "O: Serialize", deserialize = "O: DeserializeOwned")
+)]
 pub enum TransportMessage<O>
 where
     O: Serialize + DeserializeOwned,
 {
-
     /// Wraps moirai protocol events for transport-agnostic dispatch
-    Event { event: EventMessage<O> },
-    Batch { batch: BatchMessage<O> },
-    SyncRequest { since: SinceMessage },
+    Event {
+        event: EventMessage<O>,
+    },
+    Batch {
+        batch: BatchMessage<O>,
+    },
+    SyncRequest {
+        since: SinceMessage,
+    },
 
     /// Hello handshake - announces replica identity
-    Hello { id: PeerId, metadata: Option<String> },
+    Hello {
+        id: PeerId,
+        metadata: Option<String>,
+    },
     /// Acknowledgment
-    Ack { from: PeerId },
+    Ack {
+        from: PeerId,
+    },
     /// Peer disconnecting gracefully
-    Goodbye { id: PeerId },
-    /// Raw payload 
-    Raw { payload: O },
+    Goodbye {
+        id: PeerId,
+    },
+    /// Raw payload
+    Raw {
+        payload: O,
+    },
 }
 
 /// Error type for transport operations
@@ -147,7 +164,7 @@ pub trait CrdtTransport {
     /// Pause communication with a peer (for simulation)
     fn pause_peer(&mut self, peer: &PeerId) -> TransportResult<()>;
 
-    /// Resume communication 
+    /// Resume communication
     /// Buffered messages will be delivered
     fn resume_peer(&mut self, peer: &PeerId) -> TransportResult<()>;
 
@@ -179,4 +196,3 @@ pub trait CrdtTransport {
         vec![]
     }
 }
-

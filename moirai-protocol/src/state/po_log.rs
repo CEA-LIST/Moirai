@@ -4,8 +4,6 @@ use std::fmt::Debug;
 
 #[cfg(feature = "sink")]
 use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use crate::{
     HashMap,
     clock::version_vector::Version,
@@ -18,6 +16,8 @@ use crate::{
     event::{Event, id::EventId, tagged_op::TaggedOp},
     state::{log::IsLog, stable_state::IsStableState, unstable_state::IsUnstableState},
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;

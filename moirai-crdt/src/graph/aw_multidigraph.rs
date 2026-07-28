@@ -16,13 +16,13 @@ use moirai_protocol::{
     state::unstable_state::IsUnstableState,
     utils::intern_str::{InternalizeOp, Interner},
 };
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
 use petgraph::visit::EdgeRef;
 #[cfg(feature = "fuzz")]
 use rand::seq::IteratorRandom;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::{HashMap, HashSet};
 

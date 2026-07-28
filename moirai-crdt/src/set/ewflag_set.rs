@@ -15,9 +15,9 @@ use moirai_protocol::{
     state::{log::IsLog, po_log::VecLog},
     utils::intern_str::{InternalizeOp, Interner},
 };
+use rand::distr::weighted::WeightedIndex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use rand::distr::weighted::WeightedIndex;
 
 use crate::{
     HashSet,

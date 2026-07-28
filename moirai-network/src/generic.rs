@@ -77,13 +77,29 @@ pub struct OpEnvelope<O> {
 
 /// Control commands sent by external adapters (for example, HTTP).
 pub(crate) enum ControlCmd {
-    Pause { peer_id: String, reply: Sender<OpResult> },
-    Resume { peer_id: String, reply: Sender<OpResult> },
-    PauseAll { reply: Sender<OpResult> },
-    ResumeAll { reply: Sender<OpResult> },
-    Peers { reply: Sender<serde_json::Value> },
-    Query { reply: Sender<serde_json::Value> },
-    Operations { reply: Sender<serde_json::Value> },
+    Pause {
+        peer_id: String,
+        reply: Sender<OpResult>,
+    },
+    Resume {
+        peer_id: String,
+        reply: Sender<OpResult>,
+    },
+    PauseAll {
+        reply: Sender<OpResult>,
+    },
+    ResumeAll {
+        reply: Sender<OpResult>,
+    },
+    Peers {
+        reply: Sender<serde_json::Value>,
+    },
+    Query {
+        reply: Sender<serde_json::Value>,
+    },
+    Operations {
+        reply: Sender<serde_json::Value>,
+    },
 }
 
 /// Result sent back to HTTP callers.
@@ -115,14 +131,9 @@ where
     }
 
     /// Create a node with the given transport.
-    /// Transport-agnostic creator 
-    pub fn with_transport(
-        replica_id: String,
-        members: &[&str],
-        transport: T,
-    ) -> Self {
-        let replica: Replica<L, Tcsb<L::Op>> =
-            IsReplica::bootstrap(replica_id.clone(), members);
+    /// Transport-agnostic creator
+    pub fn with_transport(replica_id: String, members: &[&str], transport: T) -> Self {
+        let replica: Replica<L, Tcsb<L::Op>> = IsReplica::bootstrap(replica_id.clone(), members);
 
         let (adapter_op_tx, adapter_op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
@@ -171,7 +182,7 @@ where
             Some(event_msg) => {
                 // Record the operation
                 self.operation_log.push(op);
-                
+
                 let transport_msg = TransportMessage::Event { event: event_msg };
                 if let Err(e) = self.transport.broadcast(transport_msg) {
                     eprintln!("[{}] Broadcast failed: {}", self.replica_id, e);
@@ -205,7 +216,10 @@ where
                 let batch = self.replica.pull(since);
                 let response = TransportMessage::Batch { batch };
                 if let Err(e) = self.transport.send(&from, response) {
-                    eprintln!("[{}] Failed to send batch to {}: {}", self.replica_id, from, e);
+                    eprintln!(
+                        "[{}] Failed to send batch to {}: {}",
+                        self.replica_id, from, e
+                    );
                 }
             }
             TransportMessage::Hello { id, .. } => {
@@ -213,7 +227,10 @@ where
                 let since = self.replica.since();
                 let msg = TransportMessage::SyncRequest { since };
                 if let Err(e) = self.transport.send(&id, msg) {
-                    eprintln!("[{}] Failed to request sync from {}: {}", self.replica_id, id, e);
+                    eprintln!(
+                        "[{}] Failed to request sync from {}: {}",
+                        self.replica_id, id, e
+                    );
                 }
             }
             TransportMessage::Goodbye { id } => {
@@ -361,7 +378,7 @@ where
                     .iter()
                     .filter_map(|op| serde_json::to_value(op).ok())
                     .collect();
-                
+
                 let _ = reply.send(json!({
                     "operations": operations,
                     "count": operations.len()
@@ -370,7 +387,6 @@ where
         }
     }
 }
-
 
 // =============================================================================
 // TCP convenience constructor
