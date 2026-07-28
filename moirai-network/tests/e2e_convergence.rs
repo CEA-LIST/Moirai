@@ -68,7 +68,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// How long a mesh may take to form. Generous: the node sleeps 2 s before its
 /// single dial attempt, and a debug-profile binary starts slowly under load.
@@ -842,6 +842,39 @@ impl Cluster {
         let node = self
             .backend
             .start(id, &endpoint, &peers, &extra_env)
+            .with_context(|| format!("start `{id}` on the {} backend", self.backend.name()))?;
+        await_healthy(node.as_ref(), HEALTH_TIMEOUT)?;
+        self.running.insert(id.to_string(), node);
+        Ok(())
+    }
+
+    /// Starts `id` knowing only the replicas named in `peers`.
+    ///
+    /// [`Cluster::start`] hands a replica the whole roster, running or not,
+    /// which is right for scenarios where the membership is fixed up front. It
+    /// is wrong wherever the stable frontier has to move before a joiner
+    /// arrives: a member that is listed and never speaks pins the column-wise
+    /// minimum at zero, so nothing is ever compacted — the E4 phenomenon,
+    /// arrived at by accident. This lets a scenario introduce the joiner to the
+    /// session without introducing the session to the joiner.
+    fn start_with_peers(&mut self, id: &str, peers: &[&str]) -> Result<()> {
+        let endpoint = self
+            .endpoints
+            .get(id)
+            .ok_or_else(|| anyhow!("replica `{id}` is not part of this cluster"))?
+            .clone();
+        let peer_list: Pairs = peers
+            .iter()
+            .map(|other| {
+                (
+                    (*other).to_string(),
+                    self.endpoints[*other].sync_addr.clone(),
+                )
+            })
+            .collect();
+        let node = self
+            .backend
+            .start(id, &endpoint, &peer_list, &[])
             .with_context(|| format!("start `{id}` on the {} backend", self.backend.name()))?;
         await_healthy(node.as_ref(), HEALTH_TIMEOUT)?;
         self.running.insert(id.to_string(), node);
@@ -1810,6 +1843,348 @@ fn e2_a_replica_joining_late_catches_up() {
         0,
         "the joiner originated operations of its own; this scenario is about adoption"
     );
+}
+
+/// **T3** — a joiner writes immediately after adopting.
+///
+/// The second of the two traps in the design. The joiner installs every other
+/// replica's column at the donor's values while its own starts at zero, so its
+/// first operation has to come out causally *after* the state it just adopted.
+/// If it did not, the operation would be concurrent with history the joiner has
+/// already folded into its state, and the session would converge on something
+/// no replica ever intended.
+///
+/// Asserted through the only honest oracle available from outside: the write
+/// lands on every replica *and* the pre-existing state survives it. A causally
+/// misplaced insert would either be dropped as redundant or would reorder the
+/// string it was inserted into.
+#[test]
+fn t3_a_joiner_writes_immediately_after_adopting() {
+    let Some(mut cluster) = discovered_cluster("T3", &["a", "b"]) else {
+        return;
+    };
+    cluster.start("a").expect("T3: start a");
+    for pos in 0..6 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("name", ops::string_insert('x', pos)),
+        );
+    }
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("age", ops::number_inc(4.0)),
+    );
+
+    cluster.start("b").expect("T3: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T3: mesh");
+
+    // Wait for the joiner to hold the history, then write from it at once.
+    let b = cluster.node("b");
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((metric(b, "delivered_ops")? == 7).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the joiner never took the history{}; metrics: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(b)
+        )
+    });
+    apply_ok(b, ops::object_update("age", ops::number_inc(3.0)));
+    apply_ok(b, ops::object_update("name", ops::string_insert('z', 6)));
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_number(&state, "age").unwrap(),
+        7.0,
+        "the joiner's increment did not compose with the one it adopted; state: {state}"
+    );
+    assert_eq!(
+        read_string(&state, "name").unwrap(),
+        "xxxxxxz",
+        "the joiner's insert is not causally after the state it adopted; state: {state}"
+    );
+}
+
+/// **T2** — a joiner arrives at a busy four-replica session.
+///
+/// E2 stops writing before the joiner starts, which makes the transfer a still
+/// photograph. Here the session keeps moving across it: operations are applied
+/// while the joiner is adopting, so the snapshot it installs is stale the
+/// moment it lands and the events above it have to close the gap.
+///
+/// The count assertion is the one that matters. Convergence on a value would
+/// also hold if an operation were applied twice — the string CRDT would simply
+/// show an extra character — so the exact rendered string is asserted, not just
+/// agreement.
+#[test]
+fn t2_a_joiner_arrives_at_a_busy_session() {
+    let Some(mut cluster) = discovered_cluster("T2", &["a", "b", "c", "d"]) else {
+        return;
+    };
+    for id in ["a", "b", "c"] {
+        cluster
+            .start(id)
+            .unwrap_or_else(|e| panic!("T2: start {id}: {e:#}"));
+    }
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T2: initial mesh");
+
+    // Every replica writes: a stable frontier is a column-wise minimum, so one
+    // member that never contributes pins it at zero and nothing is compacted.
+    for round in 0..4 {
+        for id in ["a", "b", "c"] {
+            apply_ok(
+                cluster.node(id),
+                ops::object_update(id, ops::string_insert('x', round)),
+            );
+        }
+    }
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.start("d").expect("T2: start d");
+    // Keep the session moving *while* the joiner is catching up.
+    for round in 4..7 {
+        for id in ["a", "b", "c"] {
+            apply_ok(
+                cluster.node(id),
+                ops::object_update(id, ops::string_insert('x', round)),
+            );
+        }
+    }
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T2: mesh after d joined");
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    for id in ["a", "b", "c"] {
+        assert_eq!(
+            read_string(&state, id).unwrap(),
+            "xxxxxxx",
+            "`{id}` should hold exactly seven characters; anything longer is an operation \
+             applied twice, anything shorter is one lost. state: {state}"
+        );
+    }
+    let d = cluster.node("d");
+    assert_eq!(
+        metric(d, "delivered_ops").unwrap(),
+        21,
+        "the joiner rendered the right state but does not account for the history behind it; \
+         metrics: {:?}",
+        metrics_of(d)
+    );
+}
+
+/// **T4** — two joiners arrive at once, and not from the same donor.
+///
+/// Each of them asks every connected peer, so each receives more than one
+/// answer and has to discard all but the first: `adopt` replaces rather than
+/// merges, and a second snapshot installed after the first would roll the
+/// replica back. They also adopt *different* index orderings — a joiner takes
+/// over its donor's — which is the case most likely to corrupt silently.
+#[test]
+fn t4_two_joiners_arrive_together() {
+    let Some(mut cluster) = discovered_cluster("T4", &["a", "b", "c", "d"]) else {
+        return;
+    };
+    cluster.start("a").expect("T4: start a");
+    cluster.start("b").expect("T4: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T4: initial mesh");
+
+    for pos in 0..5 {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("name", ops::string_insert('x', pos)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("age", ops::number_inc(1.0)),
+        );
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.start("c").expect("T4: start c");
+    cluster.start("d").expect("T4: start d");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T4: mesh after the joiners");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, before,
+        "the joiners did not reach the existing state"
+    );
+    for id in ["c", "d"] {
+        let node = cluster.node(id);
+        assert_eq!(
+            metric(node, "delivered_ops").unwrap(),
+            10,
+            "`{id}` does not account for the history it adopted; metrics: {:?}",
+            metrics_of(node)
+        );
+    }
+}
+
+/// **T5** — a donor is severed as the joiner arrives.
+///
+/// The joiner asks every connected peer, so losing one of them has to cost a
+/// round trip and nothing else. What must *not* happen is a half-installed
+/// state: `adopt` replaces the log and the causal bookkeeping together, and a
+/// joiner left holding one without the other would reject the operations it is
+/// missing as duplicates, for ever.
+///
+/// The severing is real — `docker network disconnect`, so packets between `a`
+/// and the others have no route — which is why this is the one phase-2 scenario
+/// that needs the container backend. It is also why it uses `PEERS` rather than
+/// the directory: a container cannot reach a bootnode on the test host's
+/// loopback.
+///
+/// Honest about what it does not control: the cut lands as the joiner starts
+/// dialling, and whether that is before or after `a`'s first answer is a race.
+/// So this is "a donor disappears around the time of the transfer", not "at a
+/// chosen instant inside it" — which would need a fault-injection point in the
+/// transport that does not exist. Both outcomes of the race are covered by the
+/// same assertion, because `b` can serve the transfer just as well.
+#[test]
+fn t5_a_severed_donor_does_not_strand_the_joiner() {
+    const APPLIED: u64 = 12;
+
+    let Some(mut cluster) = container_cluster("T5", &["a", "b", "c"]) else {
+        return;
+    };
+    // `a` and `b` are told about each other and nothing else. Listing the
+    // joiner before it exists would pin the stable frontier at zero and the
+    // precondition below could never hold.
+    cluster.start_with_peers("a", &["b"]).expect("T5: start a");
+    cluster.start_with_peers("b", &["a"]).expect("T5: start b");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T5: initial mesh");
+
+    for pos in 0..(APPLIED / 2) {
+        apply_ok(
+            cluster.node("a"),
+            ops::object_update("name", ops::string_insert('x', pos as usize)),
+        );
+        apply_ok(
+            cluster.node("b"),
+            ops::object_update("age", ops::number_inc(1.0)),
+        );
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // Same precondition as E2: without a stable frontier that has moved, the
+    // joiner could reach this state by plain replay and the scenario would be
+    // testing nothing.
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    poll_until(CONVERGE_TIMEOUT, || {
+        let stable = metric(a, "stable_prefix")?.min(metric(b, "stable_prefix")?);
+        Ok((stable >= APPLIED - 4).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the stable frontier never advanced{}; a: {:?}, b: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(a),
+            metrics_of(b),
+        )
+    });
+
+    cluster
+        .start_with_peers("c", &["a", "b"])
+        .expect("T5: start c");
+    cluster.cut_network("a").expect("T5: sever a");
+
+    // `a` is gone; the joiner has to reach the same state through `b`.
+    let survivors = [cluster.node("b"), cluster.node("c")];
+    let after = assert_converged(&survivors, CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, before,
+        "the joiner did not reach the state the session held before it arrived"
+    );
+    let c = cluster.node("c");
+    assert_eq!(
+        metric(c, "delivered_ops").unwrap(),
+        APPLIED,
+        "the joiner rendered the right state but does not account for the history behind it, \
+         which is what a half-installed transfer would look like; metrics: {:?}",
+        metrics_of(c)
+    );
+}
+
+/// **T6** — a `StateRequest` from a replica the donor already has history from
+/// is refused.
+///
+/// The guard that keeps returning-member merge out of this phase rather than
+/// letting it half-happen. A returning member — evicted, or long partitioned —
+/// may hold operations the session has never seen, and adopting a snapshot is a
+/// replace, not a merge, so serving one would discard them silently.
+///
+/// No running replica can reach this state on its own: a replica with history
+/// asks for a delta, never for a transfer. So the request is made by the test,
+/// speaking the replication protocol directly over TCP — newline-delimited
+/// `TransportMessage` JSON, which is the real wire format and not a stand-in.
+/// Both branches are exercised against the same donor: a fresh id is served, a
+/// known one is refused.
+#[test]
+fn t6_a_returning_member_is_refused_a_state_transfer() {
+    let Some(mut cluster) = process_cluster("T6", &["a", "b"]) else {
+        return;
+    };
+    cluster.start_all().expect("T6: start cluster");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T6: mesh");
+
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("name", ops::string_insert('B', 0)),
+    );
+    apply_ok(
+        cluster.node("b"),
+        ops::object_update("city", ops::string_insert('P', 0)),
+    );
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // `a` has delivered an operation originated by `b`, and none from `zz`.
+    let addr = cluster.endpoints["a"].sync_addr.clone();
+    let fresh = ask_for_state(&addr, "zz").expect("T6: ask as a stranger");
+    assert_eq!(
+        fresh, "StateResponse",
+        "the donor refused a genuinely fresh joiner, so the refusal below proves nothing"
+    );
+    let returning = ask_for_state(&addr, "b").expect("T6: ask as a returning member");
+    assert_eq!(
+        returning, "StateUnavailable",
+        "the donor served a snapshot to a replica it already has history from; that would \
+         silently discard whatever the returning member did while it was away"
+    );
+}
+
+/// Opens a replication connection to `addr`, introduces itself as `id`, asks for
+/// a state transfer and returns the `type` of the answer.
+///
+/// Deliberately low-level. The HTTP API has no way to send a `StateRequest`,
+/// and adding one would mean testing an endpoint that exists only for the test.
+fn ask_for_state(addr: &str, id: &str) -> Result<String> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpStream;
+
+    let mut stream = TcpStream::connect(addr).with_context(|| format!("connect to {addr}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    writeln!(
+        stream,
+        "{}",
+        json!({ "type": "Hello", "id": id, "metadata": null })
+    )?;
+    writeln!(stream, "{}", json!({ "type": "StateRequest", "id": id }))?;
+    stream.flush()?;
+
+    let reader = BufReader::new(stream.try_clone()?);
+    for line in reader.lines() {
+        let line = line.context("read the donor's reply")?;
+        let value: Value = serde_json::from_str(&line)
+            .with_context(|| format!("the donor sent a non-JSON line: {line}"))?;
+        match value.get("type").and_then(Value::as_str) {
+            Some("StateResponse") => return Ok("StateResponse".to_string()),
+            Some("StateUnavailable") => return Ok("StateUnavailable".to_string()),
+            // The donor answers a `Hello` with a sync request of its own, and
+            // may push a batch; neither is the answer being waited for.
+            _ => continue,
+        }
+    }
+    bail!("the donor closed the connection without answering the state request")
 }
 
 /// **E3** — a replica leaves the directory and the session carries on.
