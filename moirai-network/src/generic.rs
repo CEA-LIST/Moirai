@@ -23,6 +23,7 @@ use moirai_protocol::utils::intern_str::InternalizeOp;
 
 use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
+use crate::state_transfer::TransferableLog;
 use crate::tcp_transport::TcpTransport;
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
 use crate::HashMap;
@@ -79,6 +80,15 @@ where
     /// `None` is the pre-phase-1 behaviour in full: peers come from `PEERS`,
     /// are dialled once, and nothing is ever discovered.
     discovery: Option<Discovery>,
+    /// Serialise / rebuild the CRDT log, set by `enable_state_transfer()` when
+    /// `L: TransferableLog`.
+    ///
+    /// `None` means this replica can neither serve nor accept a state
+    /// transfer, and both paths degrade to `SyncRequest`. Same shape, and same
+    /// reason, as `query_fn`: a hand-written log that is not serialisable must
+    /// keep working.
+    export_log: Option<fn(&L) -> serde_json::Value>,
+    import_log: Option<fn(serde_json::Value) -> Option<L>>,
 }
 
 /// Envelope for ops submitted, with a oneshot reply channel.
@@ -168,6 +178,8 @@ where
             operation_log: Vec::new(),
             local_ops: 0,
             discovery: None,
+            export_log: None,
+            import_log: None,
         }
     }
 
@@ -216,6 +228,17 @@ where
     /// `since()` -> `SyncRequest` -> `send()` that used to exist cannot drift
     /// apart.
     fn request_sync(&mut self, peer: &PeerId) {
+        self.request_delta_sync(peer);
+    }
+
+    /// Ask `peer` for the events it holds above what this replica has already
+    /// delivered.
+    ///
+    /// Answered out of the peer's outbox, which `prune_outbox` keeps to exactly
+    /// the events above its stable frontier. That is the right question for a
+    /// replica that has been in the session; it is the wrong one for a replica
+    /// that has not, which is what `StateRequest` is for.
+    fn request_delta_sync(&mut self, peer: &PeerId) {
         let since = self.replica.since();
         let msg = TransportMessage::SyncRequest { since };
         if let Err(e) = self.transport.send(peer, msg) {
@@ -223,6 +246,92 @@ where
                 "[{}] Failed to request sync from {}: {}",
                 self.replica_id, peer, e
             );
+        }
+    }
+
+    /// Ask `peer` for everything, compacted state included.
+    fn request_state_transfer(&mut self, peer: &PeerId) {
+        let msg = TransportMessage::StateRequest {
+            id: self.replica_id.clone(),
+        };
+        if let Err(e) = self.transport.send(peer, msg) {
+            eprintln!(
+                "[{}] Failed to request a state transfer from {}: {}",
+                self.replica_id, peer, e
+            );
+        }
+    }
+
+    /// `true` while this replica has delivered nothing and knows nobody.
+    ///
+    /// The whole precondition for adopting a donor's state wholesale, in one
+    /// place, because it is checked twice: once when deciding what to ask a new
+    /// peer for, and again when a response arrives — two donors can answer the
+    /// same request, and the second answer must not undo the first.
+    fn has_no_history(&self) -> bool {
+        let stability = self.replica.stability();
+        stability.delivered == 0 && stability.known_replicas <= 1
+    }
+
+    /// Build the answer to a `StateRequest` from `id`.
+    fn state_response_for(&self, id: &str) -> TransportMessage<L::Op> {
+        let Some(export) = self.export_log else {
+            return TransportMessage::StateUnavailable {
+                reason: "state transfer is not enabled on this replica".to_string(),
+            };
+        };
+        eprintln!("[{}] serving a state transfer to {}", self.replica_id, id);
+        TransportMessage::StateResponse {
+            snapshot: self.replica.snapshot(),
+            log: export(self.replica.log()),
+        }
+    }
+
+    /// Install a donor's state, or explain why not.
+    fn adopt_state(
+        &mut self,
+        from: &PeerId,
+        snapshot: moirai_protocol::broadcast::tcsb::StateSnapshot<L::Op>,
+        log: serde_json::Value,
+    ) {
+        let Some(import) = self.import_log else {
+            eprintln!(
+                "[{}] {} sent a state transfer but this replica cannot accept one",
+                self.replica_id, from
+            );
+            return;
+        };
+        // A second donor's answer to the same request must not undo the first.
+        // `adopt` replaces rather than merges, so re-adopting after delivering
+        // anything would silently roll the replica back.
+        if !self.has_no_history() {
+            self.request_delta_sync(from);
+            return;
+        }
+        match import(log) {
+            Some(state) => {
+                let members = snapshot.resolver().len();
+                self.replica.adopt(snapshot, state);
+                eprintln!(
+                    "[{}] adopted state from {}: {} members, stable prefix {}, {} events above it",
+                    self.replica_id,
+                    from,
+                    members,
+                    self.replica.stability().stable_prefix,
+                    self.replica.stability().retained,
+                );
+                // The snapshot is a point in time, and `adopt` discards
+                // whatever this replica had buffered before it. A delta sync
+                // closes both gaps in one round trip.
+                self.request_delta_sync(from);
+            }
+            None => {
+                eprintln!(
+                    "[{}] could not decode the log {} sent; falling back to a delta sync",
+                    self.replica_id, from
+                );
+                self.request_delta_sync(from);
+            }
         }
     }
 
@@ -292,6 +401,25 @@ where
                         self.replica_id, from, e
                     );
                 }
+            }
+            TransportMessage::StateRequest { id } => {
+                let response = self.state_response_for(&id);
+                if let Err(e) = self.transport.send(&from, response) {
+                    eprintln!(
+                        "[{}] Failed to answer the state request from {}: {}",
+                        self.replica_id, from, e
+                    );
+                }
+            }
+            TransportMessage::StateResponse { snapshot, log } => {
+                self.adopt_state(&from, snapshot, log);
+            }
+            TransportMessage::StateUnavailable { reason } => {
+                eprintln!(
+                    "[{}] {} will not serve a state transfer ({}); falling back to a delta sync",
+                    self.replica_id, from, reason
+                );
+                self.request_delta_sync(&from);
             }
             TransportMessage::Hello { id, .. } => {
                 eprintln!("[{}] Peer connected: {}", self.replica_id, id);
@@ -578,5 +706,24 @@ where
     /// Call this after `new()` and before `run()`.
     pub fn enable_state_query(&mut self) {
         self.query_fn = Some(L::query_state_json);
+    }
+}
+
+impl<L: IsLog + TransferableLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+where
+    L::Op: NetworkOp,
+{
+    /// Allow this replica to serve and to accept a state transfer.
+    ///
+    /// Opt-in, like [`enable_state_query`], and for the same reason: a
+    /// hand-written log that is not serialisable must keep working. Without it
+    /// a joiner can still catch up — but only on the events its peers have not
+    /// yet compacted away, which is the phase-1 behaviour and the gap this
+    /// phase closes.
+    ///
+    /// [`enable_state_query`]: GenericNode::enable_state_query
+    pub fn enable_state_transfer(&mut self) {
+        self.export_log = Some(L::export_log);
+        self.import_log = Some(L::import_log);
     }
 }

@@ -45,6 +45,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Child>] {
                 $(
                     $variant($log),
@@ -111,6 +112,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Container>] {
                 #[default]
                 Unset,
@@ -119,6 +121,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$union Log>] {
                 pub child: [<$union Container>],
             }

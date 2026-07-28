@@ -29,6 +29,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io;
 
 use moirai_protocol::broadcast::message::{BatchMessage, EventMessage, SinceMessage};
+use moirai_protocol::broadcast::tcsb::StateSnapshot;
 
 /// Peer identifier type
 pub type PeerId = String;
@@ -52,6 +53,34 @@ where
     },
     SyncRequest {
         since: SinceMessage,
+    },
+
+    /// "I have nothing; send me everything."
+    ///
+    /// Sent instead of `SyncRequest` by a replica with no history at all,
+    /// because a `SyncRequest` is answered out of the outbox and the outbox
+    /// holds only what is not yet causally stable. Carries the requester's id
+    /// so that the donor can tell a *fresh* joiner from a *returning* member
+    /// and refuse the latter — wholesale adoption would discard whatever a
+    /// returning member did while it was away. Merging the two is phase 3.
+    StateRequest {
+        id: PeerId,
+    },
+    /// The compacted state, and the causal bookkeeping that makes sense of it.
+    ///
+    /// The two travel together on purpose: a matrix clock claiming operations
+    /// the log does not contain would make the joiner reject them as duplicates
+    /// forever.
+    StateResponse {
+        snapshot: StateSnapshot<O>,
+        /// The donor's log, via `TransferableLog::export_log`.
+        log: serde_json::Value,
+    },
+    /// The donor declined. The requester falls back to `SyncRequest`, which is
+    /// the correct behaviour for a returning member and a harmless one for a
+    /// peer that simply cannot serve a transfer.
+    StateUnavailable {
+        reason: String,
     },
 
     /// Hello handshake - announces replica identity

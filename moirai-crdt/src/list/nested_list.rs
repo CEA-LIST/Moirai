@@ -50,6 +50,14 @@ pub enum NestedList<O> {
 /// Maintains both the logical ordering of children (via EgWalker) and the
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(
+        serialize = "L: serde::Serialize",
+        deserialize = "L: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct NestedListLog<L> {
     /// EgWalker list tracking the logical positions of children
     positions: EventGraph<SimpleList<EventId>>,
