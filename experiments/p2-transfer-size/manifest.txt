@@ -1,0 +1,9 @@
+run          20260728T173010Z
+host         Linux 7.0.0-28-generic GNU/Linux
+image        moirai-json-crdt:test
+image digest moirai-json-crdt@sha256:4a13e885737be5b39e6ded213f8380393aa7dc90007f11c608bc19c3c89e5abe
+docker       29.6.2
+nodes        2
+steps        15
+ops_per_step 40
+command      STEPS=15 OPS_PER_STEP=40 ./run.sh
