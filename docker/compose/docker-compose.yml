@@ -1,0 +1,133 @@
+# Dynamic-membership rig: a bootnode, N replicas that were never told about
+# each other, and an observer that samples them into CSV.
+#
+# There is no `PEERS` anywhere in this file. That is the point: every replica
+# registers its own address with the directory, reads back the roster, and
+# dials it. Membership is therefore something the run *has* rather than
+# something it was configured with, which is what makes join and leave
+# measurable.
+#
+# # Running it
+#
+# The image is the one the e2e harness already uses, and it carries all three
+# binaries. Build it from the directory holding both checkouts:
+#
+#     docker build -f moirai/docker/e2e/Dockerfile -t moirai-json-crdt:test .
+#
+# Then, from this directory:
+#
+#     docker compose up -d --scale node=5
+#     docker compose logs -f observer
+#     cat runs/metrics.csv
+#     docker compose down -v
+#
+# On a host whose login shell has stale group credentials, prefix with
+# `sg docker -c "..."`.
+#
+# # Addressing a specific replica
+#
+# With `--scale` the containers are named `moirai-node-1` .. `moirai-node-N`
+# and each replica's id is its own hostname, which is also how peers reach it.
+# So:
+#
+#     docker compose exec --index 3 node curl -s localhost:8081/api/metrics
+#     docker network disconnect moirai_session moirai-node-3      # E4: go silent
+#     docker network connect moirai_session moirai-node-3         # and back
+#
+# # One network, and what that costs
+#
+# A single user-defined bridge, so `docker network disconnect` severs a replica
+# for real. It severs it from the observer too, because the control plane rides
+# the same network. That is fine for E4, where the interesting curve is what
+# happens to the *survivors*. It is not enough for E6, where both halves of a
+# partition must keep writing: use the per-peer `POST /api/pause/<id>` on the
+# replicas for that, or the two-network container backend in
+# `moirai-network/tests/e2e_convergence.rs`, which already splits control from
+# replication for exactly this reason.
+
+name: moirai
+
+x-image: &image ${MOIRAI_IMAGE:-moirai-json-crdt:test}
+
+services:
+  # Directory only. It never sees an operation and holds no model state, so it
+  # can be restarted mid-run without any replica noticing beyond a failed poll.
+  bootnode:
+    image: *image
+    command: ["moirai-bootnode"]
+    environment:
+      BOOTNODE_PORT: "7000"
+      # Comfortably above the replicas' RECONCILE_SECS, so a live replica is
+      # never dropped for being slow.
+      BOOTNODE_TTL_SECS: "${BOOTNODE_TTL_SECS:-30}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7000/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    networks: [session]
+
+  # Scale this: `docker compose up --scale node=5`.
+  #
+  # Every instance is identical. REPLICA_ID and ADVERTISE_ADDR both default to
+  # the container's own hostname, which Docker's embedded DNS resolves on a
+  # user-defined network, so scaling needs no per-instance configuration and no
+  # entry in this file changes when N does.
+  node:
+    image: *image
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      LISTEN_PORT: "9001"
+      HTTP_PORT: "8081"
+      BOOTNODE_URL: "http://bootnode:7000"
+      SESSION_ID: "${SESSION_ID:-compose}"
+      RECONCILE_SECS: "${RECONCILE_SECS:-5}"
+      PEERS: ""
+      # Blanked deliberately. The image sets `REPLICA_ID=a` as a convenience
+      # for `docker run`, and inheriting it here gave every scaled replica the
+      # same id: five containers registered as `a`, the directory upserted them
+      # onto one entry, and the roster never held more than one peer. Empty is
+      # what makes the `:-` defaults below fire.
+      REPLICA_ID: ""
+      ADVERTISE_ADDR: ""
+    # `$$` is Compose's escape for a literal `$`, so these expand inside the
+    # container rather than on the host.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        REPLICA_ID="$${REPLICA_ID:-$$HOSTNAME}" \
+        ADVERTISE_ADDR="$${ADVERTISE_ADDR:-$$HOSTNAME:$$LISTEN_PORT}" \
+        exec network_node
+    networks: [session]
+
+  # Samples every replica the directory knows about, into runs/metrics.csv.
+  observer:
+    image: *image
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      BOOTNODE_URL: "http://bootnode:7000"
+      SESSION_ID: "${SESSION_ID:-compose}"
+      HTTP_PORT: "8081"
+      INTERVAL_SECS: "${INTERVAL_SECS:-1}"
+      OUT: "/out/metrics.csv"
+    entrypoint: ["/bin/sh", "/observer/observe.sh"]
+    # Read-only mount rather than baked into the image: the sampling can change
+    # without a rebuild, and a rebuild would change the replica binary too.
+    volumes:
+      - ./observe.sh:/observer/observe.sh:ro
+      - ${MOIRAI_RUN_DIR:-./runs}:/out
+    # The image's healthcheck curls a replica HTTP API this container does not
+    # serve; without this it would sit `unhealthy` forever.
+    healthcheck:
+      disable: true
+    networks: [session]
+
+networks:
+  session:
+    name: moirai_session
+    driver: bridge

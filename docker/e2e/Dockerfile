@@ -26,6 +26,14 @@ WORKDIR /build
 COPY moirai/ ./moirai/
 COPY arachne/generated/json_crdt/ ./arachne/generated/json_crdt/
 
+# The bootnode ships in the *same* image as the replica rather than one of its
+# own. It is a single small binary with no CRDT dependency, and one image means
+# the Compose rig and the e2e harness cannot drift onto different builds of the
+# protocol — which, for a rig whose whole job is to measure that protocol, is
+# worth more than a few megabytes.
+WORKDIR /build/moirai
+RUN cargo build -p moirai-bootnode
+
 WORKDIR /build/arachne/generated/json_crdt
 # Debug profile: the tests exercise replication, not throughput, and a release
 # build of the whole workspace costs several minutes per image rebuild.
@@ -42,13 +50,16 @@ RUN apt-get update \
 COPY --from=builder \
     /build/arachne/generated/json_crdt/target/debug/examples/network_node \
     /usr/local/bin/network_node
+COPY --from=builder \
+    /build/moirai/target/debug/moirai-bootnode \
+    /usr/local/bin/moirai-bootnode
 
 ENV REPLICA_ID=a \
     LISTEN_PORT=9001 \
     HTTP_PORT=8081 \
     PEERS=
 
-EXPOSE 9001 8081
+EXPOSE 9001 8081 7000
 
 HEALTHCHECK --interval=1s --timeout=2s --start-period=1s --retries=60 \
     CMD curl -fsS "http://localhost:${HTTP_PORT}/api/health" || exit 1

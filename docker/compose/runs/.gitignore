@@ -1,0 +1,3 @@
+# Observer output. Runs are reproduced from the compose file, not archived
+# here; measurement runs that are worth keeping go under experiments/.
+*.csv
