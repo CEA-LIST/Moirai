@@ -1,0 +1,14 @@
+run          20260728T142156Z
+host         Linux 7.0.0-28-generic x86_64
+image        moirai-json-crdt:test
+image digest sha256:42161805ec9163c1351d3562959fccd7a90c577c41b3a70df35f9537370be565
+compose      5.3.1
+docker       29.6.2
+nodes        4
+duration_s   180
+sever_at_s   60
+op_interval  1
+sample_every 1
+reconcile_s  5
+bootnode_ttl 30
+command      NODES=4 DURATION=180 SEVER_AT=60 ./run.sh

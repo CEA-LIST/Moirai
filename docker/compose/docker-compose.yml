@@ -127,6 +127,30 @@ services:
       disable: true
     networks: [session]
 
+  # Applies one operation per replica per tick. Off by default; bring it up
+  # with `docker compose --profile load up -d`.
+  #
+  # A measurement run needs *every* replica writing — see the header of
+  # drive.sh — so this is not an optional nicety for E4, it is what makes the
+  # baseline comparable.
+  driver:
+    image: *image
+    profiles: [load]
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      BOOTNODE_URL: "http://bootnode:7000"
+      SESSION_ID: "${SESSION_ID:-compose}"
+      HTTP_PORT: "8081"
+      OP_INTERVAL_SECS: "${OP_INTERVAL_SECS:-1}"
+    entrypoint: ["/bin/sh", "/driver/drive.sh"]
+    volumes:
+      - ./drive.sh:/driver/drive.sh:ro
+    healthcheck:
+      disable: true
+    networks: [session]
+
 networks:
   session:
     name: moirai_session
