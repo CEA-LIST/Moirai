@@ -12,6 +12,17 @@
 # the rig stays one image. Mounted read-only rather than baked in, so the
 # sampling can be changed without a rebuild.
 #
+#
+# # Why this is still here
+#
+# The dashboard supersedes it for *watching* a run — it shows the same counters
+# live, plus per-operation attribution and resolution the CSV never had. It does
+# not supersede it for *recording* one: `experiments/e4-silent-member/run.sh`
+# mounts this file and its committed `baseline.csv` / `silent.csv` were produced
+# by it. Deleting it would make a run with a recorded image digest
+# unreproducible, which is the one thing the experiments directory exists to
+# prevent. It stays for that, and new measurements should prefer the dashboard
+# or a purpose-built script under `experiments/`.
 # Environment:
 #   BOOTNODE_URL   default http://bootnode:7000
 #   SESSION_ID     default compose

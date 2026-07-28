@@ -40,6 +40,11 @@
 //!    request per operation is exactly the cost this is built to avoid.
 //! 5. **A dead dashboard is invisible.** Retry with backoff on the sender
 //!    thread; the replica is not told and does not log per operation.
+//!
+//! The one cost that is not constant per delivery is rendering the model for a
+//! state snapshot, which is `O(state)`. That is why snapshots are on their own,
+//! slower interval than the feed, and why [`SNAPSHOT_INTERVAL`] carries the
+//! measurement that chose its default.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender, TrySendError};
@@ -67,6 +72,47 @@ const BATCH_MAX: usize = 256;
 /// Longest a record waits on the sender thread before being posted.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Default gap between metrics snapshots — identity, counters, peers.
+///
+/// Cheap: a handful of integers off the TCSB and the transport, no traversal of
+/// anything. This is what keeps the replica table live.
+const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Default gap between *model* snapshots — the rendered CRDT state.
+///
+/// Separate from [`SNAPSHOT_INTERVAL`], and the separation is the whole reason
+/// reporting is affordable. Rendering the model is `O(state)`, and this model's
+/// state grows without bound for as long as the session runs — the PO-Log never
+/// compacts, which is the phase-2 finding. So the render is the only cost of
+/// reporting that is neither constant per delivery nor constant over time, and
+/// it dominates everything else in this module put together.
+///
+/// Measured in `experiments/t-dashboard-overhead/`, three replicas under nine
+/// concurrent clients, sustained operations per second with reporting off
+/// versus on:
+///
+/// ```text
+/// render every 500 ms, 15 s run    147 -> 138    -6%
+/// render every   1 s,  15 s run    145 -> 144    -1%   (looked settled)
+/// render every   1 s,  60 s run     67 ->  58   -13%   (it was not: the state had grown)
+/// ```
+///
+/// The 15-second run at 1 s was measuring a small model, and the number it gave
+/// was not wrong so much as not yet true. Hence this constant, and hence its
+/// value being five times the other one: at 5 s the difference is inside the
+/// run-to-run spread even at 60 s.
+///
+/// What this does **not** throttle, which is why it costs the viewer little:
+/// the operation feed and every counter in the replica table. Deliveries are
+/// flushed on [`FLUSH_INTERVAL`] and metrics on [`SNAPSHOT_INTERVAL`]. Only the
+/// rendered model panel is this slow, and a model that changes visibly faster
+/// than every five seconds is being watched through the feed anyway.
+///
+/// `DASHBOARD_STATE_INTERVAL_MS` overrides it. Setting it very low on a large
+/// model is the one way to make monitoring cost real throughput, so the number
+/// is documented here rather than left to be rediscovered.
+const STATE_INTERVAL: Duration = Duration::from_secs(5);
+
 /// First retry delay after a failed POST, doubled up to [`MAX_BACKOFF`].
 const MIN_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
@@ -76,9 +122,10 @@ pub struct DashboardConfig {
     /// Where to post, e.g. `http://dashboard:8090`. The ingest path is appended.
     pub url: String,
     pub replica_id: String,
-    /// Gap between the replica's state snapshots. Delivery records do not wait
-    /// for it; see [`FLUSH_INTERVAL`].
+    /// Gap between metrics snapshots — identity, counters, peers.
     pub interval: Duration,
+    /// Gap between renders of the model itself. See [`STATE_INTERVAL`].
+    pub state_interval: Duration,
 }
 
 impl DashboardConfig {
@@ -89,15 +136,18 @@ impl DashboardConfig {
         if url.trim().is_empty() {
             return None;
         }
-        let interval = std::env::var("DASHBOARD_INTERVAL_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .map(Duration::from_millis)
-            .unwrap_or(Duration::from_millis(500));
+        let millis = |name: &str, fallback: Duration| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .map(Duration::from_millis)
+                .unwrap_or(fallback)
+        };
         Some(Self {
             url: url.trim().to_string(),
             replica_id: replica_id.to_string(),
-            interval,
+            interval: millis("DASHBOARD_INTERVAL_MS", SNAPSHOT_INTERVAL),
+            state_interval: millis("DASHBOARD_STATE_INTERVAL_MS", STATE_INTERVAL),
         })
     }
 }
@@ -131,7 +181,10 @@ pub struct EventRecord<O> {
 pub struct SnapshotRecord {
     pub uptime_ms: u64,
     pub metrics: Value,
-    pub state: Value,
+    /// `None` on the snapshots that skipped the render. The dashboard keeps
+    /// whatever it last saw, so a viewer sees a stale model rather than an
+    /// empty one — see [`STATE_INTERVAL`] for why most snapshots skip it.
+    pub state: Option<Value>,
     pub peers: Vec<(String, String)>,
 }
 
@@ -147,6 +200,7 @@ pub struct DashboardSink<O> {
     /// payload that gets through.
     dropped: Arc<AtomicU64>,
     interval: Duration,
+    state_interval: Duration,
 }
 
 impl<O: Serialize + Send + 'static> DashboardSink<O> {
@@ -155,6 +209,7 @@ impl<O: Serialize + Send + 'static> DashboardSink<O> {
         let dropped = Arc::new(AtomicU64::new(0));
         let counter = Arc::clone(&dropped);
         let interval = config.interval;
+        let state_interval = config.state_interval;
 
         thread::spawn(move || {
             let client = match reqwest::blocking::Client::builder()
@@ -246,11 +301,16 @@ impl<O: Serialize + Send + 'static> DashboardSink<O> {
             tx,
             dropped,
             interval,
+            state_interval,
         }
     }
 
     pub fn interval(&self) -> Duration {
         self.interval
+    }
+
+    pub fn state_interval(&self) -> Duration {
+        self.state_interval
     }
 
     /// How many records have been dropped so far.
@@ -314,11 +374,14 @@ fn encode<O: Serialize>(
         "events": events,
     });
     if let Some(snapshot) = snapshot {
-        let state_digest = crate::workload::state_digest(&snapshot.state);
         payload["uptime_ms"] = json!(snapshot.uptime_ms);
         payload["metrics"] = snapshot.metrics.clone();
-        payload["state"] = snapshot.state.clone();
-        payload["state_digest"] = json!(state_digest);
+        if let Some(state) = &snapshot.state {
+            // The digest is computed here, on the sender thread, for the same
+            // reason the JSON is: it is a full pass over the rendered state.
+            payload["state_digest"] = json!(crate::workload::state_digest(state));
+            payload["state"] = state.clone();
+        }
         payload["peers"] = snapshot
             .peers
             .iter()
@@ -369,6 +432,7 @@ mod tests {
             url: "http://127.0.0.1:1".to_string(),
             replica_id: "a".to_string(),
             interval: Duration::from_millis(100),
+            state_interval: Duration::from_millis(100),
         });
         let start = Instant::now();
         for n in 0..(QUEUE_DEPTH * 4) {
@@ -399,7 +463,7 @@ mod tests {
         let snapshot = SnapshotRecord {
             uptime_ms: 1234,
             metrics: json!({ "stable_prefix": 7 }),
-            state: json!({ "json": "Unset" }),
+            state: Some(json!({ "json": "Unset" })),
             peers: vec![("b".into(), "Connected".into())],
         };
         let payload = encode("a", Some(&snapshot), Vec::<EventRecord<String>>::new(), 0);
@@ -410,5 +474,22 @@ mod tests {
             json!(crate::workload::state_digest(&json!({ "json": "Unset" })))
         );
         assert_eq!(payload["peers"][0]["id"], "b");
+    }
+
+    #[test]
+    fn a_snapshot_that_skipped_the_render_carries_metrics_and_no_state() {
+        let snapshot = SnapshotRecord {
+            uptime_ms: 1234,
+            metrics: json!({ "stable_prefix": 7 }),
+            state: None,
+            peers: Vec::new(),
+        };
+        let payload = encode("a", Some(&snapshot), Vec::<EventRecord<String>>::new(), 0);
+        assert_eq!(payload["metrics"]["stable_prefix"], 7);
+        assert!(
+            payload.get("state").is_none() && payload.get("state_digest").is_none(),
+            "a skipped render must be absent, not null — the dashboard keeps the \
+             last one it saw and null would clear it"
+        );
     }
 }

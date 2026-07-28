@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 
 /// A replica is stale this long after its last report.
 ///
-/// Comfortably above the default reporting interval (400 ms) so that a slow
-/// report does not flicker, and well below anything a human would call "gone".
+/// Comfortably above the default snapshot interval (1 s) so that a slow report
+/// does not flicker a live replica into staleness, and well below anything a
+/// human would call "gone".
 pub const STALE_AFTER_MS: u64 = 3_000;
 
 /// Events kept for the feed.
@@ -57,6 +58,11 @@ pub struct Dashboard {
     /// `event id -> the origin replica's own delivery timestamp`, the baseline
     /// every propagation time is measured against.
     origin_ts: HashMap<String, u64>,
+    /// `event id -> the operation itself`, reported once by the replica that
+    /// originated it. Remote deliveries carry no payload on purpose — see
+    /// `OpsByEvent` in `moirai-network/src/generic.rs` — so this is where the
+    /// feed gets an operation to display for them.
+    origin_op: HashMap<String, Value>,
     origin_order: VecDeque<String>,
     /// Recent propagation samples, newest last.
     pub samples: VecDeque<i64>,
@@ -101,7 +107,7 @@ impl Dashboard {
             let is_local = event.get("local").and_then(Value::as_bool) == Some(true);
 
             if is_local {
-                self.remember_origin(key.clone(), ts);
+                self.remember_origin(key.clone(), ts, event.get("op"));
             }
             // Local records carry no propagation by definition; remote ones do
             // only once the origin's record has been seen, which is not
@@ -121,9 +127,17 @@ impl Dashboard {
                 self.samples.push_back(sample);
             }
 
+            // Fill in the payload the origin reported, if this delivery is a
+            // remote one and the origin's report has already been seen.
+            let mut event = event.clone();
+            if event.get("op").is_none_or(Value::is_null) {
+                if let Some(op) = self.origin_op.get(&key) {
+                    event["op"] = op.clone();
+                }
+            }
             let entry = FeedEntry {
                 observer: id.to_string(),
-                event: event.clone(),
+                event,
                 propagation_ms,
                 received_ms: now_ms,
             };
@@ -134,11 +148,35 @@ impl Dashboard {
             produced.push(entry);
         }
 
-        let deliveries = self
-            .replicas
-            .get(id)
+        // A report may carry counters without a rendered model, and most do:
+        // rendering is the expensive half and runs on a slower clock than the
+        // rest. An absent field therefore means "unchanged since you last saw
+        // it", never "empty" — clearing the model on every second report would
+        // make the state panel blink and the divergence marker fire on nothing.
+        let previous = self.replicas.get(id);
+        let carried = |field: &str, prior: Option<&Value>| -> Value {
+            report
+                .get(field)
+                .cloned()
+                .or_else(|| prior.cloned())
+                .unwrap_or(Value::Null)
+        };
+        let deliveries = previous
             .map_or(0, |r| r.deliveries)
             .saturating_add(events.len() as u64);
+        let state = carried("state", previous.map(|r| &r.state));
+        let state_digest = report
+            .get("state_digest")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| previous.map(|r| r.state_digest.clone()))
+            .unwrap_or_default();
+        let metrics = carried("metrics", previous.map(|r| &r.metrics));
+        let peers = report
+            .get("peers")
+            .cloned()
+            .or_else(|| previous.map(|r| r.peers.clone()))
+            .unwrap_or_else(|| json!([]));
 
         self.replicas.insert(
             id.to_string(),
@@ -146,14 +184,10 @@ impl Dashboard {
                 id: id.to_string(),
                 last_seen_ms: now_ms,
                 uptime_ms: report.get("uptime_ms").and_then(Value::as_u64).unwrap_or(0),
-                metrics: report.get("metrics").cloned().unwrap_or(Value::Null),
-                state: report.get("state").cloned().unwrap_or(Value::Null),
-                state_digest: report
-                    .get("state_digest")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                peers: report.get("peers").cloned().unwrap_or(json!([])),
+                metrics,
+                state,
+                state_digest,
+                peers,
                 dropped_reports: report
                     .get("dropped_reports")
                     .and_then(Value::as_u64)
@@ -171,20 +205,25 @@ impl Dashboard {
     fn forget_origins_of(&mut self, id: &str) {
         let prefix = format!("{id}:");
         self.origin_ts.retain(|key, _| !key.starts_with(&prefix));
+        self.origin_op.retain(|key, _| !key.starts_with(&prefix));
         self.origin_order.retain(|key| !key.starts_with(&prefix));
     }
 
-    fn remember_origin(&mut self, key: String, ts: u64) {
+    fn remember_origin(&mut self, key: String, ts: u64, op: Option<&Value>) {
         if self.origin_ts.contains_key(&key) {
             return;
         }
         if self.origin_order.len() >= SAMPLE_CAPACITY * 4 {
             if let Some(old) = self.origin_order.pop_front() {
                 self.origin_ts.remove(&old);
+                self.origin_op.remove(&old);
             }
         }
         self.origin_order.push_back(key.clone());
-        self.origin_ts.insert(key, ts);
+        self.origin_ts.insert(key.clone(), ts);
+        if let Some(op) = op.filter(|v| !v.is_null()) {
+            self.origin_op.insert(key, op.clone());
+        }
     }
 
     /// The digest the largest number of *live* replicas report, and how many
@@ -336,6 +375,24 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_delivery_takes_its_payload_from_the_origins_report() {
+        // Remote deliveries carry no operation: the replica that originated it
+        // reports the payload once, rather than every replica cloning it to
+        // send the same bytes N times.
+        let mut d = Dashboard::default();
+        let mut origin = event("a:1", "a", true, 1_000);
+        origin["op"] = json!({ "JsonKind": { "Object": { "Remove": "beta" } } });
+        d.ingest(&report("a", "x", json!([origin])), 10);
+        d.ingest(
+            &report("b", "x", json!([event("a:1", "a", false, 1_010)])),
+            20,
+        );
+        let latest = d.feed.back().unwrap();
+        assert_eq!(latest.observer, "b");
+        assert_eq!(latest.event["op"]["JsonKind"]["Object"]["Remove"], "beta");
+    }
+
+    #[test]
     fn a_remote_delivery_seen_before_its_origin_has_no_propagation() {
         // Reports from different replicas arrive in no particular order, and
         // guessing a baseline would invent data.
@@ -347,6 +404,32 @@ mod tests {
         assert!(d.samples.is_empty());
         assert_eq!(d.feed.len(), 1);
         assert!(d.feed[0].propagation_ms.is_none());
+    }
+
+    #[test]
+    fn a_report_without_a_render_keeps_the_model_it_had() {
+        // Most reports carry counters and no model; an absent field means
+        // "unchanged", not "empty".
+        let mut d = Dashboard::default();
+        d.ingest(&report("a", "digest-one", json!([])), 0);
+        let mut counters_only = json!({
+            "replica_id": "a",
+            "ts_ms": 2_000,
+            "uptime_ms": 6_000,
+            "metrics": { "stable_prefix": 9 },
+            "dropped_reports": 0,
+            "events": [],
+        });
+        counters_only["events"] = json!([]);
+        d.ingest(&counters_only, 100);
+
+        let view = &d.replicas["a"];
+        assert_eq!(view.state_digest, "digest-one", "the model was cleared");
+        assert_eq!(view.state, json!({ "json": "Unset" }));
+        assert_eq!(
+            view.metrics["stable_prefix"], 9,
+            "counters must still update"
+        );
     }
 
     #[test]

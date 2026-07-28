@@ -14,6 +14,14 @@
 # out, so the driver stops writing to it by itself — which is exactly the
 # behaviour a silent member should produce.
 #
+#
+# # Why this is still here
+#
+# Superseded for new work by `moirai-dashboard --random`, which shares its
+# generator with the e2e suite's R1 scenario, so a run can be replayed from its
+# seed. This one stays because `experiments/e4-silent-member/run.sh` brings it
+# up by profile and the committed E4 curves were measured with it; removing it
+# would make that run unreproducible.
 # Environment:
 #   BOOTNODE_URL     default http://bootnode:7000
 #   SESSION_ID       default compose

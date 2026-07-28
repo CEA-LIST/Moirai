@@ -1453,6 +1453,7 @@ name = "moirai-network"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bollard",
  "moirai-crdt",
  "moirai-protocol",
  "reqwest",
@@ -1461,6 +1462,7 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "tiny_http",
+ "tokio",
 ]
 
 [[package]]

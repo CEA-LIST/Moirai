@@ -1,0 +1,5 @@
+arm,duration_s,replicas,clients,ops_applied,ops_per_s,delivered_ops,dashboard_reports
+off,60,3,9,4115,68,12344,0
+on,60,3,9,4044,67,12130,1682
+off,60,3,9,4110,68,12330,0
+on,60,3,9,4275,71,12825,1691

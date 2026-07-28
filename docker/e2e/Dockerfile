@@ -26,13 +26,13 @@ WORKDIR /build
 COPY moirai/ ./moirai/
 COPY arachne/generated/json_crdt/ ./arachne/generated/json_crdt/
 
-# The bootnode ships in the *same* image as the replica rather than one of its
-# own. It is a single small binary with no CRDT dependency, and one image means
-# the Compose rig and the e2e harness cannot drift onto different builds of the
-# protocol — which, for a rig whose whole job is to measure that protocol, is
-# worth more than a few megabytes.
+# The bootnode and the dashboard ship in the *same* image as the replica rather
+# than one of their own. They are small binaries, and one image means the
+# Compose rig, the e2e harness and whatever is watching cannot drift onto
+# different builds of the protocol — which, for a rig whose whole job is to
+# measure that protocol, is worth more than a few megabytes.
 WORKDIR /build/moirai
-RUN cargo build -p moirai-bootnode
+RUN cargo build -p moirai-bootnode -p moirai-dashboard
 
 WORKDIR /build/arachne/generated/json_crdt
 # Debug profile: the tests exercise replication, not throughput, and a release
@@ -53,13 +53,18 @@ COPY --from=builder \
 COPY --from=builder \
     /build/moirai/target/debug/moirai-bootnode \
     /usr/local/bin/moirai-bootnode
+# Same reasoning as the bootnode: the dashboard ships in the replica image so
+# that what watches the protocol cannot drift onto a different build of it.
+COPY --from=builder \
+    /build/moirai/target/debug/moirai-dashboard \
+    /usr/local/bin/moirai-dashboard
 
 ENV REPLICA_ID=a \
     LISTEN_PORT=9001 \
     HTTP_PORT=8081 \
     PEERS=
 
-EXPOSE 9001 8081 7000
+EXPOSE 9001 8081 7000 8090
 
 HEALTHCHECK --interval=1s --timeout=2s --start-period=1s --retries=60 \
     CMD curl -fsS "http://localhost:${HTTP_PORT}/api/health" || exit 1

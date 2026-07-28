@@ -1,0 +1,12 @@
+run          20260728T232816Z
+host         Linux 7.0.0-28-generic x86_64
+image        moirai-json-crdt:test
+image digest moirai-json-crdt@sha256:ae6756f9cba190bf81e931747c300045e5091870aeb1917fea585164c0e99f4e
+docker       29.6.2
+replicas     3
+clients      9
+duration_s   60
+seed         20260729
+arms         off, on, off, on (interleaved, so drift shows up as spread rather than as an effect)
+oracle       sum of /api/metrics ops_applied across replicas
+command      DURATION=60 REPLICAS=3 CLIENTS_PER_REPLICA=3 SEED=20260729 ./run.sh

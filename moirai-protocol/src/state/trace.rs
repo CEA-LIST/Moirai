@@ -49,8 +49,10 @@ const CAPACITY: usize = 4096;
 /// observer wants to see.
 #[derive(Debug, Clone)]
 pub struct Superseded {
-    /// `origin:seq` of the removed operation.
-    pub id: String,
+    /// The removed operation's id. Kept as an [`EventId`] rather than rendered:
+    /// cloning one is an `Rc` increment, and formatting it is an allocation on
+    /// the delivery path that only matters if anybody ever reads it.
+    pub id: EventId,
     /// `true` when the removed operation was concurrent with the arriving one.
     pub concurrent: bool,
 }
@@ -58,10 +60,11 @@ pub struct Superseded {
 /// What happened to one delivered event.
 #[derive(Debug, Clone)]
 pub struct Delivery {
-    /// Replica that originated the operation, from its [`EventId`].
-    pub origin: String,
-    /// The originator's sequence number for it.
-    pub seq: usize,
+    /// The event delivered. Carries its origin replica and sequence number, and
+    /// clones as an `Rc` increment — which is why it is kept whole rather than
+    /// decomposed into a `String` here, on the delivery path, for the benefit of
+    /// a consumer that may format it once per several hundred deliveries.
+    pub id: EventId,
     pub lamport: usize,
     /// A log appended the operation: it is now part of the state.
     pub applied: bool,
@@ -85,8 +88,7 @@ pub struct Delivery {
 impl Delivery {
     fn new(id: &EventId, lamport: &Lamport) -> Self {
         Self {
-            origin: id.origin_id().to_string(),
-            seq: id.seq(),
+            id: id.clone(),
             lamport: lamport.val(),
             applied: false,
             redundant_on_arrival: false,
@@ -166,7 +168,7 @@ pub(crate) fn note_reset() {
 pub(crate) fn note_superseded(id: &EventId, concurrent: bool) {
     note(|d| {
         d.superseded.push(Superseded {
-            id: format!("{}:{}", id.origin_id(), id.seq()),
+            id: id.clone(),
             concurrent,
         })
     });
@@ -200,11 +202,12 @@ mod tests {
 
         let drained = drain();
         assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].origin, "a");
-        assert_eq!(drained[0].seq, 3);
+        assert_eq!(drained[0].id.origin_id(), "a");
+        assert_eq!(drained[0].id.seq(), 3);
         assert!(drained[0].applied);
         assert_eq!(drained[0].superseded.len(), 1);
-        assert_eq!(drained[0].superseded[0].id, "b:2");
+        assert_eq!(drained[0].superseded[0].id.origin_id(), "b");
+        assert_eq!(drained[0].superseded[0].id.seq(), 2);
         assert!(drained[0].superseded[0].concurrent);
 
         // Draining empties the buffer rather than replaying it.
@@ -221,7 +224,7 @@ mod tests {
         let drained = drain();
         assert_eq!(drained.len(), CAPACITY);
         // The first ten are the ones that went.
-        assert_eq!(drained[0].seq, 10);
+        assert_eq!(drained[0].id.seq(), 10);
         set_enabled(false);
     }
 }

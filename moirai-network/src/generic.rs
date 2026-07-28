@@ -116,6 +116,7 @@ where
     /// `dashboard` is `None`.
     ops_by_event: OpsByEvent<L::Op>,
     last_report: Option<Instant>,
+    last_state_render: Option<Instant>,
     started_at: Instant,
 }
 
@@ -125,6 +126,13 @@ where
 /// not carry the operation, because `moirai-protocol` has no serialisation
 /// bound on it. The network layer does — every operation it sends or receives
 /// has just been through serde — so the join happens here.
+///
+/// **Only operations this replica originated.** A remote delivery reports its
+/// outcome without a payload, because the replica that originated it is
+/// reporting the payload already and the dashboard joins the two by event id.
+/// Keeping a copy on every replica would clone every operation N times to send
+/// the same bytes N times, which is the one thing a monitoring path must not
+/// do: measured, it was most of a 4% throughput regression.
 ///
 /// Bounded and FIFO. An event whose operation has already been evicted is still
 /// reported, without its payload: a feed missing a body is better than a buffer
@@ -261,6 +269,7 @@ where
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
+            last_state_render: None,
             started_at: Instant::now(),
         }
     }
@@ -521,13 +530,11 @@ where
         match msg {
             TransportMessage::Event { event } => {
                 self.operation_log.push(event.event().op().clone());
-                self.remember_op(event.event());
                 self.replica.receive(event);
             }
             TransportMessage::Batch { batch } => {
                 for event in batch.batch().events() {
                     self.operation_log.push(event.op().clone());
-                    self.remember_op(event);
                 }
                 self.replica.receive_batch(batch);
             }
@@ -572,7 +579,8 @@ where
     }
 
     /// Keep the operation behind `event`, so a delivery record can be joined
-    /// with what was actually applied. No-op unless a dashboard is attached.
+    /// with what was actually applied. Local operations only — see
+    /// [`OpsByEvent`]. No-op unless a dashboard is attached.
     fn remember_op(&mut self, event: &moirai_protocol::event::Event<L::Op>) {
         if self.dashboard.is_none() {
             return;
@@ -604,18 +612,26 @@ where
         }
         let ts_ms = now_ms();
         for delivery in deliveries {
-            let id = format!("{}:{}", delivery.origin, delivery.seq);
-            let op = self.ops_by_event.take(&id);
+            let origin = delivery.id.origin_id().to_string();
+            let seq = delivery.id.seq();
+            let id = format!("{origin}:{seq}");
+            let local = origin == self.replica_id;
+            // Only a local delivery has a payload to attach; see `OpsByEvent`.
+            let op = if local {
+                self.ops_by_event.take(&id)
+            } else {
+                None
+            };
             sink.offer_event(EventRecord {
-                local: delivery.origin == self.replica_id,
+                local,
                 superseded: delivery
                     .superseded
                     .into_iter()
-                    .map(|s| (s.id, s.concurrent))
+                    .map(|s| (format!("{}:{}", s.id.origin_id(), s.id.seq()), s.concurrent))
                     .collect(),
                 id,
-                origin: delivery.origin,
-                seq: delivery.seq,
+                origin,
+                seq,
                 lamport: delivery.lamport,
                 ts_ms,
                 applied: delivery.applied,
@@ -628,14 +644,18 @@ where
 
     /// Hand over a fresh view of this replica, if one is due.
     ///
-    /// Rendering the state is the one non-trivial thing reporting does, which
-    /// is why it happens on an interval rather than per delivery, and why the
-    /// digest over it is computed on the sender thread rather than here.
+    /// Two clocks, not one. The counters are a handful of integers and go out
+    /// every `interval`; rendering the model is `O(state)` on a state that
+    /// grows for as long as the session runs, and goes out every
+    /// `state_interval`, which is several times slower. That split is the
+    /// difference between reporting costing 13% of sustained throughput and
+    /// costing nothing measurable — see `experiments/t-dashboard-overhead/`.
     fn report_to_dashboard(&mut self) {
         let Some(sink) = &self.dashboard else {
             return;
         };
         let interval = sink.interval();
+        let state_interval = sink.state_interval();
         let now = Instant::now();
         if self
             .last_report
@@ -645,9 +665,15 @@ where
         }
         self.last_report = Some(now);
 
-        let state = match &self.query_fn {
-            Some(f) => f(&self.replica),
-            None => json!(null),
+        let render_due = self
+            .last_state_render
+            .is_none_or(|last| now.duration_since(last) >= state_interval);
+        let state = match (&self.query_fn, render_due) {
+            (Some(f), true) => {
+                self.last_state_render = Some(now);
+                Some(f(&self.replica))
+            }
+            _ => None,
         };
         let peers = self
             .transport

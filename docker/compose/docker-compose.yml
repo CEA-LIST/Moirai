@@ -1,5 +1,5 @@
-# Dynamic-membership rig: a bootnode, N replicas that were never told about
-# each other, and an observer that samples them into CSV.
+# The rig: a bootnode, N replicas that were never told about each other, an
+# observer that samples them into CSV, and — optionally — a live dashboard.
 #
 # There is no `PEERS` anywhere in this file. That is the point: every replica
 # registers its own address with the directory, reads back the roster, and
@@ -20,6 +20,40 @@
 #     docker compose logs -f observer
 #     cat runs/metrics.csv
 #     docker compose down -v
+#
+# # Watching it, optionally
+#
+# The replicas run perfectly well with nobody watching, and the dashboard is a
+# *second* command that does not touch them:
+#
+#     docker compose --profile dashboard up -d dashboard
+#     xdg-open http://localhost:8090
+#
+# It works in that order — replicas first, dashboard afterwards — because
+# reporting is outbound and retried with backoff. A replica whose POST fails
+# because nothing is listening yet backs off and keeps going; when the
+# dashboard appears, the next report reaches it and carries the replica's whole
+# identity and state, so nothing has to be replayed and no replica is restarted.
+# The same property is why the dashboard can be stopped and started again
+# mid-run.
+#
+# For a rig with genuinely zero reporting overhead, blank the variable:
+#
+#     DASHBOARD_URL= docker compose up -d --scale node=5
+#
+# `DASHBOARD_URL` unset or empty means the replica starts no reporting thread,
+# makes no request, and does not collect a delivery trace — see
+# `moirai-network/src/dashboard.rs`. `experiments/t-dashboard-overhead/` is the
+# measurement of what the difference costs.
+#
+# # Driving it
+#
+#     docker compose --profile load up -d driver          # 1 op/replica/tick
+#
+# or, for the seeded random workload the e2e suite's R1 replays:
+#
+#     docker compose exec -T dashboard moirai-dashboard --random \
+#         --seed 7 --rate 5 --nodes http://moirai-node-1:8081,http://moirai-node-2:8081
 #
 # On a host whose login shell has stale group credentials, prefix with
 # `sg docker -c "..."`.
@@ -84,6 +118,12 @@ services:
       BOOTNODE_URL: "http://bootnode:7000"
       SESSION_ID: "${SESSION_ID:-compose}"
       RECONCILE_SECS: "${RECONCILE_SECS:-5}"
+      # `-` rather than `:-`, so an explicitly empty `DASHBOARD_URL=` in the
+      # environment wins and gives a rig with no reporting at all. Pointing at
+      # a dashboard that is not running costs one failed outbound POST every
+      # few seconds, which is what makes attaching one later a second command
+      # rather than a restart.
+      DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
       PEERS: ""
       # Blanked deliberately. The image sets `REPLICA_ID=a` as a convenience
       # for `docker run`, and inheriting it here gave every scaled replica the
@@ -149,6 +189,27 @@ services:
       - ./drive.sh:/driver/drive.sh:ro
     healthcheck:
       disable: true
+    networks: [session]
+
+  # The live view. Off by default — "optionally connected" is the requirement,
+  # and a rig that needs its monitoring to run is not optional.
+  #
+  # It binds a port and the replicas do not: they dial *out* to it. That is not
+  # a Compose convenience, it is the deployment this system targets — replicas
+  # are peers on laptops behind NAT, which is the same reason the architecture
+  # has a bootnode with a relay fallback. A dashboard that had to dial into
+  # every replica would work here and nowhere else.
+  dashboard:
+    image: *image
+    profiles: [dashboard]
+    command: ["moirai-dashboard", "--port", "8090"]
+    ports:
+      - "${DASHBOARD_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/api/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
     networks: [session]
 
 networks:

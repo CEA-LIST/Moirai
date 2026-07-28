@@ -97,10 +97,12 @@ jobs:
     #  2. `ARACHNE_REPO` is the sibling repository holding that crate. If it
     #     is private, the second checkout also needs a token with read access.
     #  3. GitHub-hosted runners ship a usable Docker daemon for the runner
-    #     user, so the container-backed scenario (S4, a real network
-    #     partition) needs no extra privileges here. On a developer machine
-    #     the test process must carry the `docker` group itself — see the
-    #     header of `moirai-network/tests/e2e_convergence.rs`.
+    #     user, so the container-backed scenarios (S4, T5, C1-C4, R1 — real
+    #     network partitions) need no extra privileges here. On a developer
+    #     machine the test process must carry the `docker` group itself — see
+    #     the header of `moirai-network/tests/e2e_convergence.rs`. The backend
+    #     is `testcontainers`, which owns container lifecycle including
+    #     removal on panic; the `docker` CLI backend it replaced did not.
     #  4. Scenarios whose backend is missing skip rather than fail, so a
     #     broken assumption above turns the suite green-but-empty instead of
     #     red. The "assert the suite actually ran" step below exists to catch
@@ -156,17 +158,67 @@ jobs:
           MOIRAI_E2E_NODE_BIN: >-
             ${{ github.workspace }}/arachne/generated/json_crdt/target/debug/examples/network_node
           MOIRAI_E2E_IMAGE: ${{ env.E2E_IMAGE }}
-        run: cargo test --manifest-path moirai/Cargo.toml
-             -p moirai-network --test e2e_convergence
-             -- --test-threads=1 --nocapture
-             | tee e2e.log
+          MOIRAI_E2E_BACKEND: testcontainers
+        # `pipefail` because the pipe into `tee` would otherwise swallow a
+        # failing exit status and leave the job green with a red suite. Without
+        # it the "assert the suite actually ran" step below would be the only
+        # thing standing between a broken suite and a passing build.
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path moirai/Cargo.toml \
+            -p moirai-network --test e2e_convergence \
+            -- --test-threads=1 --nocapture \
+            | tee e2e.log
+
+      - name: Record the R1 seed
+        # R1 draws a fresh seed per run, on purpose: a fixed one would re-run
+        # the same operations for ever and stop finding anything. The seed is
+        # printed with its reproduction command, so surfacing it in the job
+        # summary is what makes a random failure actionable rather than a
+        # mystery.
+        if: always()
+        shell: bash
+        run: |
+          if grep -q '^R1 seed ' e2e.log; then
+            grep '^R1 seed ' e2e.log >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Assert the suite actually ran
         # A skipped scenario prints `E2E-SKIP <name>: <why>` and reports as a
         # pass, so a missing binary or image would otherwise look like success.
+        #
+        # The second check is the same argument one level up: a filter typo, a
+        # harness that fails to link, or a future change that quietly stops
+        # registering scenarios would leave a green job with an empty suite.
+        # The floor is asserted rather than the exact count, so adding a
+        # scenario does not require editing CI — but dropping below what exists
+        # today does.
         run: |
           if grep -q 'E2E-SKIP ' e2e.log; then
             echo "::error::e2e scenarios were skipped; the job's assumptions do not hold"
             grep 'E2E-SKIP ' e2e.log
+            exit 1
+          fi
+          passed=$(grep -oP '^test result: ok\. \K[0-9]+' e2e.log | head -1)
+          if [ -z "$passed" ] || [ "$passed" -lt 24 ]; then
+            echo "::error::expected at least 24 passing e2e scenarios, saw '${passed:-none}'"
+            exit 1
+          fi
+          echo "e2e: $passed scenarios passed"
+
+      - name: Leak check
+        # `testcontainers` removes containers and networks on drop, including
+        # while a panic unwinds. This asserts it, rather than trusting it: a
+        # leak here is invisible on a fresh runner and ruins a developer's next
+        # run.
+        if: always()
+        run: |
+          leaked=$( (docker ps -aq --filter 'name=moirai-e2e' ; \
+                     docker network ls -q --filter 'name=moirai-e2e') | wc -l )
+          if [ "$leaked" -ne 0 ]; then
+            echo "::error::the harness leaked $leaked containers or networks"
+            docker ps -a --filter 'name=moirai-e2e'
+            docker network ls --filter 'name=moirai-e2e'
             exit 1
           fi
