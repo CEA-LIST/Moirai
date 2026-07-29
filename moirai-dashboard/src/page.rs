@@ -67,6 +67,13 @@ pub const PAGE: &str = r##"<!doctype html>
   .chip.reset { color:var(--warn); border-color:rgba(210,153,34,.4) }
   .chip.won { color:var(--accent); border-color:rgba(88,166,255,.4) }
   .op { color:var(--text) }
+  .kind { font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+          padding:0 5px; border-radius:3px; border:1px solid var(--line); color:var(--dim) }
+  .kind.k-insert { color:var(--ok); border-color:rgba(63,185,80,.4) }
+  .kind.k-update { color:var(--accent); border-color:rgba(88,166,255,.4) }
+  .kind.k-remove { color:var(--bad); border-color:rgba(248,81,73,.4) }
+  .kind.k-clear { color:var(--warn); border-color:rgba(210,153,34,.4) }
+  .target { color:var(--text); font-weight:600 }
   .ms { margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums }
   .states { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
             gap:10px; padding:10px }
@@ -184,17 +191,42 @@ function describeInner(v) {
   return JSON.stringify(v);
 }
 
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+// The operation *kind*, the key it targets, and the payload, kept apart so the
+// feed can lead with what happened rather than with an opaque key.
+//
+// The kinds are the CRDT's own vocabulary, not a prettier invention. There is
+// deliberately no "add": on an add-wins map a key comes into existence on its
+// first `Update`, so add and update are the same operation and separating them
+// in the UI would claim a distinction the protocol does not make. A sequence
+// `Insert` is the one genuine addition, and it is labelled as such.
 function describeOp(op) {
-  if (!op) return "(payload evicted)";
+  if (!op) return { kind: "evicted", target: "", detail: "(payload evicted)" };
   const jk = op.JsonKind;
-  if (!jk) return JSON.stringify(op);
+  if (!jk) return { kind: "?", target: "", detail: JSON.stringify(op) };
   const o = jk.Object;
   if (o) {
-    if (o.Update) return o.Update[0] + " ← " + describeInner(o.Update[1]);
-    if (o.Remove !== undefined) return "remove " + o.Remove;
-    if (o.Clear !== undefined) return "clear";
+    if (o.Update) {
+      const inner = o.Update[1];
+      const insert = inner && inner.String && inner.String.Insert;
+      return {
+        kind: insert ? "insert" : "update",
+        target: o.Update[0],
+        // The badge already says INSERT, so do not repeat the verb here.
+        detail: insert
+          ? "'" + insert.content + "' @" + insert.pos
+          : describeInner(inner),
+      };
+    }
+    if (o.Remove !== undefined) return { kind: "remove", target: o.Remove, detail: "" };
+    if (o.Clear !== undefined) return { kind: "clear", target: "", detail: "" };
   }
-  return JSON.stringify(jk);
+  return { kind: "?", target: "", detail: JSON.stringify(jk) };
 }
 
 function renderRows(snap) {
@@ -248,9 +280,12 @@ function feedItem(f) {
   for (const s of (e.superseded || [])) {
     chips.push("<span class='chip won'>" + (s.concurrent ? "beat " : "superseded ") + s.id + "</span>");
   }
+  const d = describeOp(e.op);
   li.innerHTML =
-      "<span class='who" + (e.local ? " local" : "") + "'>" + e.origin + ":" + e.seq + "</span>"
-    + "<span class='op'>" + describeOp(e.op) + "</span>"
+      "<span class='who" + (e.local ? " local" : "") + "'>" + esc(e.origin) + ":" + esc(e.seq) + "</span>"
+    + "<span class='kind k-" + esc(d.kind) + "'>" + esc(d.kind) + "</span>"
+    + (d.target ? "<span class='target'>" + esc(d.target) + "</span>" : "")
+    + (d.detail ? "<span class='op'>" + esc(d.detail) + "</span>" : "")
     + chips.join(" ")
     + "<span class='ms'>" + (e.local ? "on " + f.observer
         : "→ " + f.observer + (f.propagation_ms === null ? "" : " " + f.propagation_ms + "ms"))
