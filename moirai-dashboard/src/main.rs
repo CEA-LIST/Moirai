@@ -308,6 +308,30 @@ mod tests {
     }
 
     #[test]
+    fn the_graph_is_wired_to_the_stream_and_bounded() {
+        // The graph is only worth having if it is fed by the live stream and
+        // cannot grow without limit; both are easy to break by editing the
+        // page and neither shows up as a compile error.
+        for required in [
+            "<canvas id=\"graph\">",
+            "buildGraph(snap)",
+            "function animateFeed(",
+            "animateFeed(entries)",
+            "requestAnimationFrame",
+            "MAX_PULSES",
+        ] {
+            assert!(
+                page::PAGE.contains(required),
+                "the page no longer contains `{required}`"
+            );
+        }
+        assert!(
+            !page::PAGE.contains("setInterval"),
+            "the animation must be driven by requestAnimationFrame, not a timer"
+        );
+    }
+
+    #[test]
     fn sse_frames_are_well_formed() {
         let (tx, rx) = sync_channel::<String>(4);
         tx.send("event: feed\ndata: {\"a\":1}\n\n".to_string())

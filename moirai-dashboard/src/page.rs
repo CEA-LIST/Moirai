@@ -77,6 +77,23 @@ pub const PAGE: &str = r##"<!doctype html>
   .states pre { margin:0; white-space:pre-wrap; word-break:break-word;
                 color:var(--dim); max-height:150px; overflow:auto; font-size:11px }
   .empty { padding:16px; color:var(--dim) }
+  section > h2.bar { display:flex; align-items:center; gap:10px }
+  .legend { display:flex; gap:11px; flex-wrap:wrap; margin-left:auto;
+            text-transform:none; letter-spacing:0; font-size:10px }
+  .legend span { display:inline-flex; align-items:center; gap:4px }
+  .legend i { width:8px; height:8px; border-radius:50%; display:inline-block;
+              font-style:normal }
+  .legend i.applied { background:var(--ok) }
+  .legend i.redundant { background:var(--bad) }
+  .legend i.origin { background:var(--local) }
+  .legend i.stale { background:#4a525c }
+  .legend i.diverged { background:none; border:2px solid var(--bad) }
+  #graphwrap { position:relative; height:min(48vh,400px); min-height:240px }
+  #graph { display:block; width:100%; height:100% }
+  #tip { position:absolute; pointer-events:none; z-index:2; display:none;
+         background:#0b0f14; border:1px solid var(--line); border-radius:4px;
+         padding:5px 7px; font-size:11px; line-height:1.4; white-space:pre;
+         color:var(--text) }
   footer { padding:8px 14px; color:var(--dim); font-size:11px;
            border-top:1px solid var(--line) }
 </style>
@@ -93,6 +110,19 @@ pub const PAGE: &str = r##"<!doctype html>
     <div class="tile"><i>reports</i><b id="t-reports">0</b></div>
   </div>
 </header>
+
+<section style="margin:12px 12px 0">
+  <h2 class="bar">Network
+    <span class="legend">
+      <span><i class="origin"></i>originated here</span>
+      <span><i class="applied"></i>delivered &amp; applied</span>
+      <span><i class="redundant"></i>discarded as redundant</span>
+      <span><i class="diverged"></i>diverged</span>
+      <span><i class="stale"></i>stale</span>
+    </span>
+  </h2>
+  <div id="graphwrap"><canvas id="graph"></canvas><div id="tip"></div></div>
+</section>
 
 <main>
   <section>
@@ -126,7 +156,11 @@ pub const PAGE: &str = r##"<!doctype html>
   Propagation is measured between each replica&rsquo;s own clock, so it carries
   their skew; the spread across replicas is the signal, not the absolute value.
   Stale replicas are greyed out and kept — a replica that stops reporting is the
-  silent-member case, not an absence.
+  silent-member case, not an absence. On the graph, a pulse is one delivery
+  running from the replica that originated the operation to the replica that
+  just delivered it; a ring opening out of a replica is an operation it
+  originated itself. Edges are what the replicas report as their peers, dashed
+  when only one end still claims the link.
 </footer>
 
 <script>
@@ -232,6 +266,309 @@ function pushFeed(entries) {
   while (feed.childElementCount > 300) feed.removeChild(feed.lastChild);
 }
 
+/* ---------------------------------------------------------------- graph --
+
+   One vertex per replica, edges from what the replicas themselves report as
+   their peers, and a pulse per delivery travelling from the replica that
+   originated the operation to the one that just delivered it.
+
+   The layout is a ring (an ellipse, to use a wide panel) rather than a force
+   simulation. Ring positions are a pure function of the replica list, which
+   the dashboard already hands over sorted, so a vertex never wanders between
+   snapshots; there is no solver left running while the session is idle; and
+   every vertex sits on the hull, so none can end up hidden behind a
+   neighbour. That is what keeps it readable from two replicas to twenty,
+   where a spring layout would either tangle or need to keep iterating.
+
+   Everything is drawn on one canvas. A pulse is four numbers in an array and
+   never a DOM node, so a burst of deliveries cannot leave anything behind,
+   and the animation loop exists only while there is something to animate.
+
+   Nothing here asks the replicas for anything new: origin, deliverer and
+   outcome are all already in the feed the page was showing as text. */
+
+const CV = $("graph");
+const CTX = CV.getContext("2d");
+const TIP = $("tip");
+
+/* Read once from `:root`, so the graph cannot drift from the table's colours. */
+const C = {};
+{
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["ok", "warn", "bad", "local", "dim", "text"]) {
+    C[k] = cs.getPropertyValue("--" + k).trim();
+  }
+}
+const GREY = "#4a525c"; /* the same grey `tr.stale td` uses */
+
+/** Pulses alive at once. Past this, new ones are dropped rather than queued —
+    the same choice the replica's bounded report channel makes, and for the
+    same reason: a backlog of animations would show the past, not the run. */
+const MAX_PULSES = 64;
+const TRAVEL_MS = 700;
+const FLASH_MS = 500;
+
+let verts = [];
+let vindex = new Map();
+let edges = [];
+const pulses = [];
+let frame = 0;
+let vw = 0, vh = 0;
+
+/** Schedule one frame. `tick` re-arms itself only while pulses remain, so an
+    idle session costs nothing and no timer is left running. */
+function requestFrame() {
+  if (!frame) frame = requestAnimationFrame(tick);
+}
+
+function tick(ts) {
+  frame = 0;
+  draw(ts);
+  if (pulses.length) frame = requestAnimationFrame(tick);
+}
+
+function resizeGraph() {
+  const box = CV.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  vw = Math.max(1, Math.round(box.width));
+  vh = Math.max(1, Math.round(box.height));
+  CV.width = Math.round(vw * dpr);
+  CV.height = Math.round(vh * dpr);
+  CTX.setTransform(dpr, 0, 0, dpr, 0, 0);
+  place();
+}
+
+function place() {
+  const n = verts.length;
+  const cx = vw / 2, cy = vh / 2;
+  // Enough room outside the ring for a vertex plus its label at top and
+  // bottom, where the label runs away from the ring rather than beside it.
+  const ry = Math.max(30, vh / 2 - 44);
+  // Capped against the height rather than filling the width: on a wide panel
+  // an uncapped ellipse flattens into a line and the edges stop being
+  // distinguishable from each other.
+  const rx = Math.max(40, Math.min(vw / 2 - 78, ry * 2.4));
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    verts[i].a = a;
+    verts[i].x = n === 1 ? cx : cx + rx * Math.cos(a);
+    verts[i].y = n === 1 ? cy : cy + ry * Math.sin(a);
+  }
+}
+
+/** Vertex radius, shrinking with the population so twenty still fit. */
+function nodeRadius() {
+  return Math.max(5, Math.min(13, 110 / Math.max(verts.length, 1)));
+}
+
+function buildGraph(snap) {
+  verts = (snap.nodes || []).map((n) => ({
+    id: n.id,
+    stale: !!n.stale,
+    diverged: !!n.diverged,
+    digest: (n.state_digest || "").slice(0, 8),
+    metrics: n.metrics || {},
+    x: 0, y: 0, a: 0,
+  }));
+  vindex = new Map(verts.map((v, i) => [v.id, i]));
+
+  // An edge exists because a replica said so. Both ends saying "Connected" is
+  // a link; one end alone is a link one side has already given up on, which is
+  // exactly what a severed replica looks like from the outside — so it is
+  // drawn, dashed, rather than silently deleted.
+  const seen = new Map();
+  for (const n of (snap.nodes || [])) {
+    const i = vindex.get(n.id);
+    for (const p of (n.peers || [])) {
+      const j = vindex.get(p.id);
+      if (i === undefined || j === undefined || i === j) continue;
+      const key = i < j ? i + ":" + j : j + ":" + i;
+      let e = seen.get(key);
+      if (!e) { e = { a: Math.min(i, j), b: Math.max(i, j), up: 0 }; seen.set(key, e); }
+      if (p.status === "Connected") e.up++;
+    }
+  }
+  edges = Array.from(seen.values());
+  place();
+}
+
+/** Colour of a delivery: what the CRDT did with it, same words as the feed. */
+function tone(e) {
+  if (e.redundant_on_arrival) return C.bad;
+  if (e.applied) return C.ok;
+  return C.warn;
+}
+
+/** Turn feed entries into pulses. Called only for streamed deliveries — the
+    feed carried by the first snapshot is history, and animating history would
+    claim traffic that is not happening. */
+function animateFeed(entries) {
+  for (const f of entries) {
+    if (pulses.length >= MAX_PULSES) break;
+    const e = f && f.event;
+    if (!e) continue;
+    if (e.local) {
+      if (vindex.has(e.origin)) {
+        pulses.push({ at: e.origin, t0: 0, dur: FLASH_MS, tone: C.local });
+      }
+    } else if (vindex.has(e.origin) && vindex.has(f.observer)) {
+      pulses.push({ from: e.origin, to: f.observer, t0: 0, dur: TRAVEL_MS, tone: tone(e) });
+    }
+  }
+  requestFrame();
+}
+
+function drawEdges(dash) {
+  // A full mesh of twenty is 190 chords. Fading them as the population grows
+  // keeps the topology legible as texture while leaving the pulses — the thing
+  // actually being watched — on top of it.
+  CTX.globalAlpha = Math.max(0.4, Math.min(1, 9 / Math.max(verts.length, 1)));
+  for (const e of edges) {
+    const A = verts[e.a], B = verts[e.b];
+    const faded = A.stale || B.stale;
+    const both = e.up >= 2;
+    CTX.setLineDash(both ? dash.solid : dash.broken);
+    CTX.lineWidth = both ? 1.4 : 1;
+    CTX.strokeStyle = both
+      ? (faded ? "#232c36" : "#31404f")
+      : (faded ? "#212831" : "#2d3947");
+    CTX.beginPath();
+    CTX.moveTo(A.x, A.y);
+    CTX.lineTo(B.x, B.y);
+    CTX.stroke();
+  }
+  CTX.globalAlpha = 1;
+  CTX.setLineDash(dash.solid);
+}
+
+function drawPulses(ts, r) {
+  for (let k = pulses.length - 1; k >= 0; k--) {
+    const p = pulses[k];
+    if (!p.t0) p.t0 = ts;
+    const t = (ts - p.t0) / p.dur;
+    const from = p.from === undefined ? vindex.get(p.at) : vindex.get(p.from);
+    const to = p.to === undefined ? from : vindex.get(p.to);
+    // A replica can vanish from the roster mid-flight; drop the pulse rather
+    // than draw it against a stale position.
+    if (t >= 1 || from === undefined || to === undefined) {
+      pulses.splice(k, 1);
+      continue;
+    }
+    const A = verts[from], B = verts[to];
+    if (p.from === undefined) {
+      // Origination: a ring opening out of the replica that made the operation.
+      CTX.globalAlpha = 1 - t;
+      CTX.lineWidth = 2;
+      CTX.strokeStyle = p.tone;
+      CTX.beginPath();
+      CTX.arc(A.x, A.y, r + 3 + t * 15, 0, 6.2832);
+      CTX.stroke();
+      CTX.globalAlpha = 1;
+      continue;
+    }
+    // Delivery: a head running origin -> deliverer, with a short trail so the
+    // direction is readable at a glance.
+    const fade = t < 0.8 ? 1 : (1 - t) / 0.2;
+    const tail = Math.max(0, t - 0.14);
+    const hx = A.x + (B.x - A.x) * t, hy = A.y + (B.y - A.y) * t;
+    CTX.globalAlpha = 0.35 * fade;
+    CTX.lineWidth = 2.5;
+    CTX.strokeStyle = p.tone;
+    CTX.beginPath();
+    CTX.moveTo(A.x + (B.x - A.x) * tail, A.y + (B.y - A.y) * tail);
+    CTX.lineTo(hx, hy);
+    CTX.stroke();
+    CTX.globalAlpha = fade;
+    CTX.fillStyle = p.tone;
+    CTX.beginPath();
+    CTX.arc(hx, hy, 3.2, 0, 6.2832);
+    CTX.fill();
+    CTX.globalAlpha = 1;
+  }
+}
+
+function drawVerts(r, dash) {
+  CTX.font = "10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+  for (const v of verts) {
+    if (v.diverged) {
+      CTX.globalAlpha = 0.3;
+      CTX.lineWidth = 2;
+      CTX.strokeStyle = C.bad;
+      CTX.beginPath();
+      CTX.arc(v.x, v.y, r + 5, 0, 6.2832);
+      CTX.stroke();
+      CTX.globalAlpha = 1;
+    }
+    CTX.beginPath();
+    CTX.arc(v.x, v.y, r, 0, 6.2832);
+    CTX.fillStyle = "#0e1116";
+    CTX.fill();
+    // Stale is drawn, never removed: a replica that stopped reporting is the
+    // silent-member case, and taking it off the graph would hide the finding.
+    CTX.setLineDash(v.stale ? dash.broken : dash.solid);
+    CTX.lineWidth = v.diverged ? 2.6 : 1.6;
+    CTX.strokeStyle = v.stale ? GREY : (v.diverged ? C.bad : C.ok);
+    CTX.stroke();
+    CTX.setLineDash(dash.solid);
+
+    const lx = v.x + Math.cos(v.a) * (r + 9);
+    const ly = v.y + Math.sin(v.a) * (r + 9);
+    CTX.textAlign = Math.abs(Math.cos(v.a)) < 0.3 ? "center"
+      : (Math.cos(v.a) > 0 ? "left" : "right");
+    CTX.textBaseline = Math.sin(v.a) > 0.3 ? "top"
+      : (Math.sin(v.a) < -0.3 ? "bottom" : "middle");
+    CTX.fillStyle = v.stale ? GREY : (v.diverged ? C.bad : C.text);
+    CTX.fillText(v.id.slice(0, 6), lx, ly);
+  }
+}
+
+function draw(ts) {
+  CTX.clearRect(0, 0, vw, vh);
+  const dash = { solid: [], broken: [3, 4] };
+  if (!verts.length) {
+    CTX.font = "12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+    CTX.fillStyle = C.dim;
+    CTX.textAlign = "center";
+    CTX.textBaseline = "middle";
+    CTX.fillText("waiting for a replica to report…", vw / 2, vh / 2);
+    return;
+  }
+  const r = nodeRadius();
+  drawEdges(dash);
+  drawPulses(ts, r);
+  drawVerts(r, dash);
+}
+
+CV.addEventListener("mousemove", (ev) => {
+  const box = CV.getBoundingClientRect();
+  const mx = ev.clientX - box.left, my = ev.clientY - box.top;
+  const reach = nodeRadius() + 7;
+  const hit = verts.find((v) =>
+    (v.x - mx) * (v.x - mx) + (v.y - my) * (v.y - my) <= reach * reach);
+  if (!hit) { TIP.style.display = "none"; return; }
+  const m = hit.metrics || {};
+  TIP.textContent = hit.id + "\n"
+    + (hit.stale ? "stale — not reporting"
+                 : (hit.diverged ? "diverged" : "agrees")) + "\n"
+    + "digest " + (hit.digest || "–") + "\n"
+    + "peers " + (m.peer_count ?? "–") + "   stable " + (m.stable_prefix ?? "–") + "\n"
+    + "retained " + (m.retained_ops ?? "–") + "   applied " + (m.ops_applied ?? "–");
+  TIP.style.display = "block";
+  TIP.style.left = Math.min(mx + 12, Math.max(0, vw - 160)) + "px";
+  TIP.style.top = Math.max(0, my - 10) + "px";
+});
+CV.addEventListener("mouseleave", () => { TIP.style.display = "none"; });
+
+// A hidden tab does not run `requestAnimationFrame`, so pulses would pile up
+// against the cap and then all expire at once on return. Drop them instead.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pulses.length = 0;
+});
+
+new ResizeObserver(() => { resizeGraph(); requestFrame(); }).observe($("graphwrap"));
+resizeGraph();
+requestFrame();
+
 function renderSnapshot(snap) {
   $("t-total").textContent = snap.total;
   $("t-agree").textContent = snap.agreeing + " / " + snap.live;
@@ -244,6 +581,8 @@ function renderSnapshot(snap) {
     snap.live > 0 && snap.agreeing < snap.live ? "var(--bad)" : "var(--ok)";
   renderRows(snap);
   renderStates(snap);
+  buildGraph(snap);
+  requestFrame();
 }
 
 fetch("/api/snapshot").then((r) => r.json()).then((snap) => {
@@ -253,7 +592,11 @@ fetch("/api/snapshot").then((r) => r.json()).then((snap) => {
 
 const es = new EventSource("/api/stream");
 es.addEventListener("snapshot", (m) => renderSnapshot(JSON.parse(m.data)));
-es.addEventListener("feed", (m) => pushFeed(JSON.parse(m.data)));
+es.addEventListener("feed", (m) => {
+  const entries = JSON.parse(m.data);
+  pushFeed(entries);
+  animateFeed(entries);
+});
 es.onerror = () => { $("foot").style.color = "var(--warn)"; };
 es.onopen = () => { $("foot").style.color = ""; };
 </script>
