@@ -26,13 +26,19 @@ WORKDIR /build
 COPY moirai/ ./moirai/
 COPY arachne/generated/json_crdt/ ./arachne/generated/json_crdt/
 
-# The bootnode and the dashboard ship in the *same* image as the replica rather
-# than one of their own. They are small binaries, and one image means the
-# Compose rig, the e2e harness and whatever is watching cannot drift onto
-# different builds of the protocol — which, for a rig whose whole job is to
+# The bootnode, the relay and the dashboard ship in the *same* image as the
+# replica rather than one of their own. They are small binaries, and one image
+# means the Compose rig, the e2e harness and whatever is watching cannot drift
+# onto different builds of the protocol — which, for a rig whose whole job is to
 # measure that protocol, is worth more than a few megabytes.
+#
+# One image, still two services: the bootnode and the relay are separate
+# binaries and separate processes (C-D3), because the bootnode's blob-blindness
+# is a property worth being able to state and merging a data path into it would
+# end that. Co-deploying them in one image is packaging; merging them would be
+# design.
 WORKDIR /build/moirai
-RUN cargo build -p moirai-bootnode -p moirai-dashboard
+RUN cargo build -p moirai-bootnode -p moirai-relay -p moirai-dashboard
 
 WORKDIR /build/arachne/generated/json_crdt
 # Debug profile: the tests exercise replication, not throughput, and a release
@@ -53,6 +59,9 @@ COPY --from=builder \
 COPY --from=builder \
     /build/moirai/target/debug/moirai-bootnode \
     /usr/local/bin/moirai-bootnode
+COPY --from=builder \
+    /build/moirai/target/debug/moirai-relay \
+    /usr/local/bin/moirai-relay
 # Same reasoning as the bootnode: the dashboard ships in the replica image so
 # that what watches the protocol cannot drift onto a different build of it.
 COPY --from=builder \
@@ -64,7 +73,7 @@ ENV REPLICA_ID=a \
     HTTP_PORT=8081 \
     PEERS=
 
-EXPOSE 9001 8081 7000 8090
+EXPOSE 9001 8081 7000 7100 7101 8090
 
 HEALTHCHECK --interval=1s --timeout=2s --start-period=1s --retries=60 \
     CMD curl -fsS "http://localhost:${HTTP_PORT}/api/health" || exit 1

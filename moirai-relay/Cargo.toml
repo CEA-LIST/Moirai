@@ -1,0 +1,24 @@
+[package]
+name = "moirai-relay"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Frame relay for Moirai replicas with no route to each other: routes by id, parses nothing"
+
+[[bin]]
+name = "moirai-relay"
+path = "src/main.rs"
+
+# No CRDT dependency, and this one is structural rather than tidy: the relay
+# must never parse `msg`, and the cheapest way to guarantee that is to make it
+# unable to. `serde_json`'s `RawValue` carries the payload through; without
+# `moirai-protocol` on the graph there is no operation type here to deserialise
+# into. Same versions `moirai-bootnode` already uses, so the build graph is
+# unchanged.
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0.133", features = ["raw_value"] }
+tiny_http = "0.12"

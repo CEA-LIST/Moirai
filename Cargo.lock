@@ -1482,6 +1482,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-relay"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tiny_http",
+]
+
+[[package]]
 name = "nichi"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
