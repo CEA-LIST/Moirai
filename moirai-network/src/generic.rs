@@ -21,16 +21,24 @@ use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
 use moirai_protocol::utils::intern_str::InternalizeOp;
 
+use crate::composite::CompositeTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
 use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
 use crate::state_transfer::TransferableLog;
-use crate::tcp_transport::TcpTransport;
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
 use crate::HashMap;
 
-/// Convenience alias
-pub type TcpNode<L> = GenericNode<L, TcpTransport<<L as IsLog>::Op>>;
+/// A replica over the transport that routes per peer. The alias to build a node
+/// with unless there is a reason not to.
+pub type Node<L> = GenericNode<L, CompositeTransport<<L as IsLog>::Op>>;
+
+/// Former name of [`Node`], from when TCP was the only way to reach a peer.
+#[deprecated(
+    since = "0.1.0",
+    note = "renamed to `Node`; the transport underneath is now a composite that routes each peer direct or relayed"
+)]
+pub type TcpNode<L> = Node<L>;
 
 /// How often a replica that still has no history re-asks its peers for one.
 ///
@@ -65,9 +73,9 @@ impl<T> NetworkOp for T where
 /// A generic network node.
 ///
 /// `L` is the CRDT **log** type (e.g. `BehaviortreeLog`).
-/// `T` is the transport backend (e.g. [`TcpTransport`]
+/// `T` is the transport backend (e.g. [`CompositeTransport`]).
 ///
-/// The [`TcpNode`] type alias is for TCP.
+/// The [`Node`] type alias is the usual choice.
 pub struct GenericNode<L: IsLog, T: CrdtTransport<Op = L::Op>>
 where
     L::Op: NetworkOp,
@@ -986,26 +994,29 @@ where
 }
 
 // =============================================================================
-// TCP convenience constructor
+// Convenience constructor
 // =============================================================================
 
-impl<L: IsLog> GenericNode<L, TcpTransport<L::Op>>
+impl<L: IsLog> GenericNode<L, CompositeTransport<L::Op>>
 where
     L::Op: NetworkOp,
 {
-    /// Create a TCP-backed node (convenience wrapper around [`with_transport`]).
+    /// Create a node over the routing composite (convenience wrapper around
+    /// [`with_transport`]).
     ///
     /// * `replica_id` — unique identifier for this replica.
     /// * `members` — all replica IDs in the cluster (including self).
     /// * `listen_port` — TCP port for peer connections.
     /// * `peer_addresses` — map of `peer_id → "host:port"` for outbound connections.
+    ///
+    /// [`with_transport`]: GenericNode::with_transport
     pub fn new(
         replica_id: String,
         members: &[&str],
         listen_port: u16,
         peer_addresses: HashMap<String, String>,
     ) -> Self {
-        let transport = TcpTransport::new(replica_id.clone(), listen_port, peer_addresses)
+        let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
             .expect("Failed to create TCP transport");
         Self::with_transport(replica_id, members, transport)
     }

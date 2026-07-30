@@ -67,8 +67,8 @@ use std::thread;
 use std::time::Duration;
 
 use moirai_crdt::set::aw_set::AWSet;
+use moirai_network::composite::CompositeTransport;
 use moirai_network::generic::GenericNode;
-use moirai_network::tcp_transport::TcpTransport;
 use moirai_network::HashMap;
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::clock::version_vector::Version;
@@ -154,7 +154,7 @@ fn main() {
     let member_refs: Vec<&str> = all_members.iter().map(|s| s.as_str()).collect();
 
     // Create the node with AWSet CRDT
-    let mut node = GenericNode::<AWSetLog, TcpTransport<AWSet<String>>>::new(
+    let mut node = GenericNode::<AWSetLog, CompositeTransport<AWSet<String>>>::new(
         replica_id.clone(),
         &member_refs,
         listen_port,
