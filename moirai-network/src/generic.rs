@@ -797,8 +797,16 @@ where
         let Some(roster) = discovery.latest_roster() else {
             return;
         };
+        let session = discovery.session().to_string();
 
-        for peer in roster {
+        // Where a pair that cannot dial each other can meet. The transport
+        // decides whether it needs one; a `DirectTransport` ignores this
+        // entirely, which is what keeps the whole path additive.
+        if let Some(relay) = &roster.relay {
+            self.transport.set_relay(&session, relay);
+        }
+
+        for peer in roster.peers {
             self.transport.add_peer(peer.id, peer.addr);
         }
 
@@ -966,6 +974,9 @@ where
     ///   logs do not expose their unstable length through `IsLog`.
     /// - `ops_applied` counts operations *originated* here. Use it, never
     ///   `/api/operations`, which double-counts remote deliveries.
+    /// - `routes` says how each peer is reached — `direct`, `relayed`, or
+    ///   `unreachable`. Additive: it is `{}` for a transport with one way of
+    ///   reaching a peer, and no other field changed to make room for it.
     fn metrics(&self) -> serde_json::Value {
         let stability = self.replica.stability();
         let peers = self.transport.peers();
@@ -973,6 +984,12 @@ where
             .stable_version
             .iter()
             .map(|(id, seq)| (id.clone(), json!(seq)))
+            .collect();
+        let routes: serde_json::Map<String, serde_json::Value> = self
+            .transport
+            .routes()
+            .into_iter()
+            .map(|(peer, route)| (peer, json!(route)))
             .collect();
 
         json!({
@@ -989,6 +1006,7 @@ where
                 .filter(|p| p.status == crate::transport::PeerStatus::Connected)
                 .count(),
             "peers_known": peers.len(),
+            "routes": routes,
         })
     }
 }

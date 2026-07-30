@@ -26,7 +26,8 @@
 //! ```
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::io;
+use std::io::{self, Write};
+use std::net::TcpStream;
 
 use moirai_protocol::broadcast::message::{BatchMessage, EventMessage, SinceMessage};
 use moirai_protocol::broadcast::tcsb::StateSnapshot;
@@ -147,6 +148,20 @@ impl std::error::Error for TransportError {}
 /// Result type for transport operations
 pub type TransportResult<T> = Result<T, TransportError>;
 
+/// Write one newline-delimited JSON frame.
+///
+/// The framing every transport in this crate uses, in one place. It is
+/// deliberately generic over the value rather than fixed to
+/// [`TransportMessage`]: the relay transport writes the same framing around an
+/// *envelope* that carries a `TransportMessage` as one of its fields, so both
+/// share the codec and neither owns it.
+pub(crate) fn write_frame<T: Serialize>(stream: &mut TcpStream, value: &T) -> TransportResult<()> {
+    let json = serde_json::to_string(value)?;
+    writeln!(stream, "{}", json)?;
+    stream.flush()?;
+    Ok(())
+}
+
 /// Connection status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerStatus {
@@ -230,6 +245,32 @@ pub trait CrdtTransport {
     fn connect_to_peers(&mut self) -> TransportResult<Vec<PeerId>> {
         Ok(vec![])
     }
+
+    /// How each known peer is currently reached, as a short label.
+    ///
+    /// Empty by default, and that is the honest answer for a transport with one
+    /// way of reaching a peer: there is no route to report because there is no
+    /// choice. A composite over several providers overrides it, and that is what
+    /// `/api/metrics` surfaces so an operator can see that one edge is direct
+    /// and another relayed instead of inferring it from throughput.
+    fn routes(&self) -> Vec<(PeerId, &'static str)> {
+        Vec::new()
+    }
+
+    /// Learn where a relay is, so peers that cannot be dialled directly can
+    /// still be reached.
+    ///
+    /// The endpoint is advertised by the bootnode rather than configured on the
+    /// replica, so it arrives at run time with a roster and can change; hence a
+    /// method rather than a constructor argument.
+    ///
+    /// Default is a no-op, exactly like [`add_peer`]: a transport with no
+    /// notion of a relay ignores it, which is what keeps the whole relay path
+    /// additive — a replica with no `BOOTNODE_URL` never hears of one and
+    /// behaves as it did before.
+    ///
+    /// [`add_peer`]: CrdtTransport::add_peer
+    fn set_relay(&mut self, _session: &str, _addr: &str) {}
 
     /// Get all messages buffered while a peer was paused.
     ///

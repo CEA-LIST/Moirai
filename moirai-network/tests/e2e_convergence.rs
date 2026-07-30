@@ -3267,3 +3267,589 @@ fn opcount_double_delivery() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// P3 — relay connectivity
+// ---------------------------------------------------------------------------
+//
+// The scenarios below need a rig the `Cluster` above cannot build: replicas with
+// **no route to each other at all**. `ContainerBackend` puts every replica on
+// one shared replication network, which is right for a partition — cut it and
+// the link is gone — and wrong here, because a relay test on a rig where a
+// direct path exists proves nothing about the relay.
+//
+// So `RelayRig` builds islands instead. Each replica is created on a network of
+// its own, which is what binds its published HTTP port and is never cut, and is
+// then attached to one or more *island* networks under a DNS alias. Two replicas
+// on different islands share no network: Docker's embedded DNS will not resolve
+// the address the bootnode hands out, and its inter-bridge isolation would drop
+// the packet even with the address in hand. The bootnode and the relay sit on
+// every island, so both replicas reach both services while reaching nothing else.
+//
+// The claim is asserted rather than assumed. `/api/metrics` reports how each
+// peer is reached, so a scenario that expects `relayed` and reads `direct` fails
+// on the rig instead of passing on the wrong topology.
+
+/// Ports inside the service containers.
+const RELAY_PORT: u16 = 7100;
+const RELAY_HTTP_PORT: u16 = 7101;
+const BOOTNODE_PORT: u16 = 7000;
+
+/// Lines the two services print once every listener is bound. The relay's health
+/// endpoint comes up last, so waiting for it also means the frame listener is up.
+const RELAY_READY_LINE: &str = "[relay] health on";
+const BOOTNODE_READY_LINE: &str = "[bootnode] listening on";
+
+/// How long a relay-less pair is watched to confirm it does *not* converge.
+///
+/// The negative control's whole value is in this being long enough to be
+/// convincing and short enough to keep the suite fast. With the relay stopped
+/// there is no other path at all, so nothing is racing: this is a margin, not a
+/// deadline.
+const NO_CONVERGENCE_WINDOW: Duration = Duration::from_secs(15);
+
+/// A container that is not a replica: the bootnode, or the relay.
+struct Service {
+    name: &'static str,
+    container: Container<GenericImage>,
+    http_base: String,
+}
+
+impl Service {
+    fn log_tail(&self, lines: usize) -> String {
+        let text = self
+            .container
+            .stderr_to_vec()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_else(|e| format!("<{e}>"));
+        let all: Vec<&str> = text.lines().collect();
+        all[all.len().saturating_sub(lines)..].join("\n")
+    }
+}
+
+/// Replicas placed on islands, with a bootnode and a relay reachable from all of
+/// them.
+struct RelayRig {
+    /// Declared first on purpose, as in [`Cluster`]: a Docker network cannot be
+    /// removed while a container is attached, so every container must drop
+    /// before the networks it is on.
+    replicas: BTreeMap<String, ContainerNode>,
+    /// `Option` so a scenario can stop the relay mid-run — which is the negative
+    /// control that proves the relay was carrying the traffic.
+    relay: Option<Service>,
+    bootnode: Option<Service>,
+    networks: Networks,
+    /// Every network this rig created, removed on drop.
+    created: Vec<String>,
+    prefix: String,
+    image: String,
+    session: String,
+}
+
+impl RelayRig {
+    /// Build the rig: one network per island, a bootnode and a relay on all of
+    /// them. Returns the reason to skip rather than failing when Docker or the
+    /// image is unavailable.
+    fn new(islands: &[&str]) -> Result<Self> {
+        let networks = Networks::new()?;
+        let image =
+            std::env::var("MOIRAI_E2E_IMAGE").unwrap_or_else(|_| "moirai-json-crdt:test".into());
+        networks
+            .runtime
+            .block_on(networks.docker.inspect_image(&image))
+            .with_context(|| {
+                format!(
+                    "the replica image `{image}` does not exist; build it with \
+                     `docker build -f moirai/docker/e2e/Dockerfile -t {image} .` \
+                     from the directory holding the moirai and arachne checkouts"
+                )
+            })?;
+
+        let run = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+        let prefix = format!("moirai-p3-{}-{run}", std::process::id());
+        let mut rig = Self {
+            replicas: BTreeMap::new(),
+            relay: None,
+            bootnode: None,
+            networks,
+            created: Vec::new(),
+            prefix: prefix.clone(),
+            image,
+            session: format!("p3-{}-{run}", std::process::id()),
+        };
+
+        // The services are *created* here and attached to the islands below, so
+        // that each attachment can carry a DNS alias. A network they share with
+        // nobody else is the price of that; it gives no replica a route anywhere.
+        rig.create_network(&rig.service_net())?;
+        for island in islands {
+            rig.create_network(&rig.island_net(island))?;
+        }
+
+        rig.start_relay(islands)?;
+        rig.start_bootnode(islands)?;
+        Ok(rig)
+    }
+
+    fn service_net(&self) -> String {
+        format!("{}-svc", self.prefix)
+    }
+
+    fn island_net(&self, island: &str) -> String {
+        format!("{}-island-{island}", self.prefix)
+    }
+
+    fn own_net(&self, id: &str) -> String {
+        format!("{}-own-{id}", self.prefix)
+    }
+
+    fn create_network(&mut self, name: &str) -> Result<()> {
+        self.networks.create(name)?;
+        self.created.push(name.to_string());
+        Ok(())
+    }
+
+    fn image_parts(&self) -> (String, String) {
+        match self.image.rsplit_once(':') {
+            Some((name, tag)) => (name.to_string(), tag.to_string()),
+            None => (self.image.clone(), "latest".to_string()),
+        }
+    }
+
+    /// Start one service and attach it to every island under `alias`.
+    fn start_service(
+        &mut self,
+        name: &'static str,
+        command: &str,
+        ready_line: &str,
+        http_port: u16,
+        env: &[(&str, String)],
+        alias: &str,
+        islands: &[&str],
+    ) -> Result<Service> {
+        let (image_name, tag) = self.image_parts();
+        let mut request = GenericImage::new(image_name, tag)
+            .with_exposed_port(http_port.tcp())
+            .with_wait_for(WaitFor::message_on_stderr(ready_line))
+            .with_network(self.service_net())
+            .with_cmd(vec![command]);
+        for (key, value) in env {
+            request = request.with_env_var(*key, value);
+        }
+        let container = request
+            .start()
+            .with_context(|| format!("start the {name} container"))?;
+        let container_id = container.id().to_string();
+
+        for island in islands {
+            self.networks
+                .connect(&self.island_net(island), &container_id, alias)?;
+        }
+
+        let host_port = container
+            .get_host_port_ipv4(http_port.tcp())
+            .with_context(|| format!("read the published port of {name}"))?;
+        Ok(Service {
+            name,
+            container,
+            http_base: format!("http://127.0.0.1:{host_port}"),
+        })
+    }
+
+    fn start_relay(&mut self, islands: &[&str]) -> Result<()> {
+        let relay = self.start_service(
+            "relay",
+            "moirai-relay",
+            RELAY_READY_LINE,
+            RELAY_HTTP_PORT,
+            &[
+                ("RELAY_PORT", RELAY_PORT.to_string()),
+                ("RELAY_HTTP_PORT", RELAY_HTTP_PORT.to_string()),
+                // One line per frame. A relay scenario that fails is almost
+                // always a routing question, and the answer is in this log.
+                ("RELAY_VERBOSE", "1".to_string()),
+            ],
+            "relay",
+            islands,
+        )?;
+        self.relay = Some(relay);
+        Ok(())
+    }
+
+    fn start_bootnode(&mut self, islands: &[&str]) -> Result<()> {
+        let bootnode = self.start_service(
+            "bootnode",
+            "moirai-bootnode",
+            BOOTNODE_READY_LINE,
+            BOOTNODE_PORT,
+            &[
+                ("BOOTNODE_PORT", BOOTNODE_PORT.to_string()),
+                ("BOOTNODE_TTL_SECS", "10".to_string()),
+                // The whole reason a replica needs no relay configuration of its
+                // own: the directory tells it where one is.
+                ("RELAY_ADDR", format!("relay:{RELAY_PORT}")),
+            ],
+            "bootnode",
+            islands,
+        )?;
+        self.bootnode = Some(bootnode);
+        Ok(())
+    }
+
+    /// Start replica `id`, reachable only on `islands`.
+    ///
+    /// It gets no `PEERS` at all: everything it knows comes from the directory,
+    /// which is what makes the routing decision the replica's own.
+    fn start_replica(&mut self, id: &str, islands: &[&str]) -> Result<()> {
+        let own = self.own_net(id);
+        self.create_network(&own)?;
+
+        let alias = format!("node-{id}");
+        let (image_name, tag) = self.image_parts();
+        let container = GenericImage::new(image_name, tag)
+            .with_exposed_port(CONTAINER_HTTP_PORT.tcp())
+            .with_wait_for(WaitFor::message_on_stderr(READY_LINE))
+            // Its own network, joined at creation: that is what binds the
+            // published port, and it is never cut. Nobody else is on it, so it
+            // is not a route to anywhere.
+            .with_network(&own)
+            .with_env_var("REPLICA_ID", id)
+            .with_env_var("LISTEN_PORT", CONTAINER_LISTEN_PORT.to_string())
+            .with_env_var("HTTP_PORT", CONTAINER_HTTP_PORT.to_string())
+            .with_env_var("PEERS", "")
+            .with_env_var("BOOTNODE_URL", format!("http://bootnode:{BOOTNODE_PORT}"))
+            .with_env_var("SESSION_ID", &self.session)
+            .with_env_var("ADVERTISE_ADDR", format!("{alias}:{CONTAINER_LISTEN_PORT}"))
+            .with_env_var("RECONCILE_SECS", "1")
+            .start()
+            .with_context(|| format!("start a container for replica `{id}`"))?;
+        let container_id = container.id().to_string();
+
+        for island in islands {
+            self.networks
+                .connect(&self.island_net(island), &container_id, &alias)?;
+        }
+
+        let host_port = container
+            .get_host_port_ipv4(CONTAINER_HTTP_PORT.tcp())
+            .with_context(|| format!("read the published HTTP port of replica `{id}`"))?;
+        let node = ContainerNode {
+            id: id.to_string(),
+            http_base: format!("http://127.0.0.1:{host_port}"),
+            container,
+        };
+        await_healthy(&node, HEALTH_TIMEOUT)?;
+        self.replicas.insert(id.to_string(), node);
+        Ok(())
+    }
+
+    fn node(&self, id: &str) -> &dyn Node {
+        self.replicas
+            .get(id)
+            .unwrap_or_else(|| panic!("replica `{id}` is not running"))
+    }
+
+    fn nodes(&self) -> Vec<&dyn Node> {
+        self.replicas.values().map(|n| n as &dyn Node).collect()
+    }
+
+    /// The relay's counters. `frames_in` / `frames_out` are how the fan-out
+    /// claim — one upload, N downloads — is observed rather than asserted.
+    fn relay_health(&self) -> Result<Value> {
+        let relay = self.relay.as_ref().ok_or_else(|| anyhow!("no relay"))?;
+        let body = client()
+            .get(format!("{}/health", relay.http_base))
+            .send()?
+            .error_for_status()?
+            .text()?;
+        Ok(serde_json::from_str(&body)?)
+    }
+
+    /// Kill the relay. The negative control: with no relay and no direct route,
+    /// new writes must stop propagating.
+    fn stop_relay(&mut self) {
+        let Some(relay) = self.relay.take() else {
+            return;
+        };
+        eprintln!(
+            "--- relay log before it was stopped ---\n{}",
+            relay.log_tail(LOG_TAIL_LINES)
+        );
+        drop(relay);
+    }
+
+    /// Everything worth reading when a scenario fails.
+    fn diagnostics(&self) -> String {
+        let mut out = String::new();
+        for (id, node) in &self.replicas {
+            let _ = writeln!(
+                out,
+                "--- {id} state {:?} metrics {:?} ---\n{}",
+                state_of(node).map(|v| v.to_string()),
+                metrics_of(node).map(|v| v.to_string()),
+                node.log_tail(LOG_TAIL_LINES)
+            );
+        }
+        for service in [self.relay.as_ref(), self.bootnode.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = writeln!(
+                out,
+                "--- {} ---\n{}",
+                service.name,
+                service.log_tail(LOG_TAIL_LINES)
+            );
+        }
+        out
+    }
+}
+
+impl Drop for RelayRig {
+    fn drop(&mut self) {
+        // Containers first: `replicas`, `relay` and `bootnode` are declared
+        // before `networks`, so they are already gone by the time this returns
+        // — but `Drop::drop` runs *before* the fields, so the removals have to
+        // happen here, after dropping them explicitly.
+        self.replicas.clear();
+        self.relay = None;
+        self.bootnode = None;
+        for network in &self.created {
+            let _ = self.networks.remove(network);
+        }
+    }
+}
+
+/// Builds a relay rig, or explains why the scenario is being skipped.
+fn relay_rig(scenario: &str, islands: &[&str]) -> Option<RelayRig> {
+    if let Err(why) = container_backend_selected() {
+        eprintln!("\nE2E-SKIP {scenario}: {why}");
+        return None;
+    }
+    match RelayRig::new(islands) {
+        Ok(rig) => Some(rig),
+        Err(why) => {
+            eprintln!("\nE2E-SKIP {scenario}: {why:#}");
+            None
+        }
+    }
+}
+
+/// How `node` says it reaches each of its peers: `direct`, `relayed`, or
+/// `unreachable`.
+fn routes_of(node: &dyn Node) -> Result<BTreeMap<String, String>> {
+    let metrics = metrics_of(node)?;
+    let routes = metrics
+        .get("routes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("`{}` reported no routes: {metrics}", node.id()))?;
+    Ok(routes
+        .iter()
+        .filter_map(|(peer, route)| route.as_str().map(|r| (peer.clone(), r.to_string())))
+        .collect())
+}
+
+/// Waits until `node` reports reaching `peer` by `expected`.
+///
+/// This is the assertion that the *rig* is what the scenario claims. A relay
+/// scenario on a topology that accidentally has a direct path would otherwise
+/// pass while testing nothing, which is the exact failure the design warns
+/// about.
+fn await_route(node: &dyn Node, peer: &str, expected: &str, timeout: Duration) -> Result<()> {
+    poll_until(timeout, || {
+        let routes = routes_of(node)?;
+        Ok((routes.get(peer).map(String::as_str) == Some(expected)).then_some(()))
+    })
+    .map_err(|e| {
+        anyhow!(
+            "`{}` never reported reaching `{peer}` as `{expected}` (last seen {:?}){}",
+            node.id(),
+            routes_of(node).ok(),
+            e.map(|e| format!("; last error: {e:#}"))
+                .unwrap_or_default()
+        )
+    })
+}
+
+/// Asserts that `laggard` does **not** catch up with `writer` for `window`.
+///
+/// Polled for the whole window rather than checked once, and it refuses to be
+/// vacuous: `writer` must actually have moved away from `before`, otherwise
+/// "they never agreed" would be satisfied by nothing having happened.
+fn assert_does_not_converge(
+    writer: &dyn Node,
+    laggard: &dyn Node,
+    before: &Value,
+    window: Duration,
+    diagnostics: impl Fn() -> String,
+) {
+    let deadline = Instant::now() + window;
+    let mut writer_moved = false;
+    while Instant::now() < deadline {
+        if let (Ok(w), Ok(l)) = (state_of(writer), state_of(laggard)) {
+            if w != *before {
+                writer_moved = true;
+            }
+            assert_ne!(
+                w,
+                l,
+                "`{}` caught up with `{}` after the relay was stopped, so the \
+                 rig has a path the scenario does not know about and the \
+                 convergence above proved nothing about relaying\n{}",
+                laggard.id(),
+                writer.id(),
+                diagnostics()
+            );
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    assert!(
+        writer_moved,
+        "`{}` never left the state it shared with `{}`, so this control is \
+         vacuous: nothing was written for the relay to fail to carry\n{}",
+        writer.id(),
+        laggard.id(),
+        diagnostics()
+    );
+}
+
+/// **P3-1** — two replicas that cannot open a direct connection converge, and
+/// stop converging the moment the relay is taken away.
+///
+/// The second half is the whole test. A pair on a rig with a hidden path would
+/// converge with the relay dead and the first half would still pass, which is
+/// the failure the design's figure 6 names: *if they converge with the relay
+/// stopped, the test is lying.*
+#[test]
+fn p3_two_replicas_with_no_route_converge() {
+    let Some(mut rig) = relay_rig("P3-1", &["left", "right"]) else {
+        return;
+    };
+    rig.start_replica("a", &["left"]).expect("P3-1: start a");
+    rig.start_replica("b", &["right"]).expect("P3-1: start b");
+
+    // The rig's own precondition: each replica has learnt about the other from
+    // the directory and can only reach it through the relay. If either of these
+    // read `direct`, the islands are not islands.
+    await_route(rig.node("a"), "b", "relayed", MESH_TIMEOUT)
+        .unwrap_or_else(|e| panic!("P3-1: {e:#}\n{}", rig.diagnostics()));
+    await_route(rig.node("b"), "a", "relayed", MESH_TIMEOUT)
+        .unwrap_or_else(|e| panic!("P3-1: {e:#}\n{}", rig.diagnostics()));
+
+    apply_ok(
+        rig.node("a"),
+        ops::object_update("name", ops::string_insert('B', 0)),
+    );
+    apply_ok(
+        rig.node("b"),
+        ops::object_update("city", ops::string_insert('P', 0)),
+    );
+    let agreed = assert_converged(&rig.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&agreed, "name").unwrap(), "B");
+    assert_eq!(read_string(&agreed, "city").unwrap(), "P");
+
+    let health = rig.relay_health().expect("P3-1: relay health");
+    assert!(
+        health["frames_out"].as_u64().unwrap_or(0) > 0,
+        "the replicas converged without the relay forwarding anything: {health}"
+    );
+    assert_eq!(
+        health["sessions"].as_u64(),
+        Some(2),
+        "both replicas must hold a session: {health}"
+    );
+
+    // --- the control ---
+    rig.stop_relay();
+    apply_ok(
+        rig.node("a"),
+        ops::object_update("name", ops::string_insert('R', 1)),
+    );
+    assert_does_not_converge(
+        rig.node("a"),
+        rig.node("b"),
+        &agreed,
+        NO_CONVERGENCE_WINDOW,
+        || rig.diagnostics(),
+    );
+}
+
+/// **P3-2** — a mixed rig: reachable pairs go direct, the unreachable pair goes
+/// through the relay, and all three converge.
+///
+/// `c` is on both islands, so `a`↔`c` and `b`↔`c` have a path and `a`↔`b` does
+/// not. The routes are asserted per replica, because "they all converged" is
+/// also true of a rig where everything went through the relay — and a relay that
+/// carried traffic it did not need to would be a regression in the direction
+/// nobody would notice.
+#[test]
+fn p3_mixed_rig_routes_each_pair_the_cheapest_way() {
+    let Some(mut rig) = relay_rig("P3-2", &["left", "right"]) else {
+        return;
+    };
+    rig.start_replica("c", &["left", "right"])
+        .expect("P3-2: start c");
+    rig.start_replica("a", &["left"]).expect("P3-2: start a");
+    rig.start_replica("b", &["right"]).expect("P3-2: start b");
+
+    for (node, peer, route) in [
+        ("a", "c", "direct"),
+        ("a", "b", "relayed"),
+        ("b", "c", "direct"),
+        ("b", "a", "relayed"),
+        ("c", "a", "direct"),
+        ("c", "b", "direct"),
+    ] {
+        await_route(rig.node(node), peer, route, MESH_TIMEOUT)
+            .unwrap_or_else(|e| panic!("P3-2: {e:#}\n{}", rig.diagnostics()));
+    }
+
+    for (id, key) in [("a", "alpha"), ("b", "beta"), ("c", "gamma")] {
+        apply_ok(rig.node(id), ops::object_update(key, ops::number_inc(1.0)));
+    }
+    let agreed = assert_converged(&rig.nodes(), CONVERGE_TIMEOUT);
+    for key in ["alpha", "beta", "gamma"] {
+        assert_eq!(
+            read_number(&agreed, key).unwrap(),
+            1.0,
+            "`{key}` did not reach every replica: {agreed}"
+        );
+    }
+}
+
+/// **P3-3** — a replica that joins an established, routeless session over the
+/// relay receives the history it missed.
+///
+/// The point of separating this from P3-1: catching up is not the same as
+/// replicating forwards. A joiner's history arrives because the composite
+/// returns a newly *relayed* peer from `connect_to_peers`, which is what makes
+/// `GenericNode::connect` answer it with a sync or state request — phase 1's
+/// dialer-requests-sync chain, firing over a route it knows nothing about. Leave
+/// a relayed peer out of that list and this scenario is the one that notices.
+#[test]
+fn p3_a_joiner_over_the_relay_receives_history() {
+    /// Applied before the joiner arrives.
+    const APPLIED: usize = 6;
+
+    let Some(mut rig) = relay_rig("P3-3", &["left", "right"]) else {
+        return;
+    };
+    rig.start_replica("a", &["left"]).expect("P3-3: start a");
+    for pos in 0..APPLIED {
+        apply_ok(
+            rig.node("a"),
+            ops::object_update("name", ops::string_insert('x', pos)),
+        );
+    }
+
+    rig.start_replica("b", &["right"]).expect("P3-3: start b");
+    await_route(rig.node("b"), "a", "relayed", MESH_TIMEOUT)
+        .unwrap_or_else(|e| panic!("P3-3: {e:#}\n{}", rig.diagnostics()));
+
+    let agreed = assert_converged(&rig.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_string(&agreed, "name").unwrap().len(),
+        APPLIED,
+        "the joiner did not receive what happened before it arrived: {agreed}"
+    );
+}

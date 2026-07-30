@@ -56,6 +56,9 @@ impl Session {
 pub struct Registry {
     sessions: Vec<(SessionId, Session)>,
     ttl: Duration,
+    /// `host:port` of the relay, from `RELAY_ADDR`. One relay, deliberately
+    /// singular: C-D6 allows several and the design says implement one now.
+    relay: Option<String>,
 }
 
 /// What a caller gets back from any of the three endpoints.
@@ -63,6 +66,19 @@ pub struct Registry {
 pub struct Roster {
     pub peers: Vec<Peer>,
     pub epoch: u64,
+    /// Where the relay is, for pairs that cannot reach each other directly, or
+    /// `null` when none is deployed.
+    ///
+    /// Advertised here rather than configured on each replica for one reason:
+    /// relay deployment then changes in one place, and a replica that has only
+    /// ever been told where a bootnode is can still be reached by a peer behind
+    /// NAT. `null` is exactly the pre-relay behaviour.
+    ///
+    /// It does not make the bootnode a data path. This is a string it was given
+    /// and repeats; it still never sees an operation, which is the property that
+    /// makes hosting one acceptable and the reason the relay is a separate
+    /// service (C-D3).
+    pub relay: Option<String>,
 }
 
 impl Registry {
@@ -70,7 +86,18 @@ impl Registry {
         Self {
             sessions: Vec::new(),
             ttl,
+            relay: None,
         }
+    }
+
+    /// Advertise `addr` as the relay in every roster this registry returns.
+    pub fn with_relay(mut self, addr: Option<String>) -> Self {
+        self.relay = addr;
+        self
+    }
+
+    pub fn relay(&self) -> Option<&str> {
+        self.relay.as_deref()
     }
 
     pub fn ttl(&self) -> Duration {
@@ -91,6 +118,8 @@ impl Registry {
             addr: addr.to_string(),
             last_seen: now,
         };
+        // Cloned before the session is borrowed mutably below.
+        let relay = self.relay.clone();
 
         let session = self.session_mut(session);
         match session.index_of(id) {
@@ -108,7 +137,7 @@ impl Registry {
             }
         }
 
-        Self::roster_of(session, Some(id))
+        Self::roster_of(session, Some(id), relay)
     }
 
     /// The current roster of `session`, including every member.
@@ -119,11 +148,13 @@ impl Registry {
     /// more code on both sides.
     pub fn peers(&mut self, session: &str, now: Instant) -> Roster {
         self.sweep(now);
+        let relay = self.relay.clone();
         match self.session_ref(session) {
-            Some(session) => Self::roster_of(session, None),
+            Some(session) => Self::roster_of(session, None, relay),
             None => Roster {
                 peers: Vec::new(),
                 epoch: 0,
+                relay,
             },
         }
     }
@@ -133,6 +164,7 @@ impl Registry {
     /// because a replica that already timed out is entitled to say goodbye.
     pub fn leave(&mut self, session: &str, id: &str, now: Instant) -> (Roster, bool) {
         self.sweep(now);
+        let relay = self.relay.clone();
         let session = self.session_mut(session);
         let removed = match session.index_of(id) {
             Some(pos) => {
@@ -142,7 +174,7 @@ impl Registry {
             }
             None => false,
         };
-        (Self::roster_of(session, None), removed)
+        (Self::roster_of(session, None, relay), removed)
     }
 
     /// Drop every entry not refreshed within the TTL.
@@ -169,8 +201,9 @@ impl Registry {
         }
     }
 
-    fn roster_of(session: &Session, exclude: Option<&str>) -> Roster {
+    fn roster_of(session: &Session, exclude: Option<&str>, relay: Option<String>) -> Roster {
         Roster {
+            relay,
             peers: session
                 .peers
                 .iter()
@@ -228,6 +261,44 @@ mod tests {
 
         // `peers` is the whole roster; `register` is the roster minus the caller.
         assert_eq!(ids(&reg.peers("s", now)), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn the_relay_is_null_unless_one_was_configured() {
+        let mut reg = Registry::new(Duration::from_secs(30));
+        let now = t0();
+        assert!(
+            reg.register("s", "a", "a:9001", now).relay.is_none(),
+            "a bootnode with no RELAY_ADDR must advertise none — that `null` is \
+             the whole guard rail: it is the behaviour before a relay existed"
+        );
+        assert!(reg.peers("s", now).relay.is_none());
+        assert!(reg.leave("s", "a", now).0.relay.is_none());
+    }
+
+    #[test]
+    fn a_configured_relay_rides_on_every_answer() {
+        let mut reg =
+            Registry::new(Duration::from_secs(30)).with_relay(Some("relay:7100".to_string()));
+        let now = t0();
+        // Every endpoint, because a replica learns the relay from whichever one
+        // it happens to call: `register` on its heartbeat, `peers` from an
+        // observer, `leave` on the way out.
+        assert_eq!(
+            reg.register("s", "a", "a:9001", now).relay.as_deref(),
+            Some("relay:7100")
+        );
+        assert_eq!(reg.peers("s", now).relay.as_deref(), Some("relay:7100"));
+        assert_eq!(
+            reg.leave("s", "a", now).0.relay.as_deref(),
+            Some("relay:7100")
+        );
+        // Including for a session nobody has ever registered in, so a replica
+        // that polls before anyone joins still learns where the relay is.
+        assert_eq!(
+            reg.peers("never-seen", now).relay.as_deref(),
+            Some("relay:7100")
+        );
     }
 
     #[test]

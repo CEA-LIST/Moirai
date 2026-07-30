@@ -15,9 +15,9 @@
 //! # API
 //!
 //! ```text
-//! POST /session/{sid}/register  {"id":..,"addr":..} -> {"peers":[..],"epoch":n}
-//! GET  /session/{sid}/peers                         -> {"peers":[..],"epoch":n}
-//! POST /session/{sid}/leave     {"id":..}           -> {"ok":b,"peers":[..],"epoch":n}
+//! POST /session/{sid}/register  {"id":..,"addr":..} -> {"peers":[..],"epoch":n,"relay":s|null}
+//! GET  /session/{sid}/peers                         -> {"peers":[..],"epoch":n,"relay":s|null}
+//! POST /session/{sid}/leave     {"id":..}           -> {"ok":b,"peers":[..],"epoch":n,"relay":s|null}
 //! GET  /health                                      -> {"status":"ok",..}
 //! ```
 //!
@@ -35,6 +35,14 @@
 //!
 //! - `BOOTNODE_PORT` — default `7000`
 //! - `BOOTNODE_TTL_SECS` — default `30`
+//! - `RELAY_ADDR` — `host:port` of a `moirai-relay`, repeated to replicas as
+//!   `relay` in every roster. Unset means `null`, which is exactly the
+//!   behaviour before a relay existed
+//!
+//! Repeating a relay address does **not** make this a data path: it is a string
+//! the bootnode was given and hands on, and it still never sees an operation.
+//! That property is why the relay is a separate service (C-D3) and why the two
+//! are not merged for the convenience of one fewer process.
 //!
 //! # Deliberately absent
 //!
@@ -78,10 +86,20 @@ fn main() {
             .expect("Invalid BOOTNODE_TTL_SECS"),
     );
 
+    // An empty `RELAY_ADDR` reads as unset, so a Compose file can blank it to
+    // get a rig with no relay without deleting the line.
+    let relay = env::var("RELAY_ADDR")
+        .ok()
+        .map(|addr| addr.trim().to_string())
+        .filter(|addr| !addr.is_empty());
+
     let addr = format!("0.0.0.0:{port}");
     let server = Server::http(&addr).expect("Failed to start bootnode HTTP server");
-    let registry = Mutex::new(Registry::new(ttl));
-    eprintln!("[bootnode] listening on {addr}, peer TTL {ttl:?}");
+    let registry = Mutex::new(Registry::new(ttl).with_relay(relay.clone()));
+    eprintln!(
+        "[bootnode] listening on {addr}, peer TTL {ttl:?}, relay {}",
+        relay.as_deref().unwrap_or("<none>")
+    );
 
     // Single-threaded on purpose. The whole workload is a handful of replicas
     // polling every few seconds; a thread pool would be more moving parts than
@@ -106,6 +124,7 @@ fn handle(mut request: Request, registry: &Mutex<Registry>) {
                     "status": "ok",
                     "sessions": registry.session_count(),
                     "ttl_secs": registry.ttl().as_secs(),
+                    "relay": registry.relay(),
                 }),
             )
         }

@@ -14,7 +14,7 @@
 //! every other relayed peer.
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -23,7 +23,8 @@ use std::thread;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::transport::{
-    CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError, TransportMessage, TransportResult,
+    write_frame, CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError, TransportMessage,
+    TransportResult,
 };
 use crate::{HashMap, HashSet};
 
@@ -178,7 +179,7 @@ where
         // Send hello if requested (for outgoing connections)
         if send_hello {
             let mut stream_clone = stream.try_clone()?;
-            send_raw(
+            write_frame(
                 &mut stream_clone,
                 &TransportMessage::Hello::<O> {
                     id: self.local_id.clone(),
@@ -195,17 +196,6 @@ where
 
         Ok(())
     }
-}
-
-/// Send a raw JSON message over a stream
-fn send_raw<O: Serialize + DeserializeOwned>(
-    stream: &mut TcpStream,
-    msg: &TransportMessage<O>,
-) -> TransportResult<()> {
-    let json = serde_json::to_string(msg)?;
-    writeln!(stream, "{}", json)?;
-    stream.flush()?;
-    Ok(())
 }
 
 impl<O> CrdtTransport for DirectTransport<O>
@@ -230,7 +220,7 @@ where
             .get_mut(peer)
             .ok_or_else(|| TransportError::PeerNotFound(peer.clone()))?;
 
-        send_raw(stream, &msg)
+        write_frame(stream, &msg)
     }
 
     fn broadcast(&mut self, msg: TransportMessage<Self::Op>) -> TransportResult<()> {
@@ -242,7 +232,7 @@ where
             }
 
             if let Some(stream) = self.connections.get_mut(&peer_id) {
-                if let Err(e) = send_raw(stream, &msg) {
+                if let Err(e) = write_frame(stream, &msg) {
                     eprintln!("[{}] Failed to send to {}: {}", self.local_id, peer_id, e);
                 }
             }

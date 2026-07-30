@@ -65,23 +65,36 @@ pub struct DiscoveredPeer {
     pub addr: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct Roster {
-    peers: Vec<DiscoveredPeer>,
+/// One answer from the directory.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Roster {
+    pub peers: Vec<DiscoveredPeer>,
     #[allow(dead_code)]
-    epoch: u64,
+    #[serde(default)]
+    pub epoch: u64,
+    /// Where the relay is, or `None` when the bootnode advertises none.
+    ///
+    /// `#[serde(default)]` so that a replica keeps working against a bootnode
+    /// that predates the field — which is the same thing as no relay being
+    /// deployed, and needs no version negotiation to say so.
+    #[serde(default)]
+    pub relay: Option<String>,
 }
 
 /// Handle on the running poll thread.
 pub struct Discovery {
-    rx: Receiver<Vec<DiscoveredPeer>>,
+    rx: Receiver<Roster>,
     leaving: Arc<AtomicBool>,
+    /// Session this replica joined. The relay needs it in its handshake, and
+    /// the node has no other copy of it.
+    session: String,
 }
 
 impl Discovery {
     /// Start polling. The first registration happens immediately, so a replica
     /// does not wait a whole interval to become visible.
     pub fn spawn(config: DiscoveryConfig) -> Self {
+        let session = config.session.clone();
         let (tx, rx) = mpsc::channel();
         let leaving = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&leaving);
@@ -132,7 +145,7 @@ impl Discovery {
                 {
                     Ok(roster) => {
                         // A closed channel means the node is gone.
-                        if tx.send(roster.peers).is_err() {
+                        if tx.send(roster).is_err() {
                             return;
                         }
                     }
@@ -152,7 +165,16 @@ impl Discovery {
             }
         });
 
-        Self { rx, leaving }
+        Self {
+            rx,
+            leaving,
+            session,
+        }
+    }
+
+    /// The session this replica registered in.
+    pub fn session(&self) -> &str {
+        &self.session
     }
 
     /// The most recent roster, or `None` if none arrived since the last call.
@@ -160,7 +182,7 @@ impl Discovery {
     /// Intermediate rosters are dropped rather than queued: only the newest
     /// one describes the session now, and a node that fell behind should catch
     /// up in one step instead of replaying stale membership.
-    pub fn latest_roster(&self) -> Option<Vec<DiscoveredPeer>> {
+    pub fn latest_roster(&self) -> Option<Roster> {
         let mut newest = None;
         loop {
             match self.rx.try_recv() {

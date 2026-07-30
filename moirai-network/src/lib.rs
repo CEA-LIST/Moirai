@@ -17,6 +17,8 @@
 //! - `dashboard.rs` - optional outbound reporting to a monitoring dashboard; off unless configured
 //! - `workload.rs` - the operation shapes the rig drives, and a seeded generator over them
 //! - `state_transfer.rs` - handing a compacted log to a replica that joins late
+//! - `relay_transport.rs` - one multiplexed session to a relay, for peers that
+//!   cannot be dialled at all
 //! - `tcp_transport.rs` - deprecated shim for the old name of `DirectTransport`
 //!
 //! Future transports (WebRTC, WebSocket) can implement the same trait.
@@ -29,6 +31,7 @@ pub mod discovery;
 pub mod generic;
 pub mod http_api;
 pub mod query;
+pub mod relay_transport;
 pub mod state_transfer;
 pub mod tcp_transport;
 pub mod transport;
