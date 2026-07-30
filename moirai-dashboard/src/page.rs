@@ -19,6 +19,9 @@ pub const PAGE: &str = r##"<!doctype html>
   :root {
     --bg:#0e1116; --panel:#161b22; --line:#262d36; --text:#c9d1d9; --dim:#7d8590;
     --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; --local:#bc8cff;
+    /* Relayed edges. Distinct from every other line on the graph, and from
+       --local, which is the ring an origination draws. */
+    --relay:#39c5cf;
   }
   * { box-sizing:border-box }
   body {
@@ -95,6 +98,9 @@ pub const PAGE: &str = r##"<!doctype html>
   .legend i.origin { background:var(--local) }
   .legend i.stale { background:#4a525c }
   .legend i.diverged { background:none; border:2px solid var(--bad) }
+  /* A bar, not a dot: the thing being described is an edge. */
+  .legend i.relayed { width:14px; height:0; border-radius:0;
+                      border-top:2px dashed var(--relay) }
   #graphwrap { position:relative; height:min(48vh,400px); min-height:240px }
   #graph { display:block; width:100%; height:100% }
   #tip { position:absolute; pointer-events:none; z-index:2; display:none;
@@ -124,6 +130,7 @@ pub const PAGE: &str = r##"<!doctype html>
       <span><i class="origin"></i>originated here</span>
       <span><i class="applied"></i>delivered &amp; applied</span>
       <span><i class="redundant"></i>discarded as redundant</span>
+      <span><i class="relayed"></i>relayed edge</span>
       <span><i class="diverged"></i>diverged</span>
       <span><i class="stale"></i>stale</span>
     </span>
@@ -167,7 +174,8 @@ pub const PAGE: &str = r##"<!doctype html>
   running from the replica that originated the operation to the replica that
   just delivered it; a ring opening out of a replica is an operation it
   originated itself. Edges are what the replicas report as their peers, dashed
-  when only one end still claims the link.
+  when only one end still claims the link, and drawn in a long teal dash when
+  the pair has no direct connection and is talking through a relay.
 </footer>
 
 <script>
@@ -330,7 +338,7 @@ const TIP = $("tip");
 const C = {};
 {
   const cs = getComputedStyle(document.documentElement);
-  for (const k of ["ok", "warn", "bad", "local", "dim", "text"]) {
+  for (const k of ["ok", "warn", "bad", "local", "relay", "dim", "text"]) {
     C[k] = cs.getPropertyValue("--" + k).trim();
   }
 }
@@ -411,16 +419,26 @@ function buildGraph(snap) {
   // a link; one end alone is a link one side has already given up on, which is
   // exactly what a severed replica looks like from the outside — so it is
   // drawn, dashed, rather than silently deleted.
+  //
+  // `relayed` if *either* end says so. Deliberately not "both": the route is a
+  // local decision, so a pair can disagree — one side reaching the other
+  // directly while the other cannot — and drawing that as direct would hide
+  // the half that is paying for a relay.
   const seen = new Map();
   for (const n of (snap.nodes || [])) {
     const i = vindex.get(n.id);
+    const routes = (n.metrics && n.metrics.routes) || {};
     for (const p of (n.peers || [])) {
       const j = vindex.get(p.id);
       if (i === undefined || j === undefined || i === j) continue;
       const key = i < j ? i + ":" + j : j + ":" + i;
       let e = seen.get(key);
-      if (!e) { e = { a: Math.min(i, j), b: Math.max(i, j), up: 0 }; seen.set(key, e); }
+      if (!e) {
+        e = { a: Math.min(i, j), b: Math.max(i, j), up: 0, relayed: false };
+        seen.set(key, e);
+      }
       if (p.status === "Connected") e.up++;
+      if (routes[p.id] === "relayed") e.relayed = true;
     }
   }
   edges = Array.from(seen.values());
@@ -462,15 +480,28 @@ function drawEdges(dash) {
     const A = verts[e.a], B = verts[e.b];
     const faded = A.stale || B.stale;
     const both = e.up >= 2;
-    CTX.setLineDash(both ? dash.solid : dash.broken);
-    CTX.lineWidth = both ? 1.4 : 1;
-    CTX.strokeStyle = both
-      ? (faded ? "#232c36" : "#31404f")
-      : (faded ? "#212831" : "#2d3947");
+    if (e.relayed) {
+      // A colour of its own as well as a dash, because "dashed" is already
+      // taken: it means one end has given up on the link. A relayed edge is
+      // working — it is just not direct — so the two must not look alike.
+      CTX.setLineDash(dash.relayed);
+      CTX.lineWidth = both ? 1.6 : 1.2;
+      CTX.strokeStyle = faded ? "#1f4c50" : C.relay;
+      CTX.globalAlpha *= faded ? 0.5 : 0.85;
+    } else {
+      CTX.setLineDash(both ? dash.solid : dash.broken);
+      CTX.lineWidth = both ? 1.4 : 1;
+      CTX.strokeStyle = both
+        ? (faded ? "#232c36" : "#31404f")
+        : (faded ? "#212831" : "#2d3947");
+    }
     CTX.beginPath();
     CTX.moveTo(A.x, A.y);
     CTX.lineTo(B.x, B.y);
     CTX.stroke();
+    if (e.relayed) {
+      CTX.globalAlpha = Math.max(0.4, Math.min(1, 9 / Math.max(verts.length, 1)));
+    }
   }
   CTX.globalAlpha = 1;
   CTX.setLineDash(dash.solid);
@@ -557,9 +588,20 @@ function drawVerts(r, dash) {
   }
 }
 
+/** How this replica reaches each peer, one line each, relayed ones first —
+    they are the interesting half and a full mesh would otherwise bury them. */
+function routeLines(routes) {
+  const entries = Object.entries(routes || {});
+  if (!entries.length) return "";
+  entries.sort((x, y) =>
+    (x[1] === "relayed" ? 0 : 1) - (y[1] === "relayed" ? 0 : 1)
+    || x[0].localeCompare(y[0]));
+  return "\n" + entries.map(([peer, route]) => "  " + route + " " + peer).join("\n");
+}
+
 function draw(ts) {
   CTX.clearRect(0, 0, vw, vh);
-  const dash = { solid: [], broken: [3, 4] };
+  const dash = { solid: [], broken: [3, 4], relayed: [7, 5] };
   if (!verts.length) {
     CTX.font = "12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
     CTX.fillStyle = C.dim;
@@ -587,7 +629,8 @@ CV.addEventListener("mousemove", (ev) => {
                  : (hit.diverged ? "diverged" : "agrees")) + "\n"
     + "digest " + (hit.digest || "–") + "\n"
     + "peers " + (m.peer_count ?? "–") + "   stable " + (m.stable_prefix ?? "–") + "\n"
-    + "retained " + (m.retained_ops ?? "–") + "   applied " + (m.ops_applied ?? "–");
+    + "retained " + (m.retained_ops ?? "–") + "   applied " + (m.ops_applied ?? "–")
+    + routeLines(m.routes);
   TIP.style.display = "block";
   TIP.style.left = Math.min(mx + 12, Math.max(0, vw - 160)) + "px";
   TIP.style.top = Math.max(0, my - 10) + "px";
