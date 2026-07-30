@@ -21,10 +21,9 @@
 //!
 //! # Direct-preferred, relay as the fallback
 //!
-//! [`CompositeTransport::connect_to_peers`] dials every known peer it is not
-//! already connected to — which is [`DirectTransport`]'s behaviour, untouched —
-//! and then routes whatever is left through the relay, if there is one. A peer's
-//! route is therefore *derived* rather than stored:
+//! [`CompositeTransport::connect_to_peers`] dials the peers that are due a direct
+//! attempt and routes whatever is still unreachable through the relay, if there
+//! is one. A peer's route is then *derived* rather than stored:
 //!
 //! ```text
 //! paused                      -> nothing goes, whatever the route
@@ -33,12 +32,27 @@
 //! else                        -> unreachable, and nothing is sent
 //! ```
 //!
-//! Deriving it is what makes the direct path win by itself. `connect_to_peers`
-//! re-dials every peer it is not connected to on every reconcile (P1-D9), so a
-//! peer that was only reachable through the relay is promoted to `Direct` the
-//! moment a dial succeeds, with no upgrade logic to write and nothing to keep in
-//! step. The design's per-peer state machine (§7) adds dial backoff and a
-//! re-probe interval on top of this; it does not replace it.
+//! Deriving it is what makes the direct path win by itself, and it is why there
+//! is no `HashMap<PeerId, Route>` here despite the design's figure 3 drawing one:
+//! a stored route would be a second copy of something two `is_connected` calls
+//! already answer, and the copy is what would go stale. A peer becomes `Direct`
+//! again the moment a dial succeeds, with no upgrade path to write.
+//!
+//! What *is* stored is `Dial` — when each peer was last attempted and how often
+//! it has failed — because that is genuinely not derivable, and without it design
+//! §7's state machine is only half implemented:
+//!
+//! ```text
+//! absent from `dials`          -> Known, due now
+//! present and not yet due      -> Relayed or Unreachable, waiting out its backoff
+//! present and due              -> Dialing on the next reconcile
+//! removed on success           -> Direct
+//! ```
+//!
+//! The backoff is what pays for the dial timeout. Without one, a peer whose
+//! address black-holes costs two seconds of the event loop *per reconcile*; with
+//! one, it costs two seconds per re-probe interval and the interval grows to the
+//! 30 s design §7 asks for.
 //!
 //! # No relay, no change
 //!
@@ -51,12 +65,56 @@
 //! [`DirectTransport`]: crate::direct_transport::DirectTransport
 //! [`RelayTransport`]: crate::relay_transport::RelayTransport
 
+use std::time::{Duration, Instant};
+
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::direct_transport::DirectTransport;
 use crate::relay_transport::RelayTransport;
 use crate::transport::{CrdtTransport, PeerId, PeerInfo, TransportMessage, TransportResult};
 use crate::HashMap;
+
+/// Shortest gap between two direct attempts on the same peer.
+///
+/// Short, because a first dial legitimately fails when the peer is not listening
+/// yet — that is P1-D9, and gating the retry on anything slower reintroduces
+/// dial-once for exactly the peers that need retrying.
+const MIN_REDIAL: Duration = Duration::from_secs(1);
+
+/// Longest gap, and therefore how often a relayed peer is re-probed for a direct
+/// path (design §7's `Relayed -> Dialing`).
+///
+/// One curve covers both cases the state machine distinguishes, which is why
+/// there is no second interval: a peer that is merely slow to start is retried in
+/// a second or two, and a peer that is genuinely unreachable settles here. It is
+/// also where hole punching attaches later — the re-probe is already periodic, so
+/// R7 replaces what the probe *does*, not when it happens.
+const MAX_REDIAL: Duration = Duration::from_secs(30);
+
+/// Per-peer direct-dial state: design §7's `Known -> Dialing -> ...`, with the
+/// backoff that keeps a doomed dial off the event loop.
+///
+/// Absent from the table means `Known` — never attempted, so due immediately.
+#[derive(Debug)]
+struct Dial {
+    last_attempt: Instant,
+    /// Consecutive failures. The only thing the backoff is computed from, so
+    /// there is no separate state field to disagree with it.
+    failures: u32,
+}
+
+impl Dial {
+    /// 1 s, 2, 4, 8, 16, then [`MAX_REDIAL`] for ever.
+    fn backoff(&self) -> Duration {
+        MIN_REDIAL
+            .saturating_mul(1u32 << self.failures.saturating_sub(1).min(5))
+            .min(MAX_REDIAL)
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_attempt) >= self.backoff()
+    }
+}
 
 /// How a peer is currently reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +152,10 @@ where
     /// session: a session that drops is re-dialled from this on the next
     /// reconcile.
     relay_endpoint: Option<(String, String)>,
+    /// Direct-dial state per peer. Only ever holds peers whose last direct
+    /// attempt *failed*: a success removes the entry, so an empty table means
+    /// every known peer is directly connected.
+    dials: HashMap<PeerId, Dial>,
 }
 
 impl<O> CompositeTransport<O>
@@ -114,7 +176,19 @@ where
             direct: DirectTransport::new(local_id, listen_port, peer_addresses)?,
             relay: None,
             relay_endpoint: None,
+            dials: HashMap::default(),
         })
+    }
+
+    /// Known peers that are neither connected nor paused — the ones a direct
+    /// attempt could still help.
+    fn dial_candidates(&self) -> Vec<PeerId> {
+        self.direct
+            .peers()
+            .into_iter()
+            .filter(|peer| !self.direct.is_connected(&peer.id) && !self.direct.is_paused(&peer.id))
+            .map(|peer| peer.id)
+            .collect()
     }
 
     /// How `peer` is reached right now.
@@ -366,7 +440,8 @@ where
         self.relay = None;
     }
 
-    /// Dial every peer that is not connected, then relay whatever is left.
+    /// Dial the peers that are due a direct attempt, then relay whatever is
+    /// still unreachable.
     ///
     /// The returned peers are the ones that became reachable in this pass,
     /// **relayed ones included**. That is not a detail: `GenericNode::connect`
@@ -377,14 +452,48 @@ where
     fn connect_to_peers(&mut self) -> TransportResult<Vec<PeerId>> {
         self.ensure_relay_session();
 
-        let mut reached = self.direct.connect_to_peers()?;
+        let now = Instant::now();
+        let mut reached = Vec::new();
+        for peer in self.dial_candidates() {
+            if !self.dials.get(&peer).is_none_or(|dial| dial.due(now)) {
+                continue;
+            }
+            match self.direct.connect_to(&peer) {
+                Ok(()) => {
+                    self.dials.remove(&peer);
+                    // A direct path has appeared, so stop paying the relay for
+                    // this peer. Left routed, every broadcast would go out twice
+                    // — harmless, since the receiver rejects the duplicate, and
+                    // wasteful in exactly the direction the relay exists to
+                    // spare.
+                    if let Some(relay) = self.relay.as_mut() {
+                        relay.unroute(&peer);
+                    }
+                    reached.push(peer);
+                }
+                Err(e) => {
+                    let dial = self.dials.entry(peer.clone()).or_insert(Dial {
+                        last_attempt: now,
+                        failures: 0,
+                    });
+                    dial.last_attempt = now;
+                    dial.failures = dial.failures.saturating_add(1);
+                    eprintln!(
+                        "[{}] direct dial to {} failed ({}); next attempt in {:?}",
+                        self.direct.local_id(),
+                        peer,
+                        e,
+                        dial.backoff()
+                    );
+                }
+            }
+        }
 
         let Some(relay) = self.relay.as_mut() else {
             return Ok(reached);
         };
-        // Whatever the direct transport knows about and could not reach. It has
-        // just tried every one of them, so this is a failed dial and not a
-        // guess.
+        // Whatever is still not directly reachable. Every one of these has had a
+        // failed dial at some point, so this is evidence rather than a guess.
         let unreachable: Vec<PeerId> = self
             .direct
             .peers()
@@ -569,5 +678,59 @@ mod tests {
         // needs it — but nothing is routed through it.
         assert!(t.relay().is_some());
         assert!(!t.relay().expect("a session").routes(&"b".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod dial_tests {
+    use super::*;
+
+    fn after(failures: u32) -> Duration {
+        Dial {
+            last_attempt: Instant::now(),
+            failures,
+        }
+        .backoff()
+    }
+
+    #[test]
+    fn the_backoff_starts_short_and_settles_at_the_re_probe_interval() {
+        // Short first, because a first dial legitimately fails when the peer is
+        // simply not listening yet (P1-D9) and that must be retried promptly.
+        assert_eq!(after(1), Duration::from_secs(1));
+        assert_eq!(after(2), Duration::from_secs(2));
+        assert_eq!(after(3), Duration::from_secs(4));
+        assert_eq!(after(4), Duration::from_secs(8));
+        assert_eq!(after(5), Duration::from_secs(16));
+        // And then it stops growing, at the interval design §7 gives for
+        // re-probing a relayed peer. One curve, two behaviours.
+        assert_eq!(after(6), MAX_REDIAL);
+        assert_eq!(after(50), MAX_REDIAL);
+        assert_eq!(after(u32::MAX), MAX_REDIAL, "and it does not overflow");
+    }
+
+    #[test]
+    fn a_peer_that_has_never_been_dialled_is_due_at_once() {
+        let dials: HashMap<PeerId, Dial> = HashMap::default();
+        assert!(
+            dials.get("b").is_none_or(|dial| dial.due(Instant::now())),
+            "absent from the table is design §7's `Known`, which is due now"
+        );
+    }
+
+    #[test]
+    fn a_failed_peer_is_not_re_dialled_before_its_backoff_expires() {
+        let now = Instant::now();
+        let dial = Dial {
+            last_attempt: now,
+            failures: 3,
+        };
+        assert!(!dial.due(now));
+        assert!(!dial.due(now + Duration::from_secs(3)));
+        assert!(
+            dial.due(now + Duration::from_secs(4)),
+            "with a two-second dial timeout, re-dialling every reconcile would \
+             spend most of the event loop waiting on a peer that is not there"
+        );
     }
 }

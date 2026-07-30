@@ -46,8 +46,8 @@ use std::time::Duration;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::transport::{
-    write_frame, CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError, TransportMessage,
-    TransportResult,
+    dial, write_frame, CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError,
+    TransportMessage, TransportResult,
 };
 use crate::{HashMap, HashSet};
 
@@ -135,8 +135,7 @@ where
     /// Fails, rather than retrying, when the relay is unreachable: the caller is
     /// already on a reconcile loop and the next pass will try again.
     pub fn connect(local_id: PeerId, session: String, relay_addr: String) -> TransportResult<Self> {
-        let target = resolve(&relay_addr)?;
-        let mut stream = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT)?;
+        let mut stream = dial(&relay_addr, CONNECT_TIMEOUT)?;
         write_frame(
             &mut stream,
             &HelloFrame {
@@ -189,6 +188,16 @@ where
         self.routed.insert(peer.clone())
     }
 
+    /// Stop routing `peer` here, because a direct path has appeared.
+    ///
+    /// Not required for correctness — the composite prefers the direct route
+    /// whatever this session thinks — but a peer left routed here receives every
+    /// broadcast twice, once per provider, and the duplicate costs an upload in
+    /// the direction the recipient list exists to spare.
+    pub fn unroute(&mut self, peer: &PeerId) -> bool {
+        self.routed.remove(peer)
+    }
+
     /// Whether `peer` is currently reached through this session.
     pub fn routes(&self, peer: &PeerId) -> bool {
         self.routed.contains(peer)
@@ -217,18 +226,6 @@ where
         }
         result
     }
-}
-
-/// Resolve `host:port` to one address.
-///
-/// [`TcpStream::connect_timeout`] takes a `SocketAddr`, not a `ToSocketAddrs`,
-/// and the timeout is what keeps a dead relay from stalling the event loop — so
-/// the resolution happens here instead of being done for us.
-fn resolve(addr: &str) -> TransportResult<std::net::SocketAddr> {
-    use std::net::ToSocketAddrs;
-    addr.to_socket_addrs()?
-        .next()
-        .ok_or_else(|| TransportError::Other(format!("`{addr}` resolved to no address")))
 }
 
 /// Read the relay session until it ends, funnelling frames into `tx`.

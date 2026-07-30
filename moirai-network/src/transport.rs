@@ -162,6 +162,44 @@ pub(crate) fn write_frame<T: Serialize>(stream: &mut TcpStream, value: &T) -> Tr
     Ok(())
 }
 
+/// Resolve `host:port` to the addresses to try, in order.
+///
+/// [`TcpStream::connect`] does this itself, and every transport here has stopped
+/// using it: a dial with no timeout is what a black-holed address turns into a
+/// stalled event loop, so the resolution has to be separate from the connect.
+///
+/// The DNS lookup itself is still unbounded. Nothing in `std` bounds it, and a
+/// hanging resolver is a different failure from an unreachable peer — worth
+/// naming rather than pretending the timeout below covers it.
+pub(crate) fn resolve(addr: &str) -> TransportResult<Vec<std::net::SocketAddr>> {
+    use std::net::ToSocketAddrs;
+    let resolved: Vec<_> = addr.to_socket_addrs()?.collect();
+    if resolved.is_empty() {
+        return Err(TransportError::Other(format!(
+            "`{addr}` resolved to no address"
+        )));
+    }
+    Ok(resolved)
+}
+
+/// Dial `addr`, giving up after `timeout`.
+///
+/// Every address the name resolves to is tried in turn, which is what
+/// [`TcpStream::connect`] does — the timeout applies per address, so a dual-stack
+/// name whose first family is unreachable still reaches the second.
+pub(crate) fn dial(addr: &str, timeout: std::time::Duration) -> TransportResult<TcpStream> {
+    let mut last = None;
+    for target in resolve(addr)? {
+        match TcpStream::connect_timeout(&target, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last
+        .map(TransportError::from)
+        .unwrap_or_else(|| TransportError::Other(format!("could not dial `{addr}`"))))
+}
+
 /// Connection status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerStatus {

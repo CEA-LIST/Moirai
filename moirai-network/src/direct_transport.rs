@@ -23,10 +23,27 @@ use std::thread;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::transport::{
-    write_frame, CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError, TransportMessage,
-    TransportResult,
+    dial, write_frame, CrdtTransport, PeerId, PeerInfo, PeerStatus, TransportError,
+    TransportMessage, TransportResult,
 };
 use crate::{HashMap, HashSet};
+
+/// How long one direct dial may take.
+///
+/// There was no timeout at all until phase 3: `TcpStream::connect` inherits the
+/// operating system's, which is minutes. That was invisible for as long as every
+/// unreachable peer in the test suite was either *refused* or a DNS failure, both
+/// of which return in milliseconds — and it is exactly wrong for the case the
+/// relay exists to serve, where a NAT'd peer's advertised address **black-holes**
+/// and the connect neither succeeds nor fails. One such peer in a roster would
+/// freeze the replica's event loop for minutes per reconcile.
+///
+/// The honest remaining cost: a dial still blocks the event loop for up to this
+/// long, so a replica with an unreachable peer pauses for two seconds every time
+/// the composite's backoff decides to re-probe it. At the 30-second cap that is
+/// under 7% of the loop, and moving the dial off the loop is a larger change than
+/// this phase needs.
+const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// TCP-based transport for CRDT replication, one stream per peer.
 pub struct DirectTransport<O>
@@ -412,23 +429,16 @@ where
     fn connect_to_peers(&mut self) -> TransportResult<Vec<PeerId>> {
         let mut connected = Vec::new();
 
-        for (peer_id, addr) in &self.peer_addresses.clone() {
-            if self.connections.contains_key(peer_id) {
+        for peer_id in self.peer_addresses.keys().cloned().collect::<Vec<_>>() {
+            if self.connections.contains_key(&peer_id) {
                 continue;
             }
-
-            match TcpStream::connect(addr) {
-                Ok(stream) => {
-                    eprintln!("[{}] Connected to {} at {}", self.local_id, peer_id, addr);
-
-                    // Register the connection and send Hello to identify ourselves
-                    self.register_connection(peer_id.clone(), stream, true)?;
-                    connected.push(peer_id.clone());
-                }
+            match self.connect_to(&peer_id) {
+                Ok(()) => connected.push(peer_id),
                 Err(e) => {
                     eprintln!(
-                        "[{}] Failed to connect to {} at {}: {}",
-                        self.local_id, peer_id, addr, e
+                        "[{}] Failed to connect to {}: {}",
+                        self.local_id, peer_id, e
                     );
                 }
             }
@@ -452,6 +462,31 @@ where
     /// Check if peer is paused
     pub fn is_paused(&self, peer: &PeerId) -> bool {
         self.paused_peers.contains(peer)
+    }
+
+    /// Dial exactly one peer, giving up after two seconds — see `DIAL_TIMEOUT`.
+    ///
+    /// Split out of [`CrdtTransport::connect_to_peers`] so that a caller which
+    /// knows *when* a peer should be retried can drive the dials itself. That
+    /// caller is [`crate::composite`], which owns the per-peer backoff; this
+    /// keeps "how to dial one peer" here and "which peers, when" there.
+    ///
+    /// `Ok(())` also covers a peer that was already connected, because the
+    /// question a caller is asking is whether there is a link now.
+    pub fn connect_to(&mut self, peer: &PeerId) -> TransportResult<()> {
+        if self.connections.contains_key(peer) {
+            return Ok(());
+        }
+        let addr = self
+            .peer_addresses
+            .get(peer)
+            .cloned()
+            .ok_or_else(|| TransportError::PeerNotFound(peer.clone()))?;
+
+        let stream = dial(&addr, DIAL_TIMEOUT)?;
+        eprintln!("[{}] Connected to {} at {}", self.local_id, peer, addr);
+        // Register the connection and send Hello to identify ourselves
+        self.register_connection(peer.clone(), stream, true)
     }
 }
 

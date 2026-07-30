@@ -3295,11 +3295,6 @@ const RELAY_PORT: u16 = 7100;
 const RELAY_HTTP_PORT: u16 = 7101;
 const BOOTNODE_PORT: u16 = 7000;
 
-/// Lines the two services print once every listener is bound. The relay's health
-/// endpoint comes up last, so waiting for it also means the frame listener is up.
-const RELAY_READY_LINE: &str = "[relay] health on";
-const BOOTNODE_READY_LINE: &str = "[bootnode] listening on";
-
 /// How long a relay-less pair is watched to confirm it does *not* converge.
 ///
 /// The negative control's whole value is in this being long enough to be
@@ -3307,6 +3302,33 @@ const BOOTNODE_READY_LINE: &str = "[bootnode] listening on";
 /// there is no other path at all, so nothing is racing: this is a margin, not a
 /// deadline.
 const NO_CONVERGENCE_WINDOW: Duration = Duration::from_secs(15);
+
+/// What distinguishes the two service containers. Bundled rather than passed as
+/// seven arguments, and the alias is the name: both are addressed by the service
+/// they are.
+struct ServiceSpec {
+    name: &'static str,
+    command: &'static str,
+    /// Printed once every listener is bound.
+    ready_line: &'static str,
+    http_port: u16,
+}
+
+const RELAY_SPEC: ServiceSpec = ServiceSpec {
+    name: "relay",
+    command: "moirai-relay",
+    // The health endpoint comes up after the frame listener, so waiting for it
+    // means both are bound.
+    ready_line: "[relay] health on",
+    http_port: RELAY_HTTP_PORT,
+};
+
+const BOOTNODE_SPEC: ServiceSpec = ServiceSpec {
+    name: "bootnode",
+    command: "moirai-bootnode",
+    ready_line: "[bootnode] listening on",
+    http_port: BOOTNODE_PORT,
+};
 
 /// A container that is not a replica: the bootnode, or the relay.
 struct Service {
@@ -3416,41 +3438,37 @@ impl RelayRig {
         }
     }
 
-    /// Start one service and attach it to every island under `alias`.
+    /// Start one service and attach it to every island under its own name.
     fn start_service(
         &mut self,
-        name: &'static str,
-        command: &str,
-        ready_line: &str,
-        http_port: u16,
+        spec: &ServiceSpec,
         env: &[(&str, String)],
-        alias: &str,
         islands: &[&str],
     ) -> Result<Service> {
         let (image_name, tag) = self.image_parts();
         let mut request = GenericImage::new(image_name, tag)
-            .with_exposed_port(http_port.tcp())
-            .with_wait_for(WaitFor::message_on_stderr(ready_line))
+            .with_exposed_port(spec.http_port.tcp())
+            .with_wait_for(WaitFor::message_on_stderr(spec.ready_line))
             .with_network(self.service_net())
-            .with_cmd(vec![command]);
+            .with_cmd(vec![spec.command]);
         for (key, value) in env {
             request = request.with_env_var(*key, value);
         }
         let container = request
             .start()
-            .with_context(|| format!("start the {name} container"))?;
+            .with_context(|| format!("start the {} container", spec.name))?;
         let container_id = container.id().to_string();
 
         for island in islands {
             self.networks
-                .connect(&self.island_net(island), &container_id, alias)?;
+                .connect(&self.island_net(island), &container_id, spec.name)?;
         }
 
         let host_port = container
-            .get_host_port_ipv4(http_port.tcp())
-            .with_context(|| format!("read the published port of {name}"))?;
+            .get_host_port_ipv4(spec.http_port.tcp())
+            .with_context(|| format!("read the published port of {}", spec.name))?;
         Ok(Service {
-            name,
+            name: spec.name,
             container,
             http_base: format!("http://127.0.0.1:{host_port}"),
         })
@@ -3458,10 +3476,7 @@ impl RelayRig {
 
     fn start_relay(&mut self, islands: &[&str]) -> Result<()> {
         let relay = self.start_service(
-            "relay",
-            "moirai-relay",
-            RELAY_READY_LINE,
-            RELAY_HTTP_PORT,
+            &RELAY_SPEC,
             &[
                 ("RELAY_PORT", RELAY_PORT.to_string()),
                 ("RELAY_HTTP_PORT", RELAY_HTTP_PORT.to_string()),
@@ -3469,7 +3484,6 @@ impl RelayRig {
                 // always a routing question, and the answer is in this log.
                 ("RELAY_VERBOSE", "1".to_string()),
             ],
-            "relay",
             islands,
         )?;
         self.relay = Some(relay);
@@ -3478,10 +3492,7 @@ impl RelayRig {
 
     fn start_bootnode(&mut self, islands: &[&str]) -> Result<()> {
         let bootnode = self.start_service(
-            "bootnode",
-            "moirai-bootnode",
-            BOOTNODE_READY_LINE,
-            BOOTNODE_PORT,
+            &BOOTNODE_SPEC,
             &[
                 ("BOOTNODE_PORT", BOOTNODE_PORT.to_string()),
                 ("BOOTNODE_TTL_SECS", "10".to_string()),
@@ -3489,7 +3500,6 @@ impl RelayRig {
                 // own: the directory tells it where one is.
                 ("RELAY_ADDR", format!("relay:{RELAY_PORT}")),
             ],
-            "bootnode",
             islands,
         )?;
         self.bootnode = Some(bootnode);
