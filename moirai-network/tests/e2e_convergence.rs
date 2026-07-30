@@ -3853,3 +3853,91 @@ fn p3_a_joiner_over_the_relay_receives_history() {
         "the joiner did not receive what happened before it arrived: {agreed}"
     );
 }
+
+/// **P3-4** — a broadcast to N relayed peers is one frame up and N frames down.
+///
+/// R4's claim, observed rather than asserted at the wire: `frames_in` and
+/// `frames_out` on the relay's `/health`. Three replicas on three islands, so
+/// every pair is relayed and one broadcast has two recipients.
+///
+/// Why this matters enough to test end to end when `routing.rs` already tests it
+/// exactly: the ratio only holds if the *replica* uses the array form. A
+/// `RelayTransport::broadcast` that looped over `send` would pass every unit
+/// test in the relay crate and cost a replica on a domestic uplink N uploads per
+/// operation, which is the thing the recipient list exists to avoid.
+#[test]
+fn p3_fan_out_is_one_upload_and_n_downloads() {
+    let Some(mut rig) = relay_rig("P3-4", &["one", "two", "three"]) else {
+        return;
+    };
+    rig.start_replica("a", &["one"]).expect("P3-4: start a");
+    rig.start_replica("b", &["two"]).expect("P3-4: start b");
+    rig.start_replica("c", &["three"]).expect("P3-4: start c");
+
+    for (node, peer) in [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "a"),
+        ("b", "c"),
+        ("c", "a"),
+        ("c", "b"),
+    ] {
+        await_route(rig.node(node), peer, "relayed", MESH_TIMEOUT)
+            .unwrap_or_else(|e| panic!("P3-4: {e:#}\n{}", rig.diagnostics()));
+    }
+
+    // Settle first. A replica with no history re-asks every peer for one every
+    // two seconds, and those are *unicast* frames: counting the ratio while they
+    // are still flying would measure the retry, not the fan-out.
+    apply_ok(
+        rig.node("a"),
+        ops::object_update("name", ops::string_insert('x', 0)),
+    );
+    assert_converged(&rig.nodes(), CONVERGE_TIMEOUT);
+    for node in rig.nodes() {
+        poll_until(CONVERGE_TIMEOUT, || {
+            Ok((metric(node, "delivered_ops")? > 0).then_some(()))
+        })
+        .unwrap_or_else(|e| {
+            panic!(
+                "P3-4: `{}` never delivered anything, so the state-transfer retry \
+                 never stops{}",
+                node.id(),
+                e.map(|e| format!(": {e:#}")).unwrap_or_default()
+            )
+        });
+    }
+
+    let before = rig.relay_health().expect("P3-4: relay health");
+    let (in_before, out_before) = (
+        before["frames_in"].as_u64().unwrap_or(0),
+        before["frames_out"].as_u64().unwrap_or(0),
+    );
+
+    apply_ok(
+        rig.node("a"),
+        ops::object_update("name", ops::string_insert('y', 1)),
+    );
+    let agreed = assert_converged(&rig.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&agreed, "name").unwrap(), "xy");
+
+    let after = rig.relay_health().expect("P3-4: relay health");
+    let (frames_in, frames_out) = (
+        after["frames_in"].as_u64().unwrap_or(0) - in_before,
+        after["frames_out"].as_u64().unwrap_or(0) - out_before,
+    );
+    assert!(
+        frames_in >= 1 && frames_out >= 2,
+        "one operation on `a` reached `b` and `c`, so the relay must have seen \
+         at least one frame in and two out; it saw {frames_in} in and \
+         {frames_out} out\n{after}"
+    );
+    assert_eq!(
+        frames_out,
+        frames_in * 2,
+        "every frame in this window was a broadcast to two relayed peers, so \
+         each one must fan out to exactly two: {frames_in} in produced \
+         {frames_out} out. A ratio of 1 means the replica is writing one frame \
+         per recipient and the recipient list is not being used\n{after}"
+    );
+}
