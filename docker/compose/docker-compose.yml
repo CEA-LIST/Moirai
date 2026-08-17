@@ -1,118 +1,63 @@
-# The rig: a bootnode, N replicas that were never told about each other, an
-# observer that samples them into CSV, and — optionally — a live dashboard.
+# The rig: a bootnode, N replicas that were never told about each other, a relay
+# for the pair that has no route between them, an observer that samples the lot
+# into CSV, and — optionally — a live dashboard.
 #
 # There is no `PEERS` anywhere in this file. That is the point: every replica
-# registers its own address with the directory, reads back the roster, and
-# dials it. Membership is therefore something the run *has* rather than
-# something it was configured with, which is what makes join and leave
-# measurable.
+# registers its own address with the directory, reads back the roster, and dials
+# it. Membership is therefore something the run *has* rather than something it
+# was configured with, which is what makes join and leave measurable.
 #
 # # Running it
 #
-# The image is the one the e2e harness already uses, and it carries all three
-# binaries. Build it from the directory holding both checkouts:
+# `docker/rig.sh` is the entry point. It builds the image, generates the CRDT
+# crate the image is built from, starts the stack and prints the URLs:
 #
-#     docker build -f moirai/docker/e2e/Dockerfile -t moirai-json-crdt:test .
+#     ../rig.sh up --nodes 5 --dashboard
+#     ../rig.sh --help
 #
-# Then, from this directory:
+# Driving `docker compose` directly works too, and is what the scripts under
+# `experiments/` do — the knobs are the `${...}` defaults below. The one thing
+# to know if you go that way is that the image is built from the directory
+# holding *both* the moirai and arachne checkouts, because it copies from each.
+# Reconstructing that from the Dockerfile is most of why rig.sh exists.
 #
-#     docker compose up -d --scale node=5
-#     docker compose logs -f observer
-#     cat runs/metrics.csv
-#     docker compose down -v
+# # Two bridges, and why the second one
 #
-# # Watching it, optionally
+# `islander` sits on `island` and nowhere else, so it shares no network with the
+# `node` replicas: Docker will not even resolve the address the bootnode hands
+# out for it. Everything that pair replicates goes through the relay, which is
+# on both. That is what makes a plain `up` demonstrate a relayed edge rather
+# than merely being able to.
 #
-# The replicas run perfectly well with nobody watching, and the dashboard is a
-# *second* command that does not touch them:
-#
-#     docker compose --profile dashboard up -d dashboard
-#     xdg-open http://localhost:8090
-#
-# It works in that order — replicas first, dashboard afterwards — because
-# reporting is outbound and retried with backoff. A replica whose POST fails
-# because nothing is listening yet backs off and keeps going; when the
-# dashboard appears, the next report reaches it and carries the replica's whole
-# identity and state, so nothing has to be replayed and no replica is restarted.
-# The same property is why the dashboard can be stopped and started again
-# mid-run.
-#
-# For a rig with genuinely zero reporting overhead, blank the variable:
-#
-#     DASHBOARD_URL= docker compose up -d --scale node=5
-#
-# `DASHBOARD_URL` unset or empty means the replica starts no reporting thread,
-# makes no request, and does not collect a delivery trace — see
-# `moirai-network/src/dashboard.rs`. `experiments/t-dashboard-overhead/` is the
-# measurement of what the difference costs.
-#
-# # Driving it
-#
-#     docker compose --profile load up -d driver          # 1 op/replica/tick
-#
-# or, for the seeded random workload the e2e suite's R1 replays:
-#
-#     docker compose exec -T dashboard moirai-dashboard --random \
-#         --seed 7 --rate 5 --nodes http://moirai-node-1:8081,http://moirai-node-2:8081
-#
-# On a host whose login shell has stale group credentials, prefix with
-# `sg docker -c "..."`.
-#
-# # Addressing a specific replica
-#
-# With `--scale` the containers are named `moirai-node-1` .. `moirai-node-N`
-# and each replica's id is its own hostname, which is also how peers reach it.
-# So:
-#
-#     docker compose exec --index 3 node curl -s localhost:8081/api/metrics
-#     docker network disconnect moirai_session moirai-node-3      # E4: go silent
-#     docker network connect moirai_session moirai-node-3         # and back
-#
-# # The relayed edge
-#
-# `docker compose up` brings up one replica, `islander`, on a second bridge and
-# nowhere else. It shares no network with the `node` replicas, so there is no
-# path between them in either direction — Docker will not even resolve the
-# address the bootnode hands out. Everything that pair replicates goes through
-# the relay, which is on both bridges.
-#
-# The demo:
-#
-#     docker compose exec -T node curl -s localhost:8081/api/metrics | jq .routes
-#     # -> { "islander": "relayed", "moirai-node-2": "direct", ... }
-#     docker compose exec -T relay curl -s localhost:7101/health
-#     # -> {"sessions":N,"frames_in":..,"frames_out":..,..}
-#
-# and the control that makes it mean something:
-#
-#     docker compose stop relay
-#     docker compose exec -T node curl -s -X POST localhost:8081/api/op -d '...'
-#     docker compose exec -T islander curl -s localhost:8081/api/state
-#     # -> unchanged, because there is no other path
-#     docker compose start relay      # and it catches up
-#
-# For a rig with no relay at all, blank the address on the bootnode — the
-# replicas are configured with nothing to change:
-#
-#     RELAY_ADDR= docker compose up -d
-#
-# `islander` is then permanently unreachable and reads `unreachable` in `routes`,
-# which is the pre-relay behaviour made visible.
-#
-# # One network for the mesh, and what that costs
-#
-# The `node` replicas share a single user-defined bridge, so `docker network
-# disconnect` severs one for real. It severs it from the observer too, because the
-# control plane rides the same network. That is fine for E4, where the interesting
-# curve is what happens to the *survivors*. It is not enough for E6, where both
-# halves of a partition must keep writing: use the per-peer `POST /api/pause/<id>`
-# on the replicas for that, or the island rig in
-# `moirai-network/tests/e2e_convergence.rs`, which gives each replica a network of
-# its own for exactly this reason.
+# The `node` replicas share the other bridge, so `docker network disconnect`
+# severs one for real — including from the observer, because the control plane
+# rides the same network. That is fine for E4, whose curve is about the
+# survivors. It is not enough for E6, where both halves of a partition must keep
+# writing: use the per-peer `POST /api/pause/<id>` on the replicas, or the island
+# rig in `moirai-network/tests/e2e_convergence.rs`, which gives each replica a
+# network of its own for exactly this reason.
 
 name: moirai
 
 x-image: &image ${MOIRAI_IMAGE:-moirai-json-crdt:test}
+
+# Everything a replica needs that is *not* its identity or its topology. Shared
+# by `node` and `islander` so the two differ only where they are meant to: the
+# island replica is the same replica on a different bridge, and a knob that
+# drifted between them would quietly stop being the same experiment.
+x-replica-env: &replica-env
+  LISTEN_PORT: "9001"
+  HTTP_PORT: "8081"
+  BOOTNODE_URL: "http://bootnode:7000"
+  SESSION_ID: "${SESSION_ID:-compose}"
+  RECONCILE_SECS: "${RECONCILE_SECS:-5}"
+  # `-` rather than `:-`, so an explicitly empty `DASHBOARD_URL=` in the
+  # environment wins and gives a rig with no reporting at all. Pointing at a
+  # dashboard that is not running costs one failed outbound POST every few
+  # seconds, which is what makes attaching one later a second command rather
+  # than a restart.
+  DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
+  PEERS: ""
 
 services:
   # Directory only. It never sees an operation and holds no model state, so it
@@ -173,18 +118,7 @@ services:
       bootnode:
         condition: service_healthy
     environment:
-      LISTEN_PORT: "9001"
-      HTTP_PORT: "8081"
-      BOOTNODE_URL: "http://bootnode:7000"
-      SESSION_ID: "${SESSION_ID:-compose}"
-      RECONCILE_SECS: "${RECONCILE_SECS:-5}"
-      # `-` rather than `:-`, so an explicitly empty `DASHBOARD_URL=` in the
-      # environment wins and gives a rig with no reporting at all. Pointing at
-      # a dashboard that is not running costs one failed outbound POST every
-      # few seconds, which is what makes attaching one later a second command
-      # rather than a restart.
-      DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
-      PEERS: ""
+      <<: *replica-env
       # Blanked deliberately. The image sets `REPLICA_ID=a` as a convenience
       # for `docker run`, and inheriting it here gave every scaled replica the
       # same id: five containers registered as `a`, the directory upserted them
@@ -218,14 +152,8 @@ services:
       relay:
         condition: service_healthy
     environment:
+      <<: *replica-env
       REPLICA_ID: "islander"
-      LISTEN_PORT: "9001"
-      HTTP_PORT: "8081"
-      BOOTNODE_URL: "http://bootnode:7000"
-      SESSION_ID: "${SESSION_ID:-compose}"
-      RECONCILE_SECS: "${RECONCILE_SECS:-5}"
-      DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
-      PEERS: ""
       # The address it advertises resolves on `island` and nowhere else, which is
       # what makes the absence of a route real rather than assumed: a `node`
       # replica cannot even look this name up.
