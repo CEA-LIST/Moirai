@@ -207,10 +207,28 @@ fn route(url: &str) -> Option<Route> {
     }
 }
 
+/// Largest request body the directory will read.
+///
+/// A register or leave payload is an id and an address — a few hundred bytes at
+/// the outside. The cap matters more here than the size suggests: request
+/// handling is single-threaded, and `tiny_http` hands the body over as a lazy
+/// reader, so one client streaming an endless body does not merely exhaust
+/// memory, it stalls discovery for every replica in every session until it
+/// stops. Bounding the read turns that from an outage into a 400.
+const MAX_BODY_BYTES: u64 = 64 * 1024;
+
 fn read_body<T: for<'de> Deserialize<'de>>(request: &mut Request) -> Result<T, String> {
     let mut raw = String::new();
-    Read::read_to_string(&mut request.as_reader(), &mut raw)
+    // One byte past the limit, so an oversized body is detected rather than
+    // silently truncated into something that might still parse.
+    request
+        .as_reader()
+        .take(MAX_BODY_BYTES + 1)
+        .read_to_string(&mut raw)
         .map_err(|e| format!("failed to read body: {e}"))?;
+    if raw.len() as u64 > MAX_BODY_BYTES {
+        return Err(format!("body exceeds the {MAX_BODY_BYTES} byte limit"));
+    }
     serde_json::from_str(&raw).map_err(|e| format!("invalid JSON body: {e}"))
 }
 

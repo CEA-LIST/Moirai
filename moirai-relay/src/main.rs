@@ -52,7 +52,7 @@
 mod routing;
 
 use std::env;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -99,6 +99,43 @@ fn main() {
     }
 }
 
+/// Largest frame the relay will read, in bytes.
+///
+/// The relay never parses `msg`, so this is a bound on what replicas are
+/// allowed to send rather than on anything the relay understands: comfortably
+/// above an operation batch, comfortably below what one connection should be
+/// able to cost. Without it `read_line` grows a single allocation until the
+/// process dies, and a client does not even have to send a newline to do it —
+/// the connection is unauthenticated, so that is a one-line denial of service.
+const MAX_FRAME_BYTES: u64 = 1024 * 1024;
+
+/// Read one newline-terminated frame. `Ok(None)` is a clean end of stream.
+///
+/// Over-long frames are an error rather than a truncation: the remainder would
+/// be parsed as the next frame, so a truncating reader turns one oversized
+/// write into a stream of nonsense the relay would faithfully forward.
+fn read_frame<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = String::new();
+    let read = reader
+        .by_ref()
+        .take(MAX_FRAME_BYTES + 1)
+        .read_line(&mut line)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if read as u64 > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame exceeds the {MAX_FRAME_BYTES} byte limit"),
+        ));
+    }
+    // `BufRead::lines` strips the terminator and this stands in for it.
+    while line.ends_with('\n') || line.ends_with('\r') {
+        line.pop();
+    }
+    Ok(Some(line))
+}
+
 /// Read one connection until it ends: handshake, then frames.
 fn serve(stream: TcpStream, sessions: Arc<Mutex<Sessions>>, verbose: bool) {
     let who = stream
@@ -113,11 +150,11 @@ fn serve(stream: TcpStream, sessions: Arc<Mutex<Sessions>>, verbose: bool) {
             return;
         }
     };
-    let mut lines = BufReader::new(read_half).lines();
+    let mut reader = BufReader::new(read_half);
 
     // --- handshake ---
-    let hello = match lines.next() {
-        Some(Ok(line)) => match serde_json::from_str::<HelloFrame>(&line) {
+    let hello = match read_frame(&mut reader) {
+        Ok(Some(line)) => match serde_json::from_str::<HelloFrame>(&line) {
             Ok(frame) => frame.hello,
             Err(e) => {
                 // Deliberately quiet about the content: it is somebody's traffic.
@@ -128,11 +165,11 @@ fn serve(stream: TcpStream, sessions: Arc<Mutex<Sessions>>, verbose: bool) {
                 return;
             }
         },
-        Some(Err(e)) => {
+        Ok(None) => return,
+        Err(e) => {
             eprintln!("[relay] {who}: read failed before the hello: {e}");
             return;
         }
-        None => return,
     };
     let label = format!("{}/{}", hello.session_id, hello.replica_id);
 
@@ -149,9 +186,10 @@ fn serve(stream: TcpStream, sessions: Arc<Mutex<Sessions>>, verbose: bool) {
     spawn_writer(stream, rx);
 
     // --- frames ---
-    for line in lines {
-        let line = match line {
-            Ok(line) => line,
+    loop {
+        let line = match read_frame(&mut reader) {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
             Err(e) => {
                 eprintln!("[relay] {label}: read error: {e}");
                 break;
@@ -302,6 +340,39 @@ fn env_u64(name: &str, fallback: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frame_is_read_without_its_terminator() {
+        let mut input = &b"{\"a\":1}\n{\"b\":2}\n"[..];
+        assert_eq!(
+            read_frame(&mut input).unwrap().as_deref(),
+            Some("{\"a\":1}")
+        );
+        assert_eq!(
+            read_frame(&mut input).unwrap().as_deref(),
+            Some("{\"b\":2}")
+        );
+        assert_eq!(read_frame(&mut input).unwrap(), None, "clean end of stream");
+    }
+
+    #[test]
+    fn an_oversized_frame_is_refused_rather_than_buffered() {
+        // The hostile shape is the one with no terminator at all: `read_line`
+        // would grow this until the process died.
+        let flood = vec![b'x'; (MAX_FRAME_BYTES + 64) as usize];
+        let err = read_frame(&mut flood.as_slice()).expect_err("must not be accepted");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_frame_at_the_limit_is_still_accepted() {
+        let mut line = vec![b'x'; (MAX_FRAME_BYTES - 1) as usize];
+        line.push(b'\n');
+        let frame = read_frame(&mut line.as_slice())
+            .expect("a frame inside the limit is not an error")
+            .expect("and is not an end of stream");
+        assert_eq!(frame.len() as u64, MAX_FRAME_BYTES - 1);
+    }
 
     #[test]
     fn the_sweep_interval_stays_inside_its_bounds() {
