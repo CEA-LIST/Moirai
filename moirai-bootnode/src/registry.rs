@@ -165,7 +165,22 @@ impl Registry {
     pub fn leave(&mut self, session: &str, id: &str, now: Instant) -> (Roster, bool) {
         self.sweep(now);
         let relay = self.relay.clone();
-        let session = self.session_mut(session);
+        // A non-creating lookup, for the same reason `peers` uses one: saying
+        // goodbye to a session that does not exist must not bring it into
+        // being. Session ids come straight off the request path and nothing
+        // authenticates them, so a creating lookup here lets any caller grow
+        // the registry without bound — and since every request sweeps every
+        // session, that cost is paid by every replica on every call.
+        let Some(session) = self.session_mut_if_present(session) else {
+            return (
+                Roster {
+                    peers: Vec::new(),
+                    epoch: 0,
+                    relay,
+                },
+                false,
+            );
+        };
         let removed = match session.index_of(id) {
             Some(pos) => {
                 session.peers.remove(pos);
@@ -220,6 +235,13 @@ impl Registry {
     fn session_ref(&self, name: &str) -> Option<&Session> {
         self.sessions
             .iter()
+            .find(|(id, _)| id == name)
+            .map(|(_, session)| session)
+    }
+
+    fn session_mut_if_present(&mut self, name: &str) -> Option<&mut Session> {
+        self.sessions
+            .iter_mut()
             .find(|(id, _)| id == name)
             .map(|(_, session)| session)
     }
@@ -319,6 +341,18 @@ mod tests {
         assert!(roster.peers.is_empty());
         assert_eq!(roster.epoch, 0);
         // Reading must not conjure the session into existence.
+        assert_eq!(reg.session_count(), 0);
+    }
+
+    #[test]
+    fn leaving_an_unknown_session_does_not_conjure_it() {
+        let mut reg = Registry::new(Duration::from_secs(30));
+        let (roster, removed) = reg.leave("never-seen", "a", t0());
+        assert!(!removed);
+        assert!(roster.peers.is_empty());
+        assert_eq!(roster.epoch, 0);
+        // The registry is unauthenticated and swept in full on every request,
+        // so an entry created by a leave would be growth anyone could drive.
         assert_eq!(reg.session_count(), 0);
     }
 
