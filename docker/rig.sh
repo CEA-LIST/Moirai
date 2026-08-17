@@ -26,8 +26,12 @@ GENERATED_CRATE="$ARACHNE_ROOT/generated/json_crdt"
 ECORE="$ARACHNE_ROOT/examples/json.ecore"
 
 NODES=3
-WITH_DASHBOARD=0
-WITH_LOAD=0
+# The rig is nearly always wanted whole: replicas, a dashboard to watch them
+# converge, and a driver producing the edits that make the dashboard worth
+# watching. So that is what a bare `rig.sh` gives you, and the flags take parts
+# away rather than adding them back.
+WITH_DASHBOARD=1
+WITH_LOAD=1
 FORCE_REBUILD=0
 FORCE_REGENERATE=0
 ALLOW_DIRTY_REGEN=0
@@ -49,8 +53,11 @@ usage() {
     cat <<'EOF'
 rig.sh — bring the Moirai Compose rig up and down as one operation.
 
+  rig.sh            start everything: replicas, relay, dashboard, driver
+  rig.sh down       stop it and remove its volumes and networks
+
 Usage:
-  rig.sh up [options]        preflight, build/generate as needed, start the stack
+  rig.sh [up] [options]      preflight, build/generate as needed, start the stack
   rig.sh down [options]      stop the stack and remove its volumes and networks
   rig.sh status              what is running, and whether it is healthy
   rig.sh urls                print the reachable URLs
@@ -60,8 +67,8 @@ Usage:
 
 Options for `up`:
   -n, --nodes N          number of `node` replicas (default: 3)
-      --dashboard        also start the dashboard and print its URL
-      --load             also start the load driver (one op per replica per tick)
+      --no-dashboard     do not start the dashboard
+      --no-load          do not start the load driver (a quiet, idle rig)
       --rebuild          rebuild the replica image even if it already exists
       --regenerate       regenerate the CRDT crate even if it is already present
       --allow-dirty      permit --regenerate to overwrite locally modified files
@@ -80,8 +87,9 @@ Notes:
   --regenerate over locally modified files refuses unless you add --allow-dirty.
 
 Examples:
-  rig.sh up --nodes 5 --dashboard
-  rig.sh up --dashboard --load
+  rig.sh                     the whole rig, dashboard and driver included
+  rig.sh --nodes 5           the same, with five replicas
+  rig.sh --no-load           up and idle, so you can drive it by hand
   rig.sh down
 EOF
 }
@@ -252,7 +260,7 @@ print_urls() {
     if [ "$WITH_DASHBOARD" -eq 1 ] || compose ps --services --filter status=running 2>/dev/null | grep -qx dashboard; then
         printf '  dashboard   http://localhost:%s\n' "$port"
     else
-        printf '  dashboard   not running (bring it up with: %s up --dashboard)\n' "$(basename "$0")"
+        printf '  dashboard   not running (started by default; %s without --no-dashboard)\n' "$(basename "$0")"
     fi
     # Only the dashboard publishes a host port; the replicas are reached through
     # Compose, which keeps the rig's port usage to exactly one.
@@ -321,11 +329,14 @@ cmd_logs() {
 # --------------------------------------------------------------------------
 
 main() {
-    local command="${1:-}"
-    [ "$#" -gt 0 ] && shift || true
-
-    case "$command" in
-        ""|-h|--help|help) usage; exit 0 ;;
+    local command
+    case "${1:-}" in
+        -h|--help|help) usage; exit 0 ;;
+        # A bare `rig.sh`, or one that leads with an option, means `up`. That is
+        # what is wanted nearly every time, so it should not have to be said.
+        # Nothing is shifted here: the option still has to reach the parser.
+        ""|-*)          command=up ;;
+        *)              command="$1"; shift ;;
     esac
 
     local rest=()
@@ -339,6 +350,10 @@ main() {
                 esac
                 [ "$NODES" -ge 1 ] || die "--nodes must be at least 1"
                 shift 2 ;;
+            --no-dashboard) WITH_DASHBOARD=0; shift ;;
+            --no-load)      WITH_LOAD=0; shift ;;
+            # Both are the default now; accepted so that older invocations and
+            # anything written down elsewhere keep working.
             --dashboard)    WITH_DASHBOARD=1; shift ;;
             --load)         WITH_LOAD=1; shift ;;
             --rebuild)      FORCE_REBUILD=1; shift ;;
