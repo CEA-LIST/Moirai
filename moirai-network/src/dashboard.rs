@@ -261,6 +261,9 @@ impl<O: Serialize + Send + 'static> DashboardSink<O> {
                 }
                 last_flush = Instant::now();
 
+                // Counted before the move, because a failed POST drops exactly
+                // these records and there is nothing left to measure afterwards.
+                let batch = pending.len() as u64;
                 let payload = encode(
                     &config.replica_id,
                     latest.as_ref(),
@@ -290,6 +293,12 @@ impl<O: Serialize + Send + 'static> DashboardSink<O> {
                         // dashboard started after the rig must not need the rig
                         // restarted. Records that arrive during the sleep fill
                         // the queue and then drop, which is counted.
+                        //
+                        // The batch this payload carried is discarded with it,
+                        // so it is counted here for the same reason: a
+                        // dashboard has to be able to tell a quiet replica from
+                        // one whose reports never arrived.
+                        counter.fetch_add(batch, Ordering::Relaxed);
                         thread::sleep(backoff);
                         backoff = (backoff * 2).min(MAX_BACKOFF);
                     }
@@ -446,6 +455,31 @@ mod tests {
             sink.dropped() > 0,
             "the queue is {QUEUE_DEPTH} deep and {} records were offered",
             QUEUE_DEPTH * 4
+        );
+    }
+
+    #[test]
+    fn a_failed_report_counts_the_batch_it_discarded() {
+        // Nothing listens on port 1, so every POST fails. Far fewer records
+        // than the queue holds are offered, so back-pressure cannot account for
+        // any loss and the discarded batch is the only path to a count.
+        let sink = DashboardSink::<String>::spawn(DashboardConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            replica_id: "a".to_string(),
+            interval: Duration::from_millis(10),
+            state_interval: Duration::from_millis(10),
+        });
+        for n in 0..4 {
+            sink.offer_event(a_record(n));
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while sink.dropped() == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            sink.dropped(),
+            4,
+            "a report that never reached the dashboard must still be counted"
         );
     }
 
