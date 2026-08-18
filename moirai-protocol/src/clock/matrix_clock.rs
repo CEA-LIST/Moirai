@@ -120,6 +120,30 @@ impl MatrixClock {
     /// Incremental SVV recomputation that only rescans columns whose value can advance
     /// relative to the provided `last_svv`. It stops a column scan early as soon as a value
     /// less than or equal to the previous minimum is found, since the minimum then cannot grow.
+    ///
+    /// # The result never goes below `last_svv`
+    ///
+    /// Which is what "can advance" above means, and what the rest of the system
+    /// reads this frontier as. [`add_replica`](Self::add_replica) seeds a member
+    /// that appears mid-session with a row of zeros, and a row stays at zero
+    /// until that member *originates* an operation — so a joiner that adopts a
+    /// snapshot and then never writes would otherwise pull every column back to
+    /// zero. Measured: a settled three-member session went from a stable prefix
+    /// of 615 to 0 in three seconds when a fourth member joined and stayed
+    /// quiet.
+    ///
+    /// A retreat is not a safely conservative answer, it is a false one. Once a
+    /// version has been reported stable, `Tcsb::prune_outbox` has deleted the
+    /// events at or below it and the CRDT log has folded them into its
+    /// tag-free stable state; nothing can put them back. A frontier that then
+    /// sits below them breaks the invariant `Tcsb::snapshot` transfers on —
+    /// that the whole outbox *is* the suffix above the stable version — and a
+    /// joiner would be handed a compacted state alongside a suffix that does
+    /// not start where the state ends.
+    ///
+    /// Holding the column instead degrades to the silent-member case: the
+    /// frontier stops advancing until the new member speaks, and everything
+    /// already compacted stays compacted.
     pub fn column_wise_min_incremental(
         &self,
         last_svv: &Version,
@@ -128,12 +152,17 @@ impl MatrixClock {
         let mut svv = last_svv.clone();
 
         for col_idx in updated_columns {
+            let previous = svv.seq_by_idx(*col_idx);
             let mut min_value = Seq::MAX;
             for ver in self.entries.0.iter() {
                 let entry = ver.seq_by_idx(*col_idx);
-                if entry == svv.seq_by_idx(*col_idx) {
-                    // Cannot advance this column's minimum
-                    min_value = entry;
+                if entry <= previous {
+                    // Cannot advance this column's minimum. The comparison used
+                    // to be `==`, so a row strictly *below* the baseline fell
+                    // through to the running minimum instead of stopping the
+                    // scan — which both let the frontier retreat and made the
+                    // answer depend on the order the rows happened to be in.
+                    min_value = previous;
                     break;
                 }
                 if entry < min_value {
@@ -289,5 +318,44 @@ mod tests {
             incremental,
             Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0])
         );
+    }
+
+    /// A member that appears mid-session and then says nothing must not pull
+    /// the stable frontier back over operations that have already been
+    /// compacted away. See `column_wise_min_incremental`.
+    #[test]
+    fn column_wise_min_incremental_holds_behind_a_silent_new_member() {
+        let mut interner = Interner::new();
+        interner.intern("A");
+        interner.intern("B");
+
+        let mut mc = MatrixClock::build(
+            interner.resolver().clone(),
+            ReplicaIdx(0),
+            &[&[4, 4], &[4, 4]],
+        );
+
+        // C joins and never originates an operation, so `add_replica` leaves it
+        // on a row of zeros indefinitely.
+        let (c, _) = interner.intern("C");
+        mc.add_replica(c);
+        let resolver = interner.resolver();
+
+        // A and B keep writing, which is what puts their columns up for rescan.
+        mc.set_by_idx(
+            ReplicaIdx(0),
+            Version::build(resolver.clone(), ReplicaIdx(0), &[5, 5]),
+        );
+        mc.set_by_idx(
+            ReplicaIdx(1),
+            Version::build(resolver.clone(), ReplicaIdx(1), &[5, 5]),
+        );
+
+        let baseline = Version::build(resolver.clone(), ReplicaIdx(0), &[4, 4]);
+        let svv = mc.column_wise_min_incremental(&baseline, &[ReplicaIdx(0), ReplicaIdx(1)]);
+
+        // Held where it was. The unconstrained minimum here is C's row of
+        // zeros, which is what used to be returned.
+        assert_eq!(svv, baseline);
     }
 }
