@@ -32,6 +32,8 @@ use std::net::TcpStream;
 use moirai_protocol::broadcast::message::{BatchMessage, EventMessage, SinceMessage};
 use moirai_protocol::broadcast::tcsb::StateSnapshot;
 
+use crate::state_transfer::LogPayload;
+
 /// Peer identifier type
 pub type PeerId = String;
 
@@ -74,8 +76,9 @@ where
     /// forever.
     StateResponse {
         snapshot: StateSnapshot<O>,
-        /// The donor's log, via `TransferableLog::export_log`.
-        log: serde_json::Value,
+        /// The donor's log, via `TransferableLog::export_log`, compressed
+        /// unless compressing it does not help. See [`LogPayload`].
+        log: LogPayload,
     },
     /// The donor declined. The requester falls back to `SyncRequest`, which is
     /// the correct behaviour for a returning member and a harmless one for a

@@ -25,7 +25,7 @@ use crate::composite::CompositeTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
 use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
-use crate::state_transfer::TransferableLog;
+use crate::state_transfer::{LogPayload, TransferableLog};
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
 use crate::HashMap;
 
@@ -54,6 +54,44 @@ pub type TcpNode<L> = Node<L>;
 /// only on a changed one: a first attempt can legitimately fail, and gating the
 /// retry on an event that will not recur reintroduces ask-once.
 const STATE_TRANSFER_RETRY: Duration = Duration::from_secs(2);
+
+/// Largest serialised log this replica will put in a `StateResponse`.
+///
+/// # Why there has to be one
+///
+/// A `StateResponse` is a single newline-delimited frame, and over a relay the
+/// relay reads it with a cap: `MAX_FRAME_BYTES = 1 MiB` in
+/// `moirai-relay/src/main.rs`, where an over-long frame is an *error* rather
+/// than a truncation, because truncating would feed the remainder back as the
+/// next frame. So the donor's own relay session is what dies, and the joiner —
+/// still with no history — re-asks every [`STATE_TRANSFER_RETRY`] and kills it
+/// again. Without a ceiling here the failure mode of a large model is a loop
+/// that takes the donor off the relay rather than a refusal anybody can act on.
+///
+/// # Why this number
+///
+/// Below the relay's 1 MiB, with the rest left for the `snapshot` beside the
+/// log and the relay envelope around both. It is checked against the log
+/// *before* compression, which is the conservative direction twice over:
+/// [`LogPayload::encode`] keeps whichever of the compressed and plain forms is
+/// smaller, so what goes on the wire is never larger than what is measured
+/// here, and the number is simultaneously a bound on the memory a joiner needs
+/// to hold the log — which compression does not reduce.
+///
+/// Uniform across transports rather than per route: the donor answers a
+/// `StateRequest` without knowing whether the reply will go direct or be
+/// relayed, and a direct connection reads the whole frame into memory with no
+/// cap of its own (`direct_transport.rs`), so a ceiling is wanted there too.
+///
+/// # What it does not fix
+///
+/// A session whose model genuinely exceeds this cannot transfer state at all,
+/// and no ordered feature compacts — see the eg-walker finding — so that is
+/// reachable by session age alone rather than only by model size. Chunking is
+/// the answer and it is phase 3; this makes the failure clean and diagnosable
+/// in the meantime, which is what the joiner's existing `StateUnavailable`
+/// handling was already written for.
+const MAX_STATE_TRANSFER_BYTES: usize = 768 * 1024;
 
 // Alias for these bounds, needed to transport operations over the network (e.g. via HTTP API).
 pub trait NetworkOp:
@@ -433,10 +471,36 @@ where
                 reason: "state transfer is not enabled on this replica".to_string(),
             };
         };
+        // The fourth refusal, and the only one that is about size rather than
+        // eligibility. Serialising to measure is not waste: this is the same
+        // work `transport.send` is about to do, and it is what keeps an
+        // oversized answer from being discovered by the relay instead of here.
+        let log = export(self.replica.log());
+        let raw = match serde_json::to_vec(&log) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return TransportMessage::StateUnavailable {
+                    reason: format!("this replica's log could not be serialised: {e}"),
+                };
+            }
+        };
+        let log_bytes = raw.len();
+        if log_bytes > MAX_STATE_TRANSFER_BYTES {
+            eprintln!(
+                "[{}] refusing a state transfer to {}: the log is {} bytes, ceiling is {}",
+                self.replica_id, id, log_bytes, MAX_STATE_TRANSFER_BYTES
+            );
+            return TransportMessage::StateUnavailable {
+                reason: format!(
+                    "this replica's log is {log_bytes} bytes, above the \
+                     {MAX_STATE_TRANSFER_BYTES} byte ceiling on one state transfer"
+                ),
+            };
+        }
         eprintln!("[{}] serving a state transfer to {}", self.replica_id, id);
         TransportMessage::StateResponse {
             snapshot: self.replica.snapshot(),
-            log: export(self.replica.log()),
+            log: LogPayload::encode(log, &raw),
         }
     }
 
@@ -445,7 +509,7 @@ where
         &mut self,
         from: &PeerId,
         snapshot: moirai_protocol::broadcast::tcsb::StateSnapshot<L::Op>,
-        log: serde_json::Value,
+        log: LogPayload,
     ) {
         let Some(import) = self.import_log else {
             eprintln!(
@@ -461,7 +525,7 @@ where
             self.request_delta_sync(from);
             return;
         }
-        match import(log) {
+        match log.decode().and_then(import) {
             Some(state) => {
                 let members = snapshot.resolver().len();
                 self.replica.adopt(snapshot, state);

@@ -19,6 +19,15 @@ rustc-hash = "2.1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.133"
 tiny_http = "0.12"
+# The state transfer's `log` field is compressed, and only that field: the relay
+# copies `msg` through as a `RawValue` without parsing it (`routing.rs`), so
+# compressing the frame would end that guarantee while compressing the field
+# leaves it untouched. `rust_backend` is `miniz_oxide`, so this stays a pure-Rust
+# build and the container image needs no C toolchain it does not already have.
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+# Already in the tree via `reqwest`; named here because this crate now uses it
+# directly. Deflate output is binary and a `TransportMessage` is a line of JSON.
+base64 = "0.22"
 # `blocking` keeps every call site a plain function: no runtime to set up, and
 # both users — the e2e harness and the bootnode poll thread in `discovery.rs`
 # — are sequences of request/poll steps. This was a dev-dependency until
