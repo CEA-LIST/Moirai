@@ -40,15 +40,20 @@ pub type Node<L> = GenericNode<L, CompositeTransport<<L as IsLog>::Op>>;
 )]
 pub type TcpNode<L> = Node<L>;
 
-/// How often a replica that still has no history re-asks its peers for one.
+/// How long a replica with no history waits on one donor before asking another,
+/// and how long it waits before starting a fresh round once every peer has been
+/// asked.
 ///
 /// Asking once, on connect, is not enough, and not because the network is
 /// unreliable. A peer that has written nothing yet has nothing to transfer and
 /// says so; the replicas of a session that starts together are all in that
 /// state until the first operation is applied, and the one that arrives second
-/// must be able to ask again afterwards. It also covers T5 — a donor that dies
-/// mid-transfer — without any special handling: the next round simply reaches a
-/// different peer.
+/// must be able to ask again afterwards.
+///
+/// It is also what covers T5 — a donor that dies mid-transfer must not strand
+/// the joiner. A donor that has said nothing by the time this elapses is passed
+/// over for the next one, so silence costs one interval rather than the
+/// session.
 ///
 /// Same reasoning as P1-D9, where the node re-dials on every roster rather than
 /// only on a changed one: a first attempt can legitimately fail, and gating the
@@ -151,9 +156,18 @@ where
     /// keep working.
     export_log: Option<fn(&L) -> serde_json::Value>,
     import_log: Option<fn(serde_json::Value) -> Option<L>>,
-    /// When the last round of `StateRequest`s went out. See
-    /// [`STATE_TRANSFER_RETRY`].
+    /// When the last `StateRequest` went out. See [`STATE_TRANSFER_RETRY`].
     last_state_request: Option<Instant>,
+    /// The peer currently being asked for a state transfer, if any.
+    ///
+    /// `Some` means a request is outstanding and the deadline is running;
+    /// `None` means the next pass may choose somebody. Cleared the moment a
+    /// donor refuses, so a refusal costs a loop iteration rather than an
+    /// interval.
+    state_donor: Option<PeerId>,
+    /// Peers already asked in the current round. A `Vec` because it is bounded
+    /// by the member count and only ever scanned linearly.
+    state_donors_tried: Vec<PeerId>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -312,6 +326,8 @@ where
             export_log: None,
             import_log: None,
             last_state_request: None,
+            state_donor: None,
+            state_donors_tried: Vec::new(),
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -382,11 +398,16 @@ where
         // delta would get it a correct answer to the wrong question: an empty
         // batch from a healthy peer, because everything it needs has already
         // been pruned.
+        //
+        // It does not ask *here*, though. `retry_state_transfer` owns the
+        // choice of donor and runs on every pass of the loop, so a new link
+        // only has to exist; asking from both places is what used to make a
+        // joiner receive one full transfer per peer and then a second round of
+        // them, and decode every one to keep the first.
         if self.import_log.is_some() && self.has_no_history() {
-            self.request_state_transfer(peer);
-        } else {
-            self.request_delta_sync(peer);
+            return;
         }
+        self.request_delta_sync(peer);
     }
 
     /// Ask `peer` for the events it holds above what this replica has already
@@ -637,6 +658,12 @@ where
                     "[{}] {} will not serve a state transfer ({}); falling back to a delta sync",
                     self.replica_id, from, reason
                 );
+                // A refusal is an answer. Free the turn now rather than waiting
+                // out the deadline, so cycling through peers that have nothing
+                // to give costs a loop iteration each.
+                if self.state_donor.as_deref() == Some(from.as_str()) {
+                    self.state_donor = None;
+                }
                 self.request_delta_sync(&from);
             }
             TransportMessage::Hello { id, .. } => {
@@ -808,27 +835,34 @@ where
         }
     }
 
-    /// Re-ask every connected peer for a state transfer while this replica
-    /// still has nothing.
+    /// Ask *one* peer for a state transfer while this replica still has
+    /// nothing, and move on if it does not deliver.
     ///
-    /// Asking *all* of them rather than one is deliberate. It costs a refusal
-    /// per peer that has nothing to give, and it means a donor that dies
-    /// mid-transfer does not strand the joiner — another peer answers on the
-    /// next round. The second answer to arrive is discarded by the freshness
-    /// re-check in `adopt_state`, so there is no race between two donors.
+    /// This used to ask every connected peer on every round, on the grounds
+    /// that a refusal is cheap and that a donor dying mid-transfer must not
+    /// strand the joiner. The first half of that is true; the second half does
+    /// not need it. A peer that *can* serve sends its whole log, so asking all
+    /// of them costs N transfers where one would do — measured on containers, a
+    /// joiner at 2 735 operations pulled 3.1 MB across 2 x N answers and threw
+    /// all but one away, after decoding each.
+    ///
+    /// So: one donor at a time, with [`STATE_TRANSFER_RETRY`] as its deadline.
+    /// Silence past the deadline, or an explicit refusal, passes the turn to
+    /// the next peer that has not been asked this round — which is the T5
+    /// property the old comment defended, at one transfer instead of N. Once
+    /// everybody has been asked the round restarts, no faster than the
+    /// interval, so a session where nobody yet has history does not spin.
     ///
     /// Stops by itself: the moment anything is delivered — adopted, replayed or
     /// locally applied — `has_no_history` goes false and this becomes one
     /// comparison per loop iteration.
     fn retry_state_transfer(&mut self) {
         if self.import_log.is_none() || !self.has_no_history() {
-            return;
-        }
-        let now = Instant::now();
-        if self
-            .last_state_request
-            .is_some_and(|last| now.duration_since(last) < STATE_TRANSFER_RETRY)
-        {
+            // Either this replica cannot adopt, or it no longer needs to.
+            // Nothing below is meaningful in that state and it must not be
+            // carried into a later one.
+            self.state_donor = None;
+            self.state_donors_tried.clear();
             return;
         }
         let peers: Vec<PeerId> = self
@@ -841,10 +875,44 @@ where
         if peers.is_empty() {
             return;
         }
-        self.last_state_request = Some(now);
-        for peer in peers {
-            self.request_state_transfer(&peer);
+
+        let now = Instant::now();
+        let waited = self
+            .last_state_request
+            .map(|last| now.duration_since(last))
+            .unwrap_or(STATE_TRANSFER_RETRY);
+        if self.state_donor.is_some() {
+            if waited < STATE_TRANSFER_RETRY {
+                // A request is outstanding and still within its deadline.
+                return;
+            }
+            // It is not coming. `state_donors_tried` already holds this peer,
+            // so the next choice below is somebody else.
+            self.state_donor = None;
         }
+
+        let next = match peers
+            .iter()
+            .find(|peer| !self.state_donors_tried.contains(peer))
+        {
+            Some(peer) => peer.clone(),
+            None => {
+                // Everybody connected has been asked. Start again — a peer that
+                // had nothing a moment ago may have something now — but not
+                // faster than the interval, or a session in which nobody yet
+                // has history would spin on refusals.
+                if waited < STATE_TRANSFER_RETRY {
+                    return;
+                }
+                self.state_donors_tried.clear();
+                peers[0].clone()
+            }
+        };
+
+        self.state_donors_tried.push(next.clone());
+        self.state_donor = Some(next.clone());
+        self.last_state_request = Some(now);
+        self.request_state_transfer(&next);
     }
 
     /// Fold the newest bootnode roster into the transport's address book and
