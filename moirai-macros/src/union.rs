@@ -234,7 +234,37 @@ macro_rules! union {
                     }
                 }
 
-                fn stabilize(&mut self, _version: &$crate::moirai_protocol::clock::version_vector::Version) {}
+                // A union is a node in the type tree, not a leaf: it holds no
+                // operations of its own, so the only thing it can do with a
+                // stable version is hand it to whichever child currently holds
+                // the value. Stopping here severs the *only* path an operation
+                // has out of a PO-Log's unstable half, and a union at the root
+                // of a model — which is what Arachne generates for JSON —
+                // stops it for the whole model. Same traversal as
+                // `redundant_by_parent` below, for the same reason.
+                fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                    match &mut self.child {
+                        [<$union Container>]::Unset => {}
+                        [<$union Container>]::Value(union_child) => match union_child.as_mut() {
+                            $(
+                                [<$union Child>]::$variant(log) => {
+                                    log.stabilize(version);
+                                }
+                            )*
+                        },
+                        [<$union Container>]::Conflicts(union_childs) => {
+                            for union_child in union_childs {
+                                match union_child {
+                                    $(
+                                        [<$union Child>]::$variant(log) => {
+                                            log.stabilize(version);
+                                        }
+                                    )*
+                                }
+                            }
+                        }
+                    }
+                }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
                     match &mut self.child {
