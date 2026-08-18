@@ -77,12 +77,31 @@ pub struct StabilitySnapshot {
 /// donor's ordering wholesale (see [`IsTcsb::adopt`]). That is only sound for a
 /// replica with no history of its own, which is exactly the case this phase
 /// implements.
+///
+/// # The member-id list travels once
+///
+/// [`Serialize`] and [`Deserialize`] are written by hand rather than derived,
+/// for one reason: every [`Version`] and every [`EventId`] owns a [`Resolver`],
+/// and a `Resolver` serialises as the whole member-id list. Derived, a snapshot
+/// therefore repeats that list `1 + (n + 1) + 1 + 2k` times for `n` members and
+/// `k` suffix events — measured at three members and two suffix events, ten
+/// copies of a 46-byte list, **460 of 1 126 bytes, 41 % of the snapshot**, and
+/// the share grows with both membership and suffix length. Compaction made this
+/// the dominant half of a state transfer rather than a rounding error: on the
+/// counter arm the snapshot is now larger than the log it accompanies.
+///
+/// `Message<O, K>` (`crate::broadcast::message`) already carries one resolver
+/// beside its payload; this is the same move one level down. The rebuild on the
+/// way in is the reconstruction [`IsTcsb::adopt`] already performs against the
+/// *local* resolver, so nothing new is being assumed about the data.
+///
+/// Deliberately confined to this type. The same repetition costs far more in
+/// the exported CRDT log — a tagged operation is mostly its tag — but stripping
+/// it there means changing how `EventId` itself serialises, which every log
+/// type derives through and which nothing would then be able to rebuild without
+/// a walk over the whole log. That is a wire-format redesign; this is not.
 #[cfg(feature = "serde")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "O: Serialize",
-    deserialize = "O: serde::de::DeserializeOwned"
-))]
+#[derive(Debug, Clone)]
 pub struct StateSnapshot<O> {
     /// The donor's index -> replica id vector. Defines the index space every
     /// other field of this snapshot is expressed in.
@@ -96,6 +115,154 @@ pub struct StateSnapshot<O> {
     /// Without them a joiner would be caught up to the last stable point rather
     /// than to now.
     suffix: Vec<Event<O>>,
+}
+
+/// [`StateSnapshot`] on the wire. Generic in the suffix element so that one
+/// declaration serves both directions: `E` is `EventWire<&O>` going out and
+/// `EventWire<O>` coming in, which keeps the field names in one place and
+/// avoids cloning every operation in order to serialise it.
+#[cfg(feature = "serde")]
+#[derive(Serialize, Deserialize)]
+struct SnapshotWire<E> {
+    /// The one copy. Everything below is expressed against it.
+    resolver: Resolver,
+    origin_idx: ReplicaIdx,
+    /// One row per member, in index order, so a row's own index is its
+    /// position and does not have to be written down.
+    matrix_clock: Vec<Vec<Seq>>,
+    last_stable_version: Vec<Seq>,
+    suffix: Vec<E>,
+}
+
+/// One suffix [`Event`] with its two resolvers taken out. `Op` is `&O` on the
+/// way out and `O` on the way in — see [`SnapshotWire`].
+#[cfg(feature = "serde")]
+#[derive(Serialize, Deserialize)]
+struct EventWire<Op> {
+    idx: ReplicaIdx,
+    seq: Seq,
+    lamport: Lamport,
+    /// The origin of the event's *version*, which is not derivable from `idx`
+    /// by anything this type is allowed to assume.
+    origin: ReplicaIdx,
+    version: Vec<Seq>,
+    op: Op,
+}
+
+/// A [`Version`]'s entries, positionally, with the resolver dropped.
+#[cfg(feature = "serde")]
+fn flatten_version(version: &Version) -> Vec<Seq> {
+    version.iter().map(|(_, seq)| seq).collect()
+}
+
+/// The inverse of [`flatten_version`], against the one hoisted resolver.
+///
+/// Entries beyond `entries` stay zero, which is what [`Version::seq_by_idx`]
+/// already reads an absent entry as.
+#[cfg(feature = "serde")]
+fn rebuild_version(origin: ReplicaIdx, entries: &[Seq], resolver: &Resolver) -> Version {
+    let mut version = Version::new(origin, resolver.clone());
+    for (i, seq) in entries.iter().enumerate() {
+        version.set_by_idx(ReplicaIdx(i), *seq);
+    }
+    version
+}
+
+#[cfg(feature = "serde")]
+impl<O> Serialize for StateSnapshot<O>
+where
+    O: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let matrix_clock = (0..self.resolver.len())
+            .map(|i| {
+                let idx = ReplicaIdx(i);
+                match self.matrix_clock.version_by_idx(idx) {
+                    Some(row) => {
+                        debug_assert_eq!(
+                            row.origin_idx(),
+                            idx,
+                            "a matrix clock row is indexed by its own origin"
+                        );
+                        flatten_version(row)
+                    }
+                    None => Vec::new(),
+                }
+            })
+            .collect();
+        let suffix = self
+            .suffix
+            .iter()
+            .map(|event| EventWire {
+                idx: event.id().idx(),
+                seq: event.id().seq(),
+                lamport: *event.lamport(),
+                origin: event.version().origin_idx(),
+                version: flatten_version(event.version()),
+                op: event.op(),
+            })
+            .collect();
+        SnapshotWire {
+            resolver: self.resolver.clone(),
+            origin_idx: self.matrix_clock.origin_idx(),
+            matrix_clock,
+            last_stable_version: flatten_version(&self.last_stable_version),
+            suffix,
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, O> Deserialize<'de> for StateSnapshot<O>
+where
+    O: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = SnapshotWire::<EventWire<O>>::deserialize(deserializer)?;
+        let resolver = wire.resolver;
+
+        let mut matrix_clock = MatrixClock::new(wire.origin_idx, resolver.clone());
+        // `set_by_idx` indexes a row vector sized from the resolver, so a
+        // payload claiming more rows than members would panic it. Take only
+        // what the resolver accounts for; a short row list leaves zeros, which
+        // is what a member that has originated nothing looks like anyway.
+        for (i, row) in wire.matrix_clock.iter().take(resolver.len()).enumerate() {
+            let idx = ReplicaIdx(i);
+            matrix_clock.set_by_idx(idx, rebuild_version(idx, row, &resolver));
+        }
+
+        // The stable frontier's own origin is never read — `adopt` rebuilds it
+        // against the local index — so it takes the snapshot's origin.
+        let last_stable_version =
+            rebuild_version(wire.origin_idx, &wire.last_stable_version, &resolver);
+
+        let suffix = wire
+            .suffix
+            .into_iter()
+            .map(|e| {
+                Event::new(
+                    EventId::new(e.idx, e.seq, resolver.clone()),
+                    e.lamport,
+                    e.op,
+                    rebuild_version(e.origin, &e.version, &resolver),
+                )
+            })
+            .collect();
+
+        Ok(StateSnapshot {
+            resolver,
+            matrix_clock,
+            last_stable_version,
+            suffix,
+        })
+    }
 }
 
 #[cfg(feature = "serde")]
