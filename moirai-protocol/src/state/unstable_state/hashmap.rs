@@ -7,23 +7,6 @@ use crate::{
     utils::hashmap::HashMap,
 };
 
-impl<O> IsUnstablePrune<O> for HashMap<EventId, TaggedOp<O>>
-where
-    O: Debug + Clone,
-{
-    fn remove(&mut self, event_id: &EventId) {
-        HashMap::remove(self, event_id);
-    }
-
-    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-        HashMap::retain(self, |_, to| predicate(to));
-    }
-
-    fn clear(&mut self) {
-        HashMap::clear(self);
-    }
-}
-
 impl<O> IsUnstableCore<O> for HashMap<EventId, TaggedOp<O>>
 where
     O: Debug + Clone,
@@ -56,5 +39,22 @@ where
 
     fn is_empty(&self) -> bool {
         self.is_empty()
+    }
+}
+
+impl<O> IsUnstablePrune<O> for HashMap<EventId, TaggedOp<O>>
+where
+    O: Debug + Clone,
+{
+    fn remove(&mut self, event_id: &EventId) {
+        HashMap::remove(self, event_id);
+    }
+
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
+        HashMap::retain(self, |_, to| predicate(to));
+    }
+
+    fn clear(&mut self) {
+        HashMap::clear(self);
     }
 }

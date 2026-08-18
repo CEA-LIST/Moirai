@@ -1,38 +1,12 @@
-use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
+use std::{borrow::Cow, cmp::Ordering, fmt::Debug};
 
-use crate::event::{id::EventId, tag::Tag, tagged_op::TaggedOp};
+use crate::event::tag::Tag;
 
 // TODO: rename this to CausalOrderPolicy?
 
 /// A policy defines a deterministic ordering of events in the system.
 pub trait Policy: Ord + Clone + Debug {
     fn compare(a: &Tag, b: &Tag) -> Ordering;
-}
-
-pub struct ByEventId<'a>(pub &'a EventId);
-
-impl Eq for ByEventId<'_> {}
-
-impl PartialEq for ByEventId<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Ord for ByEventId<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0
-            .origin_id()
-            .cmp(other.0.origin_id())
-            .then_with(|| self.0.seq().cmp(&other.0.seq()))
-            .then_with(|| self.0.disambiguator().cmp(&other.0.disambiguator()))
-    }
-}
-
-impl PartialOrd for ByEventId<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, other))
-    }
 }
 
 /// # Last-Writer-Wins (LWW)
@@ -72,15 +46,15 @@ impl PartialOrd for LwwPolicy {
 
 /// Wrapper with reference for convenient comparison
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lww<'a>(pub &'a Tag);
+pub struct LwwTag<'a>(pub Cow<'a, Tag>);
 
-impl Ord for Lww<'_> {
+impl Ord for LwwTag<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        LwwPolicy::compare(self.0, other.0)
+        LwwPolicy::compare(&self.0, &other.0)
     }
 }
 
-impl PartialOrd for Lww<'_> {
+impl PartialOrd for LwwTag<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(Ord::cmp(self, other))
     }
@@ -144,62 +118,17 @@ impl PartialOrd for FairPolicy {
 
 /// Wrapper with reference for convenient comparison
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fair<'a>(pub &'a Tag);
+pub struct FairTag<'a>(pub &'a Tag);
 
-impl Ord for Fair<'_> {
+impl Ord for FairTag<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         FairPolicy::compare(self.0, other.0)
     }
 }
 
-impl PartialOrd for Fair<'_> {
+impl PartialOrd for FairTag<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(Ord::cmp(self, other))
-    }
-}
-
-pub struct ByPolicy<'a, O, P> {
-    tagged: &'a TaggedOp<O>,
-    _policy: PhantomData<P>,
-}
-
-impl<'a, O, P> ByPolicy<'a, O, P> {
-    pub fn new(tagged: &'a TaggedOp<O>) -> Self {
-        Self {
-            tagged,
-            _policy: PhantomData,
-        }
-    }
-
-    pub fn tagged(&self) -> &'a TaggedOp<O> {
-        self.tagged
-    }
-}
-
-impl<O, P> Eq for ByPolicy<'_, O, P> {}
-
-impl<O, P> PartialEq for ByPolicy<'_, O, P> {
-    fn eq(&self, other: &Self) -> bool {
-        self.tagged.id() == other.tagged.id()
-    }
-}
-
-impl<O, P> Ord for ByPolicy<'_, O, P>
-where
-    P: Policy,
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        P::compare(self.tagged.tag(), other.tagged.tag())
-            .then_with(|| ByEventId(self.tagged.id()).cmp(&ByEventId(other.tagged.id())))
-    }
-}
-
-impl<O, P> PartialOrd for ByPolicy<'_, O, P>
-where
-    P: Policy,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 
@@ -209,7 +138,7 @@ mod tests {
 
     use crate::{
         broadcast::internalizer::Interner,
-        crdt::policy::Fair,
+        crdt::policy::FairTag,
         event::{id::EventId, lamport::Lamport, tag::Tag},
         replica::ReplicaIdx,
     };
@@ -230,7 +159,7 @@ mod tests {
             Lamport::new(lamport),
         );
 
-        Fair(&left).cmp(&Fair(&right))
+        FairTag(&left).cmp(&FairTag(&right))
     }
 
     #[test]
@@ -252,8 +181,8 @@ mod tests {
             Lamport::new(1),
         );
 
-        let ab = Fair(&a).cmp(&Fair(&b));
-        let ba = Fair(&b).cmp(&Fair(&a));
+        let ab = FairTag(&a).cmp(&FairTag(&b));
+        let ba = FairTag(&b).cmp(&FairTag(&a));
 
         assert_eq!(ab, ba.reverse(), "antisymmetry violated: Ord is invalid");
     }
@@ -282,9 +211,9 @@ mod tests {
             Lamport::new(1),
         );
 
-        let ab = Fair(&a).cmp(&Fair(&b));
-        let bc = Fair(&b).cmp(&Fair(&c));
-        let ac = Fair(&a).cmp(&Fair(&c));
+        let ab = FairTag(&a).cmp(&FairTag(&b));
+        let bc = FairTag(&b).cmp(&FairTag(&c));
+        let ac = FairTag(&a).cmp(&FairTag(&c));
 
         assert_eq!(ab, Ordering::Greater);
         assert_eq!(bc, Ordering::Less);
@@ -304,7 +233,7 @@ mod tests {
             Lamport::new(1),
         );
 
-        assert_eq!(Fair(&a).cmp(&Fair(&a)), Ordering::Equal);
+        assert_eq!(FairTag(&a).cmp(&FairTag(&a)), Ordering::Equal);
     }
 
     #[test]
@@ -344,7 +273,7 @@ mod tests {
             .collect();
 
         let mut ordered: Vec<_> = (0..4).collect();
-        ordered.sort_by(|left, right| Fair(&tags[*left]).cmp(&Fair(&tags[*right])));
+        ordered.sort_by(|left, right| FairTag(&tags[*left]).cmp(&FairTag(&tags[*right])));
 
         assert_eq!(ordered, expected);
     }

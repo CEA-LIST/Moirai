@@ -559,7 +559,7 @@ where
                 DiffFlag::B => b_only.push(id.clone()),
             }
 
-            for parent in state.parents(&id).iter() {
+            for parent in state.direct_parents(&id).iter() {
                 let event_idx = state.delivery_order(parent).unwrap();
                 enq(
                     &mut flags,
@@ -589,7 +589,7 @@ where
         let mut document = Document::new(stable);
 
         for tagged_op in events {
-            let parents = unstable.parents(tagged_op.id());
+            let parents = unstable.direct_parents(tagged_op.id());
             let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
 
             for event_id in a_only {

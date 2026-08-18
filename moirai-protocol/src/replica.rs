@@ -28,8 +28,9 @@ pub trait IsReplica<L>
 where
     L: IsLog,
 {
-    /// Command is an abstraction of the inputs of the clients to the replica.
+    /// Inputs of the clients to the replica.
     type Command;
+    /// Content of the event messages. In most cases, it will be the same as the commands.
     type Payload;
 
     /// Return the ID of this replica.
@@ -44,6 +45,7 @@ where
     fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection>;
     /// Return a batch message containing all events causally after the given version.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
+    // TODO: add a method for state transfer
     /// Query the current state of the replica with the given query operation.
     fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
     where

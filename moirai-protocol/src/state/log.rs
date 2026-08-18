@@ -58,7 +58,7 @@ pub trait IsLog: Default + Debug {
     /// Check if the log is in its default state (no events).
     /// # Note
     /// Default state is a structural property of the log, not a semantic property of the underlying CRDT.
-    /// For example, a log may be in its default state even if the underlying CRDT is not in its default state,
+    /// For example, a log may be in its default state even if the underlying CRDT has been mutated,
     /// if the log has been pruned to remove all events.
     fn is_default(&self) -> bool;
 }

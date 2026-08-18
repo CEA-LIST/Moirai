@@ -52,9 +52,6 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// The direct parents of an event are those events that are immediately causally before it, i.e.,
     /// an event e' is the direct parent of event e if e' < e and there is no event e'' such that e' < e'' < e.
     fn direct_parents(&self, event_id: &EventId) -> Vec<EventId>;
-    fn parents(&self, event_id: &EventId) -> Vec<EventId> {
-        self.direct_parents(event_id)
-    }
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;

@@ -792,6 +792,8 @@ macro_rules! typed_graph {
                     .collect();
 
                 // MAX enforcement per (source, edge_type) group
+                // We assume that their can exist at most one arc of a given type between a given source and target,
+                // so we only need to enforce MAX constraints per (source, edge_type) group
                 let mut groups: $crate::HashMap<
                     ($vertex, __TypedGraphEdgeType),
                     ::std::vec::Vec<::std::primitive::usize>,

@@ -79,16 +79,17 @@ impl EventId {
     }
 }
 
-/// Resolver-independent event identifier.
-///
 /// `EventId` stores a local `ReplicaIdx`, which is only meaningful with the
 /// replica's own interner. `ResolvedEventId` stores the resolved replica id
 /// instead, so it can safely be embedded in operation payloads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ResolvedEventId {
+    /// Plain string identifier of the issuing replica.
     origin_id: ReplicaIdOwned,
+    /// Sequence number.
     seq: Seq,
+    /// Distinguishes deterministic derived events emitted from the same source event.
     disambiguator: Option<u32>,
 }
 
