@@ -72,7 +72,7 @@ impl<T> NetworkOp for T where
 
 /// A generic network node.
 ///
-/// `L` is the CRDT **log** type (e.g. `BehaviortreeLog`).
+/// `L` is the CRDT **log** type (e.g. `JsonLog`).
 /// `T` is the transport backend (e.g. [`CompositeTransport`]).
 ///
 /// The [`Node`] type alias is the usual choice.
