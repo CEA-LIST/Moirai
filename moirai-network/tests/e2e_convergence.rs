@@ -90,6 +90,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 
+// The wire form of the transferred log, decoded through the production type
+// rather than a copy of it: see `transferred_log` below.
+use moirai_network::state_transfer::LogPayload;
 // The operation builders and the seeded generator live in the library, because
 // the dashboard's `--random` driver needs exactly the same ones and a second
 // copy would drift. `ops` is re-exported under its old name so the scenarios
@@ -2244,6 +2247,21 @@ fn t6_a_returning_member_is_refused_a_state_transfer() {
 /// Deliberately low-level. The HTTP API has no way to send a `StateRequest`,
 /// and adding one would mean testing an endpoint that exists only for the test.
 fn ask_for_state(addr: &str, id: &str) -> Result<String> {
+    let answer = ask_for_state_message(addr, id)?;
+    answer
+        .get("type")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| anyhow!("the donor's answer carries no type: {answer}"))
+}
+
+/// The donor's whole answer to a `StateRequest`, rather than only its verdict.
+///
+/// T6 needs to know which of the two answers came back; T7 needs to look inside
+/// the one that carries a payload. Split so that the handshake — the `Hello` a
+/// donor replies to with a sync request of its own, and the batch it may push
+/// before the answer — exists once in this file rather than twice.
+fn ask_for_state_message(addr: &str, id: &str) -> Result<Value> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpStream;
 
@@ -2263,14 +2281,310 @@ fn ask_for_state(addr: &str, id: &str) -> Result<String> {
         let value: Value = serde_json::from_str(&line)
             .with_context(|| format!("the donor sent a non-JSON line: {line}"))?;
         match value.get("type").and_then(Value::as_str) {
-            Some("StateResponse") => return Ok("StateResponse".to_string()),
-            Some("StateUnavailable") => return Ok("StateUnavailable".to_string()),
+            Some("StateResponse" | "StateUnavailable") => return Ok(value),
             // The donor answers a `Hello` with a sync request of its own, and
             // may push a batch; neither is the answer being waited for.
             _ => continue,
         }
     }
     bail!("the donor closed the connection without answering the state request")
+}
+
+/// The `log` field of a `StateResponse`, decoded.
+///
+/// Through the production [`LogPayload`] rather than a copy of it. The field is
+/// deflated and base64-encoded unless compressing it would have made it larger,
+/// and a harness carrying its own copy of that envelope could agree with itself
+/// while the decoder a joiner actually runs was broken.
+fn transferred_log(answer: &Value) -> Result<Value> {
+    let field = answer
+        .get("log")
+        .ok_or_else(|| anyhow!("the donor's answer carries no log: {answer}"))?;
+    let payload: LogPayload = serde_json::from_value(field.clone())
+        .with_context(|| format!("the log field is not a `LogPayload`: {field}"))?;
+    payload
+        .decode()
+        .ok_or_else(|| anyhow!("the transferred log could not be decoded"))
+}
+
+/// Tagged operations anywhere inside an exported log.
+///
+/// Every log in the framework serialises a retained operation as an object
+/// carrying both an `op` and a `tag` with a lamport stamp — a `VecLog` puts them
+/// in `unstable`, an event graph in its nodes. Matching on that shape rather
+/// than on a container name counts both, so this stays independent of which log
+/// the generated model happens to use for a given key.
+fn tagged_ops(log: &Value) -> u64 {
+    match log {
+        Value::Object(fields) => {
+            let is_op = fields.contains_key("op")
+                && fields
+                    .get("tag")
+                    .and_then(Value::as_object)
+                    .is_some_and(|tag| tag.contains_key("lamport"));
+            u64::from(is_op) + fields.values().map(tagged_ops).sum::<u64>()
+        }
+        Value::Array(items) => items.iter().map(tagged_ops).sum(),
+        _ => 0,
+    }
+}
+
+/// How many times `node`'s own log says it served a state transfer to `id`.
+///
+/// A log line rather than a metric, and deliberately: nothing counts transfers
+/// served, and adding a counter to the replica so a test could read it would be
+/// production code that exists for the test. This is `state_response_for`'s own
+/// line, and the only place a served transfer is recorded at all.
+fn transfers_served_to(node: &dyn Node, id: &str) -> usize {
+    let served = format!("serving a state transfer to {id}");
+    // The whole log rather than a tail: the scenario carries on past the line,
+    // and a tail long enough to be safe is just this with a number on it.
+    node.log_tail(usize::MAX)
+        .lines()
+        .filter(|line| line.contains(&served))
+        .count()
+}
+
+/// **T7** — the transfer carries the unstable suffix, not the history.
+///
+/// The claim every other measurement in phase 2 rests on, and the one that would
+/// come back silently: a joiner receives the donor's compacted state plus the
+/// operations above the stable frontier, never the operations behind it. Until
+/// `union!` passed `stabilize` down to its child log nothing was ever folded
+/// away, so the exported log carried every operation the session had delivered —
+/// 2 735 of them, 315 kB in a single transfer, at the age the container
+/// experiments ran at — while every other observable, convergence included, read
+/// exactly as it does now.
+///
+/// So the assertion is on the count *inside* the transfer, which is the one
+/// place the two behaviours differ: a joiner's log holds as many tagged
+/// operations as the donor's `retained_ops`, its suffix, and not as many as its
+/// `delivered_ops`, its history. Those two were equal before the fix; here they
+/// differ by two orders of magnitude, which is what makes the reading a verdict
+/// rather than an argument about a byte or two.
+///
+/// Counter operations, deliberately: they are the half of the model that *can*
+/// compact. A string leaf is an event graph and retains every insert for ever,
+/// so a workload of inserts would look identical before and after.
+///
+/// The transfer is read over the wire with T6's probe rather than from the
+/// joiner, for two reasons. No metric reports how long a log is — `retained_ops`
+/// is the replication outbox, which is pruned by the same frontier but is not
+/// the same thing — and the probe is served by `state_response_for`, the code
+/// path that answers a real joiner, with nothing standing in for it.
+#[test]
+fn t7_a_transfer_carries_the_suffix_not_the_history() {
+    const WRITERS: [&str; 3] = ["a", "b", "c"];
+    /// One increment per writer per round. Hundreds of operations, because the
+    /// claim is a ratio: at this size a log that carries the history holds a
+    /// hundred times what a log that carries the suffix holds, and no amount of
+    /// timing noise can make the two readings resemble each other.
+    const ROUNDS: u64 = 100;
+    const APPLIED: u64 = ROUNDS * WRITERS.len() as u64;
+
+    let Some(mut cluster) = discovered_cluster("T7", &["a", "b", "c", "d"]) else {
+        return;
+    };
+    for id in WRITERS {
+        cluster
+            .start(id)
+            .unwrap_or_else(|e| panic!("T7: start {id}: {e:#}"));
+        // One operation before anybody has dialled anybody — `start` returns on
+        // `/api/health` and the node sleeps two seconds before its first dial,
+        // so this lands in that window. It is not decoration: a founder that has
+        // written is not a replica with no history, so no founder asks another
+        // for a state transfer, and none is served one it has to discard. That
+        // exchange is between equals and belongs to no scenario here; T7 is
+        // about the transfer a genuine joiner is served, and `d` below is the
+        // joiner.
+        apply_ok(
+            cluster.node(id),
+            ops::object_update(id, ops::number_inc(1.0)),
+        );
+    }
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T7: initial mesh");
+
+    // Every replica writes: a stable frontier is a column-wise minimum, so one
+    // member that never contributes pins it at zero and nothing is compacted.
+    for _ in 1..ROUNDS {
+        for id in WRITERS {
+            apply_ok(
+                cluster.node(id),
+                ops::object_update(id, ops::number_inc(1.0)),
+            );
+        }
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    // Quiesce before reading anything. Stability is recomputed on delivery and
+    // nowhere else, so once every replica accounts for every operation, neither
+    // number below can move under the probe that follows.
+    for node in cluster.nodes() {
+        poll_until(CONVERGE_TIMEOUT, || {
+            Ok((metric(node, "delivered_ops")? == APPLIED).then_some(()))
+        })
+        .unwrap_or_else(|e| {
+            panic!(
+                "`{}` never delivered all {APPLIED} operations{}; metrics: {:?}",
+                node.id(),
+                e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+                metrics_of(node)
+            )
+        });
+    }
+
+    // E2's precondition, sharpened. There must be a stable frontier and it must
+    // have passed nearly all of the history, or the suffix would be most of the
+    // log and the assertion below would not be telling two things apart.
+    let donor = cluster.node("a");
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((metric(donor, "retained_ops")? * 10 < APPLIED).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the donor's suffix never became a small part of its history{}; metrics: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(donor)
+        )
+    });
+
+    let delivered = metric(donor, "delivered_ops").expect("T7: the donor's delivered_ops");
+    let retained = metric(donor, "retained_ops").expect("T7: the donor's retained_ops");
+    let addr = cluster.endpoints["a"].sync_addr.clone();
+    let answer = ask_for_state_message(&addr, "zz").expect("T7: ask for a transfer");
+    assert_eq!(
+        answer.get("type").and_then(Value::as_str),
+        Some("StateResponse"),
+        "the donor refused a genuinely fresh joiner, so nothing below is measuring \
+         a transfer: {answer}"
+    );
+    let log = transferred_log(&answer).expect("T7: decode the transferred log");
+    let carried = tagged_ops(&log);
+
+    assert_eq!(
+        carried, retained,
+        "the transfer carries {carried} tagged operations; the donor's suffix is \
+         {retained} and its history is {delivered}. The log is the suffix and \
+         nothing else — everything behind the stable frontier has been folded \
+         into the compacted state travelling beside it, and no longer exists as \
+         an operation anywhere"
+    );
+    assert!(
+        carried * 10 < delivered,
+        "the transfer carries {carried} of the {delivered} operations the donor \
+         has delivered, which is the whole history rather than the suffix above \
+         its stable frontier. That is what the log held before `union!` passed \
+         stabilization down to its child: 2 735 operations and 315 kB of \
+         transfer at the session age the phase-2 experiments ran at"
+    );
+
+    // A bounded transfer that produced the wrong state would be worse than the
+    // history it replaced, so the joiner is held to E2's assertions as well.
+    cluster.start("d").expect("T7: start d");
+    await_roster(cluster.bootnode(), &["a", "b", "c", "d"], MESH_TIMEOUT).expect("T7: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T7: mesh after d joined");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, before,
+        "the joiner did not reach the state the session held before it arrived"
+    );
+    let d = cluster.node("d");
+    assert_eq!(
+        metric(d, "delivered_ops").unwrap(),
+        APPLIED,
+        "the joiner rendered the right state but does not account for the history \
+         behind it; metrics: {:?}",
+        metrics_of(d)
+    );
+}
+
+/// **T8** — one donor serves a joiner, not every peer.
+///
+/// `retry_state_transfer` used to ask every connected peer on every round, and
+/// `request_sync` asked again on every new link, so a joiner was sent one full
+/// transfer per peer twice over and decoded every one of them to keep the first.
+/// Measured on containers at 2 735 operations: ten transfers and 3.1 MB pulled
+/// off the network, of which all but 7 kB was discarded.
+///
+/// What makes the count observable is that a donor says so — `state_response_for`
+/// prints one line per transfer it serves, and that line is what the container
+/// experiments counted. Nothing else records one: there is no metric for
+/// transfers served, and adding a counter to the replica so that a test could
+/// read it would be production code that exists for the test.
+///
+/// The count is exact rather than bounded, in both directions. Anything above
+/// one is the regression; zero would mean the joiner reached the session some
+/// other way and the scenario proved nothing — which is why the history it
+/// accounts for is asserted first, and why nothing is written after it arrives:
+/// a replica with no history never asks for a delta, so a transfer is the only
+/// way it can hold anything at all.
+#[test]
+fn t8_one_donor_serves_a_joiner_not_every_peer() {
+    const WRITERS: [&str; 3] = ["a", "b", "c"];
+    /// Small on purpose. This scenario is about how many answers a joiner is
+    /// sent, not about what is inside them — T7 is the one that looks inside.
+    const ROUNDS: u64 = 3;
+    const APPLIED: u64 = ROUNDS * WRITERS.len() as u64;
+
+    let Some(mut cluster) = discovered_cluster("T8", &["a", "b", "c", "d"]) else {
+        return;
+    };
+    for id in WRITERS {
+        cluster
+            .start(id)
+            .unwrap_or_else(|e| panic!("T8: start {id}: {e:#}"));
+        // Before the first dial, as in T7 and for the same reason: a founder
+        // that has written is never mistaken for a joiner, so the only transfer
+        // in this scenario is the one `d` is served — which is the one being
+        // counted.
+        apply_ok(
+            cluster.node(id),
+            ops::object_update(id, ops::number_inc(1.0)),
+        );
+    }
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T8: initial mesh");
+
+    for _ in 1..ROUNDS {
+        for id in WRITERS {
+            apply_ok(
+                cluster.node(id),
+                ops::object_update(id, ops::number_inc(1.0)),
+            );
+        }
+    }
+    let before = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.start("d").expect("T8: start d");
+    await_roster(cluster.bootnode(), &["a", "b", "c", "d"], MESH_TIMEOUT).expect("T8: directory");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T8: mesh after d joined");
+
+    let after = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    assert_eq!(
+        after, before,
+        "the joiner did not reach the state the session held before it arrived"
+    );
+    let d = cluster.node("d");
+    assert_eq!(
+        metric(d, "delivered_ops").unwrap(),
+        APPLIED,
+        "the joiner does not account for the history it adopted, so the count \
+         below would be counting nothing; metrics: {:?}",
+        metrics_of(d)
+    );
+
+    let served: usize = WRITERS
+        .iter()
+        .map(|id| transfers_served_to(cluster.node(id), "d"))
+        .sum();
+    assert_eq!(
+        served,
+        1,
+        "{served} of the {} donors served the joiner a state transfer. One asks \
+         and waits; every peer answering means `retry_state_transfer` is asking \
+         all of them again, and the joiner is decoding N logs to keep the first",
+        WRITERS.len()
+    );
 }
 
 /// **E3** — a replica leaves the directory and the session carries on.
@@ -3949,5 +4263,155 @@ fn p3_fan_out_is_one_upload_and_n_downloads() {
          each one must fan out to exactly two: {frames_in} in produced \
          {frames_out} out. A ratio of 1 means the replica is writing one frame \
          per recipient and the recipient list is not being used\n{after}"
+    );
+}
+
+/// Refusals `node` has logged that name the transfer ceiling.
+///
+/// The joiner's own line, which quotes the donor's reason verbatim. Matched on
+/// the reason rather than on the refusal, because `state_response_for` refuses
+/// for several reasons and only this one is about size — the others would be
+/// answered the same way by a donor whose log fits comfortably.
+fn ceiling_refusals(node: &dyn Node) -> usize {
+    // The whole log rather than a tail, as in `transfers_served_to`.
+    node.log_tail(usize::MAX)
+        .lines()
+        .filter(|line| line.contains("byte ceiling on one state transfer"))
+        .count()
+}
+
+/// **P3-5** — a state transfer that will not fit is refused, and the relay
+/// lives through the refusal.
+///
+/// What this replaces is silent and destructive. A `StateResponse` is one
+/// newline-delimited frame; the relay's `MAX_FRAME_BYTES` is 1 MiB and
+/// `read_frame` makes an over-long frame an error rather than a truncation, so
+/// the session that dies is **the donor's** — and the joiner, still with no
+/// history, asks again two seconds later and kills it again. `state_response_for`
+/// now measures the serialised log against `MAX_STATE_TRANSFER_BYTES` (768 KiB)
+/// and answers `StateUnavailable`, which is an answer the joiner already knows
+/// how to handle.
+///
+/// Both halves are asserted and they are not equally sharp, which is worth
+/// saying rather than leaving to be discovered. The refusal is the
+/// discriminating half. Since the `log` field started being deflated, a log just
+/// past the ceiling compresses to a frame the relay carries without complaint —
+/// the frame wall is not reached until roughly 7 MB of log — so the relay
+/// assertion is a guard rather than a re-enactment: it is what would notice if
+/// the ceiling were raised past what the transport can carry, or the compression
+/// removed, or the refusal turned into something the relay has to read.
+///
+/// The rig is the pairing the failure needs. `a` and `b` share an island, so
+/// they reach each other directly and both write, which keeps the stable
+/// frontier moving. That matters twice: it keeps the snapshot travelling beside
+/// the log small, and it keeps the delta sync a refused joiner falls back to
+/// small as well — a donor whose outbox had never been pruned would send an
+/// oversized *batch* instead, which is a different hole and not this one. `c` is
+/// on the other island and reaches both of them only through the relay.
+///
+/// String inserts, because nothing compacts them: a counter workload would be
+/// folded into the stable state and the log would never approach the ceiling at
+/// all. The keys carry the padding rather than the operation count carrying it,
+/// and that is a deliberate trade — a key is stored once per key in the map's
+/// stable state, so a kilobyte of key is worth six more inserts, and reaching
+/// 768 KiB in single characters means four thousand HTTP round trips and two
+/// more minutes of suite for the same log size.
+#[test]
+fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
+    /// Inserts applied before the joiner arrives, split between the two donors.
+    /// Measured at roughly 1.4 kB of exported log per operation at the padding
+    /// below, so this is about 1.1 MB against a 768 KiB ceiling — enough margin
+    /// that a change in the log's shape moves the number without moving the
+    /// verdict.
+    const APPLIED: usize = 800;
+    /// Characters of padding on every key.
+    const KEY_PAD: usize = 1000;
+    /// Replicas that hold the session before the joiner arrives.
+    const DONORS: [&str; 2] = ["a", "b"];
+
+    let Some(mut rig) = relay_rig("P3-5", &["left", "right"]) else {
+        return;
+    };
+    for id in DONORS {
+        rig.start_replica(id, &["left"])
+            .unwrap_or_else(|e| panic!("P3-5: start {id}: {e:#}"));
+    }
+    await_route(rig.node("a"), "b", "direct", MESH_TIMEOUT)
+        .unwrap_or_else(|e| panic!("P3-5: {e:#}\n{}", rig.diagnostics()));
+
+    let pad = "q".repeat(KEY_PAD);
+    for n in 0..APPLIED {
+        apply_ok(
+            rig.node(DONORS[n % DONORS.len()]),
+            ops::object_update(&format!("k{pad}{n}"), ops::string_insert('x', 0)),
+        );
+    }
+    // Both donors must hold the whole history before either is asked for it.
+    // Nothing here waits on the rendered state: at this key size it is most of a
+    // megabyte per replica, and the count is what the ceiling is about anyway.
+    for node in rig.nodes() {
+        poll_until(CONVERGE_TIMEOUT, || {
+            Ok((metric(node, "delivered_ops")? == APPLIED as u64).then_some(()))
+        })
+        .unwrap_or_else(|e| {
+            panic!(
+                "P3-5: `{}` never delivered all {APPLIED} operations{}; metrics: {:?}",
+                node.id(),
+                e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+                metrics_of(node)
+            )
+        });
+    }
+
+    // --- the joiner, reachable only over the relay ---
+    rig.start_replica("c", &["right"]).expect("P3-5: start c");
+    for (node, peer) in [("c", "a"), ("c", "b"), ("a", "c"), ("b", "c")] {
+        await_route(rig.node(node), peer, "relayed", MESH_TIMEOUT)
+            .unwrap_or_else(|e| panic!("P3-5: {e:#}"));
+    }
+
+    let c = rig.node("c");
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((ceiling_refusals(c) > 0).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "the joiner was never refused a transfer it cannot be sent{}. Either a \
+             donor served {APPLIED} operations' worth of log over a transport that \
+             bounds one frame at a megabyte, or the ceiling is no longer being \
+             checked; metrics: {:?}\n--- c ---\n{}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            metrics_of(c),
+            c.log_tail(LOG_TAIL_LINES)
+        )
+    });
+    assert_eq!(
+        metric(c, "delivered_ops").unwrap(),
+        0,
+        "the joiner was refused and holds history anyway. A refusal drops it back \
+         to a delta sync, which a donor answers out of an outbox pruned to the \
+         suffix — a correct answer to the wrong question, and it cannot make a \
+         replica with no history causally ready; metrics: {:?}",
+        metrics_of(c)
+    );
+
+    // --- the relay ---
+    //
+    // Three replicas, three sessions, each opened once. An oversized frame does
+    // not fail politely: the relay's reader errors, `serve` returns, and the
+    // *donor's* session closes — after which the donor reconnects and the joiner
+    // asks again, so what a repeat of the original defect leaves behind is a
+    // session count below three and an opened count above it.
+    let health = rig.relay_health().expect("P3-5: relay health");
+    assert_eq!(
+        health["sessions"].as_u64(),
+        Some(3),
+        "a replica lost its relay session while the joiner was being refused: {health}"
+    );
+    assert_eq!(
+        health["sessions_opened"].as_u64(),
+        Some(3),
+        "a replica had to open a second relay session, which is what a frame the \
+         relay refuses to read costs the side that sent it: {health}"
     );
 }
