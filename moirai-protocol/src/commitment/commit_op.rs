@@ -1,15 +1,20 @@
 use crate::replica::ReplicaIdOwned;
 
-/// Operation stored by a commitment log.
-#[derive(Clone, Debug)]
-pub struct CommitOp<U> {
-    pub update: U,
-    // TODO: replace with replica idx later
+/// A commitment operation, which consists of an updateoperation and a vote for a leader
+#[derive(Debug, Clone)]
+pub struct CommitOp<O> {
+    /// Update operation
+    pub op: O,
+    /// Leader vote
     pub leader: ReplicaIdOwned,
 }
 
-impl<U> CommitOp<U> {
-    pub fn new(update: U, leader: ReplicaIdOwned) -> Self {
-        Self { update, leader }
+impl<O> CommitOp<O> {
+    pub fn new(op: O, leader: ReplicaIdOwned) -> Self {
+        Self { op, leader }
+    }
+
+    pub fn split(self) -> (O, ReplicaIdOwned) {
+        (self.op, self.leader)
     }
 }

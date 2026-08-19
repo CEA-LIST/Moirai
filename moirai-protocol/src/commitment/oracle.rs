@@ -1,32 +1,32 @@
 use std::fmt::Debug;
 
-use crate::replica::{ReplicaId, ReplicaIdOwned};
+use crate::replica::ReplicaIdOwned;
 
-pub trait IsOracle: Debug + Clone {
-    fn query(&self) -> &ReplicaId;
+/// An oracle is a component that provides information about the current state of the system, such as the current leader.
+pub trait IsOracle: Debug + Clone + Default {
+    /// Query the oracle for the current leader.
+    fn query(&self) -> Option<ReplicaIdOwned>;
 }
 
+/// Eventual leader oracle
 #[derive(Clone, Debug)]
 pub struct Omega {
-    // TODO: use replica idx
-    leader: ReplicaIdOwned,
+    leader: Option<ReplicaIdOwned>,
 }
 
 impl Omega {
     pub fn new() -> Omega {
-        Omega {
-            leader: ReplicaIdOwned::default(),
-        }
+        Omega { leader: None }
     }
 
     pub fn with_leader(leader: impl Into<ReplicaIdOwned>) -> Omega {
         Omega {
-            leader: leader.into(),
+            leader: Some(leader.into()),
         }
     }
 
     pub fn set_leader(&mut self, leader: impl Into<ReplicaIdOwned>) {
-        self.leader = leader.into();
+        self.leader = Some(leader.into());
     }
 }
 
@@ -37,7 +37,7 @@ impl Default for Omega {
 }
 
 impl IsOracle for Omega {
-    fn query(&self) -> &ReplicaId {
-        &self.leader
+    fn query(&self) -> Option<ReplicaIdOwned> {
+        self.leader.clone()
     }
 }

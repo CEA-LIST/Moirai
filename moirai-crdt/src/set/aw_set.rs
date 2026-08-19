@@ -183,8 +183,10 @@ impl OpGenerator for AWSet<usize> {
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
+        broadcast::tcsb::Tcsb,
+        commitment::{commit_log::CommitmentLog, commit_op::CommitOp},
         crdt::query::{Contains, Read},
-        replica::IsReplica,
+        replica::{IsReplica, Replica},
         state::po_log::VecLog,
     };
 
@@ -369,6 +371,60 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
         assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
+    }
+
+    #[test]
+    pub fn commitment() {
+        type Log<'a> = CommitmentLog<VecLog<AWSet<&'a str>>>;
+        type Tcb<'a> = Tcsb<CommitOp<AWSet<&'a str>>>;
+
+        let members = ["a", "b", "c"];
+
+        let mut replica_a = Replica::<Log, Tcb>::bootstrap("a".to_string(), &members);
+        let mut replica_b = Replica::<Log, Tcb>::bootstrap("b".to_string(), &members);
+        let mut _replica_c = Replica::<Log, Tcb>::bootstrap("c".to_string(), &members);
+
+        replica_a.state_mut().oracle_mut().set_leader("a");
+        replica_b.state_mut().oracle_mut().set_leader("a");
+        _replica_c.state_mut().oracle_mut().set_leader("a");
+
+        replica_a.update(AWSet::Add("a")).unwrap();
+        replica_a.update(AWSet::Add("b")).unwrap();
+        replica_a.update(AWSet::Remove("a")).unwrap();
+        replica_a.update(AWSet::Add("c")).unwrap();
+
+        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["b", "c"]));
+
+        replica_b.state_mut().oracle_mut().set_leader("b");
+
+        replica_b.update(AWSet::Add("d")).unwrap();
+        replica_b.update(AWSet::Add("e")).unwrap();
+        replica_b.update(AWSet::Remove("d")).unwrap();
+        replica_b.update(AWSet::Remove("a")).unwrap();
+
+        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["e"]));
+
+        let since_a = replica_a.since();
+        let b_to_a = replica_b.pull(since_a);
+        assert_eq!(b_to_a.batch().events().len(), 4);
+        replica_a.receive_batch(b_to_a);
+
+        assert!(replica_a.query(Contains("e")));
+        assert_eq!(
+            replica_a.query(Read::new()),
+            set_from_slice(&["b", "c", "e"])
+        );
+
+        let since_b = replica_b.since();
+        let a_to_b = replica_a.pull(since_b);
+        assert_eq!(a_to_b.batch().events().len(), 4);
+        replica_b.receive_batch(a_to_b);
+
+        let value_a = replica_a.query(Read::new());
+        let value_b = replica_b.query(Read::new());
+
+        assert_eq!(value_a, value_b);
+        assert_eq!(value_a, set_from_slice(&["b", "c", "e"]));
     }
 
     #[cfg(feature = "fuzz")]

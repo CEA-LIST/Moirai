@@ -21,9 +21,25 @@ impl DeepSizeOf for Resolver {
     }
 }
 
+impl Default for Resolver {
+    fn default() -> Self {
+        Self {
+            inner: Rc::new(FrozenVec::new()),
+        }
+    }
+}
+
 impl Resolver {
+    /// # Complexity
+    /// `O(1)`
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {
         self.inner.get(idx.0)
+    }
+
+    /// # Complexity
+    /// `O(n)`
+    pub fn get(&self, id: &ReplicaId) -> Option<ReplicaIdx> {
+        self.inner.iter().position(|s| s == id).map(ReplicaIdx)
     }
 
     pub fn len(&self) -> usize {
