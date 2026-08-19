@@ -77,6 +77,7 @@ macro_rules! record {
             /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
                 type Value = [<$name Value>];
+                type Command = $name;
                 type Op = $name;
                 type Rejection = [<$name Rejection>];
 
@@ -86,6 +87,10 @@ macro_rules! record {
                             $field: <$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                         )*
                     }
+                }
+
+                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                    cmd
                 }
 
                 fn effect(

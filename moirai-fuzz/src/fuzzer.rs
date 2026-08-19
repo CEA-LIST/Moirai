@@ -19,7 +19,9 @@ use crate::{
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog<Command = <L as IsLog>::Op>
+        + OpGeneratorNested
+        + EvalNested<Read<<L as IsLog>::Value>>,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {

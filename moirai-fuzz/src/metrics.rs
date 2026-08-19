@@ -56,6 +56,7 @@ impl<L: IsLog> Default for MetricsLog<L> {
 
 impl<L: IsLog> IsLog for MetricsLog<L> {
     type Value = L::Value;
+    type Command = L::Command;
     type Op = L::Op;
     type Rejection = L::Rejection;
 
@@ -63,8 +64,8 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
         Self::new(L::new())
     }
 
-    fn prepare(op: Self::Op) -> Self::Op {
-        L::prepare(op)
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        self.inner.prepare(cmd)
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {

@@ -1,6 +1,7 @@
 #![allow(clippy::mutable_key_type)]
 
 pub mod event_graph;
+pub mod event_history;
 pub mod hashmap;
 pub mod vec;
 
@@ -8,9 +9,7 @@ use std::fmt::Debug;
 
 use crate::{
     clock::version_vector::Version,
-    crdt::policy::Policy,
     event::{Event, id::EventId, tagged_op::TaggedOp},
-    utils::hashmap::HashSet,
 };
 
 /// Essential services for an unstable state implementation.
@@ -22,6 +21,7 @@ pub trait IsUnstableCore<O>: Debug {
     /// Get a tagged operation from the unstable state by its ID.
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
     /// Returns a list of references to tagged operations that are predecessors of the given version.
+    /// The set of predecessors of a version v is defined as the set of tagged operations that are causally before or equal to v.
     fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
     where
         O: Clone;
@@ -51,15 +51,10 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// # Note
     /// The direct parents of an event are those events that are immediately causally before it, i.e.,
     /// an event e' is the direct parent of event e if e' < e and there is no event e'' such that e' < e'' < e.
-    fn direct_parents(&self, event_id: &EventId) -> Vec<EventId>;
+    fn direct_predecessors(&self, event_id: &EventId) -> Vec<EventId>;
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
-    /// Returns the inclusive causal past of `event_id` in deterministic topological order.
-    /// The policy only breaks ties between events whose parents have already been emitted.
-    fn predecessors_by_id<P: Policy>(&self, event_id: &EventId) -> Vec<EventId>;
-    /// Returns the inclusive causal past of `event_id` without imposing a deterministic order.
-    fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.

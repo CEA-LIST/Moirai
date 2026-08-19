@@ -41,6 +41,7 @@ where
     U: IsUnstablePrune<O> + Default + Debug,
 {
     type Value = O::Value;
+    type Command = O;
     type Op = O;
     type Rejection = O::Rejection;
 
@@ -49,6 +50,10 @@ where
             stable: O::StableState::default(),
             unstable: U::default(),
         }
+    }
+
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        command
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {

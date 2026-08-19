@@ -94,12 +94,17 @@ impl<L> IsLog for NestedListLog<L>
 where
     L: IsLog,
 {
+    type Command = NestedList<L::Op>;
     type Op = NestedList<L::Op>;
     type Value = Vec<L::Value>;
     type Rejection = NestedListRejection<Box<L::Rejection>>;
 
     fn new() -> Self {
         Self::default()
+    }
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
@@ -168,10 +173,6 @@ where
 
     fn is_default(&self) -> bool {
         self.positions.is_default() && self.children.is_default()
-    }
-
-    fn prepare(op: Self::Op) -> Self::Op {
-        op
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {

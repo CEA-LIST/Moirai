@@ -123,11 +123,16 @@ macro_rules! union {
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
                 type Value = [<$union Value>];
+                type Command = [<$union>];
                 type Op = [<$union>];
                 type Rejection = [<$union Rejection>];
 
                 fn new() -> Self {
                     <Self as ::std::default::Default>::default()
+                }
+
+                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                    cmd
                 }
 
                 fn is_enabled(&self, op: &Self::Op) -> ::std::result::Result<(), Self::Rejection> {

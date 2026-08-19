@@ -52,6 +52,7 @@ where
     O: PureCRDT + Clone + std::fmt::Debug + UsesUnstableService<EventGraph<O>>,
 {
     type Value = <O as PureCRDT>::Value;
+    type Command = O;
     type Op = O;
     type Rejection = O::Rejection;
 
@@ -63,6 +64,10 @@ where
             stable: <O as PureCRDT>::StableState::default(),
             unstable: Default::default(),
         }
+    }
+
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        command
     }
 
     fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {

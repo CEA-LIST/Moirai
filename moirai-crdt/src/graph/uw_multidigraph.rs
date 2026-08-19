@@ -97,12 +97,17 @@ where
     V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
+    type Command = UWGraph<V, E, Vl::Op, El::Op>;
     type Op = UWGraph<V, E, Vl::Op, El::Op>;
     type Value = LabeledMultidigraph<V, E, Vl, El>;
     type Rejection = LabelledGraphRejection<V, E, Vl, El>;
 
     fn new() -> Self {
         Self::default()
+    }
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
     // TODO: add sink when vertex/arc creation/destruction

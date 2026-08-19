@@ -33,11 +33,16 @@ where
     L: IsLog,
 {
     type Value = Option<L::Value>;
+    type Command = Optional<L::Op>;
     type Op = Optional<L::Op>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
+    }
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {

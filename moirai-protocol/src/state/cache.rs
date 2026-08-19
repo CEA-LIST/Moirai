@@ -108,6 +108,7 @@ impl<L: IsLog> Default for CachedLog<L> {
 
 impl<L: IsLog> IsLog for CachedLog<L> {
     type Value = L::Value;
+    type Command = L::Command;
     type Op = L::Op;
     type Rejection = L::Rejection;
 
@@ -118,8 +119,8 @@ impl<L: IsLog> IsLog for CachedLog<L> {
         }
     }
 
-    fn prepare(op: Self::Op) -> Self::Op {
-        L::prepare(op)
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        self.inner.prepare(command)
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {

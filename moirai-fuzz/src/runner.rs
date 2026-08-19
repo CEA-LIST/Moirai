@@ -50,7 +50,9 @@ pub fn runner<L>(
     compare: fn(&L::Value, &L::Value) -> bool,
 ) -> RunData
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog<Command = <L as IsLog>::Op>
+        + OpGeneratorNested
+        + EvalNested<Read<<L as IsLog>::Value>>,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {

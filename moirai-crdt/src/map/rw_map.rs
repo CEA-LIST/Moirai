@@ -81,11 +81,16 @@ where
     K: Clone + Debug + Hash + Eq,
 {
     type Value = HashMap<K, L::Value>;
+    type Command = RWMap<K, L::Op>;
     type Op = RWMap<K, L::Op>;
     type Rejection = L::Rejection;
 
     fn new() -> Self {
         Self::default()
+    }
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {

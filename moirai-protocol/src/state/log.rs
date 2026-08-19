@@ -25,6 +25,8 @@ use crate::{
 pub trait IsLog: Default + Debug {
     // TODO: is Value really needed?
     type Value: Default + Debug;
+    /// Client input command type
+    type Command: Debug + Clone;
     /// Stored operation type
     type Op: Debug + Clone;
     /// Rejection type for operations that are not enabled in the current state
@@ -33,10 +35,10 @@ pub trait IsLog: Default + Debug {
     fn new() -> Self {
         Self::default()
     }
-    /// `prepare` cannot inspect the state, being limited to returning the operation (including potential parameters).
-    fn prepare(op: Self::Op) -> Self::Op {
-        op
-    }
+
+    /// Prepare a client command as the operation stored and replicated by this log.
+    fn prepare(&self, command: Self::Command) -> Self::Op;
+
     /// Check if an update operation is enabled in the current state.
     fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
         Ok(())
@@ -104,11 +106,16 @@ where
 /// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
 impl<L: IsLog> IsLog for Box<L> {
     type Value = L::Value;
+    type Command = Box<L::Command>;
     type Op = Box<L::Op>;
     type Rejection = L::Rejection;
 
     fn new() -> Self {
         Box::new(L::new())
+    }
+
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        Box::new((**self).prepare(*command))
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
@@ -164,6 +171,7 @@ impl<L: IsLog> Default for BoxedLog<L> {
 
 impl<L: IsLog> IsLog for BoxedLog<L> {
     type Value = Box<L::Value>;
+    type Command = Box<L::Command>;
     type Op = Box<L::Op>;
     type Rejection = Box<L::Rejection>;
 
@@ -171,8 +179,8 @@ impl<L: IsLog> IsLog for BoxedLog<L> {
         Self(Box::new(L::new()))
     }
 
-    fn prepare(op: Self::Op) -> Self::Op {
-        Box::new(L::prepare(*op))
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        Box::new(self.0.as_ref().prepare(*command))
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {

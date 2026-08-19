@@ -98,7 +98,7 @@ where
     }
 
     /// # Complexity
-    /// O(1)
+    /// `O(1)`
     fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
         self.map
             .get_by_right(event_id)
@@ -157,7 +157,7 @@ impl<O> IsUnstableCausal<O> for EventGraph<O>
 where
     O: Debug + Clone,
 {
-    fn direct_parents(&self, event_id: &EventId) -> Vec<EventId> {
+    fn direct_predecessors(&self, event_id: &EventId) -> Vec<EventId> {
         let maybe_idx = self.map.get_by_right(event_id);
         if let Some(idx) = maybe_idx {
             self.graph
@@ -174,14 +174,6 @@ where
             .iter()
             .filter_map(|id| self.get(id).cloned())
             .collect()
-    }
-
-    fn predecessors_by_id<P: Policy>(&self, event_id: &EventId) -> Vec<EventId> {
-        self.predecessors_by_id_ordered::<P>(event_id)
-    }
-
-    fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId> {
-        self.predecessor_set_by_id(event_id)
     }
 }
 
@@ -255,91 +247,6 @@ where
                     .cloned()
                     .map(|event_id| (event_id, tagged_op))
             })
-            .collect()
-    }
-
-    /// Return the inclusive causal past of `event_id` in one deterministic topological order.
-    fn predecessors_by_id_ordered<P: Policy>(&self, event_id: &EventId) -> Vec<EventId> {
-        let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
-            return Vec::new();
-        };
-
-        let nodes = self.predecessor_nodes_inclusive(start_idx);
-        self.linearize_nodes_by::<P>(nodes)
-            .into_iter()
-            .filter_map(|node_idx| self.map.get_by_left(&node_idx).cloned())
-            .collect()
-    }
-
-    /// Return the inclusive causal past of `event_id` as an unordered set.
-    ///
-    /// This is cheaper than `predecessors_by_id` when callers only need
-    /// membership tests and do not need a deterministic topological order.
-    pub fn predecessor_set_by_id(&self, event_id: &EventId) -> HashSet<EventId> {
-        let Some(start_idx) = self.map.get_by_right(event_id).copied() else {
-            return HashSet::default();
-        };
-
-        let mut event_ids = HashSet::default();
-        let mut stack = vec![start_idx];
-
-        while let Some(node_idx) = stack.pop() {
-            let Some(event_id) = self.map.get_by_left(&node_idx) else {
-                continue;
-            };
-
-            if !event_ids.insert(event_id.clone()) {
-                continue;
-            }
-
-            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
-        }
-
-        event_ids
-    }
-
-    /// Return the union of the inclusive causal pasts of `event_ids` in one
-    /// deterministic topological order.
-    pub fn predecessors_by_ids<P: Policy>(&self, event_ids: &HashSet<EventId>) -> Vec<EventId> {
-        let mut nodes = HashSet::default();
-
-        for event_id in event_ids {
-            if let Some(start_idx) = self.map.get_by_right(event_id).copied() {
-                self.collect_predecessor_nodes_inclusive(start_idx, &mut nodes);
-            }
-        }
-
-        self.linearize_nodes_by::<P>(nodes)
-            .into_iter()
-            .filter_map(|node_idx| self.map.get_by_left(&node_idx).cloned())
-            .collect()
-    }
-
-    fn predecessor_nodes_inclusive(&self, start_idx: NodeIndex) -> HashSet<NodeIndex> {
-        let mut nodes = HashSet::default();
-        self.collect_predecessor_nodes_inclusive(start_idx, &mut nodes);
-        nodes
-    }
-
-    fn collect_predecessor_nodes_inclusive(
-        &self,
-        start_idx: NodeIndex,
-        nodes: &mut HashSet<NodeIndex>,
-    ) {
-        let mut stack = vec![start_idx];
-
-        while let Some(node_idx) = stack.pop() {
-            if !nodes.insert(node_idx) {
-                continue;
-            }
-
-            stack.extend(self.graph.neighbors_directed(node_idx, Direction::Outgoing));
-        }
-    }
-
-    fn linearize_nodes_by<P: Policy>(&self, nodes: HashSet<NodeIndex>) -> Vec<NodeIndex> {
-        CausalOrderIter::<_, P>::new(self, nodes)
-            .map(|(node_idx, _)| node_idx)
             .collect()
     }
 

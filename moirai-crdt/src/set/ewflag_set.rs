@@ -44,11 +44,16 @@ where
     V: Clone + Hash + Debug + Eq,
 {
     type Value = HashSet<V>;
+    type Command = EWFlagSet<V>;
     type Op = EWFlagSet<V>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
+    }
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
     fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
