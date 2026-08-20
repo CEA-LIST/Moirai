@@ -1,5 +1,7 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,6 +11,8 @@ use moirai_protocol::{
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
+#[cfg(feature = "fuzz")]
+use rand::Rng;
 
 use crate::{
     HashMap,
@@ -93,6 +97,31 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<V> OpGeneratorNested for RWBagLog<V>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+{
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            Add,
+            Remove,
+            Clear,
+        }
+        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
+
+        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Add => RWBag::Add(value),
+            Choice::Remove => RWBag::Remove(value),
+            Choice::Clear => RWBag::Clear,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::replica::IsReplica;
@@ -132,5 +161,21 @@ mod tests {
         result.insert("a", 2);
         assert_eq!(replica_a.query(Read::new()), result);
         assert_eq!(replica_b.query(Read::new()), result);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_rw_bag() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config =
+            FuzzerConfig::<RWBagLog<usize>>::new("rw_bag", runs, true, |a, b| a == b, false);
+
+        fuzzer::<RWBagLog<usize>>(config);
     }
 }

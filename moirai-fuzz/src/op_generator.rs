@@ -23,6 +23,8 @@ pub trait OpGenerator: PureCRDT {
     ) -> Self;
 }
 
+// TODO: Find a way to get rid of this trait and just use OpGenerator instead
+
 pub trait CausalOpGenerator: PureCRDT {
     type Config: Default;
 

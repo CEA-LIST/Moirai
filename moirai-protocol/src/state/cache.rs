@@ -18,6 +18,12 @@ use crate::{
     state::{log::IsLogTest, stable_state::IsStableState, unstable_state::CausalReplay},
 };
 
+// TODO: a better cache design would be the following:
+// When an update is delivered, if it does not conflict with any other update, we can update the cache in place.
+// This raises the following questions:
+// - How to determine if an update conflicts with another update? This is not only about concurrency but a semantic property of the updates.
+// And how to do it efficiently?
+
 #[derive(Default)]
 pub struct CacheCell<V> {
     value: OnceCell<V>,

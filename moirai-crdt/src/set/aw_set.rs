@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -15,11 +15,9 @@ use moirai_protocol::{
     state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
 };
 #[cfg(feature = "fuzz")]
-use rand::{Rng, RngExt};
+use rand::Rng;
 
 use crate::HashSet;
-#[cfg(feature = "fuzz")]
-use crate::set::SetConfig;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -152,12 +150,15 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for AWSet<usize> {
-    type Config = SetConfig;
+impl<V> OpGenerator for AWSet<V>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+{
+    type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
-        config: &Self::Config,
+        _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
@@ -171,7 +172,7 @@ impl OpGenerator for AWSet<usize> {
         let dist = WeightedIndex::new([5, 2, 1]).unwrap();
 
         let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
-        let value = rng.random_range(0..config.max_elements);
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
         match choice {
             Choice::Add => AWSet::Add(value),
             Choice::Remove => AWSet::Remove(value),
@@ -375,6 +376,8 @@ mod tests {
 
     #[test]
     pub fn commitment() {
+        use moirai_protocol::broadcast::tcsb::IsTcsbTest;
+
         type Log<'a> = CommitmentLog<VecLog<AWSet<&'a str>>>;
         type Tcb<'a> = Tcsb<CommitOp<AWSet<&'a str>>>;
 
@@ -382,49 +385,33 @@ mod tests {
 
         let mut replica_a = Replica::<Log, Tcb>::bootstrap("a".to_string(), &members);
         let mut replica_b = Replica::<Log, Tcb>::bootstrap("b".to_string(), &members);
+        // Let replica c be faulty
         let mut _replica_c = Replica::<Log, Tcb>::bootstrap("c".to_string(), &members);
 
+        // Replica a and b are well-connected
         replica_a.state_mut().oracle_mut().set_leader("a");
         replica_b.state_mut().oracle_mut().set_leader("a");
-        _replica_c.state_mut().oracle_mut().set_leader("a");
 
-        replica_a.update(AWSet::Add("a")).unwrap();
-        replica_a.update(AWSet::Add("b")).unwrap();
-        replica_a.update(AWSet::Remove("a")).unwrap();
-        replica_a.update(AWSet::Add("c")).unwrap();
+        let event_a_1 = replica_a.send(AWSet::Add("a")).unwrap();
+        replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["b", "c"]));
+        let event_a_2 = replica_a.send(AWSet::Add("b")).unwrap();
 
-        replica_b.state_mut().oracle_mut().set_leader("b");
+        let event_b_1 = replica_b.send(AWSet::Remove("a")).unwrap();
+        let event_b_2 = replica_b.send(AWSet::Add("c")).unwrap();
 
-        replica_b.update(AWSet::Add("d")).unwrap();
-        replica_b.update(AWSet::Add("e")).unwrap();
-        replica_b.update(AWSet::Remove("d")).unwrap();
-        replica_b.update(AWSet::Remove("a")).unwrap();
+        replica_a.receive(event_b_1);
+        replica_a.receive(event_b_2);
+        replica_b.receive(event_a_2);
 
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["e"]));
+        let value = set_from_slice(&["b", "c"]);
+        assert_eq!(replica_a.query(Read::new()), value);
+        assert_eq!(replica_b.query(Read::new()), value);
 
-        let since_a = replica_a.since();
-        let b_to_a = replica_b.pull(since_a);
-        assert_eq!(b_to_a.batch().events().len(), 4);
-        replica_a.receive_batch(b_to_a);
-
-        assert!(replica_a.query(Contains("e")));
-        assert_eq!(
-            replica_a.query(Read::new()),
-            set_from_slice(&["b", "c", "e"])
-        );
-
-        let since_b = replica_b.since();
-        let a_to_b = replica_a.pull(since_b);
-        assert_eq!(a_to_b.batch().events().len(), 4);
-        replica_b.receive_batch(a_to_b);
-
-        let value_a = replica_a.query(Read::new());
-        let value_b = replica_b.query(Read::new());
-
-        assert_eq!(value_a, value_b);
-        assert_eq!(value_a, set_from_slice(&["b", "c", "e"]));
+        assert_eq!(replica_a.state().child().inner().unstable().len(), 2);
+        assert_eq!(replica_b.state().child().inner().unstable().len(), 2);
+        assert_eq!(replica_a.tcsb().causally_stable_events_count(), 0);
+        assert_eq!(replica_b.tcsb().causally_stable_events_count(), 0);
     }
 
     #[cfg(feature = "fuzz")]

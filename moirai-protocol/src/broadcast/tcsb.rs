@@ -62,6 +62,10 @@ pub struct Tcsb<O> {
     interner: Interner,
     /// The indices of the columns that were updated in the last matrix clock update, used for efficient stable version computation.
     last_updated_columns: Vec<ReplicaIdx>,
+    /// Snapshots of every version at which causal stability advanced.
+    /// The initial zero version is excluded.
+    #[cfg(feature = "test_utils")]
+    lsv_history: Vec<Version>,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
@@ -78,6 +82,8 @@ where
             interner,
             replica_idx,
             last_updated_columns: Vec::new(),
+            #[cfg(feature = "test_utils")]
+            lsv_history: Vec::new(),
         }
     }
 
@@ -133,11 +139,15 @@ where
         } else {
             self.prune_outbox(&lsv);
             self.last_stable_version = lsv;
+
+            #[cfg(feature = "test_utils")]
+            self.lsv_history.push(self.last_stable_version.clone());
+
             Some(&self.last_stable_version)
         }
     }
 
-    /// # Performance
+    /// # Complexity
     /// `O(m log m + k log k)` where `m` is the number of replicas and `k` is the number of events returned.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
         let since = self.internalize_since(since);
@@ -219,7 +229,7 @@ where
 
     /// Check that an event is causally ready to be delivered.
     /// It checks that all the event's dependencies have already been delivered.
-    /// # Performance
+    /// # Complexity
     /// `O(n)`
     fn is_causally_ready(&self, event: &Event<O>) -> bool {
         let version = self.matrix_clock.origin_version();
@@ -302,6 +312,7 @@ where
         Since::new(version, except)
     }
 
+    /// Internalize a batch of events by mapping their replica IDs to local indices.
     fn internalize_batch(&mut self, message: BatchMessage<O>) -> Batch<O> {
         let (batch, resolver) = message.into_parts();
 
@@ -379,6 +390,8 @@ where
 pub trait IsTcsbTest<O>: IsTcsb<O> {
     fn matrix_clock(&self) -> &MatrixClock;
     fn last_stable_version(&self) -> &Version;
+    fn lsv_history(&self) -> &[Version];
+    fn causally_stable_events_count(&self) -> usize;
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
         O: 'a;
@@ -401,6 +414,16 @@ where
 
     fn last_stable_version(&self) -> &Version {
         &self.last_stable_version
+    }
+
+    fn lsv_history(&self) -> &[Version] {
+        &self.lsv_history
+    }
+
+    /// The number of causally stable events is the number of events that have been delivered and are causally stable.
+    /// It is the sum of the components of the LSV.
+    fn causally_stable_events_count(&self) -> usize {
+        self.last_stable_version.sum()
     }
 
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>

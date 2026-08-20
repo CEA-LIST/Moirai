@@ -3,6 +3,8 @@ use std::{
     hash::Hash,
 };
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -13,6 +15,8 @@ use moirai_protocol::{
     state::{effect_context::EffectContext, log::IsLog},
 };
 use petgraph::graph::DiGraph;
+#[cfg(feature = "fuzz")]
+use rand::{Rng, seq::IteratorRandom};
 
 use crate::HashMap;
 
@@ -49,8 +53,8 @@ where
     Vl: IsLog,
     El: IsLog,
 {
-    arc_content: HashMap<(V, V, E), El>,
-    vertex_content: HashMap<V, Vl>,
+    arcs: HashMap<(V, V, E), El>,
+    vertices: HashMap<V, Vl>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,7 +98,7 @@ impl<V, E, Vl, El> IsLog for UWGraphLog<V, E, Vl, El>
 where
     Vl: IsLog,
     El: IsLog,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     type Command = UWGraph<V, E, Vl::Op, El::Op>;
@@ -116,24 +120,21 @@ where
             // Update the child at vertex `v`
             UWGraph::UpdateVertex { id: v, child: op } => {
                 let child_op = Event::unfold(event, op);
-                self.vertex_content
-                    .entry(v)
-                    .or_default()
-                    .effect(child_op, ctx);
+                self.vertices.entry(v).or_default().effect(child_op, ctx);
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
             UWGraph::RemoveVertex { id: v } => {
-                if let Some(child) = self.vertex_content.get_mut(&v) {
+                if let Some(child) = self.vertices.get_mut(&v) {
                     child.redundant_by_parent(event.version(), true);
                 }
                 let arcs_to_remove: Vec<(V, V, E)> = self
-                    .arc_content
+                    .arcs
                     .keys()
                     .filter(|(v1, v2, _)| v1 == &v || v2 == &v)
                     .cloned()
                     .collect();
                 for arc in arcs_to_remove {
-                    if let Some(child) = self.arc_content.get_mut(&arc) {
+                    if let Some(child) = self.arcs.get_mut(&arc) {
                         child.redundant_by_parent(event.version(), true);
                     }
                 }
@@ -146,7 +147,7 @@ where
                 child: op,
             } => {
                 let child_op = Event::unfold(event, op);
-                self.arc_content
+                self.arcs
                     .entry((v1, v2, e))
                     .or_default()
                     .effect(child_op, ctx);
@@ -157,7 +158,7 @@ where
                 target: v2,
                 id: e,
             } => {
-                if let Some(child) = self.arc_content.get_mut(&(v1, v2, e)) {
+                if let Some(child) = self.arcs.get_mut(&(v1, v2, e)) {
                     child.redundant_by_parent(event.version(), true);
                 }
             }
@@ -165,33 +166,33 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        for v in self.arc_content.values_mut() {
+        for v in self.arcs.values_mut() {
             v.stabilize(version);
         }
 
-        for v in self.vertex_content.values_mut() {
+        for v in self.vertices.values_mut() {
             v.stabilize(version);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        for v in self.arc_content.values_mut() {
+        for v in self.arcs.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
 
-        for v in self.vertex_content.values_mut() {
+        for v in self.vertices.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
     }
 
     fn is_default(&self) -> bool {
-        self.arc_content.is_empty() && self.vertex_content.is_empty()
+        self.arcs.is_empty() && self.vertices.is_empty()
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
         match op {
             UWGraph::UpdateVertex { id, child } => {
-                if let Some(log) = self.vertex_content.get(id) {
+                if let Some(log) = self.vertices.get(id) {
                     log.is_enabled(child)
                         .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
                 } else {
@@ -201,7 +202,7 @@ where
                 }
             }
             UWGraph::RemoveVertex { id: v } => {
-                if let Some(child) = self.vertex_content.get(v)
+                if let Some(child) = self.vertices.get(v)
                     && !child.is_default()
                 {
                     Ok(())
@@ -215,10 +216,9 @@ where
                 id,
                 child,
             } => {
-                if let (Some(child1), Some(child2)) = (
-                    self.vertex_content.get(source),
-                    self.vertex_content.get(target),
-                ) {
+                if let (Some(child1), Some(child2)) =
+                    (self.vertices.get(source), self.vertices.get(target))
+                {
                     if child1.is_default() || child2.is_default() {
                         return Err(LabelledGraphRejection::ArcNotFound(
                             source.clone(),
@@ -238,9 +238,7 @@ where
                 }
             }
             UWGraph::RemoveArc { source, target, id } => {
-                if let Some(child) =
-                    self.arc_content
-                        .get(&(source.clone(), target.clone(), id.clone()))
+                if let Some(child) = self.arcs.get(&(source.clone(), target.clone(), id.clone()))
                     && !child.is_default()
                 {
                     Ok(())
@@ -265,8 +263,8 @@ where
 {
     fn default() -> Self {
         Self {
-            arc_content: HashMap::default(),
-            vertex_content: HashMap::default(),
+            arcs: HashMap::default(),
+            vertices: HashMap::default(),
         }
     }
 }
@@ -275,7 +273,7 @@ impl<V, E, Vl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E,
 where
     Vl: IsLog + EvalNested<Read<<Vl as IsLog>::Value>>,
     El: IsLog + EvalNested<Read<<El as IsLog>::Value>>,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     fn execute_query(
@@ -284,14 +282,14 @@ where
     ) -> <Read<Self::Value> as QueryOperation>::Response {
         let mut graph = <Self as IsLog>::Value::new();
         let mut node_idx = HashMap::default();
-        for (v, child) in self.vertex_content.iter() {
+        for (v, child) in self.vertices.iter() {
             if child.is_default() {
                 continue;
             }
             let idx = graph.add_node(Content::new(v.clone(), child.execute_query(Read::new())));
             node_idx.insert(v.clone(), idx);
         }
-        for ((v1, v2, e), child) in self.arc_content.iter() {
+        for ((v1, v2, e), child) in self.arcs.iter() {
             if child.is_default() {
                 continue;
             }
@@ -338,6 +336,98 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<V, E, Vl, El> OpGeneratorNested for UWGraphLog<V, E, Vl, El>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+    E: ValueGenerator + Clone + Hash + Debug + Eq,
+    Vl: OpGeneratorNested + EvalNested<Read<<Vl as IsLog>::Value>>,
+    El: OpGeneratorNested + EvalNested<Read<<El as IsLog>::Value>>,
+{
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            UpdateVertex,
+            RemoveVertex,
+            UpdateArc,
+            RemoveArc,
+        }
+
+        let graph = self.execute_query(Read::new());
+
+        let choice = if graph.node_count() < 2 {
+            &Choice::UpdateVertex
+        } else if graph.edge_count() == 0 {
+            let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+            &[
+                Choice::UpdateVertex,
+                Choice::RemoveVertex,
+                Choice::UpdateArc,
+            ][dist.sample(rng)]
+        } else {
+            let dist = WeightedIndex::new([2, 1, 2, 1]).unwrap();
+            &[
+                Choice::UpdateVertex,
+                Choice::RemoveVertex,
+                Choice::UpdateArc,
+                Choice::RemoveArc,
+            ][dist.sample(rng)]
+        };
+
+        match choice {
+            Choice::UpdateVertex => {
+                let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
+                let child_op = if let Some(child) = self.vertices.get(&v) {
+                    child.generate(rng)
+                } else {
+                    Vl::new().generate(rng)
+                };
+                UWGraph::UpdateVertex {
+                    id: v,
+                    child: child_op,
+                }
+            }
+            Choice::RemoveVertex => {
+                let idx = graph.node_indices().choose(rng).unwrap();
+                let v = graph.node_weight(idx).unwrap();
+                UWGraph::RemoveVertex { id: v.id.clone() }
+            }
+            Choice::UpdateArc => {
+                let idx1 = graph.node_indices().choose(rng).unwrap();
+                let idx2 = graph.node_indices().choose(rng).unwrap();
+                let v1 = graph.node_weight(idx1).unwrap();
+                let v2 = graph.node_weight(idx2).unwrap();
+                let edge = E::generate(rng, &<E as ValueGenerator>::Config::default());
+
+                let child_op = if let Some(child) =
+                    self.arcs.get(&(v1.id.clone(), v2.id.clone(), edge.clone()))
+                {
+                    child.generate(rng)
+                } else {
+                    El::new().generate(rng)
+                };
+
+                UWGraph::UpdateArc {
+                    source: v1.id.clone(),
+                    target: v2.id.clone(),
+                    id: edge,
+                    child: child_op,
+                }
+            }
+            Choice::RemoveArc => {
+                let edge = graph.edge_references().choose(rng).unwrap();
+                let e = edge.weight();
+                UWGraph::RemoveArc {
+                    source: e.id.0.clone(),
+                    target: e.id.1.clone(),
+                    id: e.id.2.clone(),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
@@ -347,6 +437,7 @@ mod tests {
     };
     use petgraph::graph::DiGraph;
 
+    #[cfg(feature = "fuzz")]
     use crate::{
         counter::resettable_counter::Counter,
         graph::uw_multidigraph::{UWGraph, UWGraphLog},
@@ -744,5 +835,23 @@ mod tests {
         );
     }
 
-    // TODO: fuzzer test
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_uw_graph() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<UWGraphLog<usize, usize, Lww, Cntr>>::new(
+            "uw_graph",
+            runs,
+            true,
+            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            false,
+        );
+        fuzzer::<UWGraphLog<usize, usize, Lww, Cntr>>(config);
+    }
 }

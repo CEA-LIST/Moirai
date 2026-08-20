@@ -28,7 +28,7 @@ pub struct CommitmentLog<L> {
     /// Log of leader votes
     leader_log: EventHistory<ReplicaIdx>,
     /// Commitment protocol state
-    pub protocol: CommitmentProtocol<Omega>,
+    protocol: CommitmentProtocol<Omega>,
 }
 
 impl<L> IsLog for CommitmentLog<L>
@@ -123,6 +123,10 @@ where
 
     pub fn oracle_mut(&mut self) -> &mut Omega {
         self.protocol.oracle_mut()
+    }
+
+    pub fn child(&self) -> &L {
+        &self.child
     }
 }
 

@@ -1,7 +1,7 @@
-use std::{convert::Infallible, fmt::Debug, marker::PhantomData};
+use std::{cmp::Ordering, convert::Infallible, fmt::Debug, marker::PhantomData};
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -12,6 +12,8 @@ use moirai_protocol::{
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
 };
+#[cfg(feature = "fuzz")]
+use rand::{Rng, RngExt};
 
 pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
@@ -23,16 +25,17 @@ pub type FairRegister<V> = Register<V, FairPolicy>;
 )]
 pub enum Register<V, P> {
     Write(V),
+    Clear,
     // TODO: find a better design pattern
     __Marker(std::convert::Infallible, PhantomData<P>),
 }
 
 impl<V, P> PureCRDT for Register<V, P>
 where
-    V: Default + Debug + Clone,
+    V: Debug + Clone,
     P: Policy,
 {
-    type Value = V;
+    type Value = Option<V>;
     type StableState = Vec<Self>;
     type Rejection = Infallible;
 
@@ -46,9 +49,22 @@ where
     where
         Self: 'a,
     {
-        unstable.any(|old_tagged_op| {
-            P::compare(new_tagged_op.tag(), old_tagged_op.tag()) == std::cmp::Ordering::Less
-        })
+        match new_tagged_op.op() {
+            Register::Clear => true,
+            Register::Write(_) => unstable.any(|old_tagged_op| {
+                P::compare(new_tagged_op.tag(), old_tagged_op.tag()) == Ordering::Less
+            }),
+            _ => unreachable!(),
+        }
+    }
+
+    fn redundant_by_when_redundant(
+        _old_op: &Self,
+        _old_tag: Option<&Tag>,
+        is_conc: bool,
+        _new_tagged_op: &TaggedOp<Self>,
+    ) -> bool {
+        !is_conc
     }
 
     fn redundant_by_when_not_redundant(
@@ -58,7 +74,7 @@ where
         new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
         if let Some(old_tag) = old_tag {
-            P::compare(new_tagged_op.tag(), old_tag) == std::cmp::Ordering::Greater
+            P::compare(new_tagged_op.tag(), old_tag) == Ordering::Greater
         } else {
             true
         }
@@ -67,7 +83,7 @@ where
 
 impl<V, P, U> UsesUnstableService<U> for Register<V, P>
 where
-    V: Default + Debug + Clone,
+    V: Debug + Clone,
     P: Policy,
     U: IsUnstableCore<Self>,
 {
@@ -75,7 +91,7 @@ where
 
 impl<V, P, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Register<V, P>
 where
-    V: Default + Debug + Clone,
+    V: Debug + Clone,
     P: Policy,
     U: IsUnstableCore<Self>,
 {
@@ -84,10 +100,10 @@ where
         stable: &<Register<V, P> as PureCRDT>::StableState,
         unstable: &U,
     ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
-        let mut value = V::default();
+        let mut value = None;
         for op in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             match op {
-                Register::Write(v) => value = v.clone(),
+                Register::Write(v) => value = Some(v.clone()),
                 _ => unreachable!(),
             }
         }
@@ -95,15 +111,24 @@ where
     }
 }
 
-#[cfg(feature = "test_utils")]
-impl<V, P> DeepSizeOf for Register<V, P>
+#[cfg(feature = "fuzz")]
+impl<V, P> OpGenerator for Register<V, P>
 where
-    V: DeepSizeOf,
+    P: Policy,
+    V: ValueGenerator + Debug + Clone,
 {
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        match self {
-            Register::Write(v) => v.deep_size_of_children(context),
-            Register::__Marker(never, _) => match *never {},
+    type Config = ();
+
+    fn generate(
+        rng: &mut impl Rng,
+        _config: &Self::Config,
+        _stable: &Self::StableState,
+        _unstable: &impl IsUnstableCore<Self>,
+    ) -> Self {
+        if rng.random_ratio(1, 5) {
+            Self::Clear
+        } else {
+            Self::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
         }
     }
 }
@@ -138,7 +163,7 @@ mod tests {
         replica_b.receive(event);
 
         let result = "World".to_string();
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(Read::new()), Some(result));
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
     }
 
@@ -150,20 +175,20 @@ mod tests {
         let event_a = replica_a
             .send(Register::Write("Hello".to_string()))
             .unwrap();
-        assert!(replica_a.query(Read::new()) == "Hello");
+        assert!(replica_a.query(Read::new()) == Some("Hello".to_string()));
         let event_b = replica_b
             .send(Register::Write("World".to_string()))
             .unwrap();
-        assert!(replica_b.query(Read::new()) == "World");
+        assert!(replica_b.query(Read::new()) == Some("World".to_string()));
 
         replica_a.receive(event_b.clone());
-        assert_eq!(replica_a.query(Read::new()), "World");
+        assert_eq!(replica_a.query(Read::new()), Some("World".to_string()));
         replica_b.receive(event_a.clone());
-        assert_eq!(replica_b.query(Read::new()), "World");
+        assert_eq!(replica_b.query(Read::new()), Some("World".to_string()));
         replica_c.receive(event_a);
-        assert_eq!(replica_c.query(Read::new()), "Hello");
+        assert_eq!(replica_c.query(Read::new()), Some("Hello".to_string()));
         replica_c.receive(event_b);
-        assert_eq!(replica_c.query(Read::new()), "World");
+        assert_eq!(replica_c.query(Read::new()), Some("World".to_string()));
     }
 
     #[test]
@@ -185,9 +210,9 @@ mod tests {
         replica_c.receive(event_a_1.clone());
         replica_a.receive(event_b_1);
 
-        assert_eq!(replica_a.query(Read::new()), "y".to_string());
-        assert_eq!(replica_b.query(Read::new()), "y".to_string());
-        assert_eq!(replica_c.query(Read::new()), "y".to_string());
+        assert_eq!(replica_a.query(Read::new()), Some("y".to_string()));
+        assert_eq!(replica_b.query(Read::new()), Some("y".to_string()));
+        assert_eq!(replica_c.query(Read::new()), Some("y".to_string()));
     }
 
     #[test]
@@ -205,8 +230,8 @@ mod tests {
         replica_a.receive(event_b.clone());
         replica_b.receive(event_a.clone());
 
-        assert_eq!(replica_a.query(Read::new()), "Public".to_string());
-        assert_eq!(replica_b.query(Read::new()), "Public".to_string());
+        assert_eq!(replica_a.query(Read::new()), Some("Public".to_string()));
+        assert_eq!(replica_b.query(Read::new()), Some("Public".to_string()));
 
         let event_a_2 = replica_a
             .send(Register::Write("Private".to_string()))
@@ -214,8 +239,8 @@ mod tests {
 
         replica_b.receive(event_a_2.clone());
 
-        assert_eq!(replica_a.query(Read::new()), "Private".to_string());
-        assert_eq!(replica_b.query(Read::new()), "Private".to_string());
+        assert_eq!(replica_a.query(Read::new()), Some("Private".to_string()));
+        assert_eq!(replica_b.query(Read::new()), Some("Private".to_string()));
 
         let event_b_2 = replica_b
             .send(Register::Write("Protected".to_string()))
@@ -228,9 +253,39 @@ mod tests {
         replica_a.receive(event_b_2.clone());
         replica_b.receive(event_a_3.clone());
 
-        assert_eq!(replica_a.query(Read::new()), "Protected".to_string());
-        assert_eq!(replica_b.query(Read::new()), "Protected".to_string());
+        assert_eq!(replica_a.query(Read::new()), Some("Protected".to_string()));
+        assert_eq!(replica_b.query(Read::new()), Some("Protected".to_string()));
     }
 
-    // TODO: fuzzer
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_lww_register() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        type Log = VecLog<Register<i32, LwwPolicy>>;
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<Log>::new("lww_register", runs, true, |a, b| a == b, false);
+        fuzzer::<Log>(config);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_fair_register() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        type Log = VecLog<Register<i32, FairPolicy>>;
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<Log>::new("fair_register", runs, true, |a, b| a == b, false);
+        fuzzer::<Log>(config);
+    }
 }

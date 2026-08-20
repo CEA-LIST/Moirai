@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use crate::event::id::EventId;
-
 pub trait QueryOperation {
     type Response;
 }
@@ -25,15 +23,22 @@ impl<V> Default for Read<V> {
     }
 }
 
-pub struct ReadId;
+#[derive(Debug)]
+pub struct ReadStable<V>(std::marker::PhantomData<V>);
 
-impl QueryOperation for ReadId {
-    type Response = Option<EventId>;
+impl<V> QueryOperation for ReadStable<V> {
+    type Response = V;
 }
 
-impl Default for ReadId {
+impl<V> ReadStable<V> {
+    pub fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<V> Default for ReadStable<V> {
     fn default() -> Self {
-        Self
+        Self::new()
     }
 }
 

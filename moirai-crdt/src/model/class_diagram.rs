@@ -23,14 +23,13 @@ use crate::{
     register::{mv_register::MVRegister, to_register::TORegister},
 };
 
-#[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum RelationType {
     Extends,
     Implements,
     Composes,
     Aggregates,
-    #[default]
     Associates,
 }
 
@@ -58,13 +57,12 @@ impl Ord for RelationType {
     }
 }
 
-#[derive(Debug, Clone, Eq, Default, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PrimitiveType {
     String,
     Number,
     Boolean,
-    #[default]
     Void,
 }
 
@@ -81,10 +79,9 @@ impl Default for TypeRef {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Visibility {
-    #[default]
     Public,
     Private,
     Protected,
@@ -115,10 +112,9 @@ impl Ord for Visibility {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Multiplicity {
-    #[default]
     Unspecified,
     One,
     ZeroOrOne,
@@ -239,15 +235,27 @@ fn edge_attr(
         .join("/");
     let rtype = &edge.weight().val.typ;
 
-    let multiplicity_from = format_mult(&edge.weight().val.ends.source);
-    let multiplicity_to = format_mult(&edge.weight().val.ends.target);
+    let source = &edge.weight().val.ends.source;
+    let multiplicity_from = if let Some(s) = source {
+        format_mult(s)
+    } else {
+        "".to_string()
+    };
+    let target = &edge.weight().val.ends.target;
+
+    let multiplicity_to = if let Some(t) = target {
+        format_mult(t)
+    } else {
+        "".to_string()
+    };
 
     let (head, style) = match rtype {
-        RelationType::Extends => ("empty", "normal"),
-        RelationType::Implements => ("empty", "dashed"),
-        RelationType::Aggregates => ("odiamond", "normal"),
-        RelationType::Composes => ("diamond", "normal"),
-        RelationType::Associates => ("normal", "normal"),
+        Some(RelationType::Extends) => ("empty", "normal"),
+        Some(RelationType::Implements) => ("empty", "dashed"),
+        Some(RelationType::Aggregates) => ("odiamond", "normal"),
+        Some(RelationType::Composes) => ("diamond", "normal"),
+        Some(RelationType::Associates) => ("normal", "normal"),
+        _ => ("none", "normal"),
     };
     format!(
         "label=\"{label}\", arrowhead=\"{head}\", style=\"{style}\", taillabel=\"{multiplicity_from}\", headlabel=\"{multiplicity_to}\", labeldistance=1.25, labelangle=45, fontcolor=brown"
@@ -303,10 +311,11 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
                 types.join("/")
             };
             let feature_vis = match v.visibility {
-                Visibility::Public => "+",
-                Visibility::Private => "-",
-                Visibility::Protected => "#",
-                Visibility::Package => "~",
+                Some(Visibility::Public) => "+",
+                Some(Visibility::Private) => "-",
+                Some(Visibility::Protected) => "#",
+                Some(Visibility::Package) => "~",
+                None => "",
             };
             format!("{feature_vis}{feature_name}: {feature_type}")
         })
@@ -320,10 +329,11 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationVal
         .map(|(k, v)| {
             let op_name = k.clone();
             let op_vis = match v.visibility {
-                Visibility::Public => "+",
-                Visibility::Private => "-",
-                Visibility::Protected => "#",
-                Visibility::Package => "~",
+                Some(Visibility::Public) => "+",
+                Some(Visibility::Private) => "-",
+                Some(Visibility::Protected) => "#",
+                Some(Visibility::Package) => "~",
+                None => "",
             };
             let params: Vec<String> = v
                 .parameters

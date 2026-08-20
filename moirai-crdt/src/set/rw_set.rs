@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -21,8 +21,6 @@ use moirai_protocol::{
 use rand::Rng;
 
 use crate::HashSet;
-#[cfg(feature = "fuzz")]
-use crate::set::SetConfig;
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -244,23 +242,33 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for RWSet<String> {
-    type Config = SetConfig;
+impl<V> OpGenerator for RWSet<V>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+{
+    type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
-        config: &Self::Config,
+        _config: &Self::Config,
         _stable: &<Self as PureCRDT>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
-        let letters: Vec<String> = (0..config.max_elements).map(|i| format!("{i}")).collect();
-        let choice = rand::seq::IteratorRandom::choose(letters.iter(), rng)
-            .unwrap()
-            .clone();
-        if rng.next_u32().is_multiple_of(2) {
-            RWSet::Add(choice)
-        } else {
-            RWSet::Remove(choice)
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            Add,
+            Remove,
+            Clear,
+        }
+        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
+
+        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Add => RWSet::Add(value),
+            Choice::Remove => RWSet::Remove(value),
+            Choice::Clear => RWSet::Clear,
         }
     }
 }

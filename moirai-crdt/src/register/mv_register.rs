@@ -2,6 +2,8 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -11,6 +13,8 @@ use moirai_protocol::{
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
 };
+#[cfg(feature = "fuzz")]
+use rand::{Rng, RngExt};
 
 use crate::HashSet;
 
@@ -68,7 +72,7 @@ where
 
 impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for MVRegister<V>
 where
-    V: Debug + Clone + Eq + Hash + Default,
+    V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
@@ -83,6 +87,27 @@ where
             }
         }
         set
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> OpGenerator for MVRegister<V>
+where
+    V: Clone + Debug + Eq + Hash + ValueGenerator,
+{
+    type Config = ();
+
+    fn generate(
+        rng: &mut impl Rng,
+        _config: &Self::Config,
+        _stable: &Self::StableState,
+        _unstable: &impl IsUnstableCore<Self>,
+    ) -> Self {
+        if rng.random_ratio(1, 5) {
+            Self::Clear
+        } else {
+            Self::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
+        }
     }
 }
 
@@ -198,5 +223,21 @@ mod tests {
 
         assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4, 2]));
         assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_mv_register() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        type Log = VecLog<MVRegister<i32>>;
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<Log>::new("mv_register", runs, true, |a, b| a == b, false);
+        fuzzer::<Log>(config);
     }
 }

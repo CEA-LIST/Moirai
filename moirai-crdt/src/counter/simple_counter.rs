@@ -106,9 +106,27 @@ impl OpGenerator for Counter<i32> {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{
+        crdt::query::{Read, ReadStable},
+        replica::IsReplica,
+    };
 
-    use crate::{counter::simple_counter::Counter, utils::membership::twins};
+    use crate::{
+        counter::{simple_counter::Counter, stable::CounterStable},
+        utils::membership::twins,
+    };
+
+    #[test]
+    fn read_stable_ignores_unstable_updates() {
+        let (mut replica_a, _replica_b) = twins::<Counter<isize>>();
+
+        replica_a.send(Counter::Inc(5)).unwrap();
+
+        assert_eq!(
+            replica_a.query(ReadStable::<CounterStable<isize>>::new()),
+            CounterStable::default()
+        );
+    }
 
     #[test]
     pub fn simple_counter() {

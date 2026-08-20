@@ -1,5 +1,7 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::op_generator::OpGeneratorNested;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -9,6 +11,8 @@ use moirai_protocol::{
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
+#[cfg(feature = "fuzz")]
+use rand::{Rng, RngExt};
 
 use crate::{
     HashSet,
@@ -104,6 +108,18 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl OpGeneratorNested for EWFlagSetLog<usize> {
+    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+        let value = rng.random_range(0..16);
+        match rng.random_range(0..8) {
+            0 => EWFlagSet::Clear,
+            1 | 2 => EWFlagSet::Remove(value),
+            _ => EWFlagSet::Add(value),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::replica::IsReplica;
@@ -153,5 +169,26 @@ mod tests {
             replica_b.query(Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec!["b", "c"])
         );
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_ewflag_set() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<EWFlagSetLog<usize>>::new(
+            "ewflag_set",
+            runs,
+            true,
+            |a, b| a == b,
+            false,
+        );
+
+        fuzzer::<EWFlagSetLog<usize>>(config);
     }
 }

@@ -209,4 +209,27 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), Some(2));
         assert_eq!(replica_b.query(Read::new()), Some(2));
     }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_optional_counter() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        type OptionalCounter = OptionLog<VecLog<Counter<i32>>>;
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<OptionalCounter>::new(
+            "optional_counter",
+            runs,
+            true,
+            |a, b| a == b,
+            false,
+        );
+
+        fuzzer::<OptionalCounter>(config);
+    }
 }

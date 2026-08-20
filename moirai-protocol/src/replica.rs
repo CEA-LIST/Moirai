@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use deepsize::DeepSizeOf;
 
 #[cfg(feature = "test_utils")]
-use crate::broadcast::tcsb::IsTcsbTest;
+use crate::{broadcast::tcsb::IsTcsbTest, clock::version_vector::Version};
 use crate::{
     broadcast::{
         internalizer::Interner,
@@ -69,12 +69,6 @@ pub struct Replica<L, T> {
     /// Replica state
     state: L,
 }
-
-// message = what is sent over the network
-// event = prepared operation + vector clock
-// metadata = commitment information
-// command = input of the client
-// payload = content of the message = { event, metadata }
 
 impl<L, T> IsReplica<L> for Replica<L, T>
 where
@@ -199,6 +193,12 @@ where
 
     pub fn num_delivered_events(&self) -> usize {
         self.tcsb.matrix_clock().origin_version().sum()
+    }
+
+    /// Versions at which the communication layer advanced causal stability.
+    /// The initial zero version is not included.
+    pub fn stable_version_history(&self) -> &[Version] {
+        self.tcsb.lsv_history()
     }
 
     pub fn state(&self) -> &L {

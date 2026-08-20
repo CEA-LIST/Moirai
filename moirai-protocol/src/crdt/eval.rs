@@ -1,5 +1,8 @@
 use crate::{
-    crdt::{pure_crdt::PureCRDT, query::QueryOperation},
+    crdt::{
+        pure_crdt::PureCRDT,
+        query::{QueryOperation, ReadStable},
+    },
     state::log::IsLog,
 };
 
@@ -9,6 +12,20 @@ where
     Self: PureCRDT,
 {
     fn execute_query(q: Q, stable: &Self::StableState, unstable: &U) -> Q::Response;
+}
+
+impl<O, U> Eval<ReadStable<O::StableState>, U> for O
+where
+    O: PureCRDT,
+    O::StableState: Clone,
+{
+    fn execute_query(
+        _q: ReadStable<O::StableState>,
+        stable: &O::StableState,
+        _unstable: &U,
+    ) -> O::StableState {
+        stable.clone()
+    }
 }
 
 pub trait EvalNested<Q>
