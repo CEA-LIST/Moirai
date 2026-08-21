@@ -73,7 +73,7 @@ where
         ));
 
         if let Some(v) = version {
-            let advances = match &self.protocol.last_committed {
+            let advances = match &self.protocol.last_committed() {
                 Some(last_committed) => v.partial_cmp(last_committed) == Some(Ordering::Greater),
                 None => true,
             };
@@ -81,19 +81,19 @@ where
             if advances {
                 self.child.stabilize(&v);
                 self.leader_log.stabilize(&v);
-                self.protocol.last_committed = Some(v);
+                self.protocol.update_last_committed(v);
             }
         }
     }
 
     fn stabilize(&mut self, version: &Version) {
-        let advances = match &self.protocol.last_committed {
+        let advances = match &self.protocol.last_committed() {
             Some(last_committed) => version.partial_cmp(last_committed) == Some(Ordering::Greater),
             None => true,
         };
 
         if advances {
-            self.protocol.last_committed = Some(version.clone());
+            self.protocol.update_last_committed(version.clone());
             self.child.stabilize(version);
         }
     }
