@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -245,12 +245,12 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> OpGeneratorNested for NestedListLog<L>
+impl<L> CommandGenerator for NestedListLog<L>
 where
-    L: OpGeneratorNested + IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op> + EvalNested<Read<<L as IsLog>::Value>>,
     <L as IsLog>::Value: Clone + PartialEq,
 {
-    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -271,7 +271,7 @@ where
             Choice::Insert => {
                 let pos = rng.random_range(0..=positions.len());
                 let default_child = L::new();
-                let op = <L as OpGeneratorNested>::generate(&default_child, rng);
+                let op = <L as CommandGenerator>::generate_command(&default_child, rng);
                 NestedList::Insert { pos, op }
             }
             Choice::Update => {
@@ -279,10 +279,10 @@ where
                 let target_id = &positions[pos];
                 let child = self.children.get_child(target_id);
                 let op = if let Some(c) = child {
-                    <L as OpGeneratorNested>::generate(c, rng)
+                    <L as CommandGenerator>::generate_command(c, rng)
                 } else {
                     let default_child = L::new();
-                    <L as OpGeneratorNested>::generate(&default_child, rng)
+                    <L as CommandGenerator>::generate_command(&default_child, rng)
                 };
                 NestedList::Update { pos, op }
             }

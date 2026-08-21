@@ -7,8 +7,8 @@ use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -25,7 +25,7 @@ pub enum PORegister<V> {
     Write(V),
 }
 
-impl<V> PureCRDT for PORegister<V>
+impl<V> ReplicatedDataType for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
 {
@@ -70,16 +70,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for PORegister<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &<PORegister<V> as PureCRDT>::StableState,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
+        stable: &<PORegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         // The set can contain only incomparable values
         let mut set = HashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|to| to.op())) {

@@ -1,8 +1,5 @@
 use std::fmt::{Debug, Display};
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
-
 use crate::{
     clock::version_vector::Version,
     crdt::{
@@ -11,15 +8,6 @@ use crate::{
     },
     event::Event,
     state::effect_context::EffectContext,
-};
-#[cfg(feature = "test_utils")]
-use crate::{
-    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
-    state::{
-        po_log::POLog,
-        stable_state::IsStableState,
-        unstable_state::{CausalReplay, IsUnstableState},
-    },
 };
 
 pub trait IsLog: Default + Debug {
@@ -72,36 +60,6 @@ pub trait __DefaultSinkExpansion: IsLog {
 }
 
 impl<L: IsLog> __DefaultSinkExpansion for L {}
-
-#[cfg(feature = "test_utils")]
-pub trait IsLogTest: IsLog
-where
-    Self::Op: PureCRDT + DeepSizeOf,
-    <Self::Op as PureCRDT>::StableState: IsStableState<Self::Op>,
-{
-    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState;
-    fn unstable(&self) -> &(impl CausalReplay<Self::Op> + DeepSizeOf);
-    fn unstable_mut(&mut self) -> &mut (impl CausalReplay<Self::Op> + DeepSizeOf);
-}
-
-#[cfg(feature = "test_utils")]
-impl<O, U> IsLogTest for POLog<O, U>
-where
-    O: PureCRDT + Clone + DeepSizeOf + UsesUnstableService<U>,
-    U: Default + Debug + DeepSizeOf + IsUnstableState<O>,
-{
-    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {
-        &self.stable
-    }
-
-    fn unstable(&self) -> &(impl CausalReplay<Self::Op> + DeepSizeOf) {
-        &self.unstable
-    }
-
-    fn unstable_mut(&mut self) -> &mut (impl CausalReplay<Self::Op> + DeepSizeOf) {
-        &mut self.unstable
-    }
-}
 
 /// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
 impl<L: IsLog> IsLog for Box<L> {

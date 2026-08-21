@@ -1,8 +1,9 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, range::Range};
 
 use crate::{
-    clock::version_vector::Version,
+    clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::unstable_state::{IsUnstableCore, IsUnstablePrune},
     utils::hashmap::HashMap,
 };
@@ -31,6 +32,23 @@ where
         O: 'a,
     {
         self.values()
+    }
+
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.iter().filter_map(move |(id, to)| {
+            if id.idx() == replica_idx && range.contains(&id.seq()) {
+                Some(to)
+            } else {
+                None
+            }
+        })
     }
 
     fn len(&self) -> usize {

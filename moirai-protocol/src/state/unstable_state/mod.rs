@@ -5,17 +5,18 @@ pub mod event_history;
 pub mod hashmap;
 pub mod vec;
 
-use std::fmt::Debug;
+use std::range::Range;
 
 use crate::{
-    clock::version_vector::Version,
+    clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
 };
 
 /// Essential services for an unstable state implementation.
 /// Core services include appending, retrieving and iterating over tagged operations.
 /// As such, it is "grow-only".
-pub trait IsUnstableCore<O>: Debug {
+pub trait IsUnstableCore<O> {
     /// Append an event to the unstable state.
     fn append(&mut self, event: Event<O>);
     /// Get a tagged operation from the unstable state by its ID.
@@ -27,6 +28,14 @@ pub trait IsUnstableCore<O>: Debug {
         O: Clone;
     /// Returns an iterator over all tagged operations in the unstable state.
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a;
+    /// Iterates over the events of the given replica whose sequence numbers fall within the specified range.
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
     where
         O: 'a;
     /// Returns the number of tagged operations in the unstable state.
@@ -55,6 +64,13 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
+    /// Let v ∈ G, previous(v) denotes the set of vertices z ∈ G such that z is the last vertex from z.id for which z ⇝ v
+    fn previous(&self, version: &Version, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
+    /// Let v ∈ G, next(v) denotes the set of vertices w ∈ G such that w is the first vertex from w.id for which v ⇝ w
+    fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
+    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
+    where
+        O: 'a;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.

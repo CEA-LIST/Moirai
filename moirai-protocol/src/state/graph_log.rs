@@ -1,16 +1,11 @@
 use std::fmt::Debug;
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
-
-#[cfg(feature = "test_utils")]
-use crate::state::{log::IsLogTest, unstable_state::CausalReplay};
 use crate::{
     clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
-        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::QueryOperation,
+        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
     },
     event::{Event, id::EventId, lamport::Lamport},
     state::{
@@ -28,15 +23,15 @@ pub type GraphLog<O> = CachedLog<RawGraphLog<O>>;
 #[derive(Debug)]
 pub struct RawGraphLog<O>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
-    stable: <O as PureCRDT>::StableState,
+    stable: <O as ReplicatedDataType>::StableState,
     unstable: EventGraph<O>,
 }
 
 impl<O> Clone for RawGraphLog<O>
 where
-    O: PureCRDT + Clone,
+    O: ReplicatedDataType + Clone,
     O::StableState: Clone,
 {
     fn clone(&self) -> Self {
@@ -49,9 +44,9 @@ where
 
 impl<O> IsLog for RawGraphLog<O>
 where
-    O: PureCRDT + Clone + std::fmt::Debug + UsesUnstableService<EventGraph<O>>,
+    O: ReplicatedDataType + Clone + UsesUnstableService<EventGraph<O>>,
 {
-    type Value = <O as PureCRDT>::Value;
+    type Value = <O as ReplicatedDataType>::Value;
     type Command = O;
     type Op = O;
     type Rejection = O::Rejection;
@@ -61,7 +56,7 @@ where
             debug_assert!(O::DISABLE_R_WHEN_NOT_R && O::DISABLE_R_WHEN_R);
         }
         Self {
-            stable: <O as PureCRDT>::StableState::default(),
+            stable: <O as ReplicatedDataType>::StableState::default(),
             unstable: Default::default(),
         }
     }
@@ -113,11 +108,11 @@ where
 
 impl<O> Default for RawGraphLog<O>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
     fn default() -> Self {
         Self {
-            stable: <O as PureCRDT>::StableState::default(),
+            stable: <O as ReplicatedDataType>::StableState::default(),
             unstable: Default::default(),
         }
     }
@@ -125,7 +120,7 @@ where
 
 impl<O> RawGraphLog<O>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
     pub fn stable(&self) -> &O::StableState {
         &self.stable
@@ -135,7 +130,7 @@ where
         &self.unstable
     }
 
-    pub fn from_stable(stable: <O as PureCRDT>::StableState) -> Self {
+    pub fn from_stable(stable: <O as ReplicatedDataType>::StableState) -> Self {
         Self {
             stable,
             unstable: Default::default(),
@@ -145,7 +140,7 @@ where
 
 impl<O> GraphLog<O>
 where
-    O: PureCRDT + Clone + Debug + UsesUnstableService<EventGraph<O>>,
+    O: ReplicatedDataType + Clone + Debug + UsesUnstableService<EventGraph<O>>,
 {
     pub fn stable(&self) -> &O::StableState {
         self.inner().stable()
@@ -155,35 +150,17 @@ where
         self.inner().unstable()
     }
 
-    pub fn from_stable(stable: <O as PureCRDT>::StableState) -> Self {
+    pub fn from_stable(stable: <O as ReplicatedDataType>::StableState) -> Self {
         Self::from_inner(RawGraphLog::from_stable(stable))
     }
 }
 
 impl<O, Q> EvalNested<Q> for RawGraphLog<O>
 where
-    O: PureCRDT + Clone + Eval<Q, EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
+    O: ReplicatedDataType + Clone + Eval<Q, EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
     Q: QueryOperation,
 {
     fn execute_query(&self, q: Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
-    }
-}
-
-#[cfg(feature = "test_utils")]
-impl<O> IsLogTest for RawGraphLog<O>
-where
-    O: PureCRDT + Clone + DeepSizeOf + UsesUnstableService<EventGraph<O>>,
-{
-    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {
-        &self.stable
-    }
-
-    fn unstable(&self) -> &(impl CausalReplay<Self::Op> + DeepSizeOf) {
-        &self.unstable
-    }
-
-    fn unstable_mut(&mut self) -> &mut (impl CausalReplay<Self::Op> + DeepSizeOf) {
-        &mut self.unstable
     }
 }

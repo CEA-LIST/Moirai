@@ -11,8 +11,8 @@ use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     state::unstable_state::IsUnstableCore,
 };
@@ -33,7 +33,7 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Dec(V),
 }
 
-impl<V> PureCRDT for Counter<V>
+impl<V> ReplicatedDataType for Counter<V>
 where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
@@ -52,16 +52,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Counter<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Counter<V>
 where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
             match op {
@@ -92,7 +92,7 @@ impl OpGenerator for Counter<i32> {
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
+        _stable: &<Self as ReplicatedDataType>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         let choice = ["Inc", "Dec"][rng.next_u32() as usize % 2];

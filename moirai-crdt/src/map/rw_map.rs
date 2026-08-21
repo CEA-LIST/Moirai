@@ -6,7 +6,7 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
+use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -240,13 +240,13 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<K, L> OpGeneratorNested for RWMapLog<K, L>
+impl<K, L> CommandGenerator for RWMapLog<K, L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>> + OpGeneratorNested,
+    L: IsLog<Command = <L as IsLog>::Op> + EvalNested<Read<<L as IsLog>::Value>> + CommandGenerator,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
     <L as IsLog>::Value: Clone + Default + PartialEq,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use moirai_fuzz::value_generator::ValueGenerator;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -262,9 +262,9 @@ where
         match choice {
             Choice::Update => {
                 let child_op = if let Some(child) = self.children.get(&key) {
-                    child.generate(rng)
+                    child.generate_command(rng)
                 } else {
-                    L::new().generate(rng)
+                    L::new().generate_command(rng)
                 };
                 RWMap::Update(key, child_op)
             }

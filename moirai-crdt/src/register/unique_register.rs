@@ -6,8 +6,8 @@ use moirai_protocol::{
     crdt::{
         eval::Eval,
         policy::{FairPolicy, LwwPolicy, Policy},
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -30,7 +30,7 @@ pub enum Register<V, P> {
     __Marker(std::convert::Infallible, PhantomData<P>),
 }
 
-impl<V, P> PureCRDT for Register<V, P>
+impl<V, P> ReplicatedDataType for Register<V, P>
 where
     V: Debug + Clone,
     P: Policy,
@@ -89,17 +89,17 @@ where
 {
 }
 
-impl<V, P, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Register<V, P>
+impl<V, P, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Register<V, P>
 where
     V: Debug + Clone,
     P: Policy,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &<Register<V, P> as PureCRDT>::StableState,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
+        stable: &<Register<V, P> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut value = None;
         for op in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             match op {

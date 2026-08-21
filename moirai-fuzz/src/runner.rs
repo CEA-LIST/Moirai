@@ -8,17 +8,17 @@ use log::{debug, info, warn};
 use moirai_protocol::{
     broadcast::tcsb::{IsTcsbTest, Tcsb},
     crdt::{eval::EvalNested, query::Read},
-    replica::{IsReplica, ReplicaIdx},
+    replica::{IsReplica, ReplicaId, ReplicaIdx},
     state::log::IsLog,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
 
 use crate::{
-    config::RunConfig,
+    config::{OracleDriver, RunConfig},
     execution_graph::ExecutionGraph,
     metrics::{MetricsLog, set_disable_stability},
-    op_generator::OpGeneratorNested,
+    op_generator::CommandGenerator,
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, format_string_ellipsis, seed_to_hex},
@@ -48,11 +48,10 @@ pub fn runner<L>(
     config: RunConfig,
     final_merge: bool,
     compare: fn(&L::Value, &L::Value) -> bool,
+    oracle_driver: Option<&OracleDriver<L>>,
 ) -> RunData
 where
-    L: IsLog<Command = <L as IsLog>::Op>
-        + OpGeneratorNested
-        + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + CommandGenerator + EvalNested<Read<<L as IsLog>::Value>>,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
@@ -120,8 +119,21 @@ where
             }
         }
 
-        // Send the operation
-        let op = replicas[replica_idx].state().generate(&mut rng);
+        if let Some(driver) = oracle_driver {
+            let replica_ids: Vec<_> = replicas.iter().map(|replica| replica.id()).collect();
+            let Some(leader_idx) =
+                select_omega_leader(replica_idx, &online, &reachability, &replica_ids)
+            else {
+                // An Omega-backed log cannot prepare a command until its oracle has an output.
+                continue;
+            };
+            let leader = replicas[leader_idx].id().to_owned();
+            driver.set_leader(replicas[replica_idx].state_mut().inner_mut(), &leader);
+        }
+
+        // Generate a client command. `send` then prepares the replicated payload, including any
+        // protocol metadata configured by the oracle driver above.
+        let command = replicas[replica_idx].state().generate_command(&mut rng);
         count_ops += 1;
 
         // Update progress bar
@@ -132,12 +144,12 @@ where
             &mut total_time_to_deliver_per_replica,
             || {
                 replicas[replica_idx]
-                    .send(op.clone())
+                    .send(command.clone())
                     .unwrap_or_else(|err| {
                         panic!(
                             "Failed to send operation from replica {}: {:?}. Error: {}",
                             replicas[replica_idx].id(),
-                            op,
+                            command,
                             err
                         )
                     })
@@ -297,6 +309,21 @@ where
         execution_graph_dot,
         inter_replica_concurrency_ratio,
     }
+}
+
+fn select_omega_leader(
+    selected: usize,
+    online: &[bool],
+    reachability: &[Vec<bool>],
+    replica_ids: &[&ReplicaId],
+) -> Option<usize> {
+    if online[selected] {
+        return Some(selected);
+    }
+
+    (0..online.len())
+        .filter(|&candidate| online[candidate] && reachability[selected][candidate])
+        .min_by(|&left, &right| replica_ids[left].cmp(replica_ids[right]))
 }
 
 fn timed<F, R>(replica_idx: ReplicaIdx, recorder: &mut HashMap<ReplicaIdx, Duration>, f: F) -> R

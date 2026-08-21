@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
-    op_generator::OpGeneratorNested,
+    op_generator::CommandGenerator,
     runner::{RunData, runner},
     serialize::save_execution_record,
     utils::format::seed_to_hex,
@@ -19,9 +19,7 @@ use crate::{
 
 pub fn fuzzer<L>(config: FuzzerConfig<L>)
 where
-    L: IsLog<Command = <L as IsLog>::Op>
-        + OpGeneratorNested
-        + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + CommandGenerator + EvalNested<Read<<L as IsLog>::Value>>,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {
@@ -29,17 +27,33 @@ where
             writeln!(buf, "{}", record.args())
         })
         .try_init();
+    let FuzzerConfig {
+        name,
+        runs,
+        final_merge,
+        compare,
+        save_execution,
+        oracle_driver,
+    } = config;
+
+    if oracle_driver.is_some() {
+        assert!(
+            runs.iter().all(|run| run.churn_rate < 1.0),
+            "Omega fuzzing requires a churn rate below 1.0 so that an online leader can eventually be selected"
+        );
+    }
+
     let mut run_results_list: Vec<(usize, (RunResults, RunConfig))> = Vec::new();
 
-    for (run_idx, run_config) in config.runs.into_iter().enumerate() {
+    for (run_idx, run_config) in runs.into_iter().enumerate() {
         debug!("Starting run {}", run_idx + 1);
 
         // Run configuration display
-        let config_table = display_config_table(&run_config, config.final_merge);
+        let config_table = display_config_table(&run_config, final_merge);
 
         info!("{}", config_table);
 
-        let run_data = runner::<L>(run_config, config.final_merge, config.compare);
+        let run_data = runner::<L>(run_config, final_merge, compare, oracle_driver.as_ref());
         let results = run_results(&run_data);
 
         debug!("Run {} completed", run_idx + 1);
@@ -48,7 +62,7 @@ where
 
         info!("{}", run_table);
 
-        if config.save_execution {
+        if save_execution {
             run_results_list.push((run_idx + 1, (results, run_data.config)));
         }
     }
@@ -62,14 +76,9 @@ where
     }
 
     // Save all runs at the end
-    if config.save_execution
+    if save_execution
         && !run_results_list.is_empty()
-        && let Err(e) = save_execution_record(
-            config.name,
-            config.final_merge,
-            run_results_list,
-            maybe_summary,
-        )
+        && let Err(e) = save_execution_record(name, final_merge, run_results_list, maybe_summary)
     {
         warn!("Failed to save execution record: {e}");
     }

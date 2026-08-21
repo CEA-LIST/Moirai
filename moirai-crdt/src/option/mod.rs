@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -96,20 +96,23 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> OpGeneratorNested for OptionLog<L>
+impl<L> CommandGenerator for OptionLog<L>
 where
-    L: OpGeneratorNested,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
 {
-    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         match &self.child {
             Some(child) => {
                 if rng.random_bool(1.0 / 5.0) {
                     Optional::Unset
                 } else {
-                    Optional::Set(child.generate(rng))
+                    Optional::Set(child.generate_command(rng))
                 }
             }
-            None => Optional::Set(<L as OpGeneratorNested>::generate(&L::default(), rng)),
+            None => Optional::Set(<L as CommandGenerator>::generate_command(
+                &L::default(),
+                rng,
+            )),
         }
     }
 }

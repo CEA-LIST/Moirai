@@ -7,9 +7,9 @@ use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::Read,
         redundancy::RedundancyRelation,
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
@@ -56,7 +56,7 @@ impl IsStableState<DWFlag> for Option<bool> {
     }
 }
 
-impl PureCRDT for DWFlag {
+impl ReplicatedDataType for DWFlag {
     type Value = bool;
     type StableState = Option<bool>;
     type Rejection = Infallible;
@@ -93,12 +93,12 @@ impl PureCRDT for DWFlag {
 
 impl<U> UsesUnstableService<U> for DWFlag where U: IsUnstableCore<Self> {}
 
-impl<U> Eval<Read<<Self as PureCRDT>::Value>, U> for DWFlag
+impl<U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for DWFlag
 where
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
         stable: &Self::StableState,
         unstable: &U,
     ) -> bool {
@@ -134,7 +134,7 @@ impl OpGenerator for DWFlag {
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
+        _stable: &<Self as ReplicatedDataType>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         let choice = rand::seq::IteratorRandom::choose(

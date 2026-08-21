@@ -7,9 +7,9 @@ use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{Contains, QueryOperation, Read},
         redundancy::RedundancyRelation,
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{
@@ -78,7 +78,7 @@ where
     }
 }
 
-impl<V> PureCRDT for RWSet<V>
+impl<V> ReplicatedDataType for RWSet<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
@@ -169,16 +169,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for RWSet<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &<RWSet<V> as PureCRDT>::StableState,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
+        stable: &<RWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut set = stable.0.clone();
         let mut removed = HashSet::default();
 
@@ -214,7 +214,7 @@ where
     /// Semantics: there exists an 'add' for the element, and there is no 'remove' for the element.
     fn execute_query(
         q: Contains<V>,
-        stable: &<RWSet<V> as PureCRDT>::StableState,
+        stable: &<RWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
         let stable_removed = stable
@@ -251,7 +251,7 @@ where
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
+        _stable: &<Self as ReplicatedDataType>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};

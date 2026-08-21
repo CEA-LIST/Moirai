@@ -6,9 +6,9 @@ use crate::{
     clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
-        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::QueryOperation,
         redundancy::RedundancyRelation,
+        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
@@ -29,7 +29,7 @@ pub type MapLog<O> = CachedMapLog<O>;
 // #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
     pub(crate) stable: O::StableState,
     pub(crate) unstable: U,
@@ -37,7 +37,7 @@ where
 
 impl<O, U> IsLog for POLog<O, U>
 where
-    O: PureCRDT + Clone + UsesUnstableService<U>,
+    O: ReplicatedDataType + Clone + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
     type Value = O::Value;
@@ -142,7 +142,7 @@ where
 
 impl<O, U> Default for POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
     U: Default,
 {
     fn default() -> Self {
@@ -155,7 +155,7 @@ where
 
 impl<O, U> POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
     pub fn stable(&self) -> &O::StableState {
         &self.stable
@@ -168,7 +168,7 @@ where
 
 impl<O, U> POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
     U: IsUnstablePrune<O>,
 {
     fn prune_redundant_ops(
@@ -195,7 +195,7 @@ where
 impl<Q, O, U> EvalNested<Q> for POLog<O, U>
 where
     Q: QueryOperation,
-    O: PureCRDT + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
+    O: ReplicatedDataType + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
     fn execute_query(&self, q: Q) -> Q::Response {

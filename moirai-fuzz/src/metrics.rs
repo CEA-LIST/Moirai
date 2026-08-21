@@ -12,7 +12,7 @@ use moirai_protocol::{
 };
 use rand::Rng;
 
-use crate::op_generator::OpGeneratorNested;
+use crate::op_generator::CommandGenerator;
 
 // Thread-local flag to control stability behavior during fuzzing
 thread_local! {
@@ -45,6 +45,14 @@ impl<L: IsLog> MetricsLog<L> {
             total_effect_time: Duration::ZERO,
             effect_call_count: 0,
         }
+    }
+
+    pub fn inner(&self) -> &L {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut L {
+        &mut self.inner
     }
 }
 
@@ -106,11 +114,11 @@ where
     }
 }
 
-impl<L> OpGeneratorNested for MetricsLog<L>
+impl<L> CommandGenerator for MetricsLog<L>
 where
-    L: IsLog + OpGeneratorNested,
+    L: IsLog + CommandGenerator,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        self.inner.generate(rng)
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.inner.generate_command(rng)
     }
 }

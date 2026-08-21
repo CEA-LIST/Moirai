@@ -13,8 +13,8 @@ use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -63,7 +63,7 @@ where
     }
 }
 
-impl<V, E> PureCRDT for Graph<V, E>
+impl<V, E> ReplicatedDataType for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
@@ -180,17 +180,17 @@ where
     }
 }
 
-impl<V, E, U> Eval<Read<<Self as PureCRDT>::Value>, U> for Graph<V, E>
+impl<V, E, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut ops: Vec<&Self> = stable
             .iter()
             .chain(unstable.iter().map(|t| t.op()))

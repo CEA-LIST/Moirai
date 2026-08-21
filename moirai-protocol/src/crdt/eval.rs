@@ -1,7 +1,7 @@
 use crate::{
     crdt::{
-        pure_crdt::PureCRDT,
         query::{QueryOperation, ReadStable},
+        replicated_data_type::ReplicatedDataType,
     },
     state::log::IsLog,
 };
@@ -9,14 +9,14 @@ use crate::{
 pub trait Eval<Q, U>
 where
     Q: QueryOperation,
-    Self: PureCRDT,
+    Self: ReplicatedDataType,
 {
     fn execute_query(q: Q, stable: &Self::StableState, unstable: &U) -> Q::Response;
 }
 
 impl<O, U> Eval<ReadStable<O::StableState>, U> for O
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
     O::StableState: Clone,
 {
     fn execute_query(

@@ -10,12 +10,7 @@ use crate::{
     },
 };
 
-pub enum CausalReset<O> {
-    Prune,
-    Inject(Vec<O>),
-}
-
-pub trait PureCRDT: Debug + Sized {
+pub trait ReplicatedDataType: Debug + Sized {
     // TODO: try to get rid of this
     type Value: Default + Debug;
     type StableState: IsStableState<Self>;
@@ -70,7 +65,12 @@ pub trait PureCRDT: Debug + Sized {
     }
 }
 
-pub trait UsesUnstableService<U>: PureCRDT
+pub enum CausalReset<O> {
+    Prune,
+    Inject(Vec<O>),
+}
+
+pub trait UsesUnstableService<U>: ReplicatedDataType
 where
     U: IsUnstableCore<Self>,
 {

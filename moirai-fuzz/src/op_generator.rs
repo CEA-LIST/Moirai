@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 
 use moirai_protocol::{
-    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
+    commitment::commit_log::CommitmentLog,
+    crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     state::{
         cache::CachedLog,
         graph_log::RawGraphLog,
@@ -12,7 +13,7 @@ use moirai_protocol::{
 };
 use rand::Rng;
 
-pub trait OpGenerator: PureCRDT {
+pub trait OpGenerator: ReplicatedDataType {
     type Config: Default;
 
     fn generate(
@@ -25,7 +26,7 @@ pub trait OpGenerator: PureCRDT {
 
 // TODO: Find a way to get rid of this trait and just use OpGenerator instead
 
-pub trait CausalOpGenerator: PureCRDT {
+pub trait CausalOpGenerator: ReplicatedDataType {
     type Config: Default;
 
     fn generate_causal(
@@ -52,15 +53,19 @@ where
     }
 }
 
-pub trait OpGeneratorNested: IsLog {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op;
+/// Generates client commands from the current state of a log.
+///
+/// Commands are deliberately kept distinct from replicated operations: log adapters such as
+/// `CommitmentLog` use `prepare` to attach protocol metadata to a client command.
+pub trait CommandGenerator: IsLog {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
 }
 
-impl<O> OpGeneratorNested for RawGraphLog<O>
+impl<O> CommandGenerator for RawGraphLog<O>
 where
-    O: PureCRDT + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
+    O: ReplicatedDataType + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
 {
-    fn generate(&self, rng: &mut impl Rng) -> <RawGraphLog<O> as IsLog>::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         O::generate_causal(
             rng,
             &<O as CausalOpGenerator>::Config::default(),
@@ -70,12 +75,12 @@ where
     }
 }
 
-impl<O, U> OpGeneratorNested for POLog<O, U>
+impl<O, U> CommandGenerator for POLog<O, U>
 where
-    O: PureCRDT + Clone + OpGenerator + UsesUnstableService<U>,
+    O: ReplicatedDataType + Clone + OpGenerator + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         O::generate(
             rng,
             &<O as OpGenerator>::Config::default(),
@@ -85,20 +90,29 @@ where
     }
 }
 
-impl<L> OpGeneratorNested for CachedLog<L>
+impl<L> CommandGenerator for CachedLog<L>
 where
-    L: OpGeneratorNested,
+    L: CommandGenerator,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        self.inner().generate(rng)
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.inner().generate_command(rng)
     }
 }
 
-impl<L> OpGeneratorNested for BoxedLog<L>
+impl<L> CommandGenerator for BoxedLog<L>
 where
-    L: OpGeneratorNested,
+    L: CommandGenerator,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        Box::new(self.inner().generate(rng))
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        Box::new(self.inner().generate_command(rng))
+    }
+}
+
+impl<L> CommandGenerator for CommitmentLog<L>
+where
+    L: IsLog + CommandGenerator,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.child().generate_command(rng)
     }
 }

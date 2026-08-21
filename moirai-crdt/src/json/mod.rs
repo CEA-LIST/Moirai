@@ -1,5 +1,5 @@
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_macros::union;
 use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
 #[cfg(feature = "fuzz")]
@@ -27,8 +27,8 @@ union! {
 
 // TODO: the code must be factorized
 #[cfg(feature = "fuzz")]
-impl OpGeneratorNested for JsonLog {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+impl CommandGenerator for JsonLog {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use moirai_protocol::state::log::IsLog;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -42,30 +42,28 @@ impl OpGeneratorNested for JsonLog {
         let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
 
         fn generate_number(log: &VecLog<Counter<f64>>, rng: &mut impl Rng) -> Json {
-            Json::Number(<VecLog<Counter<f64>> as OpGeneratorNested>::generate(
-                log, rng,
-            ))
+            Json::Number(<VecLog<Counter<f64>> as CommandGenerator>::generate_command(log, rng))
         }
 
         fn generate_boolean(log: &VecLog<EWFlag>, rng: &mut impl Rng) -> Json {
-            Json::Boolean(<VecLog<EWFlag> as OpGeneratorNested>::generate(log, rng))
-        }
-
-        fn generate_string(log: &GraphLog<List<char>>, rng: &mut impl Rng) -> Json {
-            Json::String(<GraphLog<List<char>> as OpGeneratorNested>::generate(
+            Json::Boolean(<VecLog<EWFlag> as CommandGenerator>::generate_command(
                 log, rng,
             ))
         }
 
+        fn generate_string(log: &GraphLog<List<char>>, rng: &mut impl Rng) -> Json {
+            Json::String(<GraphLog<List<char>> as CommandGenerator>::generate_command(log, rng))
+        }
+
         fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl Rng) -> Json {
-            let op = <UWMapLog<String, JsonLog> as OpGeneratorNested>::generate(log, rng);
+            let op = <UWMapLog<String, JsonLog> as CommandGenerator>::generate_command(log, rng);
             Json::Object(Boxer::<UWMap<String, Box<Json>>>::boxer(op))
         }
 
         fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl Rng) -> Json {
             use moirai_protocol::utils::boxer::Boxer;
 
-            let list_op = <NestedListLog<JsonLog> as OpGeneratorNested>::generate(log, rng);
+            let list_op = <NestedListLog<JsonLog> as CommandGenerator>::generate_command(log, rng);
             let o = Boxer::<NestedList<Box<Json>>>::boxer(list_op);
             Json::Array(o)
         }

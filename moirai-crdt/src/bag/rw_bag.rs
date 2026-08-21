@@ -1,7 +1,7 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
+use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -98,11 +98,11 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGeneratorNested for RWBagLog<V>
+impl<V> CommandGenerator for RWBagLog<V>
 where
     V: ValueGenerator + Clone + Hash + Debug + Eq,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {

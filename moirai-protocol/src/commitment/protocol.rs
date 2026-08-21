@@ -1,10 +1,12 @@
+use std::range::Range;
+
 use crate::{
     broadcast::internalizer::Resolver,
     clock::version_vector::Version,
     commitment::oracle::{IsOracle, Omega},
     event::{id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::unstable_state::event_history::EventHistory,
+    state::unstable_state::{IsUnstableCausal, IsUnstableCore, event_history::EventHistory},
 };
 
 /// Commitment protocol, which is responsible for
@@ -54,11 +56,11 @@ where
     }
 
     /// Simple majority quorum, which is the minimum number of votes required to commit a candidate leader.
-    fn quorum(&self) -> usize {
+    pub fn quorum(&self) -> usize {
         self.resolver.len() / 2 + 1
     }
 
-    fn members(&self) -> Vec<ReplicaIdx> {
+    pub fn members(&self) -> Vec<ReplicaIdx> {
         let mut members = vec![];
         for i in 0..self.resolver.len() {
             members.push(ReplicaIdx(i));
@@ -79,10 +81,6 @@ where
         let previous = log.previous(candidate_version, r);
         let next = log.next(&EventId::from(candidate_version), r);
 
-        // A vote is support only once both sides of the candidate's causal
-        // region have been observed. In particular, a previous vote without a
-        // `next` event is still pending: extending the history may reveal that
-        // the replica changed its vote before it observed the candidate.
         let (Some(first), Some(last)) = (previous, next) else {
             return false;
         };
@@ -90,9 +88,14 @@ where
         let first = first.id().seq() - 1;
         let last = last.id().seq() - 1;
 
-        log.store[&r][first..=last]
-            .iter()
-            .all(|(event, _)| *event.op() == candidate_version.origin_idx())
+        log.replica_events(
+            r,
+            Range {
+                start: first,
+                end: last + 1,
+            },
+        )
+        .all(|to| *to.op() == candidate_version.origin_idx())
     }
 
     pub fn leaders<'a>(
@@ -105,10 +108,10 @@ where
         log.store
             .values()
             .flat_map(|events| events.iter())
-            .filter(|e| {
+            .filter(|(_, v)| {
                 members
                     .iter()
-                    .filter(|&&r| self.supports(log, &e.1, r))
+                    .filter(|&&r| self.supports(log, v, r))
                     .take(quorum)
                     .count()
                     >= quorum

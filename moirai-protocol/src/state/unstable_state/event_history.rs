@@ -1,11 +1,11 @@
 use crate::{
-    clock::version_vector::Version,
+    clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
-    state::unstable_state::IsUnstableCore,
+    state::unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
     utils::hashmap::HashMap,
 };
-use std::fmt::Debug;
+use std::{fmt::Debug, range::Range};
 
 #[derive(Debug, Clone)]
 pub struct EventHistory<O> {
@@ -27,36 +27,11 @@ impl<O> EventHistory<O> {
             store: HashMap::default(),
         }
     }
-
-    /// Let v ∈ G, previous(v) denotes the set of vertices z ∈ G such that z is the last vertex from z.id for which z ⇝ v
-    pub fn previous(&self, version: &Version, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
-        let k = version.seq_by_idx(r);
-
-        if k == 0 {
-            None
-        } else {
-            self.store.get(&r)?.get(k - 1).map(|e| &e.0)
-        }
-    }
-
-    /// Let v ∈ G, next(v) denotes the set of vertices w ∈ G such that w is the first vertex from w.id for which v ⇝ w
-    pub fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
-        if event_id.seq() == 0 {
-            return None;
-        }
-
-        let events = self.store.get(&r)?;
-
-        let index = events
-            .partition_point(|(_, version)| version.seq_by_idx(event_id.idx()) < event_id.seq());
-
-        events.get(index).map(|(event, _)| event)
-    }
 }
 
 impl<O> IsUnstableCore<O> for EventHistory<O>
 where
-    O: Debug + Clone,
+    O: Clone,
 {
     fn append(&mut self, event: Event<O>) {
         let origin = event.id().idx();
@@ -118,6 +93,17 @@ where
             .flat_map(|events| events.iter().map(|(t, _)| t))
     }
 
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.store[&replica_idx][range].iter().map(|(to, _)| to)
+    }
+
     fn len(&self) -> usize {
         self.store.values().map(Vec::len).sum()
     }
@@ -125,4 +111,60 @@ where
     fn is_empty(&self) -> bool {
         self.store.values().all(Vec::is_empty)
     }
+}
+
+impl<O> IsUnstableCausal<O> for EventHistory<O>
+where
+    O: Debug + Clone,
+{
+    fn direct_predecessors(&self, _event_id: &EventId) -> Vec<EventId> {
+        todo!()
+    }
+
+    fn frontier(&self) -> Vec<TaggedOp<O>> {
+        todo!()
+    }
+
+    fn previous(&self, version: &Version, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+        let k = version.seq_by_idx(r);
+
+        if k == 0 {
+            None
+        } else {
+            self.store.get(&r)?.get(k - 1).map(|e| &e.0)
+        }
+    }
+
+    fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+        if event_id.seq() == 0 {
+            return None;
+        }
+
+        let events = self.store.get(&r)?;
+
+        let index = events
+            .partition_point(|(_, version)| version.seq_by_idx(event_id.idx()) < event_id.seq());
+
+        events.get(index).map(|(event, _)| event)
+    }
+
+    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
+    where
+        O: 'a,
+    {
+        self.store
+            .values()
+            .flat_map(|events| events.iter().map(|(t, v)| (t.op(), v)))
+    }
+}
+
+impl<O> IsUnstablePrune<O> for EventHistory<O>
+where
+    O: Clone,
+{
+    fn remove(&mut self, _event_id: &EventId) {}
+
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, _predicate: T) {}
+
+    fn clear(&mut self) {}
 }

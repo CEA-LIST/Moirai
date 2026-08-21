@@ -1,10 +1,9 @@
 #![allow(clippy::mutable_key_type)]
 
 use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fmt::{Debug, Display},
-    marker::PhantomData,
+    range::Range,
 };
 
 use bimap::BiMap;
@@ -18,14 +17,13 @@ use petgraph::{
 };
 
 use crate::{
-    clock::version_vector::Version,
-    crdt::policy::Policy,
-    event::{Event, id::EventId, tag::Tag, tagged_op::TaggedOp},
+    clock::version_vector::{Seq, Version},
+    event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
-    utils::hashmap::{HashMap, HashSet},
+    utils::hashmap::HashSet,
 };
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -144,6 +142,25 @@ where
         self.graph.node_weights()
     }
 
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.cutter
+            .0
+            .get(&replica_idx)
+            .into_iter()
+            .flat_map(move |seq_map| {
+                seq_map
+                    .range(range)
+                    .filter_map(|(_, node_idx)| self.graph.node_weight(*node_idx))
+            })
+    }
+
     fn len(&self) -> usize {
         self.graph.node_count()
     }
@@ -174,6 +191,21 @@ where
             .iter()
             .filter_map(|id| self.get(id).cloned())
             .collect()
+    }
+
+    fn previous(&self, _version: &Version, _r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+        todo!()
+    }
+
+    fn next(&self, _event_id: &EventId, _r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+        todo!()
+    }
+
+    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
+    where
+        O: 'a,
+    {
+        self.graph.node_weights().map(|_tagged_op| todo!())
     }
 }
 
@@ -237,19 +269,6 @@ impl<O> EventGraph<O>
 where
     O: Debug + Clone,
 {
-    /// Return all retained events in deterministic causal order.
-    pub fn linearize<P: Policy>(&self) -> Vec<(EventId, &TaggedOp<O>)> {
-        let nodes = self.graph.node_indices().collect::<HashSet<_>>();
-        CausalOrderIter::<O, P>::new(self, nodes)
-            .filter_map(|(node_idx, tagged_op)| {
-                self.map
-                    .get_by_left(&node_idx)
-                    .cloned()
-                    .map(|event_id| (event_id, tagged_op))
-            })
-            .collect()
-    }
-
     /// Find the immediate predecessors of the given version in the DAG.
     /// An immediate predecessor is a node that is a predecessor of the given version,
     /// and has no other predecessors that are also predecessors of the given version.
@@ -308,154 +327,6 @@ where
     #[allow(clippy::mutable_key_type)]
     pub fn heads(&self) -> &HashSet<EventId> {
         &self.heads
-    }
-}
-
-/// Kahn-style topological iterator over a subset of the event graph.
-///
-/// The graph stores edges from child to parent (child -> parent). For replay we need the opposite
-/// direction: every parent must be linearized before its children. The iterator therefore tracks, for
-/// each included node, how many included parents are still not emitted. A node becomes "ready" when
-/// that count reaches zero.
-pub struct CausalOrderIter<'a, O, P>
-where
-    O: Debug + Clone,
-    P: Policy,
-{
-    event_graph: &'a EventGraph<O>,
-    /// Node subset to linearize
-    included: HashSet<NodeIndex>,
-    /// Number of included parents that still need to be emitted for each included node.
-    remaining_parents: HashMap<NodeIndex, usize>,
-    /// Nodes whose included parents have all been emitted, ordered by the policy tie-breaker.
-    ready: BTreeSet<ReadyNode<P>>,
-}
-
-impl<'a, O, P> CausalOrderIter<'a, O, P>
-where
-    O: Debug + Clone,
-    P: Policy,
-{
-    fn new(event_graph: &'a EventGraph<O>, included: HashSet<NodeIndex>) -> Self {
-        let mut remaining_parents = HashMap::default();
-        let mut ready = BTreeSet::new();
-
-        for node_idx in included.iter().copied() {
-            // Outgoing edges point to causal parents. Only parents that are inside the requested
-            // subset block this node from being emitted.
-            let parent_count = event_graph
-                .graph
-                .neighbors_directed(node_idx, Direction::Outgoing)
-                .filter(|parent_idx| included.contains(parent_idx))
-                .count();
-
-            remaining_parents.insert(node_idx, parent_count);
-
-            // Roots of the induced subgraph have no remaining included parents, so they can be
-            // emitted immediately.
-            if parent_count == 0
-                && let Some(tagged_op) = event_graph.graph.node_weight(node_idx)
-            {
-                ready.insert(ReadyNode::new(node_idx, tagged_op.tag().clone()));
-            }
-        }
-
-        Self {
-            event_graph,
-            included,
-            remaining_parents,
-            ready,
-        }
-    }
-}
-
-impl<'a, O, P> Iterator for CausalOrderIter<'a, O, P>
-where
-    O: Debug + Clone,
-    P: Policy,
-{
-    type Item = (NodeIndex, &'a TaggedOp<O>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Pick the next causally ready node. If several nodes are ready, applies
-        // the chosen policy and then deterministic fallbacks
-        let ready = self.ready.pop_first()?;
-        let tagged_op = self.event_graph.graph.node_weight(ready.node_idx)?;
-
-        // Incoming edges are causal children
-        for child_idx in self
-            .event_graph
-            .graph
-            .neighbors_directed(ready.node_idx, Direction::Incoming)
-        {
-            if !self.included.contains(&child_idx) {
-                continue;
-            }
-
-            let Some(parent_count) = self.remaining_parents.get_mut(&child_idx) else {
-                continue;
-            };
-
-            debug_assert!(*parent_count > 0);
-            *parent_count = parent_count.saturating_sub(1);
-
-            if *parent_count == 0
-                && let Some(child_tagged_op) = self.event_graph.graph.node_weight(child_idx)
-            {
-                self.ready
-                    .insert(ReadyNode::new(child_idx, child_tagged_op.tag().clone()));
-            }
-        }
-
-        Some((ready.node_idx, tagged_op))
-    }
-}
-
-/// Sort key stored in the ready frontier of `CausalOrderIter`.
-///
-/// `BTreeSet` requires owned values with a stable `Ord` implementation. We therefore copy the
-/// node's `Tag` into the ready set when the node becomes ready. The tag is immutable once the event
-/// is inserted in the graph, so the ordering remains stable while the node waits in the set.
-#[derive(Clone)]
-struct ReadyNode<P> {
-    node_idx: NodeIndex,
-    tag: Tag,
-    _marker: PhantomData<P>,
-}
-
-impl<P> ReadyNode<P> {
-    fn new(node_idx: NodeIndex, tag: Tag) -> Self {
-        Self {
-            node_idx,
-            tag,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<P> Eq for ReadyNode<P> {}
-
-impl<P> PartialEq for ReadyNode<P> {
-    fn eq(&self, other: &Self) -> bool {
-        self.node_idx == other.node_idx
-    }
-}
-
-impl<P> Ord for ReadyNode<P>
-where
-    P: Policy,
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        P::compare(&self.tag, &other.tag)
-    }
-}
-
-impl<P> PartialOrd for ReadyNode<P>
-where
-    P: Policy,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, other))
     }
 }
 

@@ -16,9 +16,9 @@ use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
         eval::Eval,
-        pure_crdt::{CausalReset, PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
         redundancy::RedundancyRelation,
+        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
     },
     event::{id::EventId, tagged_op::TaggedOp},
     state::{
@@ -627,7 +627,7 @@ impl Display for ListRejection {
     }
 }
 
-impl<V> PureCRDT for List<V>
+impl<V> ReplicatedDataType for List<V>
 where
     V: Debug + Clone,
 {
@@ -698,13 +698,13 @@ where
 }
 
 /// Normal read: replay all unstable events on top of the stable list snapshot.
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for List<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
         stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {
@@ -745,13 +745,13 @@ impl<'a, V> QueryOperation for ReadAt<'a, V> {
     type Response = V;
 }
 
-impl<'a, V, U> Eval<ReadAt<'a, <Self as PureCRDT>::Value>, U> for List<V>
+impl<'a, V, U> Eval<ReadAt<'a, <Self as ReplicatedDataType>::Value>, U> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
     fn execute_query(
-        q: ReadAt<<Self as PureCRDT>::Value>,
+        q: ReadAt<<Self as ReplicatedDataType>::Value>,
         stable: &Self::StableState,
         unstable: &U,
     ) -> Vec<V> {

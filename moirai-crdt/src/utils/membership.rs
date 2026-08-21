@@ -1,6 +1,6 @@
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
-    crdt::pure_crdt::{PureCRDT, UsesUnstableService},
+    crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     event::tagged_op::TaggedOp,
     replica::Replica,
     state::{log::IsLog, po_log::VecLog},
@@ -21,7 +21,7 @@ pub type Quadruplet<O, L> = (
 
 pub fn twins<O>() -> Twins<O, VecLog<O>>
 where
-    O: PureCRDT + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
+    O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b"]);
     let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b"]);
@@ -39,7 +39,7 @@ where
 
 pub fn triplet<O>() -> Triplet<O, VecLog<O>>
 where
-    O: PureCRDT + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
+    O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b", "c"]);
     let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b", "c"]);

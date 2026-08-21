@@ -7,8 +7,8 @@ use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -23,7 +23,7 @@ pub enum TORegister<V> {
     Write(V),
 }
 
-impl<V> PureCRDT for TORegister<V>
+impl<V> ReplicatedDataType for TORegister<V>
 where
     V: Debug + PartialOrd + Ord + Clone,
 {
@@ -68,16 +68,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for TORegister<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for TORegister<V>
 where
     V: Debug + PartialOrd + Ord + Clone,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &<TORegister<V> as PureCRDT>::StableState,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
+        stable: &<TORegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut val = None;
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let TORegister::Write(v) = o

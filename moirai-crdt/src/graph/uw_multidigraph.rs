@@ -4,7 +4,7 @@ use std::{
 };
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
+use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -337,14 +337,18 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V, E, Vl, El> OpGeneratorNested for UWGraphLog<V, E, Vl, El>
+impl<V, E, Vl, El> CommandGenerator for UWGraphLog<V, E, Vl, El>
 where
     V: ValueGenerator + Clone + Hash + Debug + Eq,
     E: ValueGenerator + Clone + Hash + Debug + Eq,
-    Vl: OpGeneratorNested + EvalNested<Read<<Vl as IsLog>::Value>>,
-    El: OpGeneratorNested + EvalNested<Read<<El as IsLog>::Value>>,
+    Vl: CommandGenerator
+        + IsLog<Command = <Vl as IsLog>::Op>
+        + EvalNested<Read<<Vl as IsLog>::Value>>,
+    El: CommandGenerator
+        + IsLog<Command = <El as IsLog>::Op>
+        + EvalNested<Read<<El as IsLog>::Value>>,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -379,9 +383,9 @@ where
             Choice::UpdateVertex => {
                 let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
                 let child_op = if let Some(child) = self.vertices.get(&v) {
-                    child.generate(rng)
+                    child.generate_command(rng)
                 } else {
-                    Vl::new().generate(rng)
+                    Vl::new().generate_command(rng)
                 };
                 UWGraph::UpdateVertex {
                     id: v,
@@ -403,9 +407,9 @@ where
                 let child_op = if let Some(child) =
                     self.arcs.get(&(v1.id.clone(), v2.id.clone(), edge.clone()))
                 {
-                    child.generate(rng)
+                    child.generate_command(rng)
                 } else {
-                    El::new().generate(rng)
+                    El::new().generate_command(rng)
                 };
 
                 UWGraph::UpdateArc {

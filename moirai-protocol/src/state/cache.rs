@@ -1,8 +1,5 @@
 use std::{cell::OnceCell, fmt, fmt::Debug};
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
-
 use crate::{
     clock::version_vector::Version,
     crdt::{
@@ -11,11 +8,6 @@ use crate::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-};
-#[cfg(feature = "test_utils")]
-use crate::{
-    crdt::pure_crdt::PureCRDT,
-    state::{log::IsLogTest, stable_state::IsStableState, unstable_state::CausalReplay},
 };
 
 // TODO: a better cache design would be the following:
@@ -170,26 +162,5 @@ where
     fn read_ref(&self) -> &Self::Value {
         self.read_cache
             .get_or_compute(|| self.inner.execute_query(Read::new()))
-    }
-}
-
-#[cfg(feature = "test_utils")]
-impl<L> IsLogTest for CachedLog<L>
-where
-    L: IsLogTest,
-    L::Op: PureCRDT + DeepSizeOf,
-    <L::Op as PureCRDT>::StableState: IsStableState<L::Op>,
-{
-    fn stable(&self) -> &<Self::Op as PureCRDT>::StableState {
-        self.inner.stable()
-    }
-
-    fn unstable(&self) -> &(impl CausalReplay<Self::Op> + DeepSizeOf) {
-        self.inner.unstable()
-    }
-
-    fn unstable_mut(&mut self) -> &mut (impl CausalReplay<Self::Op> + DeepSizeOf) {
-        self.read_cache.invalidate();
-        self.inner.unstable_mut()
     }
 }

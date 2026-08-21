@@ -25,7 +25,7 @@ _Note: We update the crate organization diagram from time to time, so it may not
         ├── crdt/
         │   ├── eval.rs # Pure CRDT evaluation semantics
         │   ├── policy.rs # Abstract total order policy
-        │   ├── pure_crdt.rs # General trait for defining Pure CRDT semantics
+        │   ├── replicated_data_type.rs # General trait for defining Pure CRDT semantics
         │   ├── query.rs # Set of common query operations
         │   └── redundancy.rs # Causal redundancy rules
         ├── event/

@@ -7,9 +7,9 @@ use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::{PureCRDT, UsesUnstableService},
         query::{Contains, QueryOperation, Read},
         redundancy::RedundancyRelation,
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
@@ -27,7 +27,7 @@ pub enum AWSet<V> {
     Clear,
 }
 
-impl<V> PureCRDT for AWSet<V>
+impl<V> ReplicatedDataType for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
@@ -78,16 +78,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as PureCRDT>::Value>, U> for AWSet<V>
+impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &<AWSet<V> as PureCRDT>::StableState,
+        _q: Read<<Self as ReplicatedDataType>::Value>,
+        stable: &<AWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
         let mut set = stable.clone();
         for o in unstable.iter() {
             if let AWSet::Add(v) = o.op() {
@@ -105,7 +105,7 @@ where
 {
     fn execute_query(
         q: Contains<V>,
-        stable: &<AWSet<V> as PureCRDT>::StableState,
+        stable: &<AWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
         stable.contains(&q.0)
@@ -159,7 +159,7 @@ where
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
+        _stable: &<Self as ReplicatedDataType>::StableState,
         _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -443,5 +443,24 @@ mod tests {
             FuzzerConfig::<VecLog<AWSet<usize>>>::new("aw_set", runs, true, |a, b| a == b, false);
 
         fuzzer::<VecLog<AWSet<usize>>>(config);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_aw_set_with_commitment() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        type Log = CommitmentLog<VecLog<AWSet<usize>>>;
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config =
+            FuzzerConfig::<Log>::new("aw_set_commitment", runs, true, |a, b| a == b, false)
+                .with_omega_oracle();
+
+        fuzzer::<Log>(config);
     }
 }

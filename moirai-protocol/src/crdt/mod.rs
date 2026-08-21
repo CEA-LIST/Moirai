@@ -1,6 +1,5 @@
 pub mod eval;
 pub mod policy;
-pub mod pure_crdt;
 pub mod query;
 pub mod redundancy;
-pub mod sequential;
+pub mod replicated_data_type;

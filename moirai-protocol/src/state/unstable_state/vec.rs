@@ -1,8 +1,9 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, range::Range};
 
 use crate::{
     clock::version_vector::Version,
     event::{Event, id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
     state::unstable_state::{IsUnstableCore, IsUnstableDelivery, IsUnstablePrune},
 };
 
@@ -32,6 +33,18 @@ where
         O: 'a,
     {
         self.as_slice().iter()
+    }
+
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<crate::clock::version_vector::Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.iter()
+            .filter(move |to| to.id().idx() == replica_idx && range.contains(&to.id().seq()))
     }
 
     fn len(&self) -> usize {

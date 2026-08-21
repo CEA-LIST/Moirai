@@ -1,7 +1,7 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -109,8 +109,8 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGeneratorNested for EWFlagSetLog<usize> {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+impl CommandGenerator for EWFlagSetLog<usize> {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         let value = rng.random_range(0..16);
         match rng.random_range(0..8) {
             0 => EWFlagSet::Clear,

@@ -5,16 +5,15 @@ use crate::{
     clock::version_vector::Version,
     commitment::{
         commit_op::CommitOp,
+        leader_vote::{CommitFrontier, LeaderVote},
         oracle::{IsOracle, Omega},
         protocol::CommitmentProtocol,
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    replica::ReplicaIdx,
     state::{
-        effect_context::EffectContext,
-        log::IsLog,
-        unstable_state::{IsUnstableCore, event_history::EventHistory},
+        effect_context::EffectContext, log::IsLog, po_log::POLog,
+        unstable_state::event_history::EventHistory,
     },
 };
 
@@ -26,7 +25,7 @@ pub struct CommitmentLog<L> {
     /// Child log. It can contain any CRDT log, including composite ones.
     child: L,
     /// Log of leader votes
-    leader_log: EventHistory<ReplicaIdx>,
+    leader_log: POLog<LeaderVote, EventHistory<LeaderVote>>,
     /// Commitment protocol state
     protocol: CommitmentProtocol<Omega>,
 }
@@ -44,7 +43,7 @@ where
     fn prepare(&self, command: Self::Command) -> Self::Op {
         CommitOp::new(
             self.child.prepare(command),
-            self.protocol.oracle().query().unwrap(),
+            LeaderVote::Vote(self.protocol.oracle().query().unwrap()),
         )
     }
 
@@ -59,31 +58,30 @@ where
         self.protocol
             .update_resolver(event.version().resolver().clone());
 
-        let (op, leader) = event.op().clone().split();
-        let leader = self.protocol.resolver().get(&leader).unwrap();
+        let (op, vote) = event.op().clone().split();
 
         let update_event = event.clone().unfold(op);
-        let leader_event = event.unfold(leader);
+        let vote_event = event.clone().unfold(vote);
 
         // Dispatch the child update to its log, and the leader vote to the leader log.
         self.child.effect(update_event, ctx);
-        self.leader_log.append(leader_event);
+        self.leader_log.effect(vote_event, ctx);
 
-        // After processing the event, we check if we can advance the last committed anchor.
-        let leaders = self.protocol.leaders(&self.leader_log);
+        let version = self.leader_log.execute_query(CommitFrontier::new(
+            self.protocol.members(),
+            self.protocol.quorum(),
+        ));
 
-        // If we have a new anchor that is greater than the last committed anchor, we stabilize the child log at that anchor.
-        if let Some(anchor) = self.protocol.anchor(&leaders) {
+        if let Some(v) = version {
             let advances = match &self.protocol.last_committed {
-                Some(last_committed) => {
-                    anchor.partial_cmp(last_committed) == Some(Ordering::Greater)
-                }
+                Some(last_committed) => v.partial_cmp(last_committed) == Some(Ordering::Greater),
                 None => true,
             };
 
             if advances {
-                self.protocol.last_committed = Some(anchor.clone());
-                self.child.stabilize(anchor);
+                self.child.stabilize(&v);
+                self.leader_log.stabilize(&v);
+                self.protocol.last_committed = Some(v);
             }
         }
     }
@@ -105,7 +103,7 @@ where
     }
 
     fn is_default(&self) -> bool {
-        self.child.is_default() && self.leader_log.is_empty()
+        self.child.is_default() && self.leader_log.is_default()
     }
 }
 
@@ -116,7 +114,7 @@ where
     pub fn new(child: L, oracle: Omega, resolver: Resolver) -> Self {
         Self {
             child,
-            leader_log: EventHistory::default(),
+            leader_log: POLog::default(),
             protocol: CommitmentProtocol::new(oracle, resolver),
         }
     }
@@ -147,7 +145,7 @@ where
     fn default() -> Self {
         Self {
             child: L::default(),
-            leader_log: EventHistory::default(),
+            leader_log: POLog::default(),
             protocol: CommitmentProtocol::default(),
         }
     }
