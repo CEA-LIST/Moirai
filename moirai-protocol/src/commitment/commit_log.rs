@@ -78,25 +78,22 @@ where
         // Gather the new anchors
         let candidate_anchors = self.protocol.apply_support_deltas(deltas);
 
-        if candidate_anchors.is_empty() {
-            return;
-        }
-
-        // Find the greatest anchor
+        // Find the greatest candidate anchor, if any.
         let greatest_candidate = candidate_anchors
             .iter()
-            .map(|anchor| self.leader_log.unstable().retrieve_version(anchor))
+            .filter_map(|anchor| self.leader_log.unstable().version(anchor))
             .max_by(|a, b| {
                 a.partial_cmp(b)
                     .expect("candidate versions must be comparable")
             })
-            .unwrap();
+            .cloned();
 
-        // If the greatest anchor candidate advance commitment, then we reach a
-        // new commitment point.
-        if self.protocol.advance_commitment(&greatest_candidate) {
-            self.child.stabilize(&greatest_candidate);
-            self.leader_log.stabilize(&greatest_candidate);
+        // Only advance commitment when a real candidate exists.
+        if let Some(candidate) = greatest_candidate
+            && self.protocol.advance_commitment(&candidate)
+        {
+            self.child.stabilize(&candidate);
+            self.leader_log.stabilize(&candidate);
         }
     }
 

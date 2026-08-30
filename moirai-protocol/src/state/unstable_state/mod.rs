@@ -71,7 +71,8 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// Given an event `e` issued by a replica `r` `newly_observed_by(e)` returns the set of
     /// event ids `v` for which `e` is the first event issued by `r` that has `v` in its causal past.
     fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>>;
-    fn retrieve_version(&self, event_id: &EventId) -> Version;
+    /// Returns the version of the given event ID, if it exists.
+    fn version(&self, event_id: &EventId) -> Option<&Version>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.

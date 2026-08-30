@@ -14,16 +14,31 @@ pub struct EventHistory<O> {
     store: HashMap<ReplicaIdx, Vec<(TaggedOp<O>, Version)>>,
 }
 
-impl<O> Default for EventHistory<O> {
+impl<O> Default for EventHistory<O>
+where
+    O: Clone + Debug,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<O> EventHistory<O> {
+impl<O> EventHistory<O>
+where
+    O: Clone + Debug,
+{
     fn new() -> Self {
         Self {
             store: HashMap::default(),
+        }
+    }
+
+    /// Returns how many events from `replica` are strictly in `event`'s causal past.
+    fn strict_past_seq(&self, event: &EventId, replica: ReplicaIdx) -> Option<Seq> {
+        if replica == event.idx() {
+            event.seq().checked_sub(1)
+        } else {
+            Some(self.version(event)?.seq_by_idx(replica))
         }
     }
 }
@@ -114,7 +129,7 @@ where
 
 impl<O> IsUnstableCausal<O> for EventHistory<O>
 where
-    O: Debug + Clone,
+    O: Clone + Debug,
 {
     fn direct_predecessors(&self, _event_id: &EventId) -> Vec<EventId> {
         todo!()
@@ -129,18 +144,7 @@ where
     /// # Complexity
     /// `O(1)`
     fn previous(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
-        let version = self
-            .store
-            .get(&event_id.idx())?
-            .get(event_id.seq() - 1)
-            .map(|(_, version)| version)?;
-
-        let k = if r == event_id.idx() {
-            // If the event has been produced by `r`, then previous returns eventId.seq - 1 `
-            event_id.seq().checked_sub(1)?
-        } else {
-            version.seq_by_idx(r)
-        };
+        let k = self.strict_past_seq(event_id, r)?;
 
         if k == 0 {
             None
@@ -170,64 +174,43 @@ where
         events.get(index).map(|(event, _)| event)
     }
 
-    fn newly_observed_by<'a>(&self, observer: &EventId) -> Vec<&TaggedOp<O>> {
-        let observer_origin = observer.idx();
-
-        // If observer is the first event from its origin, so it has no previous event to compare with.
-        let Some(observer_index) = observer.seq().checked_sub(1) else {
+    /// # Complexity
+    /// Expected `O(N + E)` time and `O(E)` auxiliary space, where:
+    ///
+    /// - `N` is the number of replicas in the system that have issued events.
+    /// - `E` is the number of events newly added to the observer replica's
+    ///   causal past by `observer`.
+    fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>> {
+        if self.version(observer).is_none() {
             return Vec::new();
-        };
-        // Retrieve the events of the observer's origin
-        let Some(observer_events) = self.store.get(&observer_origin) else {
-            return Vec::new();
-        };
-        // Retrieve the event and its version
-        let Some((_, observer_version)) = observer_events.get(observer_index) else {
-            return Vec::new();
-        };
+        }
 
-        // Event previous to the observer event, if it exists, to determine which events are newly observed.
-        let previous_version = observer_index
-            .checked_sub(1)
-            .and_then(|index| observer_events.get(index))
-            .map(|(_, version)| version);
+        let previous = self.previous(observer, observer.idx()).map(TaggedOp::id);
 
-        let mut newly_observed: Vec<&TaggedOp<O>> = Vec::new();
+        let mut newly_observed = Vec::new();
         for (candidate_origin, events) in &self.store {
-            if *candidate_origin == observer_origin {
-                // On one replica's own timeline, the strict successor of event k is event k + 1.
-                // Therefore observer k establishes `next` only for candidate k - 1.
-                if let Some(candidate_index) = observer.seq().checked_sub(2)
-                    && let Some((candidate, _)) = events.get(candidate_index)
-                {
-                    newly_observed.push(candidate);
-                }
-                continue;
-            }
-
-            let previous = previous_version
-                .map_or(0, |version| version.seq_by_idx(*candidate_origin))
+            let first = previous
+                .and_then(|event| self.strict_past_seq(event, *candidate_origin))
+                .unwrap_or(0)
                 .min(events.len());
-            let current = observer_version
-                .seq_by_idx(*candidate_origin)
+            let last = self
+                .strict_past_seq(observer, *candidate_origin)
+                .unwrap_or(0)
                 .min(events.len());
 
-            if current > previous {
-                newly_observed.extend(
-                    events[previous..current]
-                        .iter()
-                        .map(|(candidate, _)| candidate),
-                );
+            if last > first {
+                newly_observed.extend(events[first..last].iter().map(|(candidate, _)| candidate));
             }
         }
 
         newly_observed
     }
 
-    fn retrieve_version(&self, event_id: &EventId) -> Version {
-        let index = event_id.seq().saturating_sub(1);
-        let (_, version) = self.store.get(&event_id.idx()).unwrap().get(index).unwrap();
-        version.clone()
+    fn version(&self, event_id: &EventId) -> Option<&Version> {
+        let index = event_id.seq().checked_sub(1)?;
+        let (event, version) = self.store.get(&event_id.idx())?.get(index)?;
+
+        (event.id() == event_id).then_some(version)
     }
 }
 

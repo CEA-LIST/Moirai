@@ -205,7 +205,7 @@ where
         todo!()
     }
 
-    fn retrieve_version(&self, _event_id: &EventId) -> Version {
+    fn version(&self, _event_id: &EventId) -> Option<&Version> {
         todo!()
     }
 }
