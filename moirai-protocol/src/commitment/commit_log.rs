@@ -5,15 +5,17 @@ use crate::{
     clock::version_vector::Version,
     commitment::{
         commit_op::CommitOp,
-        leader_vote::{CommitFrontier, LeaderVote},
+        leader_vote::{LeaderVote, NewSupports},
         oracle::{IsOracle, Omega},
         protocol::CommitmentProtocol,
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::{
-        effect_context::EffectContext, log::IsLog, po_log::POLog,
-        unstable_state::event_history::EventHistory,
+        effect_context::EffectContext,
+        log::IsLog,
+        po_log::POLog,
+        unstable_state::{IsUnstableCausal, event_history::EventHistory},
     },
 };
 
@@ -62,27 +64,39 @@ where
 
         let update_event = event.clone().unfold(op);
         let vote_event = event.clone().unfold(vote);
+        let vote_event_id = vote_event.id().clone();
 
         // Dispatch the child update to its log, and the leader vote to the leader log.
         self.child.effect(update_event, ctx);
         self.leader_log.effect(vote_event, ctx);
 
-        let version = self.leader_log.execute_query(CommitFrontier::new(
-            self.protocol.members(),
-            self.protocol.quorum(),
-        ));
+        // Compute the new supports
+        let deltas = self
+            .leader_log
+            .execute_query(NewSupports::new(vote_event_id));
 
-        if let Some(v) = version {
-            let advances = match &self.protocol.last_committed() {
-                Some(last_committed) => v.partial_cmp(last_committed) == Some(Ordering::Greater),
-                None => true,
-            };
+        // Gather the new anchors
+        let candidate_anchors = self.protocol.apply_support_deltas(deltas);
 
-            if advances {
-                self.child.stabilize(&v);
-                self.leader_log.stabilize(&v);
-                self.protocol.update_last_committed(v);
-            }
+        if candidate_anchors.is_empty() {
+            return;
+        }
+
+        // Find the greatest anchor
+        let greatest_candidate = candidate_anchors
+            .iter()
+            .map(|anchor| self.leader_log.unstable().retrieve_version(anchor))
+            .max_by(|a, b| {
+                a.partial_cmp(b)
+                    .expect("candidate versions must be comparable")
+            })
+            .unwrap();
+
+        // If the greatest anchor candidate advance commitment, then we reach a
+        // new commitment point.
+        if self.protocol.advance_commitment(&greatest_candidate) {
+            self.child.stabilize(&greatest_candidate);
+            self.leader_log.stabilize(&greatest_candidate);
         }
     }
 

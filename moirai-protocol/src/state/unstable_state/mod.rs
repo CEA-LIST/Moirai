@@ -65,12 +65,13 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     /// those that have no successors in the unstable state.
     fn frontier(&self) -> Vec<TaggedOp<O>>;
     /// Let v ∈ G, previous(v) denotes the set of vertices z ∈ G such that z is the last vertex from z.id for which z ⇝ v
-    fn previous(&self, version: &Version, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
+    fn previous(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
     /// Let v ∈ G, next(v) denotes the set of vertices w ∈ G such that w is the first vertex from w.id for which v ⇝ w
     fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
-    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
-    where
-        O: 'a;
+    /// Given an event `e` issued by a replica `r` `newly_observed_by(e)` returns the set of
+    /// event ids `v` for which `e` is the first event issued by `r` that has `v` in its causal past.
+    fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>>;
+    fn retrieve_version(&self, event_id: &EventId) -> Version;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.

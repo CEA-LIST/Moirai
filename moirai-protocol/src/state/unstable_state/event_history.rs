@@ -9,10 +9,9 @@ use std::{fmt::Debug, range::Range};
 
 #[derive(Debug, Clone)]
 pub struct EventHistory<O> {
-    // TODO: use a vec rather than a hashmap? But then some vec entries may be empty (because no op from these replicas)
     /// Note: we assume events are inserted in order without gaps.
     /// The store should not be pruned as the index of the vec is used to determine the sequence number of an event.
-    pub store: HashMap<ReplicaIdx, Vec<(TaggedOp<O>, Version)>>,
+    store: HashMap<ReplicaIdx, Vec<(TaggedOp<O>, Version)>>,
 }
 
 impl<O> Default for EventHistory<O> {
@@ -125,8 +124,23 @@ where
         todo!()
     }
 
-    fn previous(&self, version: &Version, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
-        let k = version.seq_by_idx(r);
+    /// `previous(v,r)` returns the event `e` from replica `r` such that `v` has `e`
+    /// in its causal past and there is no `e'` from `r` such that `e` -> `e'` -> `v`.
+    /// # Complexity
+    /// `O(1)`
+    fn previous(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+        let version = self
+            .store
+            .get(&event_id.idx())?
+            .get(event_id.seq() - 1)
+            .map(|(_, version)| version)?;
+
+        let k = if r == event_id.idx() {
+            // If the event has been produced by `r`, then previous returns eventId.seq - 1 `
+            event_id.seq().checked_sub(1)?
+        } else {
+            version.seq_by_idx(r)
+        };
 
         if k == 0 {
             None
@@ -135,26 +149,85 @@ where
         }
     }
 
+    /// `next(v, r)` returns the first event `e` from replica `r` such that `e` has `v` in its causal past.
+    /// # Complexity
+    /// `O(log e.r)` where `e.r` is the set of events from replica `r`
     fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>> {
-        if event_id.seq() == 0 {
-            return None;
-        }
-
+        // Get all events from replica `r`
         let events = self.store.get(&r)?;
 
+        // If the event has been produced by `r`
+        if r == event_id.idx() {
+            // seq k is at index k - 1 (e.g., event 1 from `r` is at index 0), so its strict successor k + 1
+            // is at index k.
+            return events.get(event_id.seq()).map(|(event, _)| event);
+        }
+
+        // Return the first event `e` from replica `r` such that `e` has the input event in its causal past
         let index = events
             .partition_point(|(_, version)| version.seq_by_idx(event_id.idx()) < event_id.seq());
 
         events.get(index).map(|(event, _)| event)
     }
 
-    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
-    where
-        O: 'a,
-    {
-        self.store
-            .values()
-            .flat_map(|events| events.iter().map(|(t, v)| (t.op(), v)))
+    fn newly_observed_by<'a>(&self, observer: &EventId) -> Vec<&TaggedOp<O>> {
+        let observer_origin = observer.idx();
+
+        // If observer is the first event from its origin, so it has no previous event to compare with.
+        let Some(observer_index) = observer.seq().checked_sub(1) else {
+            return Vec::new();
+        };
+        // Retrieve the events of the observer's origin
+        let Some(observer_events) = self.store.get(&observer_origin) else {
+            return Vec::new();
+        };
+        // Retrieve the event and its version
+        let Some((_, observer_version)) = observer_events.get(observer_index) else {
+            return Vec::new();
+        };
+
+        // Event previous to the observer event, if it exists, to determine which events are newly observed.
+        let previous_version = observer_index
+            .checked_sub(1)
+            .and_then(|index| observer_events.get(index))
+            .map(|(_, version)| version);
+
+        let mut newly_observed: Vec<&TaggedOp<O>> = Vec::new();
+        for (candidate_origin, events) in &self.store {
+            if *candidate_origin == observer_origin {
+                // On one replica's own timeline, the strict successor of event k is event k + 1.
+                // Therefore observer k establishes `next` only for candidate k - 1.
+                if let Some(candidate_index) = observer.seq().checked_sub(2)
+                    && let Some((candidate, _)) = events.get(candidate_index)
+                {
+                    newly_observed.push(candidate);
+                }
+                continue;
+            }
+
+            let previous = previous_version
+                .map_or(0, |version| version.seq_by_idx(*candidate_origin))
+                .min(events.len());
+            let current = observer_version
+                .seq_by_idx(*candidate_origin)
+                .min(events.len());
+
+            if current > previous {
+                newly_observed.extend(
+                    events[previous..current]
+                        .iter()
+                        .map(|(candidate, _)| candidate),
+                );
+            }
+        }
+
+        newly_observed
+    }
+
+    fn retrieve_version(&self, event_id: &EventId) -> Version {
+        let index = event_id.seq().saturating_sub(1);
+        let (_, version) = self.store.get(&event_id.idx()).unwrap().get(index).unwrap();
+        version.clone()
     }
 }
 

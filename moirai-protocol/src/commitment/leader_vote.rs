@@ -102,79 +102,73 @@ impl LeaderVote {
 
 impl<U> UsesUnstableService<U> for LeaderVote where U: IsUnstableCore<Self> {}
 
-pub struct CommitFrontier {
-    members: Vec<ReplicaIdx>,
-    quorum: usize,
+fn supports<U>(log: &U, event_id: &EventId, supporter: ReplicaIdx) -> bool
+where
+    U: IsUnstableCausal<LeaderVote>,
+{
+    let previous = log.previous(event_id, supporter);
+    let next = log.next(event_id, supporter);
+
+    let (Some(first), Some(last)) = (previous, next) else {
+        return false;
+    };
+
+    let first = first.id().seq() - 1;
+    let last = last.id().seq() - 1;
+
+    log.replica_events(
+        supporter,
+        Range {
+            start: first,
+            end: last + 1,
+        },
+    )
+    .all(|tagged_op| tagged_op.op().id() == event_id.origin_id())
 }
 
-impl CommitFrontier {
-    pub fn new(members: Vec<ReplicaIdx>, quorum: usize) -> Self {
-        Self { members, quorum }
+/// A newly decided positive `(candidate, supporter)` relationship.
+#[derive(Debug, Clone)]
+pub struct SupportDelta {
+    pub candidate: EventId,
+    pub supporter: ReplicaIdx,
+}
+
+/// Computes only the positive support relationships decided by one delivered observer event.
+#[derive(Debug, Clone)]
+pub struct NewSupports {
+    observer: EventId,
+}
+
+impl NewSupports {
+    pub fn new(observer: EventId) -> Self {
+        Self { observer }
     }
 }
 
-impl QueryOperation for CommitFrontier {
-    type Response = Option<Version>;
+impl QueryOperation for NewSupports {
+    type Response = Vec<SupportDelta>;
 }
 
-impl<U> Eval<CommitFrontier, U> for LeaderVote
+impl<U> Eval<NewSupports, U> for LeaderVote
 where
     U: IsUnstableCausal<Self>,
 {
+    /// Compute `supports(v, r)` for every `v` newly observed by delivered event from replica `r`.
     fn execute_query(
-        q: CommitFrontier,
+        q: NewSupports,
         _stable: &Self::StableState,
         unstable: &U,
-    ) -> <CommitFrontier as QueryOperation>::Response {
-        fn supports<U: IsUnstableCausal<LeaderVote>>(
-            log: &U,
-            candidate_version: &Version,
-            r: ReplicaIdx,
-        ) -> bool {
-            // An event becomes ready to be committed if it gathers support from "enough" events around its past and future
-            // The causal region of an event e is comprised of its immediate past (the latest events from each replica seen by e),
-            // its immediate future (the earliest events from each replica to see e), and vertices "in between".
+    ) -> <NewSupports as QueryOperation>::Response {
+        let supporter = q.observer.idx();
 
-            let previous = log.previous(candidate_version, r);
-            let next = log.next(&EventId::from(candidate_version), r);
-
-            let (Some(first), Some(last)) = (previous, next) else {
-                return false;
-            };
-
-            let first = first.id().seq() - 1;
-            let last = last.id().seq() - 1;
-
-            log.replica_events(
-                r,
-                Range {
-                    start: first,
-                    end: last + 1,
-                },
-            )
-            .all(|to| to.op().id() == candidate_version.origin_id())
-        }
-
-        let leaders: Vec<_> = unstable
-            .versioned_events()
-            .filter(|(_, v)| {
-                q.members
-                    .iter()
-                    .filter(|&&r| supports(unstable, v, r))
-                    .take(q.quorum)
-                    .count()
-                    >= q.quorum
+        unstable
+            .newly_observed_by(&q.observer)
+            .into_iter()
+            .filter(|candidate| supports(unstable, candidate.id(), supporter))
+            .map(|candidate| SupportDelta {
+                candidate: candidate.id().clone(),
+                supporter,
             })
-            .collect();
-
-        leaders
-            .iter()
-            .copied()
-            .find(|(_, candidate_version)| {
-                leaders
-                    .iter()
-                    .all(|(_, v)| EventId::from(*v).is_predecessor_of(candidate_version))
-            })
-            .map(move |(_, v)| v.clone())
+            .collect()
     }
 }

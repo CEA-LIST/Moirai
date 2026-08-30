@@ -193,7 +193,7 @@ where
             .collect()
     }
 
-    fn previous(&self, _version: &Version, _r: ReplicaIdx) -> Option<&TaggedOp<O>> {
+    fn previous(&self, _event_id: &EventId, _r: ReplicaIdx) -> Option<&TaggedOp<O>> {
         todo!()
     }
 
@@ -201,11 +201,12 @@ where
         todo!()
     }
 
-    fn versioned_events<'a>(&'a self) -> impl Iterator<Item = (&'a O, &'a Version)>
-    where
-        O: 'a,
-    {
-        self.graph.node_weights().map(|_tagged_op| todo!())
+    fn newly_observed_by(&self, _observer: &EventId) -> Vec<&TaggedOp<O>> {
+        todo!()
+    }
+
+    fn retrieve_version(&self, _event_id: &EventId) -> Version {
+        todo!()
     }
 }
 

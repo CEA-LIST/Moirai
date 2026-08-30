@@ -422,7 +422,7 @@ mod tests {
             config::{FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
+        let run = RunConfig::new(0.4, 8, 10_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
         let config =
@@ -442,7 +442,7 @@ mod tests {
 
         type Log = CommitmentLog<VecLog<AWSet<usize>>>;
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(0.4, 8, 10_000, None, None, false, false)];
         let config =
             FuzzerConfig::<Log>::new("aw_set_commitment", runs, true, |a, b| a == b, false)
                 .with_omega_oracle();
