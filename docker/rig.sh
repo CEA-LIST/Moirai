@@ -227,7 +227,7 @@ ensure_image() {
 # running and the next `up` inherits them.
 compose() {
     ( cd "$HERE/compose" \
-        && MOIRAI_IMAGE="$IMAGE" docker compose --profile load --profile dashboard "$@" )
+        && MOIRAI_IMAGE="$IMAGE" docker compose --profile load --profile dashboard --profile edit "$@" )
 }
 
 # `up` deliberately does not enable profiles wholesale — the services are named
@@ -237,7 +237,6 @@ compose_up() {
     [ "$WITH_LOAD" -eq 1 ] && services+=(driver)
     [ "$WITH_DASHBOARD" -eq 1 ] && services+=(dashboard)
     if [ "$WITH_EDIT" -eq 1 ]; then
-        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}edit"
         services+=(editor-a editor-b)
     fi
 
@@ -324,9 +323,6 @@ cmd_up() {
 
 cmd_down() {
     preflight_docker "$@"
-    # Enable every profile so `down` also removes services behind one (the
-    # editor replicas); without this, `--edit` containers outlive the rig.
-    export COMPOSE_PROFILES="edit,load,dashboard"
     local args=(down --remove-orphans)
     [ "${KEEP_VOLUMES:-0}" -eq 1 ] || args+=(-v)
     say "tearing down"
