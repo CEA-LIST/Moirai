@@ -137,6 +137,40 @@ services:
         exec network_node
     networks: [session]
 
+  # Two replicas with their HTTP APIs published to the host, for the browser
+  # model editor (clients/model-editor). Behind the `edit` profile so a bare
+  # `docker compose up` keeps its shipped behaviour; `rig.sh --edit` starts
+  # them. Each serves the baked-in metamodel descriptor on /api/metamodel.
+  editor-a:
+    image: *image
+    profiles: [edit]
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      <<: *replica-env
+      REPLICA_ID: "editor-a"
+      ADVERTISE_ADDR: "editor-a:9001"
+      METAMODEL_PATH: "${METAMODEL_PATH:-/metamodels/bt.metamodel.json}"
+    ports:
+      - "${EDIT_HTTP_A:-8081}:8081"
+    networks: [session]
+
+  editor-b:
+    image: *image
+    profiles: [edit]
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      <<: *replica-env
+      REPLICA_ID: "editor-b"
+      ADVERTISE_ADDR: "editor-b:9001"
+      METAMODEL_PATH: "${METAMODEL_PATH:-/metamodels/bt.metamodel.json}"
+    ports:
+      - "${EDIT_HTTP_B:-8082}:8081"
+    networks: [session]
+
   # One replica on the *island* network and nowhere else, so it has no route to
   # any of the `node` replicas and they have none to it. Everything it replicates
   # goes through the relay, which is what makes `docker compose up` demonstrate a

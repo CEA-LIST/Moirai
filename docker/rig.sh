@@ -16,12 +16,18 @@ MOIRAI_ROOT="$(cd "$HERE/.." && pwd)"
 # The image copies `moirai/` and `arachne/generated/json_crdt/`, so the build
 # context is the directory holding both checkouts, not either checkout.
 BUILD_CONTEXT="$(cd "$MOIRAI_ROOT/.." && pwd)"
+# A worktree checkout carries its branch in the directory name (moirai-modelsward);
+# prefer the arachne sibling with the same suffix when it exists.
+_suffix="${MOIRAI_ROOT##*/moirai}"
+if [ -z "${ARACHNE_ROOT:-}" ] && [ -d "$BUILD_CONTEXT/arachne$_suffix" ]; then
+    ARACHNE_ROOT="$BUILD_CONTEXT/arachne$_suffix"
+fi
 ARACHNE_ROOT="${ARACHNE_ROOT:-$BUILD_CONTEXT/arachne}"
 
 COMPOSE_FILE="$HERE/compose/docker-compose.yml"
 DOCKERFILE="$HERE/e2e/Dockerfile"
 
-IMAGE="${MOIRAI_IMAGE:-moirai-json-crdt:test}"
+IMAGE="${MOIRAI_IMAGE:-moirai-json-crdt${_suffix:-}:test}"
 GENERATED_CRATE="$ARACHNE_ROOT/generated/json_crdt"
 ECORE="$ARACHNE_ROOT/examples/json.ecore"
 
@@ -32,6 +38,7 @@ NODES=3
 # away rather than adding them back.
 WITH_DASHBOARD=1
 WITH_LOAD=1
+WITH_EDIT=0
 FORCE_REBUILD=0
 FORCE_REGENERATE=0
 ALLOW_DIRTY_REGEN=0
@@ -68,6 +75,8 @@ Usage:
 Options for `up`:
   -n, --nodes N          number of `node` replicas (default: 3)
       --no-dashboard     do not start the dashboard
+      --edit             also start editor-a and editor-b, replicas with host
+                         HTTP ports 8081 and 8082 for the browser model editor
       --no-load          do not start the load driver (a quiet, idle rig)
       --rebuild          rebuild the replica image even if it already exists
       --regenerate       regenerate the CRDT crate even if it is already present
@@ -193,6 +202,8 @@ build_image() {
     docker build \
         -f "$DOCKERFILE" \
         -t "$IMAGE" \
+        --build-arg MOIRAI_DIR="$(basename "$MOIRAI_ROOT")" \
+        --build-arg ARACHNE_DIR="$(basename "$ARACHNE_ROOT")" \
         "$BUILD_CONTEXT" \
         || die "the image build failed; see the docker output above."
 }
@@ -225,6 +236,10 @@ compose_up() {
     local services=(bootnode relay node islander observer)
     [ "$WITH_LOAD" -eq 1 ] && services+=(driver)
     [ "$WITH_DASHBOARD" -eq 1 ] && services+=(dashboard)
+    if [ "$WITH_EDIT" -eq 1 ]; then
+        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}edit"
+        services+=(editor-a editor-b)
+    fi
 
     ( cd "$HERE/compose" \
         && MOIRAI_IMAGE="$IMAGE" \
@@ -351,6 +366,7 @@ main() {
                 [ "$NODES" -ge 1 ] || die "--nodes must be at least 1"
                 shift 2 ;;
             --no-dashboard) WITH_DASHBOARD=0; shift ;;
+            --edit)         WITH_EDIT=1; shift ;;
             --no-load)      WITH_LOAD=0; shift ;;
             # Both are the default now; accepted so that older invocations and
             # anything written down elsewhere keep working.
