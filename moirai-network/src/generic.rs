@@ -168,6 +168,12 @@ where
     /// Peers already asked in the current round. A `Vec` because it is bounded
     /// by the member count and only ever scanned linearly.
     state_donors_tried: Vec<PeerId>,
+    /// Metamodel descriptor served verbatim on `GET /api/metamodel`, when set
+    /// by [`Self::serve_metamodel`].
+    ///
+    /// `None` is the pre-existing behaviour in full: the endpoint answers 404
+    /// exactly like any other unknown path.
+    metamodel: Option<String>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -328,6 +334,7 @@ where
             last_state_request: None,
             state_donor: None,
             state_donors_tried: Vec::new(),
+            metamodel: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -345,6 +352,19 @@ where
     /// [`enable_discovery`]: GenericNode::enable_discovery
     pub fn enable_dashboard(&mut self, config: DashboardConfig) {
         self.dashboard = Some(DashboardSink::spawn(config));
+    }
+
+    /// Serve `descriptor` verbatim on `GET /api/metamodel`.
+    ///
+    /// Purely additive, exactly like [`enable_dashboard`]: not calling this
+    /// leaves the endpoint answering 404 as it always has. The HTTP adapter
+    /// snapshots the descriptor when it spawns, so call this before
+    /// [`start_http`].
+    ///
+    /// [`enable_dashboard`]: GenericNode::enable_dashboard
+    /// [`start_http`]: GenericNode::start_http
+    pub fn serve_metamodel(&mut self, descriptor: String) {
+        self.metamodel = Some(descriptor);
     }
 
     /// Start discovering peers through a bootnode.
@@ -381,6 +401,7 @@ where
             self.replica_id.clone(),
             self.adapter_op_tx.clone(),
             self.ctrl_tx.clone(),
+            self.metamodel.clone(),
         );
     }
 

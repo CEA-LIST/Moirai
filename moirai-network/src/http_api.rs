@@ -19,6 +19,9 @@ use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
 /// - `GET  /api/health`          health check
 /// - `GET  /api/state`           query current CRDT state as JSON
+/// - `GET  /api/metamodel`       metamodel descriptor, when the node carries
+///   one (see [`crate::generic::GenericNode::serve_metamodel`]); 404
+///   otherwise, exactly like any unknown path
 /// - `GET  /api/metrics`         causal-stability and log-size counters
 /// - `GET  /api/operations`      list operations delivered to this replica
 ///   (display only — it double-counts remote deliveries; use `/api/metrics`)
@@ -33,6 +36,7 @@ pub(crate) fn start_http_api<O: NetworkOp>(
     replica_id: String,
     sender: Sender<OpEnvelope<O>>,
     ctrl: Sender<ControlCmd>,
+    metamodel: Option<String>,
 ) {
     thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
@@ -77,6 +81,20 @@ pub(crate) fn start_http_api<O: NetworkOp>(
                         ),
                         Err(_) => {
                             Response::from_string(r#"{"error":"timeout"}"#).with_status_code(504)
+                        }
+                    };
+                    let _ = request.respond(add_cors(resp));
+                }
+                (&Method::Get, "/api/metamodel") => {
+                    // Byte-identical to the catch-all 404 when no descriptor
+                    // was configured: a node that never called
+                    // `serve_metamodel` keeps its old behaviour in full.
+                    let resp = match &metamodel {
+                        Some(descriptor) => Response::from_string(descriptor.as_str()).with_header(
+                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
+                        ),
+                        None => {
+                            Response::from_string(r#"{"error":"not found"}"#).with_status_code(404)
                         }
                     };
                     let _ = request.respond(add_cors(resp));
@@ -268,4 +286,168 @@ pub(crate) fn start_http_api<O: NetworkOp>(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
+
+    use super::start_http_api;
+    use crate::generic::{ControlCmd, OpEnvelope, OpResult};
+
+    /// Minimal operation satisfying the `NetworkOp` bounds, so the HTTP layer
+    /// can be exercised without a replica behind it.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestOp {
+        value: i64,
+    }
+
+    impl InternalizeOp for TestOp {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    /// The channels a spawned API is wired to, kept alive for the test's
+    /// duration so the server never observes a closed channel.
+    struct Api {
+        port: u16,
+        op_rx: mpsc::Receiver<OpEnvelope<TestOp>>,
+        ctrl_rx: mpsc::Receiver<ControlCmd>,
+    }
+
+    fn spawn_api(metamodel: Option<String>) -> Api {
+        // Grab a free port, release it, and let the server re-bind it. The
+        // race window is negligible on loopback and only affects tests.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+
+        let (op_tx, op_rx) = mpsc::channel();
+        let (ctrl_tx, ctrl_rx) = mpsc::channel();
+        start_http_api::<TestOp>(port, "test-replica".into(), op_tx, ctrl_tx, metamodel);
+
+        Api {
+            port,
+            op_rx,
+            ctrl_rx,
+        }
+    }
+
+    /// One raw HTTP/1.1 exchange; returns `(status, body)`.
+    fn request(port: u16, head: &str, body: Option<&str>) -> (u16, String) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stream = loop {
+            match TcpStream::connect(("127.0.0.1", port)) {
+                Ok(stream) => break stream,
+                Err(e) if Instant::now() < deadline => {
+                    let _ = e;
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("server never came up on port {port}: {e}"),
+            }
+        };
+
+        let payload = body.unwrap_or("");
+        let raw = format!(
+            "{head} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+             Content-Length: {}\r\n\r\n{payload}",
+            payload.len()
+        );
+        stream.write_all(raw.as_bytes()).expect("request written");
+
+        let mut response = String::new();
+        std::io::Read::read_to_string(&mut stream, &mut response).expect("response read");
+
+        let status: u16 = response
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .expect("status line");
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .expect("header/body separator");
+        (status, body)
+    }
+
+    #[test]
+    fn metamodel_endpoint_serves_the_configured_descriptor() {
+        let descriptor = r#"{"formatVersion":1,"package":"demo"}"#;
+        let api = spawn_api(Some(descriptor.to_string()));
+
+        let (status, body) = request(api.port, "GET /api/metamodel", None);
+
+        assert_eq!((status, body.as_str()), (200, descriptor));
+    }
+
+    #[test]
+    fn metamodel_endpoint_stays_404_without_a_descriptor() {
+        let api = spawn_api(None);
+
+        let (status, body) = request(api.port, "GET /api/metamodel", None);
+
+        assert_eq!((status, body.as_str()), (404, r#"{"error":"not found"}"#));
+    }
+
+    #[test]
+    fn health_endpoint_is_unchanged_beside_the_metamodel_route() {
+        let api = spawn_api(Some("{}".to_string()));
+
+        let (status, body) = request(api.port, "GET /api/health", None);
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(
+            (status, parsed),
+            (200, json!({"status": "ok", "replica_id": "test-replica"}))
+        );
+    }
+
+    #[test]
+    fn state_endpoint_is_unchanged_beside_the_metamodel_route() {
+        let api = spawn_api(Some("{}".to_string()));
+        let state = json!({"json": "Unset"});
+        let answer = state.clone();
+        let ctrl_rx = api.ctrl_rx;
+        std::thread::spawn(move || {
+            if let Ok(ControlCmd::Query { reply }) = ctrl_rx.recv() {
+                let _ = reply.send(answer);
+            }
+        });
+
+        let (status, body) = request(api.port, "GET /api/state", None);
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!((status, parsed), (200, state));
+    }
+
+    #[test]
+    fn op_endpoint_is_unchanged_beside_the_metamodel_route() {
+        let api = spawn_api(Some("{}".to_string()));
+        let op_rx = api.op_rx;
+        std::thread::spawn(move || {
+            if let Ok(envelope) = op_rx.recv() {
+                let _ = envelope.reply.send(OpResult {
+                    success: true,
+                    message: format!("applied {:?}", envelope.op),
+                });
+            }
+        });
+
+        let (status, body) = request(api.port, "POST /api/op", Some(r#"{"value":3}"#));
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(
+            (status, parsed["success"].as_bool()),
+            (200, Some(true)),
+            "unexpected body: {body}"
+        );
+    }
 }
