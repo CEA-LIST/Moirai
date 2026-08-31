@@ -324,6 +324,9 @@ cmd_up() {
 
 cmd_down() {
     preflight_docker "$@"
+    # Enable every profile so `down` also removes services behind one (the
+    # editor replicas); without this, `--edit` containers outlive the rig.
+    export COMPOSE_PROFILES="edit,load,dashboard"
     local args=(down --remove-orphans)
     [ "${KEEP_VOLUMES:-0}" -eq 1 ] || args+=(-v)
     say "tearing down"
