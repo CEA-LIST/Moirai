@@ -17,6 +17,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use moirai_protocol::broadcast::tcsb::Tcsb;
+use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
 use moirai_protocol::utils::intern_str::InternalizeOp;
@@ -311,9 +312,32 @@ where
 
     /// Create a node with the given transport.
     /// Transport-agnostic creator
+    ///
+    /// Mints a fresh [`LogId`], which is right for the replica that creates a
+    /// log and wrong for one joining a log that already exists — use
+    /// [`with_transport_and_log_id`] wherever the log is shared.
+    ///
+    /// [`with_transport_and_log_id`]: GenericNode::with_transport_and_log_id
     pub fn with_transport(replica_id: String, members: &[&str], transport: T) -> Self {
         let replica: Replica<L, Tcsb<L::Op>> = IsReplica::bootstrap(replica_id.clone(), members);
+        Self::from_replica(replica_id, replica, transport)
+    }
 
+    /// Create a node with the given transport, hosting the log named `log_id`.
+    pub fn with_transport_and_log_id(
+        replica_id: String,
+        members: &[&str],
+        transport: T,
+        log_id: LogId,
+    ) -> Self {
+        let replica: Replica<L, Tcsb<L::Op>> =
+            IsReplica::bootstrap_with_log_id(replica_id.clone(), members, log_id);
+        Self::from_replica(replica_id, replica, transport)
+    }
+
+    /// The common tail of both constructors: everything except how the replica
+    /// got its log id.
+    fn from_replica(replica_id: String, replica: Replica<L, Tcsb<L::Op>>, transport: T) -> Self {
         let (adapter_op_tx, adapter_op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
 
@@ -386,6 +410,11 @@ where
         self.discovery = Some(Discovery::spawn(config));
     }
 
+    /// The log this node's replica hosts.
+    pub fn log_id(&self) -> &LogId {
+        self.replica.log_id()
+    }
+
     /// Get a sender that can be used to submit ops from other threads.
     pub fn op_sender(&self) -> Sender<OpEnvelope<L::Op>> {
         self.adapter_op_tx.clone()
@@ -399,6 +428,7 @@ where
         crate::http_api::start_http_api::<L::Op>(
             port,
             self.replica_id.clone(),
+            self.replica.log_id().clone(),
             self.adapter_op_tx.clone(),
             self.ctrl_tx.clone(),
             self.metamodel.clone(),
@@ -453,6 +483,7 @@ where
     fn request_state_transfer(&mut self, peer: &PeerId) {
         let msg = TransportMessage::StateRequest {
             id: self.replica_id.clone(),
+            log_id: self.replica.log_id().clone(),
         };
         if let Err(e) = self.transport.send(peer, msg) {
             eprintln!(
@@ -489,7 +520,21 @@ where
     /// Adopting a snapshot is a replace, not a merge, so serving one would
     /// discard them silently. Refusing costs the requester one round trip and
     /// gives phase 3 a defined starting point.
-    fn state_response_for(&self, id: &str) -> TransportMessage<L::Op> {
+    fn state_response_for(&self, id: &str, log_id: &LogId) -> TransportMessage<L::Op> {
+        let ours = self.replica.log_id().clone();
+        // Before any question of history: a requester hosting another log is
+        // not a joiner at all. Serving it a snapshot would splice two logs that
+        // by definition never merge, so the refusal comes first and names both
+        // ids — that line is the only symptom an operator gets.
+        if *log_id != ours {
+            return TransportMessage::StateUnavailable {
+                reason: format!(
+                    "`{id}` asked for log {log_id}, but this replica hosts \
+                     log {ours}; a state transfer never crosses logs"
+                ),
+                log_id: ours,
+            };
+        }
         // Two replicas that start together are both empty and both ask. Serving
         // an empty snapshot would work, but it would make one of them adopt the
         // other's index ordering for nothing; saying there is nothing to give
@@ -498,6 +543,7 @@ where
         if self.replica.stability().delivered == 0 {
             return TransportMessage::StateUnavailable {
                 reason: "this replica has no history to transfer".to_string(),
+                log_id: ours,
             };
         }
         if self.replica.has_history_for(id) {
@@ -506,11 +552,13 @@ where
                     "`{id}` is a returning member, not a fresh one; merging its \
                      history with a snapshot is not implemented"
                 ),
+                log_id: ours,
             };
         }
         let Some(export) = self.export_log else {
             return TransportMessage::StateUnavailable {
                 reason: "state transfer is not enabled on this replica".to_string(),
+                log_id: ours,
             };
         };
         // The fourth refusal, and the only one that is about size rather than
@@ -523,6 +571,7 @@ where
             Err(e) => {
                 return TransportMessage::StateUnavailable {
                     reason: format!("this replica's log could not be serialised: {e}"),
+                    log_id: ours,
                 };
             }
         };
@@ -537,12 +586,14 @@ where
                     "this replica's log is {log_bytes} bytes, above the \
                      {MAX_STATE_TRANSFER_BYTES} byte ceiling on one state transfer"
                 ),
+                log_id: ours,
             };
         }
         eprintln!("[{}] serving a state transfer to {}", self.replica_id, id);
         TransportMessage::StateResponse {
             snapshot: self.replica.snapshot(),
             log: LogPayload::encode(log, &raw),
+            log_id: ours,
         }
     }
 
@@ -662,8 +713,8 @@ where
                     );
                 }
             }
-            TransportMessage::StateRequest { id } => {
-                let response = self.state_response_for(&id);
+            TransportMessage::StateRequest { id, log_id } => {
+                let response = self.state_response_for(&id, &log_id);
                 if let Err(e) = self.transport.send(&from, response) {
                     eprintln!(
                         "[{}] Failed to answer the state request from {}: {}",
@@ -671,10 +722,29 @@ where
                     );
                 }
             }
-            TransportMessage::StateResponse { snapshot, log } => {
-                self.adopt_state(&from, snapshot, log);
+            TransportMessage::StateResponse {
+                snapshot,
+                log,
+                log_id,
+            } => {
+                // The mirror of the donor-side refusal, because the donor is
+                // not the only way a foreign snapshot can arrive: an old donor
+                // that predates the check, or a misrouted frame, must not make
+                // this replica adopt a log it does not host.
+                if log_id != *self.replica.log_id() {
+                    eprintln!(
+                        "[{}] refusing a state transfer from {}: it carries log {}, \
+                         this replica hosts log {}",
+                        self.replica_id,
+                        from,
+                        log_id,
+                        self.replica.log_id()
+                    );
+                } else {
+                    self.adopt_state(&from, snapshot, log);
+                }
             }
-            TransportMessage::StateUnavailable { reason } => {
+            TransportMessage::StateUnavailable { reason, .. } => {
                 eprintln!(
                     "[{}] {} will not serve a state transfer ({}); falling back to a delta sync",
                     self.replica_id, from, reason
@@ -1191,6 +1261,24 @@ where
             .expect("Failed to create TCP transport");
         Self::with_transport(replica_id, members, transport)
     }
+
+    /// [`new`], except the node hosts the log named `log_id` instead of
+    /// minting a fresh one (convenience wrapper around
+    /// [`with_transport_and_log_id`]).
+    ///
+    /// [`new`]: GenericNode::new
+    /// [`with_transport_and_log_id`]: GenericNode::with_transport_and_log_id
+    pub fn new_with_log_id(
+        replica_id: String,
+        members: &[&str],
+        listen_port: u16,
+        peer_addresses: HashMap<String, String>,
+        log_id: LogId,
+    ) -> Self {
+        let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
+            .expect("Failed to create TCP transport");
+        Self::with_transport_and_log_id(replica_id, members, transport, log_id)
+    }
 }
 
 impl<L: IsLog + QueryableLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
@@ -1220,5 +1308,121 @@ where
     pub fn enable_state_transfer(&mut self) {
         self.export_log = Some(L::export_log);
         self.import_log = Some(L::import_log);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{PeerInfo, TransportResult};
+    use moirai_crdt::set::ewflag_set::{EWFlagSet, EWFlagSetLog};
+
+    type Op = EWFlagSet<String>;
+    type Log = EWFlagSetLog<String>;
+
+    /// Records everything sent and receives nothing: enough transport to feed
+    /// `handle_transport_message` and inspect the node's answer.
+    struct RecordingTransport {
+        id: PeerId,
+        sent: Vec<(PeerId, TransportMessage<Op>)>,
+    }
+
+    impl RecordingTransport {
+        fn new(id: &str) -> Self {
+            Self {
+                id: id.to_string(),
+                sent: Vec::new(),
+            }
+        }
+    }
+
+    impl CrdtTransport for RecordingTransport {
+        type Op = Op;
+
+        fn local_id(&self) -> &PeerId {
+            &self.id
+        }
+
+        fn send(&mut self, peer: &PeerId, msg: TransportMessage<Op>) -> TransportResult<()> {
+            self.sent.push((peer.clone(), msg));
+            Ok(())
+        }
+
+        fn broadcast(&mut self, _msg: TransportMessage<Op>) -> TransportResult<()> {
+            Ok(())
+        }
+
+        fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage<Op>)>> {
+            Ok(None)
+        }
+
+        fn peers(&self) -> Vec<PeerInfo> {
+            Vec::new()
+        }
+
+        fn is_connected(&self, _peer: &PeerId) -> bool {
+            false
+        }
+
+        fn pause_peer(&mut self, _peer: &PeerId) -> TransportResult<()> {
+            Ok(())
+        }
+
+        fn resume_peer(&mut self, _peer: &PeerId) -> TransportResult<()> {
+            Ok(())
+        }
+
+        fn pause_all(&mut self) -> TransportResult<()> {
+            Ok(())
+        }
+
+        fn resume_all(&mut self) -> TransportResult<()> {
+            Ok(())
+        }
+
+        fn buffered_count(&self, _peer: &PeerId) -> usize {
+            0
+        }
+
+        fn accept_connections(&mut self) -> TransportResult<Vec<PeerId>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn a_state_request_for_a_foreign_log_is_refused_naming_both_ids() {
+        let ours = LogId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let theirs = LogId::parse("ffffffffffffffffffffffffffffffff").unwrap();
+        let mut node = GenericNode::<Log, RecordingTransport>::with_transport_and_log_id(
+            "a".to_string(),
+            &["a"],
+            RecordingTransport::new("a"),
+            ours.clone(),
+        );
+        assert_eq!(node.log_id(), &ours, "the node hosts the log it was given");
+
+        node.handle_transport_message(
+            "b".to_string(),
+            TransportMessage::StateRequest {
+                id: "b".to_string(),
+                log_id: theirs.clone(),
+            },
+        );
+
+        let (to, answer) = node.transport.sent.pop().expect("the request was answered");
+        assert_eq!(to, "b");
+        match answer {
+            TransportMessage::StateUnavailable { reason, log_id } => {
+                assert_eq!(log_id, ours, "the refusal is stamped with the donor's log");
+                // Both ids, because the reason line is the only symptom an
+                // operator gets and either id alone is ungreppable on the
+                // other side.
+                assert!(
+                    reason.contains(ours.as_str()) && reason.contains(theirs.as_str()),
+                    "the refusal must name both logs, got: {reason}"
+                );
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
     }
 }

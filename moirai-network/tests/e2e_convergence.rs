@@ -116,6 +116,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Number of log lines quoted in a failure report.
 const LOG_TAIL_LINES: usize = 40;
 
+/// The log every replica in a scenario hosts, injected as `LOG_ID` by both
+/// backends. Fixed rather than minted per replica, because replicas that each
+/// mint their own id host different logs and refuse one another's events — no
+/// scenario would converge. Fixed rather than minted per run so the
+/// raw-protocol helpers below can name it. A scenario that wants a different
+/// id overrides it through `extra_env`.
+const E2E_LOG_ID: &str = "e2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2";
+
 /// `(peer_id, address)` pairs, or `(env_var, value)` pairs — the two lists a
 /// replica is launched with.
 type Pairs = Vec<(String, String)>;
@@ -307,6 +315,7 @@ impl Backend for ProcessBackend {
             .env("LISTEN_PORT", endpoint.listen_port.to_string())
             .env("HTTP_PORT", endpoint.http_port.to_string())
             .env("PEERS", &peers_env)
+            .env("LOG_ID", E2E_LOG_ID)
             .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -602,7 +611,8 @@ impl Backend for ContainerBackend {
             .with_env_var("REPLICA_ID", id)
             .with_env_var("LISTEN_PORT", endpoint.listen_port.to_string())
             .with_env_var("HTTP_PORT", endpoint.http_port.to_string())
-            .with_env_var("PEERS", &peers_env);
+            .with_env_var("PEERS", &peers_env)
+            .with_env_var("LOG_ID", E2E_LOG_ID);
         for (key, value) in extra_env {
             request = request.with_env_var(key, value);
         }
@@ -2241,13 +2251,53 @@ fn t6_a_returning_member_is_refused_a_state_transfer() {
     );
 }
 
+/// **T9** — a `StateRequest` naming a foreign log is answered with
+/// `StateUnavailable`, and the refusal names both logs.
+///
+/// Same raw-protocol shape as T6, and for the same reason: no running replica
+/// hosting the session's log can send this request, so the test speaks the
+/// wire format directly. The refusal must carry both ids because that reason
+/// line is the only symptom an operator gets when two deployments are pointed
+/// at each other by mistake — either id alone cannot be grepped for on the
+/// other side.
+#[test]
+fn t9_a_state_request_for_a_foreign_log_is_refused_naming_both_ids() {
+    let Some(mut cluster) = process_cluster("T9", &["a"]) else {
+        return;
+    };
+    cluster.start_all().expect("T9: start cluster");
+
+    let foreign = "ffffffffffffffffffffffffffffffff";
+    let addr = cluster.endpoints["a"].sync_addr.clone();
+    let answer = ask_for_state_message(&addr, "zz", foreign).expect("T9: ask across logs");
+
+    assert_eq!(
+        answer.get("type").and_then(Value::as_str),
+        Some("StateUnavailable"),
+        "a request from a foreign log must be refused, got: {answer}"
+    );
+    assert_eq!(
+        answer.get("log_id").and_then(Value::as_str),
+        Some(E2E_LOG_ID),
+        "the refusal is stamped with the donor's own log: {answer}"
+    );
+    let reason = answer
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        reason.contains(foreign) && reason.contains(E2E_LOG_ID),
+        "the refusal must name both logs, got: {reason}"
+    );
+}
+
 /// Opens a replication connection to `addr`, introduces itself as `id`, asks for
 /// a state transfer and returns the `type` of the answer.
 ///
 /// Deliberately low-level. The HTTP API has no way to send a `StateRequest`,
 /// and adding one would mean testing an endpoint that exists only for the test.
 fn ask_for_state(addr: &str, id: &str) -> Result<String> {
-    let answer = ask_for_state_message(addr, id)?;
+    let answer = ask_for_state_message(addr, id, E2E_LOG_ID)?;
     answer
         .get("type")
         .and_then(Value::as_str)
@@ -2261,7 +2311,7 @@ fn ask_for_state(addr: &str, id: &str) -> Result<String> {
 /// the one that carries a payload. Split so that the handshake — the `Hello` a
 /// donor replies to with a sync request of its own, and the batch it may push
 /// before the answer — exists once in this file rather than twice.
-fn ask_for_state_message(addr: &str, id: &str) -> Result<Value> {
+fn ask_for_state_message(addr: &str, id: &str, log_id: &str) -> Result<Value> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpStream;
 
@@ -2272,7 +2322,11 @@ fn ask_for_state_message(addr: &str, id: &str) -> Result<Value> {
         "{}",
         json!({ "type": "Hello", "id": id, "metadata": null })
     )?;
-    writeln!(stream, "{}", json!({ "type": "StateRequest", "id": id }))?;
+    writeln!(
+        stream,
+        "{}",
+        json!({ "type": "StateRequest", "id": id, "log_id": log_id })
+    )?;
     stream.flush()?;
 
     let reader = BufReader::new(stream.try_clone()?);
@@ -2451,7 +2505,7 @@ fn t7_a_transfer_carries_the_suffix_not_the_history() {
     let delivered = metric(donor, "delivered_ops").expect("T7: the donor's delivered_ops");
     let retained = metric(donor, "retained_ops").expect("T7: the donor's retained_ops");
     let addr = cluster.endpoints["a"].sync_addr.clone();
-    let answer = ask_for_state_message(&addr, "zz").expect("T7: ask for a transfer");
+    let answer = ask_for_state_message(&addr, "zz", E2E_LOG_ID).expect("T7: ask for a transfer");
     assert_eq!(
         answer.get("type").and_then(Value::as_str),
         Some("StateResponse"),

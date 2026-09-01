@@ -31,6 +31,7 @@ use std::net::TcpStream;
 
 use moirai_protocol::broadcast::message::{BatchMessage, EventMessage, SinceMessage};
 use moirai_protocol::broadcast::tcsb::StateSnapshot;
+use moirai_protocol::log_id::LogId;
 
 use crate::state_transfer::LogPayload;
 
@@ -68,6 +69,14 @@ where
     /// returning member did while it was away. Merging the two is phase 3.
     StateRequest {
         id: PeerId,
+        /// The log the requester hosts. A donor hosting a different log answers
+        /// `StateUnavailable` instead of a snapshot: adopting state across a
+        /// log boundary would silently splice two histories that never merge.
+        ///
+        /// `Event`, `Batch` and `SyncRequest` carry no such field because the
+        /// `Message` they wrap already does; these three variants are the ones
+        /// that travel without a `Message` inside.
+        log_id: LogId,
     },
     /// The compacted state, and the causal bookkeeping that makes sense of it.
     ///
@@ -79,12 +88,18 @@ where
         /// The donor's log, via `TransferableLog::export_log`, compressed
         /// unless compressing it does not help. See [`LogPayload`].
         log: LogPayload,
+        /// The log this snapshot belongs to. A joiner refuses a response for a
+        /// log it does not host, however plausible the payload looks.
+        log_id: LogId,
     },
     /// The donor declined. The requester falls back to `SyncRequest`, which is
     /// the correct behaviour for a returning member and a harmless one for a
     /// peer that simply cannot serve a transfer.
     StateUnavailable {
         reason: String,
+        /// The log the *donor* hosts, so a refusal across a log boundary names
+        /// the boundary instead of looking like a donor with nothing to give.
+        log_id: LogId,
     },
 
     /// Hello handshake - announces replica identity

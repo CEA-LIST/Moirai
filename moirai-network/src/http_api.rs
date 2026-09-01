@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
 
+use moirai_protocol::log_id::LogId;
 use serde_json::json;
 use tiny_http::{Header, Method, Response, Server};
 
@@ -17,7 +18,8 @@ use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
 ///
 /// Endpoints:
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
-/// - `GET  /api/health`          health check
+/// - `GET  /api/health`          health check, names the replica and its log
+/// - `GET  /api/log-id`          the log this replica hosts, on its own
 /// - `GET  /api/state`           query current CRDT state as JSON
 /// - `GET  /api/metamodel`       metamodel descriptor, when the node carries
 ///   one (see [`crate::generic::GenericNode::serve_metamodel`]); 404
@@ -34,6 +36,7 @@ use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
 pub(crate) fn start_http_api<O: NetworkOp>(
     port: u16,
     replica_id: String,
+    log_id: LogId,
     sender: Sender<OpEnvelope<O>>,
     ctrl: Sender<ControlCmd>,
     metamodel: Option<String>,
@@ -66,7 +69,18 @@ pub(crate) fn start_http_api<O: NetworkOp>(
 
             match (&method, path.as_str()) {
                 (&Method::Get, "/api/health") => {
-                    let body = json!({ "status": "ok", "replica_id": replica_id });
+                    let body = json!({
+                        "status": "ok",
+                        "replica_id": replica_id,
+                        "log_id": log_id.as_str(),
+                    });
+                    let resp = Response::from_string(body.to_string()).with_header(
+                        Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
+                    );
+                    let _ = request.respond(add_cors(resp));
+                }
+                (&Method::Get, "/api/log-id") => {
+                    let body = json!({ "log_id": log_id.as_str() });
                     let resp = Response::from_string(body.to_string()).with_header(
                         Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
                     );
@@ -295,12 +309,17 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
+    use moirai_protocol::log_id::LogId;
     use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
     use super::start_http_api;
     use crate::generic::{ControlCmd, OpEnvelope, OpResult};
+
+    /// The log id every spawned API reports, fixed so bodies can be asserted
+    /// verbatim.
+    const TEST_LOG_ID: &str = "00112233445566778899aabbccddeeff";
 
     /// Minimal operation satisfying the `NetworkOp` bounds, so the HTTP layer
     /// can be exercised without a replica behind it.
@@ -332,7 +351,15 @@ mod tests {
 
         let (op_tx, op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
-        start_http_api::<TestOp>(port, "test-replica".into(), op_tx, ctrl_tx, metamodel);
+        let log_id = LogId::parse(TEST_LOG_ID).expect("a fixed, valid log id");
+        start_http_api::<TestOp>(
+            port,
+            "test-replica".into(),
+            log_id,
+            op_tx,
+            ctrl_tx,
+            metamodel,
+        );
 
         Api {
             port,
@@ -398,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn health_endpoint_is_unchanged_beside_the_metamodel_route() {
+    fn health_endpoint_names_the_replica_and_its_log() {
         let api = spawn_api(Some("{}".to_string()));
 
         let (status, body) = request(api.port, "GET /api/health", None);
@@ -406,8 +433,25 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
         assert_eq!(
             (status, parsed),
-            (200, json!({"status": "ok", "replica_id": "test-replica"}))
+            (
+                200,
+                json!({
+                    "status": "ok",
+                    "replica_id": "test-replica",
+                    "log_id": TEST_LOG_ID,
+                })
+            )
         );
+    }
+
+    #[test]
+    fn log_id_endpoint_serves_the_id_on_its_own() {
+        let api = spawn_api(None);
+
+        let (status, body) = request(api.port, "GET /api/log-id", None);
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!((status, parsed), (200, json!({ "log_id": TEST_LOG_ID })));
     }
 
     #[test]
