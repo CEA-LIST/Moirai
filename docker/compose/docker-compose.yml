@@ -58,6 +58,10 @@ x-replica-env: &replica-env
   # than a restart.
   DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
   PEERS: ""
+  # One shared log id for the whole rig: replicas that each minted their own
+  # would host different logs and refuse each other's events. Override to run
+  # the rig against another log.
+  LOG_ID: "${LOG_ID:-c0113c7ed10c0113c7ed10c0113c7ed1}"
 
 services:
   # Directory only. It never sees an operation and holds no model state, so it
