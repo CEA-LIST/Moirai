@@ -18,6 +18,7 @@ use crate::{
         version_vector::{Seq, Version},
     },
     event::{Event, id::EventId, lamport::Lamport},
+    log_id::LogId,
     replica::ReplicaIdx,
     utils::intern_str::{InternalizeOp, Interner, Resolver},
 };
@@ -292,7 +293,16 @@ impl<O> StateSnapshot<O> {
 }
 
 pub trait IsTcsb<O> {
-    fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self;
+    fn new(replica_idx: ReplicaIdx, interner: Interner, log_id: LogId) -> Self;
+    /// The log this replica hosts. Minted by whoever created the log, never by
+    /// the transport that carries it.
+    fn log_id(&self) -> &LogId;
+    /// How many messages have been refused for belonging to a different log.
+    ///
+    /// A refusal is the one outcome that must never be silent: it means two
+    /// logs were pointed at each other, which is a configuration mistake that
+    /// otherwise shows up only as state that never converges.
+    fn foreign_log_refusals(&self) -> u64;
     fn receive(&mut self, message: EventMessage<O>);
     fn receive_batch(&mut self, message: BatchMessage<O>);
     fn send(&mut self, op: O) -> EventMessage<O>;
@@ -338,6 +348,12 @@ pub struct Tcsb<O> {
     last_stable_version: Version,
     replica_idx: ReplicaIdx,
     interner: Interner,
+    /// The log this replica hosts. Every outgoing message is stamped with it
+    /// and every incoming one is checked against it.
+    log_id: LogId,
+    /// Messages refused because they belong to another log. See
+    /// [`IsTcsb::foreign_log_refusals`].
+    foreign_log_refusals: u64,
     /// TEMPORARY: for testing purposes only
     last_updated_columns: Vec<ReplicaIdx>,
 }
@@ -346,7 +362,7 @@ impl<O> IsTcsb<O> for Tcsb<O>
 where
     O: Clone + Debug + InternalizeOp,
 {
-    fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
+    fn new(replica_idx: ReplicaIdx, interner: Interner, log_id: LogId) -> Self {
         let resolver = interner.resolver();
         Self {
             inbox: HashMap::default(),
@@ -355,12 +371,30 @@ where
             last_stable_version: Version::new(replica_idx, resolver.clone()),
             interner,
             replica_idx,
+            log_id,
+            foreign_log_refusals: 0,
             // TEMPORARY: for testing purposes only
             last_updated_columns: Vec::new(),
         }
     }
 
+    fn log_id(&self) -> &LogId {
+        &self.log_id
+    }
+
+    fn foreign_log_refusals(&self) -> u64 {
+        self.foreign_log_refusals
+    }
+
     fn receive(&mut self, message: EventMessage<O>) {
+        // Before anything is internalized. Internalizing an event is not
+        // read-only — it interns the sender's id and widens the matrix clock —
+        // so a foreign event that got this far would leave a permanent member
+        // behind even after being dropped, and that member never speaks again,
+        // which pins the stable frontier at zero forever.
+        if self.refuse_foreign(&message) {
+            return;
+        }
         // TODO: do the checks before internalizing (i.e, before adding new replicas to the matrix clock)
         let event = self.internalize_event(message);
         if self.is_valid(&event) {
@@ -373,6 +407,11 @@ where
     }
 
     fn receive_batch(&mut self, message: BatchMessage<O>) {
+        // Whole-batch, not per-event: a batch is one log's traffic, so either
+        // all of it belongs here or none of it does.
+        if self.refuse_foreign(&message) {
+            return;
+        }
         let batch = self.internalize_batch(message);
         for event in batch.into_events() {
             if self.is_valid(&event) {
@@ -396,7 +435,7 @@ where
             .entry(event.id().idx())
             .or_default()
             .insert(event.id().seq(), event.clone());
-        EventMessage::new(event, self.interner.resolver().clone())
+        EventMessage::new(event, self.interner.resolver().clone(), self.log_id.clone())
     }
 
     fn next_causally_ready(&mut self) -> Option<Event<O>> {
@@ -465,7 +504,7 @@ where
         }
 
         let batch = Batch::new(events, self.matrix_clock.origin_version().clone());
-        BatchMessage::new(batch, self.interner.resolver().clone())
+        BatchMessage::new(batch, self.interner.resolver().clone(), self.log_id.clone())
     }
 
     fn since(&self) -> SinceMessage {
@@ -473,7 +512,7 @@ where
         let except: HashSet<EventId> = self.inbox.keys().cloned().collect();
         let version = self.matrix_clock.origin_version().clone();
         let since = Since::new(version, except);
-        SinceMessage::new(since, self.interner.resolver().clone())
+        SinceMessage::new(since, self.interner.resolver().clone(), self.log_id.clone())
     }
 
     fn stability(&self) -> StabilitySnapshot {
@@ -638,6 +677,26 @@ impl<O> Tcsb<O>
 where
     O: Debug + Clone + InternalizeOp,
 {
+    /// `true` when `message` belongs to another log, in which case it has
+    /// already been counted and reported and the caller must drop it.
+    ///
+    /// Loud on purpose. Two replicas pointed at each other with different log
+    /// ids converge to nothing at all, and without this line the only symptom
+    /// is a session where every replica looks healthy and none of them agree.
+    fn refuse_foreign<K>(&mut self, message: &crate::broadcast::message::Message<O, K>) -> bool {
+        if *message.log_id() == self.log_id {
+            return false;
+        }
+        self.foreign_log_refusals += 1;
+        eprintln!(
+            "[log {}] refused a message from log {}: a replica applies only \
+             the log it hosts",
+            self.log_id,
+            message.log_id()
+        );
+        true
+    }
+
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
 
@@ -919,7 +978,10 @@ mod state_transfer {
         for member in members {
             interner.intern(member);
         }
-        Tcsb::new(idx, interner)
+        // Every replica in these tests hosts the same log: a minted-per-call
+        // id would make them refuse each other, which is its own test, not
+        // this one's.
+        Tcsb::new(idx, interner, LogId::from_bytes([7; 16]))
     }
 
     /// What `Replica::deliver` does, minus the CRDT log.
@@ -1097,5 +1159,127 @@ mod state_transfer {
              adopted: {} vs {adopted}",
             first.event().version()
         );
+    }
+}
+/// Log identity, at the boundary where it is enforced: two `Tcsb` instances
+/// pointed at each other either host the same log or refuse each other's
+/// traffic, and the refusal is counted rather than silent.
+#[cfg(all(test, feature = "serde"))]
+mod log_isolation {
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+    use crate::utils::intern_str::Interner;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct Op(u32);
+
+    impl InternalizeOp for Op {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    fn tcsb(id: &str, members: &[&str], log_id: LogId) -> Tcsb<Op> {
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(id);
+        for member in members {
+            interner.intern(member);
+        }
+        Tcsb::new(idx, interner, log_id)
+    }
+
+    /// What `Replica::deliver` does, minus the CRDT log.
+    fn drain(t: &mut Tcsb<Op>) {
+        while t.next_causally_ready().is_some() {
+            t.is_stable();
+        }
+    }
+
+    /// What `Replica::send` does after `Tcsb::send`: advance the origin's own
+    /// column, because a local event never goes through the inbox.
+    fn send(t: &mut Tcsb<Op>, n: u32) -> EventMessage<Op> {
+        let message = t.send(Op(n));
+        t.matrix_clock
+            .set_by_idx_incremental(t.replica_idx, message.event().version().clone());
+        message
+    }
+
+    fn shared() -> LogId {
+        LogId::from_bytes([0x11; 16])
+    }
+
+    fn foreign() -> LogId {
+        LogId::from_bytes([0x22; 16])
+    }
+
+    #[test]
+    fn replicas_hosting_the_same_log_exchange_an_event() {
+        let mut a = tcsb("a", &["a", "b"], shared());
+        let mut b = tcsb("b", &["a", "b"], shared());
+
+        let message = send(&mut a, 7);
+        assert_eq!(message.log_id(), &shared(), "send did not stamp the log id");
+
+        b.receive(message);
+        drain(&mut b);
+
+        assert_eq!(b.stability().delivered, 1);
+        assert_eq!(b.foreign_log_refusals(), 0);
+    }
+
+    #[test]
+    fn an_event_from_a_foreign_log_is_refused_and_counted() {
+        let mut a = tcsb("a", &["a", "b"], shared());
+        let mut b = tcsb("b", &["a", "b"], foreign());
+
+        let before = b.stability();
+        b.receive(send(&mut a, 7));
+
+        assert_eq!(
+            b.foreign_log_refusals(),
+            1,
+            "the refusal was not counted, which is the silent-drop failure \
+             mode this counter exists to prevent"
+        );
+        assert_eq!(b.stability(), before, "the receiver's state changed");
+        assert!(
+            b.next_causally_ready().is_none(),
+            "the foreign event reached the inbox"
+        );
+    }
+
+    #[test]
+    fn a_batch_from_a_foreign_log_is_refused_whole() {
+        let mut a = tcsb("a", &["a", "b"], shared());
+        let mut b = tcsb("b", &["a", "b"], shared());
+        send(&mut a, 1);
+        send(&mut a, 2);
+        let batch = a.pull(b.since());
+        assert_eq!(
+            batch.batch().events().len(),
+            2,
+            "the donor's batch is empty, so the refusal below proves nothing"
+        );
+
+        let mut c = tcsb("c", &["a", "b", "c"], foreign());
+        let before = c.stability();
+        c.receive_batch(batch);
+        drain(&mut c);
+
+        assert_eq!(c.foreign_log_refusals(), 1, "one batch, one refusal");
+        assert_eq!(c.stability(), before, "part of a foreign batch was applied");
+    }
+
+    #[test]
+    fn a_message_round_trips_with_its_log_id() {
+        let mut a = tcsb("a", &["a", "b"], shared());
+        let message = send(&mut a, 42);
+
+        let json = serde_json::to_string(&message).expect("serialize message");
+        let back: EventMessage<Op> = serde_json::from_str(&json).expect("deserialize message");
+
+        assert_eq!(back.log_id(), message.log_id());
+        assert_eq!(back.log_id(), &shared());
     }
 }

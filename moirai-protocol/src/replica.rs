@@ -16,6 +16,7 @@ use crate::{
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
+    log_id::LogId,
     state::log::IsLog,
     utils::intern_str::Interner,
 };
@@ -43,7 +44,23 @@ where
     where
         L: EvalNested<Q>;
     fn update(&mut self, op: L::Op);
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self;
+    /// Bootstrap a replica hosting a *fresh* log.
+    ///
+    /// Mints an id, which is right for the replica that creates a log and
+    /// wrong for every replica meant to join one that already exists — two
+    /// replicas that mint separately host two different logs and refuse each
+    /// other's events. Use [`bootstrap_with_log_id`] wherever the log is
+    /// shared.
+    ///
+    /// [`bootstrap_with_log_id`]: IsReplica::bootstrap_with_log_id
+    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self
+    where
+        Self: Sized,
+    {
+        Self::bootstrap_with_log_id(id, members, LogId::generate())
+    }
+    /// Bootstrap a replica hosting the log named by `log_id`.
+    fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self;
 }
 
 #[derive(Debug)]
@@ -63,7 +80,7 @@ where
         let idx = interner.intern(&id);
         Self {
             id,
-            tcsb: T::new(idx.0, interner),
+            tcsb: T::new(idx.0, interner, LogId::generate()),
             state: L::new(),
         }
     }
@@ -115,7 +132,7 @@ where
         &self.id
     }
 
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+    fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self {
         assert!(
             members.contains(&&(*id)),
             "Bootstrap replica ID {} must be included in members list {:?}",
@@ -129,7 +146,7 @@ where
         }
         Self {
             id,
-            tcsb: T::new(idx, interner),
+            tcsb: T::new(idx, interner, log_id),
             state: L::new(),
         }
     }
@@ -146,6 +163,17 @@ where
     /// replica has to expose for causal stability to be measurable at all.
     pub fn stability(&self) -> StabilitySnapshot {
         self.tcsb.stability()
+    }
+
+    /// The log this replica hosts.
+    pub fn log_id(&self) -> &LogId {
+        self.tcsb.log_id()
+    }
+
+    /// Messages refused for belonging to another log. See
+    /// [`IsTcsb::foreign_log_refusals`].
+    pub fn foreign_log_refusals(&self) -> u64 {
+        self.tcsb.foreign_log_refusals()
     }
 
     /// The CRDT log itself, so that a donor can serialize it for a joiner.

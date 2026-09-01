@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     broadcast::{batch::Batch, since::Since},
     event::Event,
+    log_id::LogId,
     utils::intern_str::Resolver,
 };
 
@@ -39,6 +40,13 @@ pub type SinceMessage = Message<(), kind::Since>;
 pub struct Message<O, K = kind::Any> {
     payload: Payload<O>,
     resolver: Resolver,
+    /// Which log this message belongs to.
+    ///
+    /// Hoisted beside the resolver rather than carried per event, for the same
+    /// reason the resolver is: one message is one log's traffic, so one copy
+    /// says everything a receiver needs in order to decide whether the payload
+    /// is addressed to the log it hosts.
+    log_id: LogId,
     #[cfg_attr(feature = "serde", serde(skip))]
     _kind: PhantomData<K>,
 }
@@ -56,13 +64,20 @@ impl<O, K> Message<O, K> {
     pub fn resolver(&self) -> &Resolver {
         &self.resolver
     }
+
+    /// The log this message came from. A receiver hosting a different log
+    /// refuses it; see [`crate::broadcast::tcsb::Tcsb::receive`].
+    pub fn log_id(&self) -> &LogId {
+        &self.log_id
+    }
 }
 
 impl<O> Message<O> {
-    pub fn new(payload: Payload<O>, resolver: Resolver) -> Self {
+    pub fn new(payload: Payload<O>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload,
             resolver,
+            log_id,
             _kind: PhantomData,
         }
     }
@@ -73,10 +88,11 @@ impl<O> Message<O> {
 }
 
 impl<O> Message<O, kind::Event> {
-    pub fn new(event: Event<O>, resolver: Resolver) -> Self {
+    pub fn new(event: Event<O>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Event(event),
             resolver,
+            log_id,
             _kind: PhantomData,
         }
     }
@@ -90,10 +106,11 @@ impl<O> Message<O, kind::Event> {
 }
 
 impl<O> Message<O, kind::Batch> {
-    pub fn new(batch: Batch<O>, resolver: Resolver) -> Self {
+    pub fn new(batch: Batch<O>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Batch(batch),
             resolver,
+            log_id,
             _kind: PhantomData,
         }
     }
@@ -121,10 +138,11 @@ impl<O> Message<O, kind::Batch> {
 }
 
 impl<O> Message<O, kind::Since> {
-    pub fn new(since: Since, resolver: Resolver) -> Self {
+    pub fn new(since: Since, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Since(since),
             resolver,
+            log_id,
             _kind: PhantomData,
         }
     }
