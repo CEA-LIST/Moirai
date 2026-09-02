@@ -18,7 +18,7 @@ use crate::{
     event::Event,
     log_id::LogId,
     state::log::IsLog,
-    utils::intern_str::Interner,
+    utils::intern_str::{Interner, SharedInterner, lock_interner},
 };
 
 pub type ReplicaId = str;
@@ -61,6 +61,21 @@ where
     }
     /// Bootstrap a replica hosting the log named by `log_id`.
     fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self;
+    /// [`bootstrap_with_log_id`], except the member table is `interner`,
+    /// shared with every other log the caller hosts.
+    ///
+    /// The table describes the session's members, not any one log's: a node
+    /// hosting several logs holds one and hands each of them the handle, so
+    /// that sixteen logs do not mean sixteen copies of the same peer list.
+    /// `id` and `members` are interned into it when not already there.
+    ///
+    /// [`bootstrap_with_log_id`]: IsReplica::bootstrap_with_log_id
+    fn bootstrap_with_log_id_and_interner(
+        id: ReplicaIdOwned,
+        members: &[&ReplicaId],
+        log_id: LogId,
+        interner: SharedInterner,
+    ) -> Self;
 }
 
 #[derive(Debug)]
@@ -80,7 +95,7 @@ where
         let idx = interner.intern(&id);
         Self {
             id,
-            tcsb: T::new(idx.0, interner, LogId::generate()),
+            tcsb: T::new(idx.0, interner.into_shared(), LogId::generate()),
             state: L::new(),
         }
     }
@@ -133,17 +148,29 @@ where
     }
 
     fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self {
+        Self::bootstrap_with_log_id_and_interner(id, members, log_id, Interner::new().into_shared())
+    }
+
+    fn bootstrap_with_log_id_and_interner(
+        id: ReplicaIdOwned,
+        members: &[&ReplicaId],
+        log_id: LogId,
+        interner: SharedInterner,
+    ) -> Self {
         assert!(
             members.contains(&&(*id)),
             "Bootstrap replica ID {} must be included in members list {:?}",
             id,
             members
         );
-        let mut interner = Interner::new();
-        let (idx, _) = interner.intern(&id);
-        for member in members {
-            interner.intern(member);
-        }
+        let idx = {
+            let mut table = lock_interner(&interner);
+            let (idx, _) = table.intern(&id);
+            for member in members {
+                table.intern(member);
+            }
+            idx
+        };
         Self {
             id,
             tcsb: T::new(idx, interner, log_id),

@@ -99,6 +99,23 @@ impl MatrixClock {
         self.entries.0.push(version);
     }
 
+    /// Add zero rows until the clock has `len` of them.
+    ///
+    /// The resolver a clock is indexed by can be shared with other logs on the
+    /// same node, so a member can be interned by another log's traffic and
+    /// never by this one's; the row still has to exist before a message that
+    /// names its index arrives.
+    pub fn grow_to(&mut self, len: usize) {
+        while self.entries.0.len() < len {
+            self.add_replica(ReplicaIdx(self.entries.0.len()));
+        }
+    }
+
+    /// The index space this clock is expressed in.
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
+    }
+
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the PO-Log that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.

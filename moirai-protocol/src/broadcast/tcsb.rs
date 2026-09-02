@@ -20,7 +20,7 @@ use crate::{
     event::{Event, id::EventId, lamport::Lamport},
     log_id::LogId,
     replica::ReplicaIdx,
-    utils::intern_str::{InternalizeOp, Interner, Resolver},
+    utils::intern_str::{InternalizeOp, Interner, Resolver, SharedInterner, lock_interner},
 };
 
 /// A read-only view of the causal-stability bookkeeping behind a replica.
@@ -293,7 +293,9 @@ impl<O> StateSnapshot<O> {
 }
 
 pub trait IsTcsb<O> {
-    fn new(replica_idx: ReplicaIdx, interner: Interner, log_id: LogId) -> Self;
+    /// A log's causal bookkeeping over `interner`, the member table it shares
+    /// with every other log its node hosts. See [`SharedInterner`].
+    fn new(replica_idx: ReplicaIdx, interner: SharedInterner, log_id: LogId) -> Self;
     /// The log this replica hosts. Minted by whoever created the log, never by
     /// the transport that carries it.
     fn log_id(&self) -> &LogId;
@@ -347,7 +349,10 @@ pub struct Tcsb<O> {
     matrix_clock: MatrixClock,
     last_stable_version: Version,
     replica_idx: ReplicaIdx,
-    interner: Interner,
+    /// The member table, shared with every other log this node hosts. The
+    /// clock above is indexed by it; `follow_shared_interner` keeps the two
+    /// in step.
+    interner: SharedInterner,
     /// The log this replica hosts. Every outgoing message is stamped with it
     /// and every incoming one is checked against it.
     log_id: LogId,
@@ -362,13 +367,13 @@ impl<O> IsTcsb<O> for Tcsb<O>
 where
     O: Clone + Debug + InternalizeOp,
 {
-    fn new(replica_idx: ReplicaIdx, interner: Interner, log_id: LogId) -> Self {
-        let resolver = interner.resolver();
+    fn new(replica_idx: ReplicaIdx, interner: SharedInterner, log_id: LogId) -> Self {
+        let resolver = lock_interner(&interner).resolver().clone();
         Self {
             inbox: HashMap::default(),
             outbox: HashMap::default(),
             matrix_clock: MatrixClock::new(replica_idx, resolver.clone()),
-            last_stable_version: Version::new(replica_idx, resolver.clone()),
+            last_stable_version: Version::new(replica_idx, resolver),
             interner,
             replica_idx,
             log_id,
@@ -395,6 +400,7 @@ where
         if self.refuse_foreign(&message) {
             return;
         }
+        self.follow_shared_interner();
         // TODO: do the checks before internalizing (i.e, before adding new replicas to the matrix clock)
         let event = self.internalize_event(message);
         if self.is_valid(&event) {
@@ -412,6 +418,7 @@ where
         if self.refuse_foreign(&message) {
             return;
         }
+        self.follow_shared_interner();
         let batch = self.internalize_batch(message);
         for event in batch.into_events() {
             if self.is_valid(&event) {
@@ -425,17 +432,19 @@ where
     }
 
     fn send(&mut self, op: O) -> EventMessage<O> {
+        self.follow_shared_interner();
         let seq = self.matrix_clock.origin_version_mut().increment();
         let version = self.matrix_clock.origin_version();
         let lamport = Lamport::from(version);
-        let event_id = EventId::new(self.replica_idx, seq, self.interner.resolver().clone());
+        let resolver = self.matrix_clock.resolver().clone();
+        let event_id = EventId::new(self.replica_idx, seq, resolver.clone());
         // let op = op.translate_ids(self.replica_idx, &self.interner);
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox
             .entry(event.id().idx())
             .or_default()
             .insert(event.id().seq(), event.clone());
-        EventMessage::new(event, self.interner.resolver().clone(), self.log_id.clone())
+        EventMessage::new(event, resolver, self.log_id.clone())
     }
 
     fn next_causally_ready(&mut self) -> Option<Event<O>> {
@@ -469,6 +478,7 @@ where
     }
 
     fn update_version(&mut self, version: &Version) {
+        self.follow_shared_interner();
         self.matrix_clock.origin_version_mut().join(version);
         self.matrix_clock
             .set_by_idx(version.origin_idx(), version.clone());
@@ -477,6 +487,7 @@ where
     /// # Performance
     /// `O(m log m + k log k)` where `m` is the number of replicas and `k` is the number of events returned.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
+        self.follow_shared_interner();
         let since = self.internalize_since(since);
         let mut events = Vec::new();
 
@@ -504,7 +515,11 @@ where
         }
 
         let batch = Batch::new(events, self.matrix_clock.origin_version().clone());
-        BatchMessage::new(batch, self.interner.resolver().clone(), self.log_id.clone())
+        BatchMessage::new(
+            batch,
+            self.matrix_clock.resolver().clone(),
+            self.log_id.clone(),
+        )
     }
 
     fn since(&self) -> SinceMessage {
@@ -512,11 +527,18 @@ where
         let except: HashSet<EventId> = self.inbox.keys().cloned().collect();
         let version = self.matrix_clock.origin_version().clone();
         let since = Since::new(version, except);
-        SinceMessage::new(since, self.interner.resolver().clone(), self.log_id.clone())
+        // The clock's own resolver rather than the shared table's, so the
+        // message is consistent with the version inside it even on a log that
+        // has not yet re-seated after a sibling's `adopt`.
+        SinceMessage::new(
+            since,
+            self.matrix_clock.resolver().clone(),
+            self.log_id.clone(),
+        )
     }
 
     fn stability(&self) -> StabilitySnapshot {
-        let resolver = self.interner.resolver();
+        let resolver = self.matrix_clock.resolver();
         // Iterate the resolver rather than the version: a `Version`'s entry
         // vector is grown lazily, so a replica that is known but has not yet
         // contributed an operation has no entry and would be missed.
@@ -542,7 +564,7 @@ where
     }
 
     fn has_history_for(&self, id: &ReplicaId) -> bool {
-        match self.interner.get(id) {
+        match lock_interner(&self.interner).get(id) {
             Some(idx) => self
                 .matrix_clock
                 .version_by_idx(idx)
@@ -564,7 +586,7 @@ where
             .collect();
 
         StateSnapshot {
-            resolver: self.interner.resolver().clone(),
+            resolver: self.matrix_clock.resolver().clone(),
             matrix_clock: self.matrix_clock.clone(),
             last_stable_version: self.last_stable_version.clone(),
             suffix,
@@ -573,6 +595,7 @@ where
 
     #[cfg(feature = "serde")]
     fn adopt(&mut self, snapshot: StateSnapshot<O>) {
+        self.follow_shared_interner();
         let StateSnapshot {
             resolver,
             matrix_clock,
@@ -581,40 +604,69 @@ where
         } = snapshot;
 
         let local_id = self
-            .interner
+            .matrix_clock
+            .resolver()
             .resolve(self.replica_idx)
             .expect("a replica always resolves its own index")
             .to_owned();
         let donor_idx = matrix_clock.origin_idx();
 
-        // Take over the donor's index ordering verbatim: intern its ids first,
-        // in its order, so every index inside `matrix_clock`,
+        // The member table is the node's, shared with every other log it
+        // hosts, so the donor's ordering is installed in one of two ways.
+        //
+        // When it agrees with ours on every index both tables have, the
+        // donor's indices already mean the same thing here: whatever it knows
+        // beyond our length is appended in its order, and the table — and
+        // every sibling clock indexed by it — is left as it is.
+        //
+        // Otherwise the table is rebuilt to the donor's ordering verbatim:
+        // its ids first, in its order, so every index inside `matrix_clock`,
         // `last_stable_version`, `suffix` — and inside the compacted log that
-        // travels beside them — keeps its meaning without being rewritten.
-        // Anything this replica happened to know already is appended after,
-        // which for a fresh joiner is only its own id.
-        let mut interner = Interner::new();
-        for i in 0..resolver.len() {
-            interner.intern(
-                resolver
-                    .resolve(ReplicaIdx(i))
-                    .expect("a resolver resolves every index below its length"),
-            );
-        }
-        let (local_idx, _) = interner.intern(&local_id);
-        let previous = self.interner.resolver().clone();
-        for i in 0..previous.len() {
-            interner.intern(
-                previous
-                    .resolve(ReplicaIdx(i))
-                    .expect("a resolver resolves every index below its length"),
-            );
-        }
-        // The donor's row of the translator, filled the same way every inbound
-        // message fills one. It is the identity here, but going through
-        // `update_translation` keeps a single owner of that invariant.
-        interner.update_translation(donor_idx, &resolver);
-        let local_resolver = interner.resolver().clone();
+        // travels beside them — keeps its meaning without being rewritten;
+        // then this replica's own id; then anything previously known. Every
+        // sibling log re-seats itself on the new ordering the next time it is
+        // touched (`follow_shared_interner`), which is only sound while none
+        // of them has history — the node checks that before it lets a
+        // transfer through.
+        let (local_idx, local_resolver) = {
+            let mut interner = lock_interner(&self.interner);
+            if interner.resolver().agrees_with(&resolver) {
+                let known = interner.resolver().len();
+                for i in known..resolver.len() {
+                    interner.intern(
+                        resolver
+                            .resolve(ReplicaIdx(i))
+                            .expect("a resolver resolves every index below its length"),
+                    );
+                }
+            } else {
+                let mut rebuilt = Interner::new();
+                for i in 0..resolver.len() {
+                    rebuilt.intern(
+                        resolver
+                            .resolve(ReplicaIdx(i))
+                            .expect("a resolver resolves every index below its length"),
+                    );
+                }
+                rebuilt.intern(&local_id);
+                let previous = interner.resolver().clone();
+                for i in 0..previous.len() {
+                    rebuilt.intern(
+                        previous
+                            .resolve(ReplicaIdx(i))
+                            .expect("a resolver resolves every index below its length"),
+                    );
+                }
+                *interner = rebuilt;
+            }
+            // The donor's row of the translator, filled the same way every
+            // inbound message fills one. It is the identity here, but going
+            // through `update_translation` keeps a single owner of that
+            // invariant.
+            interner.update_translation(donor_idx, &resolver);
+            let (local_idx, _) = interner.intern(&local_id);
+            (local_idx, interner.resolver().clone())
+        };
 
         let mut clock = MatrixClock::new(local_idx, local_resolver.clone());
         for i in 0..local_resolver.len() {
@@ -668,7 +720,6 @@ where
         self.matrix_clock = clock;
         self.last_stable_version = lsv;
         self.replica_idx = local_idx;
-        self.interner = interner;
         self.last_updated_columns = Vec::new();
     }
 }
@@ -677,6 +728,44 @@ impl<O> Tcsb<O>
 where
     O: Debug + Clone + InternalizeOp,
 {
+    /// Bring this log's clock in line with the shared member table before
+    /// touching either.
+    ///
+    /// Two things can have happened since the last call, both through another
+    /// log on the same node. A member may have been interned by that log's
+    /// traffic, in which case this clock needs the row: the `internalize_*`
+    /// functions used to add rows on the "new id" signal from `intern`, and
+    /// that signal fires once per node, in whichever log sees the peer first.
+    /// Or that log may have adopted a donor's index ordering (`adopt`), which
+    /// rebuilds the table; a log with no history re-seats itself on the new
+    /// ordering here, and a log with history must never see it happen — the
+    /// node refuses such a transfer before it starts.
+    fn follow_shared_interner(&mut self) {
+        let interner = lock_interner(&self.interner);
+        let shared = interner.resolver();
+        if self.matrix_clock.resolver() != shared {
+            debug_assert!(
+                self.matrix_clock.origin_version().sum() == 0
+                    && self.inbox.is_empty()
+                    && self.outbox.is_empty(),
+                "the member table was rebuilt under a log with history"
+            );
+            let own_id = self
+                .matrix_clock
+                .resolver()
+                .resolve(self.replica_idx)
+                .expect("a replica always resolves its own index");
+            let idx = interner
+                .get(own_id)
+                .expect("a rebuilt member table keeps every id it replaced");
+            self.replica_idx = idx;
+            self.matrix_clock = MatrixClock::new(idx, shared.clone());
+            self.last_stable_version = Version::new(idx, shared.clone());
+            self.last_updated_columns.clear();
+        }
+        self.matrix_clock.grow_to(shared.len());
+    }
+
     /// `true` when `message` belongs to another log, in which case it has
     /// already been counted and reported and the caller must drop it.
     ///
@@ -771,54 +860,41 @@ where
     /// Internalize an event by mapping its replica IDs to local indices.
     /// If a replica ID is unknown, it is added to the interner and the matrix clock.
     fn internalize_event(&mut self, message: EventMessage<O>) -> Event<O> {
-        let (from, is_new) = self.interner.intern(message.event().id().origin_id());
+        let mut interner = lock_interner(&self.interner);
+        let (from, _) = interner.intern(message.event().id().origin_id());
+        interner.update_translation(from, message.resolver());
+        // Rows for everything the table holds, not only for what the two
+        // calls above added: the table is shared, so a member may have been
+        // interned by another log's traffic with this clock never told.
+        self.matrix_clock.grow_to(interner.resolver().len());
 
-        if is_new {
-            self.matrix_clock.add_replica(from);
-        }
-
-        let new_indices = self.interner.update_translation(from, message.resolver());
-
-        for idx in new_indices {
-            self.matrix_clock.add_replica(idx);
-        }
-
-        let event_id = EventId::new(
-            from,
-            message.event().id().seq(),
-            self.interner.resolver().clone(),
-        );
-        let mut version = Version::new(from, self.interner.resolver().clone());
+        let resolver = interner.resolver().clone();
+        let event_id = EventId::new(from, message.event().id().seq(), resolver.clone());
+        let mut version = Version::new(from, resolver);
 
         for (remote_idx, seq) in message.event().version().iter() {
-            let idx = self.interner.translate(from, remote_idx);
+            let idx = interner.translate(from, remote_idx);
             version.set_by_idx(idx, seq);
         }
 
         let event = message.event();
-        let op = event.op().clone().internalize(&self.interner);
+        let op = event.op().clone().internalize(&interner);
         Event::new(event_id, *event.lamport(), op, version)
     }
 
     fn internalize_since(&mut self, message: SinceMessage) -> Since {
         let since = message.since();
 
-        let (from, is_new) = self.interner.intern(since.origin_id());
+        let mut interner = lock_interner(&self.interner);
+        let (from, _) = interner.intern(since.origin_id());
+        interner.update_translation(from, message.resolver());
+        self.matrix_clock.grow_to(interner.resolver().len());
 
-        if is_new {
-            self.matrix_clock.add_replica(from);
-        }
-
-        let new_indices = self.interner.update_translation(from, message.resolver());
-
-        for idx in new_indices {
-            self.matrix_clock.add_replica(idx);
-        }
-
-        let mut version = Version::new(from, self.interner.resolver().clone());
+        let resolver = interner.resolver().clone();
+        let mut version = Version::new(from, resolver.clone());
 
         for (remote_idx, seq) in since.version().iter() {
-            let idx = self.interner.translate(from, remote_idx);
+            let idx = interner.translate(from, remote_idx);
             version.set_by_idx(idx, seq);
         }
 
@@ -827,8 +903,8 @@ where
             .except()
             .iter()
             .map(|e_id| {
-                let idx = self.interner.translate(from, e_id.idx());
-                EventId::new(idx, e_id.seq(), self.interner.resolver().clone())
+                let idx = interner.translate(from, e_id.idx());
+                EventId::new(idx, e_id.seq(), resolver.clone())
             })
             .collect();
 
@@ -836,27 +912,19 @@ where
     }
 
     fn internalize_batch(&mut self, message: BatchMessage<O>) -> Batch<O> {
-        let (batch, resolver) = message.into_parts();
+        let (batch, batch_resolver) = message.into_parts();
+        let mut interner = lock_interner(&self.interner);
         // Intern the batch origin ID
-        let (from, is_new) = self.interner.intern(batch.origin_id());
-
-        // If a new replica ID was added, update the matrix clock
-        if is_new {
-            self.matrix_clock.add_replica(from);
-        }
-
+        let (from, _) = interner.intern(batch.origin_id());
         // Update the translation between our resolver and the batch resolver
-        let new_indices = self.interner.update_translation(from, &resolver);
+        interner.update_translation(from, &batch_resolver);
+        self.matrix_clock.grow_to(interner.resolver().len());
 
-        // If new replica IDs were discovered during translation update, update the matrix clock
-        for idx in new_indices {
-            self.matrix_clock.add_replica(idx);
-        }
-
+        let resolver = interner.resolver().clone();
         // Rebuild the batch version with local indices
-        let mut version = Version::new(from, self.interner.resolver().clone());
+        let mut version = Version::new(from, resolver.clone());
         for (remote_idx, seq) in batch.version().iter() {
-            let idx = self.interner.translate(from, remote_idx);
+            let idx = interner.translate(from, remote_idx);
             version.set_by_idx(idx, seq);
         }
 
@@ -864,18 +932,14 @@ where
         // For each event, translate its event ID and version to our local indices
         for event in batch.into_events() {
             // Event origin idx in our mapping
-            let event_origin_idx = self.interner.translate(from, event.id().idx());
-            let event_id = EventId::new(
-                event_origin_idx,
-                event.id().seq(),
-                self.interner.resolver().clone(),
-            );
-            let mut version = Version::new(event_origin_idx, self.interner.resolver().clone());
+            let event_origin_idx = interner.translate(from, event.id().idx());
+            let event_id = EventId::new(event_origin_idx, event.id().seq(), resolver.clone());
+            let mut version = Version::new(event_origin_idx, resolver.clone());
             for (remote_idx, seq) in event.version().iter() {
-                let idx = self.interner.translate(from, remote_idx);
+                let idx = interner.translate(from, remote_idx);
                 version.set_by_idx(idx, seq);
             }
-            let op = event.op().clone().internalize(&self.interner);
+            let op = event.op().clone().internalize(&interner);
             let e = Event::new(event_id, *event.lamport(), op, version);
             events.push(e);
         }
@@ -896,7 +960,8 @@ pub trait IsTcsbTest<O>: IsTcsb<O> {
     where
         O: 'a;
     fn outbox_len(&self) -> usize;
-    fn interner(&self) -> &Interner;
+    /// The member table this log shares with its node's other logs.
+    fn interner(&self) -> &SharedInterner;
 }
 
 #[cfg(feature = "test_utils")]
@@ -909,7 +974,7 @@ where
     }
 
     fn members(&self) -> Vec<ReplicaIdOwned> {
-        self.interner.resolver().into_vec()
+        self.matrix_clock.resolver().into_vec()
     }
 
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
@@ -939,7 +1004,7 @@ where
             .sum()
     }
 
-    fn interner(&self) -> &Interner {
+    fn interner(&self) -> &SharedInterner {
         &self.interner
     }
 }
@@ -981,7 +1046,7 @@ mod state_transfer {
         // Every replica in these tests hosts the same log: a minted-per-call
         // id would make them refuse each other, which is its own test, not
         // this one's.
-        Tcsb::new(idx, interner, LogId::from_bytes([7; 16]))
+        Tcsb::new(idx, interner.into_shared(), LogId::from_bytes([7; 16]))
     }
 
     /// What `Replica::deliver` does, minus the CRDT log.
@@ -1186,7 +1251,7 @@ mod log_isolation {
         for member in members {
             interner.intern(member);
         }
-        Tcsb::new(idx, interner, log_id)
+        Tcsb::new(idx, interner.into_shared(), log_id)
     }
 
     /// What `Replica::deliver` does, minus the CRDT log.
@@ -1281,5 +1346,170 @@ mod log_isolation {
 
         assert_eq!(back.log_id(), message.log_id());
         assert_eq!(back.log_id(), &shared());
+    }
+}
+
+/// One member table for many logs, at the boundary where the sharing is
+/// enforced: two `Tcsb` instances on one node hold one `SharedInterner`, and
+/// each grows or re-seats its own clock from it.
+#[cfg(all(test, feature = "serde"))]
+mod shared_interner {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+    use crate::utils::intern_str::Interner;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct Op(u32);
+
+    impl InternalizeOp for Op {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    fn log_a() -> LogId {
+        LogId::from_bytes([0xa1; 16])
+    }
+
+    fn log_b() -> LogId {
+        LogId::from_bytes([0xb2; 16])
+    }
+
+    /// A node: one member table, one `Tcsb` per hosted log, the node's own
+    /// id interned first as `Replica::bootstrap` does.
+    fn node(id: &str, logs: &[LogId]) -> (SharedInterner, Vec<Tcsb<Op>>) {
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(id);
+        let shared = interner.into_shared();
+        let tcsbs = logs
+            .iter()
+            .map(|log| Tcsb::new(idx, Arc::clone(&shared), log.clone()))
+            .collect();
+        (shared, tcsbs)
+    }
+
+    /// What `Replica::deliver` does, minus the CRDT log.
+    fn drain(t: &mut Tcsb<Op>) {
+        while t.next_causally_ready().is_some() {
+            t.is_stable();
+        }
+    }
+
+    /// What `Replica::send` does after `Tcsb::send`: advance the origin's own
+    /// column, because a local event never goes through the inbox.
+    fn send(t: &mut Tcsb<Op>, n: u32) -> EventMessage<Op> {
+        let message = t.send(Op(n));
+        t.matrix_clock
+            .set_by_idx_incremental(t.replica_idx, message.event().version().clone());
+        message
+    }
+
+    #[test]
+    fn two_logs_on_one_node_hold_one_member_table() {
+        let (shared, tcsbs) = node("n", &[log_a(), log_b()]);
+
+        assert!(
+            tcsbs.iter().all(|t| Arc::ptr_eq(&t.interner, &shared)),
+            "a log holds a table of its own"
+        );
+    }
+
+    #[test]
+    fn a_member_learnt_through_one_log_gets_a_clock_row_in_the_other() {
+        let (_, mut p) = node("p", &[log_a(), log_b()]);
+        let (_, mut n) = node("n", &[log_a(), log_b()]);
+
+        // `n` learns `p` through log A: the table interns `p` once, for the
+        // whole node.
+        n[0].receive(send(&mut p[0], 1));
+        drain(&mut n[0]);
+        assert_eq!(n[0].stability().delivered, 1);
+
+        // Log B's clock never saw the "new id" signal. It has to have grown a
+        // row for `p` all the same, or indexing it here panics.
+        n[1].receive(send(&mut p[1], 2));
+        drain(&mut n[1]);
+
+        assert_eq!(
+            n[1].stability().delivered,
+            1,
+            "log B did not deliver p's event: its clock had no row for p"
+        );
+    }
+
+    #[test]
+    fn a_log_with_no_history_reseats_itself_after_a_sibling_adopts_a_donor() {
+        // A donor with history in log A, ordering [d, x].
+        let mut donor = {
+            let mut interner = Interner::new();
+            let (idx, _) = interner.intern("d");
+            interner.intern("x");
+            Tcsb::new(idx, interner.into_shared(), log_a())
+        };
+        send(&mut donor, 1);
+
+        // A joiner hosting A and B, both empty, ordering [n].
+        let (shared, mut n) = node("n", &[log_a(), log_b()]);
+        n[0].adopt(donor.snapshot());
+        assert_eq!(
+            lock_interner(&shared).resolver().into_vec(),
+            vec!["d".to_string(), "x".to_string(), "n".to_string()],
+            "the table was not rebuilt to the donor's ordering"
+        );
+
+        // Log B still indexes itself at 0 until it is touched; its first
+        // write must come out in the node's ordering.
+        let message = send(&mut n[1], 7);
+
+        assert_eq!(n[1].replica_idx, ReplicaIdx(2), "log B kept its old index");
+        assert_eq!(message.event().id().origin_id(), "n");
+        assert_eq!(
+            message.resolver(),
+            n[0].matrix_clock.resolver(),
+            "log B's message carries a resolver other than the node's"
+        );
+    }
+
+    #[test]
+    fn a_donor_whose_ordering_agrees_is_adopted_without_rebuilding_the_table() {
+        // A donor that already knows the joiner: ordering [d, n].
+        let mut donor = {
+            let mut interner = Interner::new();
+            let (idx, _) = interner.intern("d");
+            interner.intern("n");
+            Tcsb::new(idx, interner.into_shared(), log_a())
+        };
+        send(&mut donor, 1);
+
+        // A joiner whose table already orders the two the same way, and whose
+        // log B has history — a rebuild would be unsound, and none is needed.
+        let shared = {
+            let mut interner = Interner::new();
+            interner.intern("d");
+            interner.intern("n");
+            interner.into_shared()
+        };
+        let mut n_a = Tcsb::new(ReplicaIdx(1), Arc::clone(&shared), log_a());
+        let mut n_b = Tcsb::new(ReplicaIdx(1), Arc::clone(&shared), log_b());
+        send(&mut n_b, 3);
+        let table_before = lock_interner(&shared).resolver().clone();
+
+        n_a.adopt(donor.snapshot());
+
+        assert_eq!(
+            *lock_interner(&shared).resolver(),
+            table_before,
+            "the table was rebuilt although the donor's ordering agreed with ours"
+        );
+        assert_eq!(
+            n_a.stability().delivered,
+            1,
+            "the snapshot was not installed"
+        );
+        assert_eq!(n_b.stability().delivered, 1, "log B lost its history");
+        assert_eq!(n_b.replica_idx, ReplicaIdx(1));
     }
 }

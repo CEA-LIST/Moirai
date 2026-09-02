@@ -1,4 +1,7 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -70,6 +73,17 @@ impl Resolver {
     pub fn into_vec(&self) -> Vec<ReplicaIdOwned> {
         (*self.inner).clone().into_vec()
     }
+
+    /// `true` when both resolvers name the same replica at every index they
+    /// both have.
+    ///
+    /// The test a joiner runs before installing a donor's snapshot as it is:
+    /// the donor's indices keep their meaning here exactly when this holds,
+    /// whatever either side knows beyond the other's length.
+    pub fn agrees_with(&self, other: &Resolver) -> bool {
+        let shared = self.len().min(other.len());
+        (0..shared).all(|i| self.inner.get(i) == other.inner.get(i))
+    }
 }
 
 impl Debug for Resolver {
@@ -124,6 +138,23 @@ impl Default for Interner {
     }
 }
 
+/// One [`Interner`] shared by every log a node hosts.
+///
+/// The table describes the session's member set, not any one log's, so a
+/// node hosting several logs holds one and hands each log a handle rather than
+/// a copy. The node's own thread is the only writer; the mutex is what lets the
+/// handle stay `Send + Sync` without a second bookkeeping path.
+pub type SharedInterner = Arc<Mutex<Interner>>;
+
+/// Lock a shared interner.
+///
+/// Poisoning is recovered from rather than propagated: every write to the
+/// table is a whole insertion, so a thread that panicked while holding the
+/// lock cannot have left it half-written.
+pub fn lock_interner(shared: &SharedInterner) -> MutexGuard<'_, Interner> {
+    shared.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Interner {
     pub fn new() -> Self {
         Self {
@@ -133,6 +164,11 @@ impl Interner {
             },
             translator: Translator { inner: Vec::new() },
         }
+    }
+
+    /// Wrap this table in the handle a log holds. See [`SharedInterner`].
+    pub fn into_shared(self) -> SharedInterner {
+        Arc::new(Mutex::new(self))
     }
 
     /// Translate a replica index from another replica to the local one.
