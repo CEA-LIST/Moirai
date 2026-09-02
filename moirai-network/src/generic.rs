@@ -7,6 +7,7 @@
 //! `Serialize + DeserializeOwned + Clone + Debug + Send + InternalizeOp + 'static`
 //!
 
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -20,7 +21,7 @@ use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
-use moirai_protocol::utils::intern_str::InternalizeOp;
+use moirai_protocol::utils::intern_str::{lock_interner, InternalizeOp, Interner, SharedInterner};
 
 use crate::composite::CompositeTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
@@ -40,6 +41,11 @@ pub type Node<L> = GenericNode<L, CompositeTransport<<L as IsLog>::Op>>;
     note = "renamed to `Node`; the transport underneath is now a composite that routes each peer direct or relayed"
 )]
 pub type TcpNode<L> = Node<L>;
+
+/// One hosted log together with its causal bookkeeping: the per-model bundle a
+/// node keeps, which is not a peer, a process or a connection. See
+/// [`GenericNode`].
+pub type LogReplica<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
 
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
@@ -111,7 +117,7 @@ impl<T> NetworkOp for T where
 }
 
 // =============================================================================
-// GenericNode — one replica + transport + external adapters
+// GenericNode — one peer, its hosted logs, one transport, external adapters
 // =============================================================================
 
 /// A generic network node.
@@ -120,29 +126,54 @@ impl<T> NetworkOp for T where
 /// `T` is the transport backend (e.g. [`CompositeTransport`]).
 ///
 /// The [`Node`] type alias is the usual choice.
+///
+/// One node is one peer: one process, one transport, one HTTP server — and
+/// one log per model it hosts, keyed by [`LogId`]. Each hosted log carries its
+/// own causal bookkeeping ([`LogReplica`]: inbox, outbox, matrix clock),
+/// because causal stability is per log. What the logs share is the member
+/// table ([`SharedInterner`]), because that describes the session and not any
+/// one model.
 pub struct GenericNode<L: IsLog, T: CrdtTransport<Op = L::Op>>
 where
     L::Op: NetworkOp,
 {
     replica_id: String,
-    replica: Replica<L, Tcsb<L::Op>>,
+    /// The logs this node hosts, one per model.
+    ///
+    /// A node hosts a log only after [`host_log`] registered it (the
+    /// constructor registers the default log); a frame for any other id is
+    /// filtered and counted in `frames_not_hosted`, never adopted. Hosting on
+    /// sight would let any peer spawn unbounded logs on every node.
+    ///
+    /// [`host_log`]: GenericNode::host_log
+    logs: BTreeMap<LogId, HostedLog<L>>,
+    /// The log named at start. The unscoped routes, [`apply_op`] and the
+    /// dashboard read it.
+    ///
+    /// [`apply_op`]: GenericNode::apply_op
+    default_log: LogId,
+    /// The member table every hosted log indexes by. See [`SharedInterner`].
+    interner: SharedInterner,
+    /// Frames dropped because no hosted log carries their id.
+    ///
+    /// A filter, not a refusal. One session carries every model's traffic, so
+    /// a node hosting one model of sixteen drops fifteen frames in sixteen,
+    /// and on a multi-model session a flat zero is the suspicious reading. The
+    /// counter is the whole observable: nothing is printed per frame, which
+    /// would flood any such session. The refusal is the other counter,
+    /// `foreign_log_refusals` inside each log — a frame handed to a log that
+    /// does not own it, which is a dispatch defect and stays at zero once
+    /// frames route by id.
+    frames_not_hosted: u64,
     transport: T,
     adapter_op_rx: Receiver<OpEnvelope<L::Op>>,
     adapter_op_tx: Sender<OpEnvelope<L::Op>>,
     ctrl_rx: Receiver<ControlCmd>,
     ctrl_tx: Sender<ControlCmd>,
 
-    /// Optional callback to query the CRDT state as JSON.
+    /// Optional callback to query a log's state as JSON.
     /// Set by `enable_state_query()` when `L: QueryableLog`.
-    query_fn: Option<fn(&Replica<L, Tcsb<L::Op>>) -> serde_json::Value>,
-    /// Log of all operations delivered to this replica (for operation log endpoint)
-    operation_log: Vec<L::Op>,
-    /// Operations *originated* here and accepted by the CRDT.
-    ///
-    /// Separate from `operation_log`, which counts deliveries and over-counts
-    /// remote operations while both peers dial each other. This one is exact,
-    /// so `/api/metrics` can be trusted as a test oracle.
-    local_ops: usize,
+    query_fn: Option<fn(&LogReplica<L>) -> serde_json::Value>,
     /// Bootnode poller, when `BOOTNODE_URL` was configured.
     ///
     /// `None` is the pre-phase-1 behaviour in full: peers come from `PEERS`,
@@ -157,18 +188,6 @@ where
     /// keep working.
     export_log: Option<fn(&L) -> serde_json::Value>,
     import_log: Option<fn(serde_json::Value) -> Option<L>>,
-    /// When the last `StateRequest` went out. See [`STATE_TRANSFER_RETRY`].
-    last_state_request: Option<Instant>,
-    /// The peer currently being asked for a state transfer, if any.
-    ///
-    /// `Some` means a request is outstanding and the deadline is running;
-    /// `None` means the next pass may choose somebody. Cleared the moment a
-    /// donor refuses, so a refusal costs a loop iteration rather than an
-    /// interval.
-    state_donor: Option<PeerId>,
-    /// Peers already asked in the current round. A `Vec` because it is bounded
-    /// by the member count and only ever scanned linearly.
-    state_donors_tried: Vec<PeerId>,
     /// Metamodel descriptor served verbatim on `GET /api/metamodel`, when set
     /// by [`Self::serve_metamodel`].
     ///
@@ -187,6 +206,91 @@ where
     started_at: Instant,
 }
 
+/// One hosted log and the bookkeeping that belongs to it rather than to the
+/// node.
+struct HostedLog<L: IsLog> {
+    /// The log with its causal bookkeeping.
+    replica: LogReplica<L>,
+    /// Log of all operations delivered to this log (for the operations
+    /// endpoint). Display only: it over-counts remote operations while both
+    /// peers dial each other.
+    operation_log: Vec<L::Op>,
+    /// Operations *originated* here and accepted by the CRDT.
+    ///
+    /// Separate from `operation_log`, which counts deliveries. This one is
+    /// exact, so `/api/metrics` can be trusted as a test oracle.
+    local_ops: usize,
+    /// Where this log stands with state transfer. Per log rather than per
+    /// node, or a joiner of four models would ask one donor for one of them.
+    transfer: TransferState,
+}
+
+impl<L: IsLog> HostedLog<L>
+where
+    L::Op: NetworkOp,
+{
+    fn new(replica: LogReplica<L>) -> Self {
+        Self {
+            replica,
+            operation_log: Vec::new(),
+            local_ops: 0,
+            transfer: TransferState::default(),
+        }
+    }
+
+    /// `true` while this log has delivered nothing at all.
+    ///
+    /// The whole precondition for adopting a donor's state wholesale, in one
+    /// place, because it is checked twice: once when deciding what to ask a peer
+    /// for, and again when a response arrives — several donors can answer the
+    /// same request, and the second answer must not undo the first.
+    ///
+    /// Deliberately *not* "and knows no other replica", which the plan proposed
+    /// and which does not work: a peer's `SyncRequest` is internalised, so being
+    /// asked for a delta adds the asker to the member set. A replica that has
+    /// merely been spoken to would then look like one with history, and — as
+    /// measured — a joiner would receive its donors' state transfers and
+    /// silently discard every one of them. Knowing who the members are is not
+    /// history. Having delivered something is.
+    fn has_no_history(&self) -> bool {
+        self.replica.stability().delivered == 0
+    }
+}
+
+/// One log's side of the state-transfer protocol. See [`STATE_TRANSFER_RETRY`].
+#[derive(Debug, Default)]
+struct TransferState {
+    /// When the last `StateRequest` went out.
+    last_request: Option<Instant>,
+    /// The peer currently being asked for a state transfer, if any.
+    ///
+    /// `Some` means a request is outstanding and the deadline is running;
+    /// `None` means the next pass may choose somebody. Cleared the moment a
+    /// donor refuses, so a refusal costs a loop iteration rather than an
+    /// interval.
+    donor: Option<PeerId>,
+    /// Peers already asked in the current round. A `Vec` because it is bounded
+    /// by the member count and only ever scanned linearly.
+    donors_tried: Vec<PeerId>,
+}
+
+/// Why [`GenericNode::host_log`] declined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostError {
+    /// The node already hosts a log with this id.
+    AlreadyHosted(LogId),
+}
+
+impl Display for HostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyHosted(log_id) => write!(f, "log {log_id} is already hosted here"),
+        }
+    }
+}
+
+impl std::error::Error for HostError {}
+
 /// The operations behind recently delivered events, keyed `origin:seq`.
 ///
 /// The delivery trace names *which* event a log resolved; it deliberately does
@@ -204,6 +308,12 @@ where
 /// Bounded and FIFO. An event whose operation has already been evicted is still
 /// reported, without its payload: a feed missing a body is better than a buffer
 /// that grows for as long as the replica runs.
+///
+/// Keyed by `origin:seq` alone because the delivery trace it is joined with
+/// carries no log id. On a node hosting several logs one key can therefore
+/// name one event per log, and the join is then by arrival order; the
+/// dashboard reads the default log's state, so this is an imprecision of the
+/// monitoring path and not of replication.
 #[derive(Debug)]
 struct OpsByEvent<O> {
     by_id: crate::HashMap<String, O>,
@@ -313,51 +423,48 @@ where
     /// Create a node with the given transport.
     /// Transport-agnostic creator
     ///
-    /// Mints a fresh [`LogId`], which is right for the replica that creates a
-    /// log and wrong for one joining a log that already exists — use
-    /// [`with_transport_and_log_id`] wherever the log is shared.
+    /// Mints a fresh [`LogId`] for the default log, which is right for the
+    /// replica that creates a log and wrong for one joining a log that already
+    /// exists — use [`with_transport_and_log_id`] wherever the log is shared.
     ///
     /// [`with_transport_and_log_id`]: GenericNode::with_transport_and_log_id
     pub fn with_transport(replica_id: String, members: &[&str], transport: T) -> Self {
-        let replica: Replica<L, Tcsb<L::Op>> = IsReplica::bootstrap(replica_id.clone(), members);
-        Self::from_replica(replica_id, replica, transport)
+        Self::with_transport_and_log_id(replica_id, members, transport, LogId::generate())
     }
 
-    /// Create a node with the given transport, hosting the log named `log_id`.
+    /// Create a node with the given transport, hosting the log named `log_id`
+    /// as its default log.
     pub fn with_transport_and_log_id(
         replica_id: String,
         members: &[&str],
         transport: T,
         log_id: LogId,
     ) -> Self {
-        let replica: Replica<L, Tcsb<L::Op>> =
-            IsReplica::bootstrap_with_log_id(replica_id.clone(), members, log_id);
-        Self::from_replica(replica_id, replica, transport)
-    }
-
-    /// The common tail of both constructors: everything except how the replica
-    /// got its log id.
-    fn from_replica(replica_id: String, replica: Replica<L, Tcsb<L::Op>>, transport: T) -> Self {
+        let interner = Interner::new().into_shared();
+        let replica: LogReplica<L> = IsReplica::bootstrap_with_log_id_and_interner(
+            replica_id.clone(),
+            members,
+            log_id.clone(),
+            interner.clone(),
+        );
         let (adapter_op_tx, adapter_op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
 
         Self {
             replica_id,
-            replica,
+            logs: BTreeMap::from([(log_id.clone(), HostedLog::new(replica))]),
+            default_log: log_id,
+            interner,
+            frames_not_hosted: 0,
             transport,
             adapter_op_rx,
             adapter_op_tx,
             ctrl_rx,
             ctrl_tx,
             query_fn: None,
-            operation_log: Vec::new(),
-            local_ops: 0,
             discovery: None,
             export_log: None,
             import_log: None,
-            last_state_request: None,
-            state_donor: None,
-            state_donors_tried: Vec::new(),
             metamodel: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
@@ -365,6 +472,46 @@ where
             last_state_render: None,
             started_at: Instant::now(),
         }
+    }
+
+    /// Host one more log, with no history: the primitive behind registration.
+    ///
+    /// The log shares this node's member table and starts empty; if state
+    /// transfer is enabled the event loop asks the connected peers for its
+    /// state exactly as it does for the default log. A node hosts a log only
+    /// through this call — never because a frame for the id arrived.
+    pub fn host_log(&mut self, log_id: LogId) -> Result<(), HostError> {
+        if self.logs.contains_key(&log_id) {
+            return Err(HostError::AlreadyHosted(log_id));
+        }
+        let replica: LogReplica<L> = IsReplica::bootstrap_with_log_id_and_interner(
+            self.replica_id.clone(),
+            &[self.replica_id.as_str()],
+            log_id.clone(),
+            self.interner.clone(),
+        );
+        self.logs.insert(log_id, HostedLog::new(replica));
+        Ok(())
+    }
+
+    /// `true` when this node hosts the log named `log_id`.
+    pub fn hosts(&self, log_id: &LogId) -> bool {
+        self.logs.contains_key(log_id)
+    }
+
+    /// The hosted log named `log_id`, with its causal bookkeeping.
+    pub fn hosted(&self, log_id: &LogId) -> Option<&LogReplica<L>> {
+        self.logs.get(log_id).map(|log| &log.replica)
+    }
+
+    /// The ids of every log this node hosts, in id order.
+    pub fn hosted_logs(&self) -> impl Iterator<Item = &LogId> {
+        self.logs.keys()
+    }
+
+    /// Frames dropped because no hosted log carried their id. See the field.
+    pub fn frames_not_hosted(&self) -> u64 {
+        self.frames_not_hosted
     }
 
     /// Start reporting to a dashboard.
@@ -410,9 +557,10 @@ where
         self.discovery = Some(Discovery::spawn(config));
     }
 
-    /// The log this node's replica hosts.
+    /// The default log: the one named at start, which the unscoped routes
+    /// serve.
     pub fn log_id(&self) -> &LogId {
-        self.replica.log_id()
+        &self.default_log
     }
 
     /// Get a sender that can be used to submit ops from other threads.
@@ -428,14 +576,14 @@ where
         crate::http_api::start_http_api::<L::Op>(
             port,
             self.replica_id.clone(),
-            self.replica.log_id().clone(),
+            self.default_log.clone(),
             self.adapter_op_tx.clone(),
             self.ctrl_tx.clone(),
             self.metamodel.clone(),
         );
     }
 
-    /// Ask `peer` for everything this replica has not seen yet.
+    /// Ask `peer` for everything this node has not seen yet, log by log.
     ///
     /// The single place that turns "we have a link to `peer`" into a history
     /// pull. Every path that needs one — an accepted `Hello`, a resumed peer, a
@@ -443,33 +591,41 @@ where
     /// `since()` -> `SyncRequest` -> `send()` that used to exist cannot drift
     /// apart.
     fn request_sync(&mut self, peer: &PeerId) {
-        // A replica that has been in the session asks for the delta, which is
-        // what its peers can actually answer from their outboxes. A replica
-        // that has not needs the compacted state as well, and asking for a
-        // delta would get it a correct answer to the wrong question: an empty
-        // batch from a healthy peer, because everything it needs has already
-        // been pruned.
+        // A log that has been in the session asks for the delta, which is
+        // what its peers can actually answer from their outboxes. A log that
+        // has not needs the compacted state as well, and asking for a delta
+        // would get it a correct answer to the wrong question: an empty batch
+        // from a healthy peer, because everything it needs has already been
+        // pruned.
         //
         // It does not ask *here*, though. `retry_state_transfer` owns the
         // choice of donor and runs on every pass of the loop, so a new link
         // only has to exist; asking from both places is what used to make a
         // joiner receive one full transfer per peer and then a second round of
         // them, and decode every one to keep the first.
-        if self.import_log.is_some() && self.has_no_history() {
-            return;
+        let wants_delta: Vec<LogId> = self
+            .logs
+            .iter()
+            .filter(|(_, log)| self.import_log.is_none() || !log.has_no_history())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for log_id in &wants_delta {
+            self.request_delta_sync(log_id, peer);
         }
-        self.request_delta_sync(peer);
     }
 
-    /// Ask `peer` for the events it holds above what this replica has already
-    /// delivered.
+    /// Ask `peer` for the events of `log_id` it holds above what this node has
+    /// already delivered.
     ///
     /// Answered out of the peer's outbox, which `prune_outbox` keeps to exactly
     /// the events above its stable frontier. That is the right question for a
-    /// replica that has been in the session; it is the wrong one for a replica
-    /// that has not, which is what `StateRequest` is for.
-    fn request_delta_sync(&mut self, peer: &PeerId) {
-        let since = self.replica.since();
+    /// log that has been in the session; it is the wrong one for a log that
+    /// has not, which is what `StateRequest` is for.
+    fn request_delta_sync(&mut self, log_id: &LogId, peer: &PeerId) {
+        let Some(log) = self.logs.get(log_id) else {
+            return;
+        };
+        let since = log.replica.since();
         let msg = TransportMessage::SyncRequest { since };
         if let Err(e) = self.transport.send(peer, msg) {
             eprintln!(
@@ -479,11 +635,11 @@ where
         }
     }
 
-    /// Ask `peer` for everything, compacted state included.
-    fn request_state_transfer(&mut self, peer: &PeerId) {
+    /// Ask `peer` for everything of `log_id`, compacted state included.
+    fn request_state_transfer(&mut self, log_id: &LogId, peer: &PeerId) {
         let msg = TransportMessage::StateRequest {
             id: self.replica_id.clone(),
-            log_id: self.replica.log_id().clone(),
+            log_id: log_id.clone(),
         };
         if let Err(e) = self.transport.send(peer, msg) {
             eprintln!(
@@ -493,25 +649,7 @@ where
         }
     }
 
-    /// `true` while this replica has delivered nothing at all.
-    ///
-    /// The whole precondition for adopting a donor's state wholesale, in one
-    /// place, because it is checked twice: once when deciding what to ask a peer
-    /// for, and again when a response arrives — several donors can answer the
-    /// same request, and the second answer must not undo the first.
-    ///
-    /// Deliberately *not* "and knows no other replica", which the plan proposed
-    /// and which does not work: a peer's `SyncRequest` is internalised, so being
-    /// asked for a delta adds the asker to the member set. A replica that has
-    /// merely been spoken to would then look like one with history, and — as
-    /// measured — a joiner would receive its donors' state transfers and
-    /// silently discard every one of them. Knowing who the members are is not
-    /// history. Having delivered something is.
-    fn has_no_history(&self) -> bool {
-        self.replica.stability().delivered == 0
-    }
-
-    /// Build the answer to a `StateRequest` from `id`.
+    /// Build the answer to a `StateRequest` from `requester` for `log_id`.
     ///
     /// The refusal below is the whole reason returning-member merge stays out
     /// of this phase rather than half-happening by accident. A requester this
@@ -520,36 +658,39 @@ where
     /// Adopting a snapshot is a replace, not a merge, so serving one would
     /// discard them silently. Refusing costs the requester one round trip and
     /// gives phase 3 a defined starting point.
-    fn state_response_for(&self, id: &str, log_id: &LogId) -> TransportMessage<L::Op> {
-        let ours = self.replica.log_id().clone();
-        // Before any question of history: a requester hosting another log is
-        // not a joiner at all. Serving it a snapshot would splice two logs that
-        // by definition never merge, so the refusal comes first and names both
-        // ids — that line is the only symptom an operator gets.
-        if *log_id != ours {
+    fn state_response_for(&self, requester: &str, log_id: &LogId) -> TransportMessage<L::Op> {
+        let Some(log) = self.logs.get(log_id) else {
+            // Not a joiner of anything held here. Stamped with the default
+            // log — the transport's contract is "the log the donor hosts" —
+            // and the reason names the id asked for beside what is hosted,
+            // because that line is the only symptom an operator gets and
+            // either id alone is ungreppable on the other side.
+            let hosted: Vec<&str> = self.logs.keys().map(LogId::as_str).collect();
             return TransportMessage::StateUnavailable {
                 reason: format!(
-                    "`{id}` asked for log {log_id}, but this replica hosts \
-                     log {ours}; a state transfer never crosses logs"
+                    "`{requester}` asked for log {log_id}, but this replica does not host \
+                     it (it hosts {}); a state transfer never crosses logs",
+                    hosted.join(", ")
                 ),
-                log_id: ours,
+                log_id: self.default_log.clone(),
             };
-        }
+        };
+        let ours = log_id.clone();
         // Two replicas that start together are both empty and both ask. Serving
         // an empty snapshot would work, but it would make one of them adopt the
         // other's index ordering for nothing; saying there is nothing to give
         // lets both fall back to a delta sync, which is the right shape for
         // peers that are equals rather than donor and joiner.
-        if self.replica.stability().delivered == 0 {
+        if log.has_no_history() {
             return TransportMessage::StateUnavailable {
                 reason: "this replica has no history to transfer".to_string(),
                 log_id: ours,
             };
         }
-        if self.replica.has_history_for(id) {
+        if log.replica.has_history_for(requester) {
             return TransportMessage::StateUnavailable {
                 reason: format!(
-                    "`{id}` is a returning member, not a fresh one; merging its \
+                    "`{requester}` is a returning member, not a fresh one; merging its \
                      history with a snapshot is not implemented"
                 ),
                 log_id: ours,
@@ -565,8 +706,8 @@ where
         // eligibility. Serialising to measure is not waste: this is the same
         // work `transport.send` is about to do, and it is what keeps an
         // oversized answer from being discovered by the relay instead of here.
-        let log = export(self.replica.log());
-        let raw = match serde_json::to_vec(&log) {
+        let exported = export(log.replica.log());
+        let raw = match serde_json::to_vec(&exported) {
             Ok(bytes) => bytes,
             Err(e) => {
                 return TransportMessage::StateUnavailable {
@@ -578,8 +719,8 @@ where
         let log_bytes = raw.len();
         if log_bytes > MAX_STATE_TRANSFER_BYTES {
             eprintln!(
-                "[{}] refusing a state transfer to {}: the log is {} bytes, ceiling is {}",
-                self.replica_id, id, log_bytes, MAX_STATE_TRANSFER_BYTES
+                "[{}] refusing a state transfer of log {} to {}: the log is {} bytes, ceiling is {}",
+                self.replica_id, ours, requester, log_bytes, MAX_STATE_TRANSFER_BYTES
             );
             return TransportMessage::StateUnavailable {
                 reason: format!(
@@ -589,20 +730,24 @@ where
                 log_id: ours,
             };
         }
-        eprintln!("[{}] serving a state transfer to {}", self.replica_id, id);
+        eprintln!(
+            "[{}] serving a state transfer to {} for log {}",
+            self.replica_id, requester, ours
+        );
         TransportMessage::StateResponse {
-            snapshot: self.replica.snapshot(),
-            log: LogPayload::encode(log, &raw),
+            snapshot: log.replica.snapshot(),
+            log: LogPayload::encode(exported, &raw),
             log_id: ours,
         }
     }
 
-    /// Install a donor's state, or explain why not.
+    /// Install a donor's state for `log_id`, or explain why not.
     fn adopt_state(
         &mut self,
+        log_id: &LogId,
         from: &PeerId,
         snapshot: moirai_protocol::broadcast::tcsb::StateSnapshot<L::Op>,
-        log: LogPayload,
+        payload: LogPayload,
     ) {
         let Some(import) = self.import_log else {
             eprintln!(
@@ -611,36 +756,69 @@ where
             );
             return;
         };
+        let Some(log) = self.logs.get(log_id) else {
+            return;
+        };
         // A second donor's answer to the same request must not undo the first.
         // `adopt` replaces rather than merges, so re-adopting after delivering
-        // anything would silently roll the replica back.
-        if !self.has_no_history() {
-            self.request_delta_sync(from);
+        // anything would silently roll the log back.
+        if !log.has_no_history() {
+            self.request_delta_sync(log_id, from);
             return;
         }
-        match log.decode().and_then(import) {
+        // Adopting takes over the donor's index ordering, and the ordering is
+        // the node's, shared by every hosted log. That is safe while no log
+        // here has history, and it is free of any rebuild when the donor's
+        // ordering agrees with ours on every index both know. Otherwise the
+        // snapshot cannot be installed without rewriting another log's clock,
+        // so it is turned away in favour of a delta sync — loudly, since the
+        // compacted prefix of `log_id` then stays out of reach.
+        let siblings_with_history = self
+            .logs
+            .iter()
+            .any(|(id, log)| id != log_id && !log.has_no_history());
+        if siblings_with_history
+            && !lock_interner(&self.interner)
+                .resolver()
+                .agrees_with(snapshot.resolver())
+        {
+            eprintln!(
+                "[{}] cannot adopt {}'s state for log {}: it orders the members differently \
+                 from this node, which already holds history in another log; falling back \
+                 to a delta sync",
+                self.replica_id, from, log_id
+            );
+            self.request_delta_sync(log_id, from);
+            return;
+        }
+        match payload.decode().and_then(import) {
             Some(state) => {
                 let members = snapshot.resolver().len();
-                self.replica.adopt(snapshot, state);
+                let Some(log) = self.logs.get_mut(log_id) else {
+                    return;
+                };
+                log.replica.adopt(snapshot, state);
+                let stability = log.replica.stability();
                 eprintln!(
-                    "[{}] adopted state from {}: {} members, stable prefix {}, {} events above it",
+                    "[{}] adopted state from {} for log {}: {} members, stable prefix {}, {} events above it",
                     self.replica_id,
                     from,
+                    log_id,
                     members,
-                    self.replica.stability().stable_prefix,
-                    self.replica.stability().retained,
+                    stability.stable_prefix,
+                    stability.retained,
                 );
                 // The snapshot is a point in time, and `adopt` discards
-                // whatever this replica had buffered before it. A delta sync
+                // whatever this log had buffered before it. A delta sync
                 // closes both gaps in one round trip.
-                self.request_delta_sync(from);
+                self.request_delta_sync(log_id, from);
             }
             None => {
                 eprintln!(
                     "[{}] could not decode the log {} sent; falling back to a delta sync",
                     self.replica_id, from
                 );
-                self.request_delta_sync(from);
+                self.request_delta_sync(log_id, from);
             }
         }
     }
@@ -665,46 +843,70 @@ where
         }
     }
 
-    /// Apply an operation: send to the CRDT, then broadcast to peers.
+    /// Apply an operation to the default log: send to the CRDT, then broadcast
+    /// to peers.
     pub fn apply_op(&mut self, op: L::Op) -> OpResult {
-        match self.replica.send(op.clone()) {
-            Some(event_msg) => {
-                // Record the operation
-                self.operation_log.push(op);
-                self.local_ops += 1;
-                self.remember_op(event_msg.event());
+        let default_log = self.default_log.clone();
+        self.apply_op_to(&default_log, op)
+    }
 
-                let transport_msg = TransportMessage::Event { event: event_msg };
-                if let Err(e) = self.transport.broadcast(transport_msg) {
-                    eprintln!("[{}] Broadcast failed: {}", self.replica_id, e);
-                }
-                OpResult {
-                    success: true,
-                    message: "Applied and broadcasted".to_string(),
-                }
-            }
-            None => OpResult {
+    /// Apply an operation to the log named `log_id`: send to the CRDT, then
+    /// broadcast to peers. An id this node does not host is answered with a
+    /// failed [`OpResult`] and applies nothing.
+    pub fn apply_op_to(&mut self, log_id: &LogId, op: L::Op) -> OpResult {
+        let Some(log) = self.logs.get_mut(log_id) else {
+            return OpResult {
+                success: false,
+                message: format!("log {log_id} is not hosted here"),
+            };
+        };
+        let Some(event_msg) = log.replica.send(op.clone()) else {
+            return OpResult {
                 success: false,
                 message: "Operation not enabled".to_string(),
-            },
+            };
+        };
+        // Record the operation
+        log.operation_log.push(op);
+        log.local_ops += 1;
+        self.remember_op(event_msg.event());
+
+        let transport_msg = TransportMessage::Event { event: event_msg };
+        if let Err(e) = self.transport.broadcast(transport_msg) {
+            eprintln!("[{}] Broadcast failed: {}", self.replica_id, e);
+        }
+        OpResult {
+            success: true,
+            message: "Applied and broadcasted".to_string(),
         }
     }
 
-    /// Handle an inbound transport message.
+    /// Handle an inbound transport message: hand it to the log whose id it
+    /// carries, or filter it.
     fn handle_transport_message(&mut self, from: PeerId, msg: TransportMessage<L::Op>) {
         match msg {
-            TransportMessage::Event { event } => {
-                self.operation_log.push(event.event().op().clone());
-                self.replica.receive(event);
-            }
-            TransportMessage::Batch { batch } => {
-                for event in batch.batch().events() {
-                    self.operation_log.push(event.op().clone());
+            TransportMessage::Event { event } => match self.logs.get_mut(event.log_id()) {
+                Some(log) => {
+                    log.operation_log.push(event.event().op().clone());
+                    log.replica.receive(event);
                 }
-                self.replica.receive_batch(batch);
-            }
+                None => self.frames_not_hosted += 1,
+            },
+            TransportMessage::Batch { batch } => match self.logs.get_mut(batch.log_id()) {
+                Some(log) => {
+                    for event in batch.batch().events() {
+                        log.operation_log.push(event.op().clone());
+                    }
+                    log.replica.receive_batch(batch);
+                }
+                None => self.frames_not_hosted += 1,
+            },
             TransportMessage::SyncRequest { since } => {
-                let batch = self.replica.pull(since);
+                let Some(log) = self.logs.get_mut(since.log_id()) else {
+                    self.frames_not_hosted += 1;
+                    return;
+                };
+                let batch = log.replica.pull(since);
                 let response = TransportMessage::Batch { batch };
                 if let Err(e) = self.transport.send(&from, response) {
                     eprintln!(
@@ -714,6 +916,9 @@ where
                 }
             }
             TransportMessage::StateRequest { id, log_id } => {
+                if !self.logs.contains_key(&log_id) {
+                    self.frames_not_hosted += 1;
+                }
                 let response = self.state_response_for(&id, &log_id);
                 if let Err(e) = self.transport.send(&from, response) {
                     eprintln!(
@@ -730,21 +935,14 @@ where
                 // The mirror of the donor-side refusal, because the donor is
                 // not the only way a foreign snapshot can arrive: an old donor
                 // that predates the check, or a misrouted frame, must not make
-                // this replica adopt a log it does not host.
-                if log_id != *self.replica.log_id() {
-                    eprintln!(
-                        "[{}] refusing a state transfer from {}: it carries log {}, \
-                         this replica hosts log {}",
-                        self.replica_id,
-                        from,
-                        log_id,
-                        self.replica.log_id()
-                    );
+                // this node adopt a log it does not host.
+                if self.logs.contains_key(&log_id) {
+                    self.adopt_state(&log_id, &from, snapshot, log);
                 } else {
-                    self.adopt_state(&from, snapshot, log);
+                    self.frames_not_hosted += 1;
                 }
             }
-            TransportMessage::StateUnavailable { reason, .. } => {
+            TransportMessage::StateUnavailable { reason, log_id } => {
                 eprintln!(
                     "[{}] {} will not serve a state transfer ({}); falling back to a delta sync",
                     self.replica_id, from, reason
@@ -752,10 +950,30 @@ where
                 // A refusal is an answer. Free the turn now rather than waiting
                 // out the deadline, so cycling through peers that have nothing
                 // to give costs a loop iteration each.
-                if self.state_donor.as_deref() == Some(from.as_str()) {
-                    self.state_donor = None;
+                //
+                // The refusal is stamped with the log the donor answered for.
+                // When this node hosts it, that log's turn with `from` is
+                // over. When it does not, the donor turned the request away as
+                // one for a log it lacks and stamped its own, so every log
+                // here that was waiting on `from` is freed: the refused
+                // request was one of theirs.
+                let waiting: Vec<LogId> = if self.logs.contains_key(&log_id) {
+                    vec![log_id]
+                } else {
+                    self.logs
+                        .iter()
+                        .filter(|(_, log)| log.transfer.donor.as_deref() == Some(from.as_str()))
+                        .map(|(id, _)| id.clone())
+                        .collect()
+                };
+                for log_id in &waiting {
+                    if let Some(log) = self.logs.get_mut(log_id) {
+                        if log.transfer.donor.as_deref() == Some(from.as_str()) {
+                            log.transfer.donor = None;
+                        }
+                    }
+                    self.request_delta_sync(log_id, &from);
                 }
-                self.request_delta_sync(&from);
             }
             TransportMessage::Hello { id, .. } => {
                 eprintln!("[{}] Peer connected: {}", self.replica_id, id);
@@ -832,7 +1050,7 @@ where
         }
     }
 
-    /// Hand over a fresh view of this replica, if one is due.
+    /// Hand over a fresh view of this node's default log, if one is due.
     ///
     /// Two clocks, not one. The counters are a handful of integers and go out
     /// every `interval`; rendering the model is `O(state)` on a state that
@@ -858,10 +1076,10 @@ where
         let render_due = self
             .last_state_render
             .is_none_or(|last| now.duration_since(last) >= state_interval);
-        let state = match (&self.query_fn, render_due) {
-            (Some(f), true) => {
+        let state = match (&self.query_fn, render_due, self.logs.get(&self.default_log)) {
+            (Some(f), true, Some(log)) => {
                 self.last_state_render = Some(now);
-                Some(f(&self.replica))
+                Some(f(&log.replica))
             }
             _ => None,
         };
@@ -926,8 +1144,8 @@ where
         }
     }
 
-    /// Ask *one* peer for a state transfer while this replica still has
-    /// nothing, and move on if it does not deliver.
+    /// For every hosted log that still has nothing, ask *one* peer for a state
+    /// transfer, and move on if it does not deliver.
     ///
     /// This used to ask every connected peer on every round, on the grounds
     /// that a refusal is cheap and that a donor dying mid-transfer must not
@@ -937,73 +1155,87 @@ where
     /// joiner at 2 735 operations pulled 3.1 MB across 2 x N answers and threw
     /// all but one away, after decoding each.
     ///
-    /// So: one donor at a time, with [`STATE_TRANSFER_RETRY`] as its deadline.
-    /// Silence past the deadline, or an explicit refusal, passes the turn to
-    /// the next peer that has not been asked this round — which is the T5
-    /// property the old comment defended, at one transfer instead of N. Once
-    /// everybody has been asked the round restarts, no faster than the
+    /// So: one donor at a time per log, with [`STATE_TRANSFER_RETRY`] as its
+    /// deadline. Silence past the deadline, or an explicit refusal, passes the
+    /// turn to the next peer that has not been asked this round — which is the
+    /// T5 property the old comment defended, at one transfer instead of N.
+    /// Once everybody has been asked the round restarts, no faster than the
     /// interval, so a session where nobody yet has history does not spin.
     ///
-    /// Stops by itself: the moment anything is delivered — adopted, replayed or
-    /// locally applied — `has_no_history` goes false and this becomes one
-    /// comparison per loop iteration.
+    /// Stops by itself for each log: the moment anything is delivered —
+    /// adopted, replayed or locally applied — `has_no_history` goes false and
+    /// this becomes one comparison per loop iteration for that log.
     fn retry_state_transfer(&mut self) {
-        if self.import_log.is_none() || !self.has_no_history() {
-            // Either this replica cannot adopt, or it no longer needs to.
-            // Nothing below is meaningful in that state and it must not be
-            // carried into a later one.
-            self.state_donor = None;
-            self.state_donors_tried.clear();
+        if self.import_log.is_none() {
+            // This node cannot adopt. Nothing below is meaningful in that
+            // state and it must not be carried into a later one.
+            for log in self.logs.values_mut() {
+                log.transfer = TransferState::default();
+            }
             return;
         }
-        let peers: Vec<PeerId> = self
-            .transport
-            .peers()
-            .into_iter()
-            .filter(|p| p.status == crate::transport::PeerStatus::Connected)
-            .map(|p| p.id)
-            .collect();
-        if peers.is_empty() {
-            return;
-        }
-
+        let mut peers: Option<Vec<PeerId>> = None;
         let now = Instant::now();
-        let waited = self
-            .last_state_request
-            .map(|last| now.duration_since(last))
-            .unwrap_or(STATE_TRANSFER_RETRY);
-        if self.state_donor.is_some() {
-            if waited < STATE_TRANSFER_RETRY {
-                // A request is outstanding and still within its deadline.
+        let log_ids: Vec<LogId> = self.logs.keys().cloned().collect();
+        for log_id in log_ids {
+            let Some(log) = self.logs.get_mut(&log_id) else {
+                continue;
+            };
+            if !log.has_no_history() {
+                // This log no longer needs a transfer.
+                log.transfer = TransferState::default();
+                continue;
+            }
+            let peers = peers.get_or_insert_with(|| {
+                self.transport
+                    .peers()
+                    .into_iter()
+                    .filter(|p| p.status == crate::transport::PeerStatus::Connected)
+                    .map(|p| p.id)
+                    .collect()
+            });
+            if peers.is_empty() {
                 return;
             }
-            // It is not coming. `state_donors_tried` already holds this peer,
-            // so the next choice below is somebody else.
-            self.state_donor = None;
-        }
 
-        let next = match peers
-            .iter()
-            .find(|peer| !self.state_donors_tried.contains(peer))
-        {
-            Some(peer) => peer.clone(),
-            None => {
-                // Everybody connected has been asked. Start again — a peer that
-                // had nothing a moment ago may have something now — but not
-                // faster than the interval, or a session in which nobody yet
-                // has history would spin on refusals.
+            let transfer = &mut log.transfer;
+            let waited = transfer
+                .last_request
+                .map(|last| now.duration_since(last))
+                .unwrap_or(STATE_TRANSFER_RETRY);
+            if transfer.donor.is_some() {
                 if waited < STATE_TRANSFER_RETRY {
-                    return;
+                    // A request is outstanding and still within its deadline.
+                    continue;
                 }
-                self.state_donors_tried.clear();
-                peers[0].clone()
+                // It is not coming. `donors_tried` already holds this peer,
+                // so the next choice below is somebody else.
+                transfer.donor = None;
             }
-        };
 
-        self.state_donors_tried.push(next.clone());
-        self.state_donor = Some(next.clone());
-        self.last_state_request = Some(now);
-        self.request_state_transfer(&next);
+            let next = match peers
+                .iter()
+                .find(|peer| !transfer.donors_tried.contains(peer))
+            {
+                Some(peer) => peer.clone(),
+                None => {
+                    // Everybody connected has been asked. Start again — a peer
+                    // that had nothing a moment ago may have something now —
+                    // but not faster than the interval, or a session in which
+                    // nobody yet has history would spin on refusals.
+                    if waited < STATE_TRANSFER_RETRY {
+                        continue;
+                    }
+                    transfer.donors_tried.clear();
+                    peers[0].clone()
+                }
+            };
+
+            transfer.donors_tried.push(next.clone());
+            transfer.donor = Some(next.clone());
+            transfer.last_request = Some(now);
+            self.request_state_transfer(&log_id, &next);
+        }
     }
 
     /// Fold the newest bootnode roster into the transport's address book and
@@ -1132,17 +1364,19 @@ where
                 let _ = reply.send(json!({ "peers": peers }));
             }
             ControlCmd::Query { reply } => {
-                let serialized = match &self.query_fn {
-                    Some(f) => f(&self.replica),
-                    None => json!({ "error": "state query not enabled — implement QueryableLog" }),
+                let serialized = match (&self.query_fn, self.logs.get(&self.default_log)) {
+                    (Some(f), Some(log)) => f(&log.replica),
+                    _ => json!({ "error": "state query not enabled — implement QueryableLog" }),
                 };
                 let _ = reply.send(serialized);
             }
             ControlCmd::Operations { reply } => {
-                // Serialize all logged operations
+                // Serialize all logged operations of the default log
                 let operations: Vec<serde_json::Value> = self
-                    .operation_log
-                    .iter()
+                    .logs
+                    .get(&self.default_log)
+                    .into_iter()
+                    .flat_map(|log| log.operation_log.iter())
                     .filter_map(|op| serde_json::to_value(op).ok())
                     .collect();
 
@@ -1184,7 +1418,8 @@ where
         }
     }
 
-    /// Everything an observer needs to plot causal stability over time.
+    /// Everything an observer needs to plot causal stability over time: the
+    /// default log's counters ([`log_metrics`]) beside the node's.
     ///
     /// Field notes, because the names are easy to misread:
     ///
@@ -1200,36 +1435,64 @@ where
     /// - `routes` says how each peer is reached — `direct`, `relayed`, or
     ///   `unreachable`. Additive: it is `{}` for a transport with one way of
     ///   reaching a peer, and no other field changed to make room for it.
+    /// - `hosted_logs` and `frames_not_hosted` are the node's, not any log's:
+    ///   how many logs it hosts, and how many frames it filtered for carrying
+    ///   an id it hosts nothing under. Additive, like `routes`.
+    ///
+    /// [`log_metrics`]: GenericNode::log_metrics
     fn metrics(&self) -> serde_json::Value {
-        let stability = self.replica.stability();
+        let mut metrics = self
+            .logs
+            .get(&self.default_log)
+            .map(|log| self.log_metrics(log))
+            .unwrap_or_else(|| json!({ "replica_id": self.replica_id }));
         let peers = self.transport.peers();
-        let stable_version: serde_json::Map<String, serde_json::Value> = stability
-            .stable_version
-            .iter()
-            .map(|(id, seq)| (id.clone(), json!(seq)))
-            .collect();
         let routes: serde_json::Map<String, serde_json::Value> = self
             .transport
             .routes()
             .into_iter()
             .map(|(peer, route)| (peer, json!(route)))
             .collect();
+        if let Some(fields) = metrics.as_object_mut() {
+            fields.insert(
+                "peer_count".to_string(),
+                json!(peers
+                    .iter()
+                    .filter(|p| p.status == crate::transport::PeerStatus::Connected)
+                    .count()),
+            );
+            fields.insert("peers_known".to_string(), json!(peers.len()));
+            fields.insert("routes".to_string(), json!(routes));
+            fields.insert("hosted_logs".to_string(), json!(self.logs.len()));
+            fields.insert(
+                "frames_not_hosted".to_string(),
+                json!(self.frames_not_hosted),
+            );
+        }
+        metrics
+    }
 
+    /// One hosted log's counters. `foreign_log_refusals` is the per-log
+    /// counter that must stay at zero once frames route by id — see
+    /// `frames_not_hosted` on the node for the one that is expected to move.
+    fn log_metrics(&self, log: &HostedLog<L>) -> serde_json::Value {
+        let stability = log.replica.stability();
+        let stable_version: serde_json::Map<String, serde_json::Value> = stability
+            .stable_version
+            .iter()
+            .map(|(id, seq)| (id.clone(), json!(seq)))
+            .collect();
         json!({
             "replica_id": self.replica_id,
+            "log_id": log.replica.log_id().as_str(),
             "stable_prefix": stability.stable_prefix,
             "stable_version": stable_version,
             "delivered_ops": stability.delivered,
             "retained_ops": stability.retained,
             "pending_ops": stability.pending,
             "known_replicas": stability.known_replicas,
-            "ops_applied": self.local_ops,
-            "peer_count": peers
-                .iter()
-                .filter(|p| p.status == crate::transport::PeerStatus::Connected)
-                .count(),
-            "peers_known": peers.len(),
-            "routes": routes,
+            "ops_applied": log.local_ops,
+            "foreign_log_refusals": log.replica.foreign_log_refusals(),
         })
     }
 }
@@ -1262,8 +1525,8 @@ where
         Self::with_transport(replica_id, members, transport)
     }
 
-    /// [`new`], except the node hosts the log named `log_id` instead of
-    /// minting a fresh one (convenience wrapper around
+    /// [`new`], except the node hosts the log named `log_id` as its default
+    /// log instead of minting a fresh one (convenience wrapper around
     /// [`with_transport_and_log_id`]).
     ///
     /// [`new`]: GenericNode::new
@@ -1313,18 +1576,26 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::transport::{PeerInfo, TransportResult};
+    use crate::workload::Rng;
     use moirai_crdt::set::ewflag_set::{EWFlagSet, EWFlagSetLog};
+    use moirai_protocol::broadcast::message::EventMessage;
+    use moirai_protocol::crdt::query::Read;
 
     type Op = EWFlagSet<String>;
     type Log = EWFlagSetLog<String>;
+    type TestNode = GenericNode<Log, RecordingTransport>;
 
-    /// Records everything sent and receives nothing: enough transport to feed
-    /// `handle_transport_message` and inspect the node's answer.
+    /// Records everything sent and broadcast, and receives nothing: enough
+    /// transport to feed `handle_transport_message` and inspect the node's
+    /// answer, or to carry one node's frames to another by hand.
     struct RecordingTransport {
         id: PeerId,
         sent: Vec<(PeerId, TransportMessage<Op>)>,
+        broadcast: Vec<TransportMessage<Op>>,
     }
 
     impl RecordingTransport {
@@ -1332,6 +1603,7 @@ mod tests {
             Self {
                 id: id.to_string(),
                 sent: Vec::new(),
+                broadcast: Vec::new(),
             }
         }
     }
@@ -1348,7 +1620,8 @@ mod tests {
             Ok(())
         }
 
-        fn broadcast(&mut self, _msg: TransportMessage<Op>) -> TransportResult<()> {
+        fn broadcast(&mut self, msg: TransportMessage<Op>) -> TransportResult<()> {
+            self.broadcast.push(msg);
             Ok(())
         }
 
@@ -1389,6 +1662,56 @@ mod tests {
         }
     }
 
+    /// The behaviour-tree model of the validation plan, `a1b2…`.
+    fn bt() -> LogId {
+        LogId::parse("a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2").unwrap()
+    }
+
+    /// The SimpleUML model of the validation plan, `c3d4…`.
+    fn uml() -> LogId {
+        LogId::parse("c3d4c3d4c3d4c3d4c3d4c3d4c3d4c3d4").unwrap()
+    }
+
+    /// A node hosting `logs`, the first of them as its default log, over a
+    /// recording transport, able to serve and accept a state transfer.
+    fn node(id: &str, logs: &[LogId]) -> TestNode {
+        let (first, rest) = logs.split_first().expect("a node hosts at least one log");
+        let mut node = TestNode::with_transport_and_log_id(
+            id.to_string(),
+            &[id],
+            RecordingTransport::new(id),
+            first.clone(),
+        );
+        for log in rest {
+            node.host_log(log.clone()).expect("a fresh id");
+        }
+        node.enable_state_transfer();
+        node
+    }
+
+    /// The members of the set a hosted log holds, sorted.
+    fn members(node: &TestNode, log_id: &LogId) -> BTreeSet<String> {
+        node.hosted(log_id)
+            .unwrap_or_else(|| panic!("{} is hosted", log_id))
+            .query(Read::<<Log as IsLog>::Value>::new())
+            .into_iter()
+            .collect()
+    }
+
+    /// A bare peer hosting one log, for frames that come from outside a node.
+    fn peer(id: &str, log_id: LogId) -> LogReplica<Log> {
+        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], log_id)
+    }
+
+    fn add(value: &str) -> Op {
+        EWFlagSet::Add(value.to_string())
+    }
+
+    /// Every frame `node` broadcast since the last call, in order.
+    fn take_broadcast(node: &mut TestNode) -> Vec<TransportMessage<Op>> {
+        std::mem::take(&mut node.transport.broadcast)
+    }
+
     #[test]
     fn a_state_request_for_a_foreign_log_is_refused_naming_both_ids() {
         let ours = LogId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
@@ -1423,6 +1746,270 @@ mod tests {
                 );
             }
             other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mp1_dispatch_hands_a_frame_to_the_log_whose_id_matches() {
+        let mut node = node("n", &[bt(), uml()]);
+        let mut editor = peer("editor", uml());
+        // The state and what was delivered into it — not the whole stability
+        // snapshot, whose member list is the node's and grows when any
+        // hosted log hears from a peer.
+        let bt_before = (
+            members(&node, &bt()),
+            node.hosted(&bt()).unwrap().stability().delivered,
+        );
+
+        let event = editor.send(add("Class")).expect("an enabled operation");
+        node.handle_transport_message("editor".to_string(), TransportMessage::Event { event });
+
+        assert_eq!(
+            members(&node, &uml()),
+            BTreeSet::from(["Class".to_string()]),
+            "the Class did not land in the UML model"
+        );
+        assert_eq!(
+            members(&node, &bt()),
+            BTreeSet::new(),
+            "the Class landed in the behaviour tree"
+        );
+        assert_eq!(
+            (
+                members(&node, &bt()),
+                node.hosted(&bt()).unwrap().stability().delivered
+            ),
+            bt_before,
+            "the behaviour tree changed"
+        );
+        assert_eq!(node.hosted(&bt()).unwrap().foreign_log_refusals(), 0);
+        assert_eq!(node.hosted(&uml()).unwrap().foreign_log_refusals(), 0);
+        assert_eq!(node.frames_not_hosted(), 0);
+    }
+
+    #[test]
+    fn mp2_a_frame_for_an_unhosted_log_is_filtered_and_counted() {
+        let mut node = node("n", &[bt()]);
+        let bt_before = node.hosted(&bt()).unwrap().stability();
+        let mut writer = peer("writer", uml());
+        let reader = peer("reader", uml());
+        writer.send(add("Class")).expect("an enabled operation");
+        let event = writer.send(add("Property")).expect("an enabled operation");
+        let batch = writer.pull(reader.since());
+        let frames = vec![
+            TransportMessage::Event { event },
+            TransportMessage::Batch { batch },
+            TransportMessage::SyncRequest {
+                since: reader.since(),
+            },
+            TransportMessage::StateRequest {
+                id: "reader".to_string(),
+                log_id: uml(),
+            },
+            TransportMessage::StateResponse {
+                snapshot: writer.snapshot(),
+                log: LogPayload::Plain(serde_json::Value::Null),
+                log_id: uml(),
+            },
+        ];
+        let expected = frames.len() as u64;
+
+        for frame in frames {
+            node.handle_transport_message("writer".to_string(), frame);
+        }
+
+        assert!(!node.hosts(&uml()), "a frame made the node host a log");
+        assert_eq!(
+            node.hosted(&bt()).unwrap().stability(),
+            bt_before,
+            "the behaviour tree changed"
+        );
+        assert_eq!(members(&node, &bt()), BTreeSet::new());
+        assert_eq!(
+            node.frames_not_hosted(),
+            expected,
+            "the filter did not count once per frame"
+        );
+        assert_eq!(node.hosted(&bt()).unwrap().foreign_log_refusals(), 0);
+    }
+
+    #[test]
+    fn mp16_a_state_request_for_an_unhosted_log_is_answered_unavailable_naming_the_id() {
+        let mut node = node("donor", &[bt(), uml()]);
+        node.apply_op(add("Sequence"));
+        node.apply_op_to(&uml(), add("Class"));
+        let third = LogId::parse("e5f6e5f6e5f6e5f6e5f6e5f6e5f6e5f6").unwrap();
+        let before = (
+            node.hosted(&bt()).unwrap().stability(),
+            node.hosted(&uml()).unwrap().stability(),
+        );
+
+        node.handle_transport_message(
+            "joiner".to_string(),
+            TransportMessage::StateRequest {
+                id: "joiner".to_string(),
+                log_id: third.clone(),
+            },
+        );
+
+        let (to, answer) = node.transport.sent.pop().expect("the request was answered");
+        assert_eq!(to, "joiner");
+        match answer {
+            TransportMessage::StateUnavailable { reason, .. } => assert!(
+                reason.contains(third.as_str()),
+                "the refusal must name the id asked for, got: {reason}"
+            ),
+            other => panic!("a snapshot was served for a log the donor does not have: {other:?}"),
+        }
+        assert_eq!(node.frames_not_hosted(), 1);
+        assert_eq!(
+            (
+                node.hosted(&bt()).unwrap().stability(),
+                node.hosted(&uml()).unwrap().stability()
+            ),
+            before,
+            "a hosted model changed"
+        );
+    }
+
+    #[test]
+    fn mp17_held_back_frames_for_one_model_do_not_stall_the_other() {
+        let mut a = node("a", &[bt(), uml()]);
+        let mut b = node("b", &[bt(), uml()]);
+        a.apply_op(add("Sequence"));
+        a.apply_op_to(&uml(), add("Class"));
+        a.apply_op(add("Fallback"));
+        a.apply_op_to(&uml(), add("Property"));
+        let (held, flowing): (Vec<_>, Vec<_>) = take_broadcast(&mut a).into_iter().partition(
+            |frame| matches!(frame, TransportMessage::Event { event } if *event.log_id() == bt()),
+        );
+        assert_eq!((held.len(), flowing.len()), (2, 2));
+
+        for frame in flowing {
+            b.handle_transport_message("a".to_string(), frame);
+        }
+        assert_eq!(
+            members(&b, &uml()),
+            members(&a, &uml()),
+            "the UML model waited on frames for a model nobody is touching"
+        );
+        assert_eq!(
+            members(&b, &bt()),
+            BTreeSet::new(),
+            "held frames were delivered"
+        );
+
+        for frame in held {
+            b.handle_transport_message("a".to_string(), frame);
+        }
+        assert_eq!(members(&b, &bt()), members(&a, &bt()));
+        assert_eq!(members(&b, &uml()), members(&a, &uml()));
+        for log in [bt(), uml()] {
+            assert_eq!(b.hosted(&log).unwrap().foreign_log_refusals(), 0);
+        }
+    }
+
+    /// Two nodes, four models, a seeded workload tagged with a model, and
+    /// frames delivered in an interleaved order drawn from the seed.
+    ///
+    /// The single-model reference runs are bare peers that host one model
+    /// each and see only that model's frames: what a node hosting the four
+    /// ends with must equal what a node hosting only one would have.
+    #[test]
+    fn mp14_two_nodes_four_models_converge_per_model_with_no_cross_talk() {
+        let seed = std::env::var("MP14_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0x5eed_0000_0000_0014u64);
+        let mut rng = Rng::new(seed);
+        let models = [
+            bt(),
+            LogId::parse("a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b3").unwrap(),
+            uml(),
+            LogId::parse("c3d4c3d4c3d4c3d4c3d4c3d4c3d4c3d5").unwrap(),
+        ];
+        let vocabulary = [
+            ["Sequence", "Fallback", "Action", "Condition"],
+            ["Sequence", "Fallback", "Action", "Condition"],
+            ["Class", "Property", "Operation", "Package"],
+            ["Class", "Property", "Operation", "Package"],
+        ];
+        let mut nodes = [node("a", &models), node("b", &models)];
+        let mut references: Vec<[LogReplica<Log>; 2]> = models
+            .iter()
+            .map(|log| [peer("a", log.clone()), peer("b", log.clone())])
+            .collect();
+
+        // Rounds. Within a round every step is applied on one node and on
+        // that node's bare twin for the same model with nothing delivered,
+        // so both runs give each operation the same causal past — enable
+        // wins between concurrent operations and not between sequential
+        // ones, so the two runs must agree on which is which. At the end of
+        // the round everything pending is delivered: to the nodes in an
+        // interleaving drawn from the seed, in which frames of different
+        // models cross and a model's own frames arrive out of order, and to
+        // the twins in order. Both are then caught up, and the next round
+        // starts from equal states.
+        for _round in 0..4 {
+            let mut frames: Vec<(usize, TransportMessage<Op>)> = Vec::new();
+            let mut reference_frames: Vec<(usize, usize, EventMessage<Op>)> = Vec::new();
+            for _ in 0..10 {
+                let model = rng.below(models.len());
+                let writer = rng.below(2);
+                let word = vocabulary[model][rng.below(4)];
+                let op = if rng.below(4) == 0 {
+                    EWFlagSet::Remove(word.to_string())
+                } else {
+                    add(word)
+                };
+                let result = nodes[writer].apply_op_to(&models[model], op.clone());
+                assert!(result.success, "seed {seed}: {}", result.message);
+                let event = references[model][writer]
+                    .send(op)
+                    .expect("the reference accepts what the node accepted");
+                reference_frames.push((model, 1 - writer, event));
+                for frame in take_broadcast(&mut nodes[writer]) {
+                    frames.push((1 - writer, frame));
+                }
+            }
+
+            for i in (1..frames.len()).rev() {
+                frames.swap(i, rng.below(i + 1));
+            }
+            for (receiver, frame) in frames {
+                let from = if receiver == 0 { "b" } else { "a" };
+                nodes[receiver].handle_transport_message(from.to_string(), frame);
+            }
+            for (model, receiver, event) in reference_frames {
+                references[model][receiver].receive(event);
+            }
+        }
+
+        for (model, log) in models.iter().enumerate() {
+            let on_a = members(&nodes[0], log);
+            let on_b = members(&nodes[1], log);
+            let expected: BTreeSet<String> = references[model][0]
+                .query(Read::<<Log as IsLog>::Value>::new())
+                .into_iter()
+                .collect();
+            assert_eq!(
+                on_a, on_b,
+                "seed {seed}: model {log} differs between the nodes"
+            );
+            assert_eq!(
+                on_a, expected,
+                "seed {seed}: model {log} differs from its single-model run"
+            );
+            for node in &nodes {
+                assert_eq!(
+                    node.hosted(log).unwrap().foreign_log_refusals(),
+                    0,
+                    "seed {seed}: a frame was handed to a log that does not own it"
+                );
+            }
+        }
+        for node in &nodes {
+            assert_eq!(node.frames_not_hosted(), 0, "seed {seed}");
         }
     }
 }
