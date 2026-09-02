@@ -3895,6 +3895,10 @@ impl RelayRig {
             .with_env_var("LISTEN_PORT", CONTAINER_LISTEN_PORT.to_string())
             .with_env_var("HTTP_PORT", CONTAINER_HTTP_PORT.to_string())
             .with_env_var("PEERS", "")
+            // The suite's log, exactly as the two backends inject it: two replicas
+            // that each minted their own would host different logs and refuse each
+            // other's events, which converges to nothing over any route.
+            .with_env_var("LOG_ID", E2E_LOG_ID)
             .with_env_var("BOOTNODE_URL", format!("http://bootnode:{BOOTNODE_PORT}"))
             .with_env_var("SESSION_ID", &self.session)
             .with_env_var("ADVERTISE_ADDR", format!("{alias}:{CONTAINER_LISTEN_PORT}"))
