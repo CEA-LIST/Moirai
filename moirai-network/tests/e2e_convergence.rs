@@ -4496,8 +4496,9 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
 /// (`docker/compose/docker-compose.yml`).
 const RIG_LOG_ID: &str = "c0113c7ed10c0113c7ed10c0113c7ed1";
 
-/// The two metamodels of the validation plan, by the `nsURI` a registration
-/// names for now.
+/// The two metamodels of the validation plan: the file the descriptor
+/// directory writes, the package, and the `nsURI`. A registration names one
+/// by `{nsURI, digest}`, see [`metamodel_id`].
 const BT: (&str, &str, &str) = (
     "bt.metamodel.json",
     "behaviortree",
@@ -4509,9 +4510,24 @@ const UML: (&str, &str, &str) = (
     "http:///SimpleUML.ecore",
 );
 
-/// A directory of minimal descriptors — enough for the node to key and list
-/// them — so a process-backend scenario can set `METAMODEL_DIR` without
-/// reaching into the sibling repository for the real files.
+/// A minimal descriptor — enough for the node to key and list it — for one of
+/// the metamodels above.
+fn descriptor_value(descriptor: (&str, &str, &str)) -> Value {
+    let (_, package, ns_uri) = descriptor;
+    json!({
+        "formatVersion": 1,
+        "package": package,
+        "nsURI": ns_uri,
+        "rootClasses": [],
+        "classes": {},
+        "enums": {},
+    })
+}
+
+/// A directory of minimal descriptors, so a process-backend scenario can set
+/// `METAMODEL_DIR` without reaching into the sibling repository for the real
+/// files. Written pretty: the node keys them by a digest over the parsed
+/// value, and formatting must not matter to it.
 fn descriptor_dir(scenario: &str, descriptors: &[(&str, &str, &str)]) -> Result<PathBuf> {
     let run = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
@@ -4520,24 +4536,34 @@ fn descriptor_dir(scenario: &str, descriptors: &[(&str, &str, &str)]) -> Result<
         scenario.to_lowercase()
     ));
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    for (file, package, ns_uri) in descriptors {
-        let descriptor = json!({
-            "formatVersion": 1,
-            "package": package,
-            "nsURI": ns_uri,
-            "rootClasses": [],
-            "classes": {},
-            "enums": {},
-        });
-        fs::write(dir.join(file), serde_json::to_string_pretty(&descriptor)?)
-            .with_context(|| format!("write {file}"))?;
+    for descriptor in descriptors {
+        let file = descriptor.0;
+        fs::write(
+            dir.join(file),
+            serde_json::to_string_pretty(&descriptor_value(*descriptor))?,
+        )
+        .with_context(|| format!("write {file}"))?;
     }
     Ok(dir)
 }
 
-/// The `metamodel_id` a registration carries for a descriptor.
+/// The digest rule of the model plane, as the node binary and the editor
+/// compute it: SHA-256, lowercase hex, over the compact `serde_json`
+/// serialization of the parsed descriptor. Kept here so a scenario can name a
+/// metamodel the node under test does *not* hold, which no listing can tell
+/// it; MP25 checks the node agrees on the one it does hold.
+fn descriptor_digest(descriptor: &Value) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(descriptor.to_string()))
+}
+
+/// The `metamodel_id` a registration carries for a descriptor: its `nsURI`
+/// beside the digest, which is what the node keys descriptors by.
 fn metamodel_id(descriptor: (&str, &str, &str)) -> Value {
-    json!({ "nsURI": descriptor.2 })
+    json!({
+        "nsURI": descriptor.2,
+        "digest": descriptor_digest(&descriptor_value(descriptor)),
+    })
 }
 
 /// A POST whose status code is part of the answer: the registration route
@@ -4728,7 +4754,24 @@ fn mp25_registration_is_refused_for_a_metamodel_the_node_does_not_hold() {
         "the refused registration left a model behind"
     );
     // Positive control: the descriptor the node does hold is accepted, so the
-    // 422 above was about the metamodel and not about registration itself.
+    // 422 above was about the metamodel and not about registration itself —
+    // and it is listed under the digest this suite computed, so the two
+    // copies of the digest rule agree on the bytes it wrote.
+    let listing = get_json(a, "/api/metamodels").expect("MP25: /api/metamodels");
+    let listed: Vec<&str> = listing["metamodels"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry["digest"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        listed,
+        vec![descriptor_digest(&descriptor_value(BT)).as_str()],
+        "the node lists a digest other than the one this suite computes: {listing}"
+    );
     let id = create_model(a, BT).expect("MP25: create under bt");
     assert!(hosted_models(a).unwrap().contains(&id));
 }

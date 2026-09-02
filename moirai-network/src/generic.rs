@@ -48,9 +48,13 @@ pub type TcpNode<L> = Node<L>;
 pub type LogReplica<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
 
 /// The application's registration hook: the operations that open a newly
-/// created model's log, given its id and the `metamodel_id` it was registered
+/// created model's log, given its id and the descriptor it was registered
 /// under. See [`GenericNode::enable_registration`].
-pub type RegisterFn<O> = fn(&LogId, &serde_json::Value) -> Vec<O>;
+pub type RegisterFn<O> = fn(&LogId, &ServedDescriptor) -> Vec<O>;
+
+/// The application's intake guard: `Err(reason)` refuses an operation before a
+/// registered log applies it. See [`GenericNode::enable_op_guard`].
+pub type OpGuardFn<O> = fn(&O) -> Result<(), String>;
 
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
@@ -209,6 +213,13 @@ where
     /// log, and the creator writes it exactly once.
     descriptor_key_fn: Option<fn(&serde_json::Value) -> Option<String>>,
     register_fn: Option<RegisterFn<L::Op>>,
+    /// The application's intake guard, installed by [`Self::enable_op_guard`]:
+    /// consulted for every operation an adapter submits to a *registered*
+    /// log, never for the default log and never for the opening operations
+    /// `register_fn` writes. `None` guards nothing. What it protects is the
+    /// application's business; the node knows nothing about the shape of an
+    /// operation.
+    op_guard_fn: Option<OpGuardFn<L::Op>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -604,6 +615,7 @@ where
             descriptors: Vec::new(),
             descriptor_key_fn: None,
             register_fn: None,
+            op_guard_fn: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -699,6 +711,20 @@ where
         self.register_fn = Some(register_fn);
     }
 
+    /// Install the application's intake guard: `Err(reason)` from `guard`
+    /// refuses an adapter-submitted operation on a registered log, and the
+    /// caller is answered with a failed [`OpResult`] carrying the reason.
+    ///
+    /// Purely additive, like [`enable_registration`]: without it every
+    /// operation is applied as before. The default log is not guarded, and
+    /// neither are the opening operations `register_fn` returns, which are
+    /// applied before any adapter can reach the new log.
+    ///
+    /// [`enable_registration`]: GenericNode::enable_registration
+    pub fn enable_op_guard(&mut self, guard: OpGuardFn<L::Op>) {
+        self.op_guard_fn = Some(guard);
+    }
+
     /// Register a model: the primitive behind `POST /api/models`.
     ///
     /// Without a `model_id` this node *creates* the model: it mints a
@@ -718,8 +744,8 @@ where
         else {
             return Err(RegisterRefused::NotEnabled);
         };
-        let key = descriptor_key(&metamodel_id)
-            .filter(|key| self.descriptors.iter().any(|held| held.key == *key))
+        let descriptor = descriptor_key(&metamodel_id)
+            .and_then(|key| self.descriptors.iter().position(|held| held.key == key))
             .ok_or_else(|| RegisterRefused::UnknownMetamodel(metamodel_id.clone()))?;
         let (log_id, created) = match model_id {
             Some(log_id) => (log_id, false),
@@ -727,14 +753,14 @@ where
         };
         self.host_log(log_id.clone())?;
         let binding = Binding {
-            key,
+            key: self.descriptors[descriptor].key.clone(),
             metamodel_id: metamodel_id.clone(),
         };
         if let Some(log) = self.logs.get_mut(&log_id) {
             log.binding = Some(binding);
         }
         if created {
-            for op in register(&log_id, &metamodel_id) {
+            for op in register(&log_id, &self.descriptors[descriptor]) {
                 let result = self.apply_op_to(&log_id, op);
                 if !result.success {
                     eprintln!(
@@ -1089,9 +1115,33 @@ where
         self.apply_op_to(&default_log, op)
     }
 
+    /// The intake for operations submitted through an adapter: the guard,
+    /// when one is installed, runs before a registered log applies anything.
+    /// `None` names the default log, which is never guarded.
+    fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
+        let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
+        let registered = self
+            .logs
+            .get(&log_id)
+            .is_some_and(|log| log.binding.is_some());
+        if let (true, Some(guard)) = (registered, self.op_guard_fn) {
+            if let Err(reason) = guard(&op) {
+                return OpResult {
+                    success: false,
+                    message: reason,
+                };
+            }
+        }
+        self.apply_op_to(&log_id, op)
+    }
+
     /// Apply an operation to the log named `log_id`: send to the CRDT, then
     /// broadcast to peers. An id this node does not host is answered with a
-    /// failed [`OpResult`] and applies nothing.
+    /// failed [`OpResult`] and applies nothing. This is the primitive under
+    /// [`submit_op`] and the registration hook; the adapter intake is
+    /// guarded, this is not.
+    ///
+    /// [`submit_op`]: GenericNode::submit_op
     pub fn apply_op_to(&mut self, log_id: &LogId, op: L::Op) -> OpResult {
         let Some(log) = self.logs.get_mut(log_id) else {
             return OpResult {
@@ -1352,10 +1402,7 @@ where
         loop {
             // --- Adapter-submitted operations ---
             while let Ok(OpEnvelope { op, log_id, reply }) = self.adapter_op_rx.try_recv() {
-                let result = match log_id {
-                    Some(log_id) => self.apply_op_to(&log_id, op),
-                    None => self.apply_op(op),
-                };
+                let result = self.submit_op(log_id, op);
                 let _ = reply.send(result);
             }
 
@@ -1985,6 +2032,63 @@ mod tests {
         std::mem::take(&mut node.transport.broadcast)
     }
 
+    /// The key the `bt` descriptor is served under in these tests. Any opaque
+    /// string does: the node compares it with what `key_of` answers and reads
+    /// nothing inside it.
+    const BT_KEY: &str = "sha256:bt";
+
+    /// The set member a header occupies in this set-valued log.
+    const HEADER_PREFIX: &str = "__model:";
+
+    fn key_of(metamodel_id: &serde_json::Value) -> Option<String> {
+        metamodel_id
+            .get("digest")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    }
+
+    /// The header as a set can carry one: a member naming the model and the
+    /// descriptor it is bound to, written by the creator alone.
+    fn header(model_id: &LogId, descriptor: &ServedDescriptor) -> Vec<Op> {
+        vec![add(&format!(
+            "{HEADER_PREFIX}{model_id}:{}",
+            descriptor.key
+        ))]
+    }
+
+    /// An intake guard in the shape the node binary installs: the header is
+    /// written once, so a local operation that touches it is refused.
+    fn refuse_header_writes(op: &Op) -> Result<(), String> {
+        match op {
+            EWFlagSet::Add(member) | EWFlagSet::Remove(member)
+                if member.starts_with(HEADER_PREFIX) =>
+            {
+                Err(format!(
+                    "`{member}` is the model header, written once at creation"
+                ))
+            }
+            EWFlagSet::Clear => Err("clearing the log would erase the model header".into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// A node able to register models under the `bt` descriptor, hosting a
+    /// default log of its own beside them.
+    fn registering(id: &str) -> TestNode {
+        let mut node = node(id, &[LogId::generate()]);
+        node.serve_metamodels(vec![ServedDescriptor {
+            key: BT_KEY.to_string(),
+            listing: json!({ "nsURI": "http://www.example.org/behaviortree", "digest": BT_KEY }),
+            text: "{}".to_string(),
+        }]);
+        node.enable_registration(key_of, header);
+        node
+    }
+
+    fn bt_id() -> serde_json::Value {
+        json!({ "digest": BT_KEY })
+    }
+
     #[test]
     fn a_state_request_for_a_foreign_log_is_refused_naming_both_ids() {
         let ours = LogId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
@@ -2268,6 +2372,103 @@ mod tests {
 
     /// mp2's frames: one of every id-carrying variant, all stamped with a log
     /// the node under test does not host.
+    /// The creator registers the model and writes into it; the joiner
+    /// registers the same id and writes nothing; one transfer, driven by hand,
+    /// carries the header across.
+    #[test]
+    fn mp18_the_header_written_by_the_creator_arrives_intact_at_a_joiner() {
+        let mut creator = registering("creator");
+        let mut joiner = registering("joiner");
+        let Registered { model_id, created } = creator
+            .register(None, bt_id())
+            .expect("the creator holds the bt descriptor");
+        assert!(created);
+        creator.apply_op_to(&model_id, add("Sequence"));
+
+        let joined = joiner
+            .register(Some(model_id.clone()), bt_id())
+            .expect("the joiner holds the bt descriptor");
+        assert!(!joined.created);
+        assert_eq!(
+            joiner.hosted(&model_id).unwrap().stability().delivered,
+            0,
+            "a joiner wrote something at registration"
+        );
+
+        creator.handle_transport_message(
+            "joiner".to_string(),
+            TransportMessage::StateRequest {
+                id: "joiner".to_string(),
+                log_id: model_id.clone(),
+            },
+        );
+        let (to, response) = creator
+            .transport
+            .sent
+            .pop()
+            .expect("the request was answered");
+        assert_eq!(to, "joiner");
+        assert!(
+            matches!(response, TransportMessage::StateResponse { .. }),
+            "the creator did not serve its log: {response:?}"
+        );
+        joiner.handle_transport_message("creator".to_string(), response);
+
+        let creators = members(&creator, &model_id);
+        assert_eq!(members(&joiner, &model_id), creators);
+        let headers: Vec<&String> = creators
+            .iter()
+            .filter(|member| member.starts_with(HEADER_PREFIX))
+            .collect();
+        assert_eq!(
+            headers,
+            vec![&format!("{HEADER_PREFIX}{model_id}:{BT_KEY}")],
+            "one header, the creator's, naming the model and its metamodel"
+        );
+        let joiners_log = &joiner.logs[&model_id];
+        assert_eq!(
+            joiners_log.local_ops, 0,
+            "the joiner originated an operation"
+        );
+        assert!(
+            !joiners_log.operation_log.iter().any(
+                |op| matches!(op, EWFlagSet::Add(member) if member.starts_with(HEADER_PREFIX))
+            ),
+            "the joiner's own operation log holds a header write"
+        );
+    }
+
+    /// The guard runs on the adapter intake of a registered log and nowhere
+    /// else: the opening operations went through, the default log stays as
+    /// it was.
+    #[test]
+    fn the_intake_guard_refuses_on_a_registered_log_and_not_on_the_default_log() {
+        let mut node = registering("n");
+        node.enable_op_guard(refuse_header_writes);
+        let Registered { model_id, .. } = node.register(None, bt_id()).expect("created");
+        let before = members(&node, &model_id);
+        assert_eq!(before.len(), 1, "the header was not written at creation");
+
+        let refused = node.submit_op(
+            Some(model_id.clone()),
+            add(&format!("{HEADER_PREFIX}rewritten")),
+        );
+        assert!(!refused.success, "{}", refused.message);
+        assert_eq!(members(&node, &model_id), before, "the header moved");
+        assert!(
+            node.submit_op(Some(model_id.clone()), add("Sequence"))
+                .success,
+            "an ordinary operation on the registered log was refused"
+        );
+        let default_log = node.log_id().clone();
+        assert!(
+            node.submit_op(None, add(&format!("{HEADER_PREFIX}unbound")))
+                .success,
+            "the default log is unbound and must stay unguarded"
+        );
+        assert_eq!(members(&node, &default_log).len(), 1);
+    }
+
     fn frames_for_an_unhosted_log() -> Vec<TransportMessage<Op>> {
         let mut writer = peer("writer", uml());
         let reader = peer("reader", uml());

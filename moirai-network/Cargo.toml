@@ -51,5 +51,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 anyhow = "1.0"
 bollard = "0.20"
 serde_json = "1.0.133"
+# The model plane's digest rule, so a scenario can name a metamodel by digest
+# — including one the node under test does not hold, which no listing can
+# tell it. Dev-only: the library never computes a digest, it compares keys.
+sha2 = "0.10"
 testcontainers = { version = "0.27", features = ["blocking"] }
 tokio = { version = "1", features = ["rt"] }
