@@ -47,6 +47,11 @@ pub type TcpNode<L> = Node<L>;
 /// [`GenericNode`].
 pub type LogReplica<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
 
+/// The application's registration hook: the operations that open a newly
+/// created model's log, given its id and the `metamodel_id` it was registered
+/// under. See [`GenericNode::enable_registration`].
+pub type RegisterFn<O> = fn(&LogId, &serde_json::Value) -> Vec<O>;
+
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
 /// asked.
@@ -188,12 +193,22 @@ where
     /// keep working.
     export_log: Option<fn(&L) -> serde_json::Value>,
     import_log: Option<fn(serde_json::Value) -> Option<L>>,
-    /// Metamodel descriptor served verbatim on `GET /api/metamodel`, when set
-    /// by [`Self::serve_metamodel`].
-    ///
-    /// `None` is the pre-existing behaviour in full: the endpoint answers 404
+    /// The metamodel descriptors this node serves, in the order the
+    /// application gave them; see [`Self::serve_metamodels`]. Empty is the
+    /// pre-existing behaviour in full: `GET /api/metamodel` answers 404
     /// exactly like any other unknown path.
-    metamodel: Option<String>,
+    descriptors: Vec<ServedDescriptor>,
+    /// The application's two registration hooks, installed together by
+    /// [`Self::enable_registration`]; `None` until then, and registration
+    /// answers [`RegisterRefused::NotEnabled`].
+    ///
+    /// The first names the key a `metamodel_id` resolves to, which the node
+    /// checks against the descriptors it holds. The second returns the
+    /// operations that open a newly created model — its header — and is
+    /// called on create only, never on join: the header travels with the
+    /// log, and the creator writes it exactly once.
+    descriptor_key_fn: Option<fn(&serde_json::Value) -> Option<String>>,
+    register_fn: Option<RegisterFn<L::Op>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -223,6 +238,18 @@ struct HostedLog<L: IsLog> {
     /// Where this log stands with state transfer. Per log rather than per
     /// node, or a joiner of four models would ask one donor for one of them.
     transfer: TransferState,
+    /// What the log was registered under, when it was registered at all: the
+    /// default log has none.
+    binding: Option<Binding>,
+}
+
+/// The metamodel a hosted log was registered under, as the application named
+/// it. Opaque here: the key is whatever `descriptor_key_fn` answered and the
+/// id is echoed back on `GET /api/models` verbatim.
+#[derive(Debug, Clone)]
+struct Binding {
+    key: String,
+    metamodel_id: serde_json::Value,
 }
 
 impl<L: IsLog> HostedLog<L>
@@ -235,6 +262,7 @@ where
             operation_log: Vec::new(),
             local_ops: 0,
             transfer: TransferState::default(),
+            binding: None,
         }
     }
 
@@ -290,6 +318,81 @@ impl Display for HostError {
 }
 
 impl std::error::Error for HostError {}
+
+/// A metamodel descriptor the node serves, as the application handed it over.
+///
+/// Opaque on purpose: the key and the listing entry are whatever the
+/// application chose (a namespace URI, a digest), and the text is served
+/// verbatim. `moirai-network` never reads inside any of them.
+#[derive(Debug, Clone)]
+pub struct ServedDescriptor {
+    /// What a registration's `metamodel_id` resolves to through the
+    /// application's `descriptor_key_fn`; a model is bound to this key.
+    pub key: String,
+    /// What `GET /api/metamodels` lists for it, verbatim. `Null` keeps the
+    /// descriptor off the list.
+    pub listing: serde_json::Value,
+    /// The descriptor itself, served verbatim.
+    pub text: String,
+}
+
+impl ServedDescriptor {
+    /// A descriptor with no key and no listing: served on `GET /api/metamodel`
+    /// and nowhere else, which is all a node before registration existed did.
+    pub fn unlisted(text: String) -> Self {
+        Self {
+            key: String::new(),
+            listing: serde_json::Value::Null,
+            text,
+        }
+    }
+}
+
+/// What [`GenericNode::register`] answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registered {
+    /// The log the model lives in: minted here on a create, given on a join.
+    pub model_id: LogId,
+    /// `true` when this node created the model and wrote its opening
+    /// operations; `false` when it joined one by id and wrote nothing.
+    pub created: bool,
+}
+
+/// Why [`GenericNode::register`] declined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterRefused {
+    /// No registration hooks were installed; see
+    /// [`GenericNode::enable_registration`].
+    NotEnabled,
+    /// The `metamodel_id` names no descriptor this node holds. Refused before
+    /// anything is hosted: a node cannot host a model whose metamodel it
+    /// cannot serve.
+    UnknownMetamodel(serde_json::Value),
+    /// The node already hosts a log with this id.
+    AlreadyHosted(LogId),
+}
+
+impl Display for RegisterRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotEnabled => write!(f, "model registration is not enabled on this node"),
+            Self::UnknownMetamodel(id) => {
+                write!(f, "this node holds no descriptor for metamodel {id}")
+            }
+            Self::AlreadyHosted(log_id) => write!(f, "model {log_id} is already hosted here"),
+        }
+    }
+}
+
+impl std::error::Error for RegisterRefused {}
+
+impl From<HostError> for RegisterRefused {
+    fn from(error: HostError) -> Self {
+        match error {
+            HostError::AlreadyHosted(log_id) => Self::AlreadyHosted(log_id),
+        }
+    }
+}
 
 /// The operations behind recently delivered events, keyed `origin:seq`.
 ///
@@ -356,6 +459,8 @@ impl<O> OpsByEvent<O> {
 /// Envelope for ops submitted, with a oneshot reply channel.
 pub struct OpEnvelope<O> {
     pub op: O,
+    /// The log to apply to; `None` is the default log.
+    pub log_id: Option<LogId>,
     pub reply: Sender<OpResult>,
 }
 
@@ -389,6 +494,37 @@ pub(crate) enum ControlCmd {
     },
     Leave {
         reply: Sender<OpResult>,
+    },
+    /// The hosted models, for `GET /api/models`.
+    Models {
+        reply: Sender<serde_json::Value>,
+    },
+    /// `POST /api/models`. See [`GenericNode::register`].
+    Register {
+        model_id: Option<LogId>,
+        metamodel_id: serde_json::Value,
+        reply: Sender<Result<Registered, RegisterRefused>>,
+    },
+    /// One model's state; `None` when the node does not host it.
+    QueryLog {
+        log_id: LogId,
+        reply: Sender<Option<serde_json::Value>>,
+    },
+    /// One model's counters; `None` when the node does not host it.
+    LogMetrics {
+        log_id: LogId,
+        reply: Sender<Option<serde_json::Value>>,
+    },
+    /// The key one model was registered under: `None` when the node does not
+    /// host it, `Some(None)` for a hosted log with no binding.
+    Binding {
+        log_id: LogId,
+        reply: Sender<Option<Option<String>>>,
+    },
+    /// Whether the node hosts a log.
+    Hosts {
+        log_id: LogId,
+        reply: Sender<bool>,
     },
 }
 
@@ -465,7 +601,9 @@ where
             discovery: None,
             export_log: None,
             import_log: None,
-            metamodel: None,
+            descriptors: Vec::new(),
+            descriptor_key_fn: None,
+            register_fn: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -527,15 +665,116 @@ where
 
     /// Serve `descriptor` verbatim on `GET /api/metamodel`.
     ///
-    /// Purely additive, exactly like [`enable_dashboard`]: not calling this
-    /// leaves the endpoint answering 404 as it always has. The HTTP adapter
-    /// snapshots the descriptor when it spawns, so call this before
+    /// The one-descriptor form of [`serve_metamodels`]: the descriptor is
+    /// unkeyed and unlisted, so no model can be registered under it. Purely
+    /// additive, exactly like [`enable_dashboard`]: not calling this leaves
+    /// the endpoint answering 404 as it always has. The HTTP adapter
+    /// snapshots the descriptors when it spawns, so call this before
     /// [`start_http`].
     ///
+    /// [`serve_metamodels`]: GenericNode::serve_metamodels
     /// [`enable_dashboard`]: GenericNode::enable_dashboard
     /// [`start_http`]: GenericNode::start_http
     pub fn serve_metamodel(&mut self, descriptor: String) {
-        self.metamodel = Some(descriptor);
+        self.serve_metamodels(vec![ServedDescriptor::unlisted(descriptor)]);
+    }
+
+    /// Serve `descriptors`: the first on `GET /api/metamodel`, every listed
+    /// one on `GET /api/metamodels`, and each on `GET /api/model/{id}/metamodel`
+    /// for the models registered under its key. Replaces whatever was served
+    /// before. Call this before [`start_http`], which snapshots the list.
+    ///
+    /// [`start_http`]: GenericNode::start_http
+    pub fn serve_metamodels(&mut self, descriptors: Vec<ServedDescriptor>) {
+        self.descriptors = descriptors;
+    }
+
+    /// Install the application's registration hooks; see the fields.
+    pub fn enable_registration(
+        &mut self,
+        descriptor_key_fn: fn(&serde_json::Value) -> Option<String>,
+        register_fn: RegisterFn<L::Op>,
+    ) {
+        self.descriptor_key_fn = Some(descriptor_key_fn);
+        self.register_fn = Some(register_fn);
+    }
+
+    /// Register a model: the primitive behind `POST /api/models`.
+    ///
+    /// Without a `model_id` this node *creates* the model: it mints a
+    /// [`LogId`], hosts the log, and applies the opening operations the
+    /// application's `register_fn` returns. With one it *joins*: it hosts the
+    /// id with no history and writes nothing, and the event loop asks its
+    /// peers for a state transfer as it does for any empty log. Both are
+    /// refused before anything is hosted when the `metamodel_id` names no
+    /// descriptor this node holds, and a join is refused when the id is
+    /// hosted already.
+    pub fn register(
+        &mut self,
+        model_id: Option<LogId>,
+        metamodel_id: serde_json::Value,
+    ) -> Result<Registered, RegisterRefused> {
+        let (Some(descriptor_key), Some(register)) = (self.descriptor_key_fn, self.register_fn)
+        else {
+            return Err(RegisterRefused::NotEnabled);
+        };
+        let key = descriptor_key(&metamodel_id)
+            .filter(|key| self.descriptors.iter().any(|held| held.key == *key))
+            .ok_or_else(|| RegisterRefused::UnknownMetamodel(metamodel_id.clone()))?;
+        let (log_id, created) = match model_id {
+            Some(log_id) => (log_id, false),
+            None => (LogId::generate(), true),
+        };
+        self.host_log(log_id.clone())?;
+        let binding = Binding {
+            key,
+            metamodel_id: metamodel_id.clone(),
+        };
+        if let Some(log) = self.logs.get_mut(&log_id) {
+            log.binding = Some(binding);
+        }
+        if created {
+            for op in register(&log_id, &metamodel_id) {
+                let result = self.apply_op_to(&log_id, op);
+                if !result.success {
+                    eprintln!(
+                        "[{}] an opening operation of model {} was refused: {}",
+                        self.replica_id, log_id, result.message
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "[{}] {} model {} under metamodel {}",
+            self.replica_id,
+            if created { "created" } else { "joined" },
+            log_id,
+            metamodel_id
+        );
+        Ok(Registered {
+            model_id: log_id,
+            created,
+        })
+    }
+
+    /// The hosted models as `GET /api/models` lists them: every log, with the
+    /// `metamodel_id` it was registered under or `null` for the default log.
+    fn models(&self) -> serde_json::Value {
+        let models: Vec<serde_json::Value> = self
+            .logs
+            .iter()
+            .map(|(log_id, log)| {
+                json!({
+                    "model_id": log_id.as_str(),
+                    "metamodel_id": log
+                        .binding
+                        .as_ref()
+                        .map(|binding| binding.metamodel_id.clone())
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect();
+        json!({ "models": models })
     }
 
     /// Start discovering peers through a bootnode.
@@ -579,7 +818,7 @@ where
             self.default_log.clone(),
             self.adapter_op_tx.clone(),
             self.ctrl_tx.clone(),
-            self.metamodel.clone(),
+            self.descriptors.clone(),
         );
     }
 
@@ -1112,9 +1351,12 @@ where
         eprintln!("[{}] Entering main event loop", self.replica_id);
         loop {
             // --- Adapter-submitted operations ---
-            while let Ok(envelope) = self.adapter_op_rx.try_recv() {
-                let result = self.apply_op(envelope.op);
-                let _ = envelope.reply.send(result);
+            while let Ok(OpEnvelope { op, log_id, reply }) = self.adapter_op_rx.try_recv() {
+                let result = match log_id {
+                    Some(log_id) => self.apply_op_to(&log_id, op),
+                    None => self.apply_op(op),
+                };
+                let _ = reply.send(result);
             }
 
             // --- Control commands (pause/resume/peers) ---
@@ -1387,6 +1629,37 @@ where
             }
             ControlCmd::Metrics { reply } => {
                 let _ = reply.send(self.metrics());
+            }
+            ControlCmd::Models { reply } => {
+                let _ = reply.send(self.models());
+            }
+            ControlCmd::Register {
+                model_id,
+                metamodel_id,
+                reply,
+            } => {
+                let _ = reply.send(self.register(model_id, metamodel_id));
+            }
+            ControlCmd::QueryLog { log_id, reply } => {
+                let state = self.logs.get(&log_id).map(|log| match &self.query_fn {
+                    Some(f) => f(&log.replica),
+                    None => json!({ "error": "state query not enabled — implement QueryableLog" }),
+                });
+                let _ = reply.send(state);
+            }
+            ControlCmd::LogMetrics { log_id, reply } => {
+                let metrics = self.logs.get(&log_id).map(|log| self.log_metrics(log));
+                let _ = reply.send(metrics);
+            }
+            ControlCmd::Binding { log_id, reply } => {
+                let key = self
+                    .logs
+                    .get(&log_id)
+                    .map(|log| log.binding.as_ref().map(|binding| binding.key.clone()));
+                let _ = reply.send(key);
+            }
+            ControlCmd::Hosts { log_id, reply } => {
+                let _ = reply.send(self.logs.contains_key(&log_id));
             }
             ControlCmd::Leave { reply } => {
                 // A replica has no shutdown path — `run()` never returns and
@@ -1791,27 +2064,7 @@ mod tests {
     fn mp2_a_frame_for_an_unhosted_log_is_filtered_and_counted() {
         let mut node = node("n", &[bt()]);
         let bt_before = node.hosted(&bt()).unwrap().stability();
-        let mut writer = peer("writer", uml());
-        let reader = peer("reader", uml());
-        writer.send(add("Class")).expect("an enabled operation");
-        let event = writer.send(add("Property")).expect("an enabled operation");
-        let batch = writer.pull(reader.since());
-        let frames = vec![
-            TransportMessage::Event { event },
-            TransportMessage::Batch { batch },
-            TransportMessage::SyncRequest {
-                since: reader.since(),
-            },
-            TransportMessage::StateRequest {
-                id: "reader".to_string(),
-                log_id: uml(),
-            },
-            TransportMessage::StateResponse {
-                snapshot: writer.snapshot(),
-                log: LogPayload::Plain(serde_json::Value::Null),
-                log_id: uml(),
-            },
-        ];
+        let frames = frames_for_an_unhosted_log();
         let expected = frames.len() as u64;
 
         for frame in frames {
@@ -2011,5 +2264,82 @@ mod tests {
         for node in &nodes {
             assert_eq!(node.frames_not_hosted(), 0, "seed {seed}");
         }
+    }
+
+    /// mp2's frames: one of every id-carrying variant, all stamped with a log
+    /// the node under test does not host.
+    fn frames_for_an_unhosted_log() -> Vec<TransportMessage<Op>> {
+        let mut writer = peer("writer", uml());
+        let reader = peer("reader", uml());
+        writer.send(add("Class")).expect("an enabled operation");
+        let event = writer.send(add("Property")).expect("an enabled operation");
+        let batch = writer.pull(reader.since());
+        vec![
+            TransportMessage::Event { event },
+            TransportMessage::Batch { batch },
+            TransportMessage::SyncRequest {
+                since: reader.since(),
+            },
+            TransportMessage::StateRequest {
+                id: "reader".to_string(),
+                log_id: uml(),
+            },
+            TransportMessage::StateResponse {
+                snapshot: writer.snapshot(),
+                log: LogPayload::Plain(serde_json::Value::Null),
+                log_id: uml(),
+            },
+        ]
+    }
+
+    /// mp2's setup, read back through the real HTTP adapter and the real
+    /// event loop: the per-log counter on the model route, the node's two on
+    /// the unscoped one.
+    #[test]
+    fn mp4_the_metrics_expose_the_filter_and_the_refusal_counters() {
+        use crate::http_api::testing::{free_port, request};
+
+        let mut node = node("n", &[bt()]);
+        let frames = frames_for_an_unhosted_log();
+        let filtered = frames.len() as u64;
+        for frame in frames {
+            node.handle_transport_message("writer".to_string(), frame);
+        }
+        let port = free_port();
+        node.start_http(port);
+        std::thread::spawn(move || node.run());
+        let parse =
+            |body: &str| serde_json::from_str::<serde_json::Value>(body).expect("json body");
+
+        let (status, body) = request(port, &format!("GET /api/model/{}/metrics", bt()), None);
+        let per_log = parse(&body);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            per_log["foreign_log_refusals"].as_u64(),
+            Some(0),
+            "{per_log}"
+        );
+        assert_eq!(per_log["log_id"].as_str(), Some(bt().as_str()));
+
+        let (status, body) = request(port, "GET /api/metrics", None);
+        let node_wide = parse(&body);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            node_wide["frames_not_hosted"].as_u64(),
+            Some(filtered),
+            "{node_wide}"
+        );
+        assert_eq!(node_wide["hosted_logs"].as_u64(), Some(1), "{node_wide}");
+        assert_eq!(
+            node_wide["foreign_log_refusals"].as_u64(),
+            Some(0),
+            "{node_wide}"
+        );
+
+        let (status, body) = request(port, &format!("GET /api/model/{}/metrics", uml()), None);
+        assert_eq!(
+            status, 404,
+            "metrics were served for a log the node does not host: {body}"
+        );
     }
 }

@@ -60,8 +60,14 @@ x-replica-env: &replica-env
   PEERS: ""
   # One shared log id for the whole rig: replicas that each minted their own
   # would host different logs and refuse each other's events. Override to run
-  # the rig against another log.
+  # the rig against another log. This is each replica's *default* log; the
+  # models registered through `POST /api/models` are hosted beside it.
   LOG_ID: "${LOG_ID:-c0113c7ed10c0113c7ed10c0113c7ed1}"
+  # Every descriptor the image ships (`docker/e2e/Dockerfile` copies the
+  # Arachne examples there), so any replica can register a model under any
+  # of them. The editors keep `METAMODEL_PATH` on top of it, which is what the
+  # unscoped `/api/metamodel` answers with.
+  METAMODEL_DIR: "${METAMODEL_DIR:-/metamodels}"
 
 services:
   # Directory only. It never sees an operation and holds no model state, so it

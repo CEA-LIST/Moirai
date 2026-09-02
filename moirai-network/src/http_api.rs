@@ -2,29 +2,54 @@
 //!
 //! This module is intentionally transport-agnostic: it speaks to the node via
 //! channels and control commands.
+//!
+//! [`GenericNode`]: crate::generic::GenericNode
 
-use std::io::Read;
+use std::fmt::Display;
+use std::io::{Cursor, Read};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
 
 use moirai_protocol::log_id::LogId;
 use serde_json::json;
-use tiny_http::{Header, Method, Response, Server};
+use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::generic::{ControlCmd, NetworkOp, OpEnvelope, OpResult};
+use crate::generic::{
+    ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServedDescriptor,
+};
+
+/// How long a request waits for the node's event loop to answer before it
+/// gives up with a 504.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Start the optional HTTP API on the given port.
 ///
-/// Endpoints:
+/// Model-scoped endpoints, where `{id}` is a [`LogId`] — 32 lowercase hex
+/// characters, answered 400 with the parse error otherwise, and 404 when the
+/// node hosts no log by that id:
+/// - `GET  /api/models`               the hosted models as `{model_id, metamodel_id}`
+/// - `POST /api/models`               register a model: `{metamodel_id}` creates
+///   one and the node mints its id; `{model_id, metamodel_id}` joins one by
+///   id and writes nothing. 409 for an id already hosted, 422 for a
+///   `metamodel_id` naming no descriptor the node holds
+/// - `GET  /api/metamodels`           the descriptors the node holds, as the
+///   application listed them
+/// - `GET  /api/model/{id}/state`     that model's state as JSON
+/// - `POST /api/model/{id}/op`        submit an operation to that model
+/// - `GET  /api/model/{id}/metamodel` the descriptor that model was registered under
+/// - `GET  /api/model/{id}/metrics`   that model's counters, `foreign_log_refusals` included
+///
+/// Unscoped endpoints, which answer for the node's default log:
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
 /// - `GET  /api/health`          health check, names the replica and its log
 /// - `GET  /api/log-id`          the log this replica hosts, on its own
 /// - `GET  /api/state`           query current CRDT state as JSON
-/// - `GET  /api/metamodel`       metamodel descriptor, when the node carries
-///   one (see [`crate::generic::GenericNode::serve_metamodel`]); 404
-///   otherwise, exactly like any unknown path
-/// - `GET  /api/metrics`         causal-stability and log-size counters
+/// - `GET  /api/metamodel`       the first metamodel descriptor the node holds
+///   (see [`crate::generic::GenericNode::serve_metamodels`]); 404 without one,
+///   exactly like any unknown path
+/// - `GET  /api/metrics`         causal-stability and log-size counters, beside
+///   the node's `hosted_logs` and `frames_not_hosted`
 /// - `GET  /api/operations`      list operations delivered to this replica
 ///   (display only — it double-counts remote deliveries; use `/api/metrics`)
 /// - `POST /api/pause/<peer>`    pause a peer connection
@@ -39,337 +64,402 @@ pub(crate) fn start_http_api<O: NetworkOp>(
     log_id: LogId,
     sender: Sender<OpEnvelope<O>>,
     ctrl: Sender<ControlCmd>,
-    metamodel: Option<String>,
+    metamodels: Vec<ServedDescriptor>,
 ) {
     thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
         let server = Server::http(&addr).expect("Failed to start HTTP server");
         eprintln!("[{}] HTTP API listening on {}", replica_id, addr);
 
-        let add_cors = |mut resp: Response<std::io::Cursor<Vec<u8>>>| {
-            resp.add_header(Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap());
-            resp.add_header(
-                Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS").unwrap(),
-            );
-            resp.add_header(
-                Header::from_bytes(b"Access-Control-Allow-Headers", b"Content-Type").unwrap(),
-            );
-            resp
+        let api = Api {
+            replica_id,
+            default_log: log_id,
+            sender,
+            ctrl,
+            metamodels,
         };
-
-        for mut request in server.incoming_requests() {
-            let path = request.url().to_string();
-            let method = request.method().clone();
-
-            if method == Method::Options {
-                let resp = Response::from_string("").with_status_code(204);
-                let _ = request.respond(add_cors(resp));
-                continue;
-            }
-
-            match (&method, path.as_str()) {
-                (&Method::Get, "/api/health") => {
-                    let body = json!({
-                        "status": "ok",
-                        "replica_id": replica_id,
-                        "log_id": log_id.as_str(),
-                    });
-                    let resp = Response::from_string(body.to_string()).with_header(
-                        Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                    );
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Get, "/api/log-id") => {
-                    let body = json!({ "log_id": log_id.as_str() });
-                    let resp = Response::from_string(body.to_string()).with_header(
-                        Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                    );
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Get, "/api/state") => {
-                    let (reply_tx, reply_rx) = mpsc::channel();
-                    let _ = ctrl.send(ControlCmd::Query { reply: reply_tx });
-                    let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
-                        Ok(state) => Response::from_string(state.to_string()).with_header(
-                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                        ),
-                        Err(_) => {
-                            Response::from_string(r#"{"error":"timeout"}"#).with_status_code(504)
-                        }
-                    };
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Get, "/api/metamodel") => {
-                    // Byte-identical to the catch-all 404 when no descriptor
-                    // was configured: a node that never called
-                    // `serve_metamodel` keeps its old behaviour in full.
-                    let resp = match &metamodel {
-                        Some(descriptor) => Response::from_string(descriptor.as_str()).with_header(
-                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                        ),
-                        None => {
-                            Response::from_string(r#"{"error":"not found"}"#).with_status_code(404)
-                        }
-                    };
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Get, "/api/metrics") => {
-                    let (reply_tx, reply_rx) = mpsc::channel();
-                    let _ = ctrl.send(ControlCmd::Metrics { reply: reply_tx });
-                    let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
-                        Ok(metrics) => Response::from_string(metrics.to_string()).with_header(
-                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                        ),
-                        Err(_) => {
-                            Response::from_string(r#"{"error":"timeout"}"#).with_status_code(504)
-                        }
-                    };
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Get, "/api/operations") => {
-                    let (reply_tx, reply_rx) = mpsc::channel();
-                    let _ = ctrl.send(ControlCmd::Operations { reply: reply_tx });
-                    let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
-                        Ok(ops) => Response::from_string(ops.to_string()).with_header(
-                            Header::from_bytes(b"Content-Type", b"application/json").unwrap(),
-                        ),
-                        Err(_) => {
-                            Response::from_string(r#"{"error":"timeout"}"#).with_status_code(504)
-                        }
-                    };
-                    let _ = request.respond(add_cors(resp));
-                }
-                (&Method::Post, "/api/op") => {
-                    let mut body = String::new();
-                    if Read::read_to_string(&mut request.as_reader(), &mut body).is_err() {
-                        let resp = Response::from_string(r#"{"error":"Failed to read body"}"#)
-                            .with_status_code(400);
-                        let _ = request.respond(add_cors(resp));
-                        continue;
-                    }
-
-                    match serde_json::from_str::<O>(&body) {
-                        Ok(op) => {
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let envelope = OpEnvelope {
-                                op,
-                                reply: reply_tx,
-                            };
-                            if sender.send(envelope).is_ok() {
-                                let resp = match reply_rx.recv_timeout(Duration::from_secs(5)) {
-                                    Ok(result) => {
-                                        let resp_body = serde_json::to_string(&result)
-                                            .unwrap_or_else(|_| {
-                                                r#"{"error":"serialize"}"#.to_string()
-                                            });
-                                        Response::from_string(resp_body).with_header(
-                                            Header::from_bytes(
-                                                b"Content-Type",
-                                                b"application/json",
-                                            )
-                                            .unwrap(),
-                                        )
-                                    }
-                                    Err(_) => Response::from_string(r#"{"error":"timeout"}"#)
-                                        .with_status_code(504),
-                                };
-                                let _ = request.respond(add_cors(resp));
-                            } else {
-                                let resp = Response::from_string(r#"{"error":"channel closed"}"#)
-                                    .with_status_code(500);
-                                let _ = request.respond(add_cors(resp));
-                            }
-                        }
-                        Err(e) => {
-                            let msg = json!({ "error": format!("Invalid op JSON: {}", e) });
-                            let resp = Response::from_string(msg.to_string())
-                                .with_status_code(400)
-                                .with_header(
-                                    Header::from_bytes(b"Content-Type", b"application/json")
-                                        .unwrap(),
-                                );
-                            let _ = request.respond(add_cors(resp));
-                        }
-                    }
-                }
-                _ => {
-                    let json_header =
-                        Header::from_bytes(b"Content-Type", b"application/json").unwrap();
-
-                    match (&method, path.as_str()) {
-                        (&Method::Post, p) if p.starts_with("/api/pause/") => {
-                            let peer_id = p.trim_start_matches("/api/pause/").to_string();
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::Pause {
-                                peer_id,
-                                reply: reply_tx,
-                            });
-                            let result =
-                                reply_rx
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .unwrap_or(OpResult {
-                                        success: false,
-                                        message: "timeout".into(),
-                                    });
-                            let resp =
-                                Response::from_string(serde_json::to_string(&result).unwrap())
-                                    .with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        (&Method::Post, p) if p.starts_with("/api/resume/") => {
-                            let peer_id = p.trim_start_matches("/api/resume/").to_string();
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::Resume {
-                                peer_id,
-                                reply: reply_tx,
-                            });
-                            let result =
-                                reply_rx
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .unwrap_or(OpResult {
-                                        success: false,
-                                        message: "timeout".into(),
-                                    });
-                            let resp =
-                                Response::from_string(serde_json::to_string(&result).unwrap())
-                                    .with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        (&Method::Post, "/api/pause-all") => {
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::PauseAll { reply: reply_tx });
-                            let result =
-                                reply_rx
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .unwrap_or(OpResult {
-                                        success: false,
-                                        message: "timeout".into(),
-                                    });
-                            let resp =
-                                Response::from_string(serde_json::to_string(&result).unwrap())
-                                    .with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        (&Method::Post, "/api/resume-all") => {
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::ResumeAll { reply: reply_tx });
-                            let result =
-                                reply_rx
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .unwrap_or(OpResult {
-                                        success: false,
-                                        message: "timeout".into(),
-                                    });
-                            let resp =
-                                Response::from_string(serde_json::to_string(&result).unwrap())
-                                    .with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        (&Method::Post, "/api/leave") => {
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::Leave { reply: reply_tx });
-                            let result =
-                                reply_rx
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .unwrap_or(OpResult {
-                                        success: false,
-                                        message: "timeout".into(),
-                                    });
-                            let resp =
-                                Response::from_string(serde_json::to_string(&result).unwrap())
-                                    .with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        (&Method::Get, "/api/peers") => {
-                            let (reply_tx, reply_rx) = mpsc::channel();
-                            let _ = ctrl.send(ControlCmd::Peers { reply: reply_tx });
-                            let result = reply_rx
-                                .recv_timeout(Duration::from_secs(5))
-                                .unwrap_or(json!({"error": "timeout"}));
-                            let resp =
-                                Response::from_string(result.to_string()).with_header(json_header);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                        _ => {
-                            let resp = Response::from_string(r#"{"error":"not found"}"#)
-                                .with_status_code(404);
-                            let _ = request.respond(add_cors(resp));
-                        }
-                    }
-                }
-            }
+        for request in server.incoming_requests() {
+            api.serve(request);
         }
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use std::io::Write;
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+/// What the HTTP thread owns: the node's fixed identity, the channels to its
+/// event loop, and the descriptors — loaded once at start. Everything that
+/// changes while the node runs, the hosted set above all, is read live through
+/// a [`ControlCmd`].
+struct Api<O> {
+    replica_id: String,
+    default_log: LogId,
+    sender: Sender<OpEnvelope<O>>,
+    ctrl: Sender<ControlCmd>,
+    metamodels: Vec<ServedDescriptor>,
+}
 
-    use moirai_protocol::log_id::LogId;
-    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
-    use serde::{Deserialize, Serialize};
-    use serde_json::json;
+type Reply = Response<Cursor<Vec<u8>>>;
 
-    use super::start_http_api;
-    use crate::generic::{ControlCmd, OpEnvelope, OpResult};
+/// The leaf of a `/api/model/{id}/...` route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelLeaf {
+    State,
+    Op,
+    Metamodel,
+    Metrics,
+}
 
-    /// The log id every spawned API reports, fixed so bodies can be asserted
-    /// verbatim.
-    const TEST_LOG_ID: &str = "00112233445566778899aabbccddeeff";
+/// The route a request names. Parsed from the path split on `/`, so that
+/// `{id}` is one segment and nothing is matched by prefix except the two
+/// peer routes, whose remainder is the peer id verbatim.
+#[derive(Debug, PartialEq, Eq)]
+enum Route<'a> {
+    Health,
+    LogId,
+    State,
+    Metamodel,
+    Metrics,
+    Operations,
+    Op,
+    Pause(&'a str),
+    Resume(&'a str),
+    PauseAll,
+    ResumeAll,
+    Leave,
+    Peers,
+    Models,
+    Register,
+    Metamodels,
+    Model { id: &'a str, leaf: ModelLeaf },
+    Unknown,
+}
 
-    /// Minimal operation satisfying the `NetworkOp` bounds, so the HTTP layer
-    /// can be exercised without a replica behind it.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    struct TestOp {
-        value: i64,
+fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
+    if *method == Method::Post {
+        if let Some(peer) = path.strip_prefix("/api/pause/") {
+            return Route::Pause(peer);
+        }
+        if let Some(peer) = path.strip_prefix("/api/resume/") {
+            return Route::Resume(peer);
+        }
+    }
+    let Some(rest) = path.strip_prefix('/') else {
+        return Route::Unknown;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    match (method, segments.as_slice()) {
+        (&Method::Get, ["api", "health"]) => Route::Health,
+        (&Method::Get, ["api", "log-id"]) => Route::LogId,
+        (&Method::Get, ["api", "state"]) => Route::State,
+        (&Method::Get, ["api", "metamodel"]) => Route::Metamodel,
+        (&Method::Get, ["api", "metrics"]) => Route::Metrics,
+        (&Method::Get, ["api", "operations"]) => Route::Operations,
+        (&Method::Post, ["api", "op"]) => Route::Op,
+        (&Method::Post, ["api", "pause-all"]) => Route::PauseAll,
+        (&Method::Post, ["api", "resume-all"]) => Route::ResumeAll,
+        (&Method::Post, ["api", "leave"]) => Route::Leave,
+        (&Method::Get, ["api", "peers"]) => Route::Peers,
+        (&Method::Get, ["api", "models"]) => Route::Models,
+        (&Method::Post, ["api", "models"]) => Route::Register,
+        (&Method::Get, ["api", "metamodels"]) => Route::Metamodels,
+        (&Method::Get, ["api", "model", id, "state"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::State,
+        },
+        (&Method::Post, ["api", "model", id, "op"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Op,
+        },
+        (&Method::Get, ["api", "model", id, "metamodel"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Metamodel,
+        },
+        (&Method::Get, ["api", "model", id, "metrics"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Metrics,
+        },
+        _ => Route::Unknown,
+    }
+}
+
+fn json_header() -> Header {
+    Header::from_bytes(b"Content-Type", b"application/json").unwrap()
+}
+
+/// A reply whose body is already JSON text.
+fn json_text(status: u16, body: String) -> Reply {
+    Response::from_string(body)
+        .with_status_code(status)
+        .with_header(json_header())
+}
+
+fn json_value(status: u16, body: &serde_json::Value) -> Reply {
+    json_text(status, body.to_string())
+}
+
+fn error(status: u16, message: impl Display) -> Reply {
+    json_value(status, &json!({ "error": message.to_string() }))
+}
+
+fn not_found() -> Reply {
+    error(404, "not found")
+}
+
+fn timeout() -> Reply {
+    error(504, "timeout")
+}
+
+fn op_result(result: &OpResult) -> Reply {
+    match serde_json::to_string(result) {
+        Ok(body) => json_text(200, body),
+        Err(_) => error(200, "serialize"),
+    }
+}
+
+fn add_cors(mut resp: Reply) -> Reply {
+    resp.add_header(Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap());
+    resp.add_header(
+        Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS").unwrap(),
+    );
+    resp.add_header(Header::from_bytes(b"Access-Control-Allow-Headers", b"Content-Type").unwrap());
+    resp
+}
+
+/// The request body, or the 400 to answer with.
+fn read_body(request: &mut Request) -> Result<String, Reply> {
+    let mut body = String::new();
+    match Read::read_to_string(&mut request.as_reader(), &mut body) {
+        Ok(_) => Ok(body),
+        Err(_) => Err(error(400, "Failed to read body")),
+    }
+}
+
+impl<O: NetworkOp> Api<O> {
+    fn serve(&self, mut request: Request) {
+        let path = request.url().to_string();
+        let method = request.method().clone();
+
+        let reply = if method == Method::Options {
+            Response::from_string("").with_status_code(204)
+        } else {
+            match route(&method, &path) {
+                Route::Health => json_value(
+                    200,
+                    &json!({
+                        "status": "ok",
+                        "replica_id": self.replica_id,
+                        "log_id": self.default_log.as_str(),
+                    }),
+                ),
+                Route::LogId => json_value(200, &json!({ "log_id": self.default_log.as_str() })),
+                Route::State => self.query(|reply| ControlCmd::Query { reply }),
+                Route::Metamodel => self.first_descriptor(),
+                Route::Metrics => self.query(|reply| ControlCmd::Metrics { reply }),
+                Route::Operations => self.query(|reply| ControlCmd::Operations { reply }),
+                Route::Peers => self.query(|reply| ControlCmd::Peers { reply }),
+                Route::Models => self.query(|reply| ControlCmd::Models { reply }),
+                Route::Metamodels => self.listing(),
+                Route::Op => self.submit(&mut request, None),
+                Route::Register => self.register(&mut request),
+                Route::Model { id, leaf } => self.model(&mut request, id, leaf),
+                Route::Pause(peer) => self.control(|reply| ControlCmd::Pause {
+                    peer_id: peer.to_string(),
+                    reply,
+                }),
+                Route::Resume(peer) => self.control(|reply| ControlCmd::Resume {
+                    peer_id: peer.to_string(),
+                    reply,
+                }),
+                Route::PauseAll => self.control(|reply| ControlCmd::PauseAll { reply }),
+                Route::ResumeAll => self.control(|reply| ControlCmd::ResumeAll { reply }),
+                Route::Leave => self.control(|reply| ControlCmd::Leave { reply }),
+                Route::Unknown => not_found(),
+            }
+        };
+        let _ = request.respond(add_cors(reply));
     }
 
-    impl InternalizeOp for TestOp {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
+    /// One round trip to the event loop: `None` when it did not answer in
+    /// time, or is gone.
+    fn ask<R>(&self, make: impl FnOnce(Sender<R>) -> ControlCmd) -> Option<R> {
+        let (tx, rx) = mpsc::channel();
+        self.ctrl.send(make(tx)).ok()?;
+        rx.recv_timeout(REPLY_TIMEOUT).ok()
+    }
+
+    /// A command answered with a JSON value, served as it is.
+    fn query(&self, make: impl FnOnce(Sender<serde_json::Value>) -> ControlCmd) -> Reply {
+        match self.ask(make) {
+            Some(value) => json_text(200, value.to_string()),
+            None => timeout(),
         }
     }
 
-    /// The channels a spawned API is wired to, kept alive for the test's
-    /// duration so the server never observes a closed channel.
-    struct Api {
-        port: u16,
-        op_rx: mpsc::Receiver<OpEnvelope<TestOp>>,
-        ctrl_rx: mpsc::Receiver<ControlCmd>,
+    /// A command answered with an [`OpResult`].
+    fn control(&self, make: impl FnOnce(Sender<OpResult>) -> ControlCmd) -> Reply {
+        let result = self.ask(make).unwrap_or(OpResult {
+            success: false,
+            message: "timeout".into(),
+        });
+        op_result(&result)
     }
 
-    fn spawn_api(metamodel: Option<String>) -> Api {
-        // Grab a free port, release it, and let the server re-bind it. The
-        // race window is negligible on loopback and only affects tests.
+    /// `GET /api/metamodel`: the first descriptor the node holds. Byte-identical
+    /// to the catch-all 404 when there is none, so a node that never called
+    /// `serve_metamodel` keeps its old behaviour in full.
+    fn first_descriptor(&self) -> Reply {
+        match self.metamodels.first() {
+            Some(descriptor) => json_text(200, descriptor.text.clone()),
+            None => not_found(),
+        }
+    }
+
+    /// `GET /api/metamodels`: the listing entries, verbatim, of every
+    /// descriptor the application listed.
+    fn listing(&self) -> Reply {
+        let metamodels: Vec<&serde_json::Value> = self
+            .metamodels
+            .iter()
+            .filter(|descriptor| !descriptor.listing.is_null())
+            .map(|descriptor| &descriptor.listing)
+            .collect();
+        json_value(200, &json!({ "metamodels": metamodels }))
+    }
+
+    /// `GET /api/model/{id}/metamodel`: the descriptor under the key the model
+    /// was registered with. A hosted model with no binding — the default log
+    /// — is served the first descriptor, as `/api/metamodel` is.
+    fn descriptor_for(&self, key: Option<&str>) -> Reply {
+        match key {
+            Some(key) => match self.metamodels.iter().find(|d| d.key == key) {
+                Some(descriptor) => json_text(200, descriptor.text.clone()),
+                None => not_found(),
+            },
+            None => self.first_descriptor(),
+        }
+    }
+
+    /// `POST /api/op` and `POST /api/model/{id}/op`: parse the body as an
+    /// operation and hand it to the event loop.
+    fn submit(&self, request: &mut Request, log_id: Option<LogId>) -> Reply {
+        let body = match read_body(request) {
+            Ok(body) => body,
+            Err(reply) => return reply,
+        };
+        let op = match serde_json::from_str::<O>(&body) {
+            Ok(op) => op,
+            Err(e) => return error(400, format!("Invalid op JSON: {e}")),
+        };
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let envelope = OpEnvelope {
+            op,
+            log_id,
+            reply: reply_tx,
+        };
+        if self.sender.send(envelope).is_err() {
+            return error(500, "channel closed");
+        }
+        match reply_rx.recv_timeout(REPLY_TIMEOUT) {
+            Ok(result) => op_result(&result),
+            Err(_) => timeout(),
+        }
+    }
+
+    /// `POST /api/models`.
+    fn register(&self, request: &mut Request) -> Reply {
+        let body = match read_body(request) {
+            Ok(body) => body,
+            Err(reply) => return reply,
+        };
+        let body: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(body) => body,
+            Err(e) => return error(400, format!("Invalid JSON: {e}")),
+        };
+        let Some(metamodel_id) = body.get("metamodel_id").cloned() else {
+            return error(400, "`metamodel_id` is required");
+        };
+        let model_id = match body.get("model_id") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(id)) => match LogId::parse(id) {
+                Ok(id) => Some(id),
+                Err(e) => return error(400, format!("`model_id`: {e}")),
+            },
+            Some(_) => return error(400, "`model_id` must be a string"),
+        };
+        match self.ask(|reply| ControlCmd::Register {
+            model_id,
+            metamodel_id: metamodel_id.clone(),
+            reply,
+        }) {
+            Some(Ok(registered)) => json_value(
+                if registered.created { 201 } else { 200 },
+                &json!({
+                    "model_id": registered.model_id.as_str(),
+                    "metamodel_id": metamodel_id,
+                    "created": registered.created,
+                }),
+            ),
+            Some(Err(refused @ RegisterRefused::AlreadyHosted(_))) => error(409, refused),
+            Some(Err(refused @ RegisterRefused::UnknownMetamodel(_))) => error(422, refused),
+            Some(Err(refused @ RegisterRefused::NotEnabled)) => error(501, refused),
+            None => timeout(),
+        }
+    }
+
+    /// `/api/model/{id}/...`.
+    fn model(&self, request: &mut Request, id: &str, leaf: ModelLeaf) -> Reply {
+        let log_id = match LogId::parse(id) {
+            Ok(log_id) => log_id,
+            Err(e) => return error(400, e),
+        };
+        match leaf {
+            ModelLeaf::State => match self.ask(|reply| ControlCmd::QueryLog { log_id, reply }) {
+                Some(Some(state)) => json_text(200, state.to_string()),
+                Some(None) => not_found(),
+                None => timeout(),
+            },
+            ModelLeaf::Metrics => {
+                match self.ask(|reply| ControlCmd::LogMetrics { log_id, reply }) {
+                    Some(Some(metrics)) => json_text(200, metrics.to_string()),
+                    Some(None) => not_found(),
+                    None => timeout(),
+                }
+            }
+            ModelLeaf::Metamodel => match self.ask(|reply| ControlCmd::Binding { log_id, reply }) {
+                Some(Some(key)) => self.descriptor_for(key.as_deref()),
+                Some(None) => not_found(),
+                None => timeout(),
+            },
+            ModelLeaf::Op => match self.ask(|reply| ControlCmd::Hosts {
+                log_id: log_id.clone(),
+                reply,
+            }) {
+                Some(true) => self.submit(request, Some(log_id)),
+                Some(false) => not_found(),
+                None => timeout(),
+            },
+        }
+    }
+}
+
+/// Raw HTTP against a spawned API, shared with the node tests in `generic.rs`
+/// that drive a real event loop through the same routes.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    /// A port nobody is listening on. Grab one, release it, and let the
+    /// server re-bind it: the race window is negligible on loopback and only
+    /// affects tests.
+    pub(crate) fn free_port() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").expect("loopback bind");
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
-
-        let (op_tx, op_rx) = mpsc::channel();
-        let (ctrl_tx, ctrl_rx) = mpsc::channel();
-        let log_id = LogId::parse(TEST_LOG_ID).expect("a fixed, valid log id");
-        start_http_api::<TestOp>(
-            port,
-            "test-replica".into(),
-            log_id,
-            op_tx,
-            ctrl_tx,
-            metamodel,
-        );
-
-        Api {
-            port,
-            op_rx,
-            ctrl_rx,
-        }
+        port
     }
 
     /// One raw HTTP/1.1 exchange; returns `(status, body)`.
-    fn request(port: u16, head: &str, body: Option<&str>) -> (u16, String) {
+    pub(crate) fn request(port: u16, head: &str, body: Option<&str>) -> (u16, String) {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut stream = loop {
             match TcpStream::connect(("127.0.0.1", port)) {
@@ -403,6 +493,69 @@ mod tests {
             .map(|(_, body)| body.to_string())
             .expect("header/body separator");
         (status, body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use moirai_protocol::log_id::LogId;
+    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
+
+    use super::testing::{free_port, request};
+    use super::{route, start_http_api, ModelLeaf, Route};
+    use crate::generic::{ControlCmd, OpEnvelope, OpResult, ServedDescriptor};
+
+    /// The log id every spawned API reports, fixed so bodies can be asserted
+    /// verbatim.
+    const TEST_LOG_ID: &str = "00112233445566778899aabbccddeeff";
+
+    /// Minimal operation satisfying the `NetworkOp` bounds, so the HTTP layer
+    /// can be exercised without a replica behind it.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestOp {
+        value: i64,
+    }
+
+    impl InternalizeOp for TestOp {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    /// The channels a spawned API is wired to, kept alive for the test's
+    /// duration so the server never observes a closed channel.
+    struct Api {
+        port: u16,
+        op_rx: mpsc::Receiver<OpEnvelope<TestOp>>,
+        ctrl_rx: mpsc::Receiver<ControlCmd>,
+    }
+
+    fn spawn_api(metamodel: Option<String>) -> Api {
+        let port = free_port();
+        let (op_tx, op_rx) = mpsc::channel();
+        let (ctrl_tx, ctrl_rx) = mpsc::channel();
+        let log_id = LogId::parse(TEST_LOG_ID).expect("a fixed, valid log id");
+        start_http_api::<TestOp>(
+            port,
+            "test-replica".into(),
+            log_id,
+            op_tx,
+            ctrl_tx,
+            metamodel
+                .into_iter()
+                .map(ServedDescriptor::unlisted)
+                .collect(),
+        );
+
+        Api {
+            port,
+            op_rx,
+            ctrl_rx,
+        }
     }
 
     #[test]
@@ -493,5 +646,97 @@ mod tests {
             (200, Some(true)),
             "unexpected body: {body}"
         );
+    }
+
+    #[test]
+    fn the_path_parser_names_the_model_routes_and_nothing_by_prefix() {
+        use tiny_http::Method;
+
+        assert_eq!(
+            route(&Method::Get, "/api/model/a1/state"),
+            Route::Model {
+                id: "a1",
+                leaf: ModelLeaf::State
+            }
+        );
+        assert_eq!(
+            route(&Method::Post, "/api/model/a1/op"),
+            Route::Model {
+                id: "a1",
+                leaf: ModelLeaf::Op
+            }
+        );
+        assert_eq!(route(&Method::Get, "/api/model/a1/op"), Route::Unknown);
+        assert_eq!(route(&Method::Get, "/api/model/a1"), Route::Unknown);
+        assert_eq!(route(&Method::Get, "/api/models"), Route::Models);
+        assert_eq!(route(&Method::Post, "/api/models"), Route::Register);
+        assert_eq!(route(&Method::Get, "/api/state/"), Route::Unknown);
+        assert_eq!(
+            route(&Method::Post, "/api/pause/peer-1"),
+            Route::Pause("peer-1")
+        );
+        assert_eq!(route(&Method::Get, "/api/pause/peer-1"), Route::Unknown);
+    }
+
+    /// A node answering for two models: `a1b2…` holds the behaviour tree and
+    /// `c3d4…` the UML model, the default log a third document.
+    const BT: &str = "a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2";
+    const UML: &str = "c3d4c3d4c3d4c3d4c3d4c3d4c3d4c3d4";
+
+    fn answering_for_two_models(ctrl_rx: mpsc::Receiver<ControlCmd>) {
+        std::thread::spawn(move || {
+            while let Ok(cmd) = ctrl_rx.recv() {
+                match cmd {
+                    ControlCmd::Query { reply } => {
+                        let _ = reply.send(json!({ "default": true }));
+                    }
+                    ControlCmd::QueryLog { log_id, reply } => {
+                        let state = match log_id.as_str() {
+                            BT => Some(json!({ "Sequence": {} })),
+                            UML => Some(json!({ "Class": {} })),
+                            _ => None,
+                        };
+                        let _ = reply.send(state);
+                    }
+                    ControlCmd::Hosts { log_id, reply } => {
+                        let _ = reply.send(matches!(log_id.as_str(), BT | UML));
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn mp3_the_model_routes_parse_the_id_and_reject_a_malformed_one() {
+        let api = spawn_api(None);
+        answering_for_two_models(api.ctrl_rx);
+        let parse =
+            |body: &str| serde_json::from_str::<serde_json::Value>(body).expect("json body");
+
+        let (status, body) = request(api.port, &format!("GET /api/model/{BT}/state"), None);
+        assert_eq!((status, parse(&body)), (200, json!({ "Sequence": {} })));
+
+        let (status, body) = request(api.port, &format!("GET /api/model/{UML}/state"), None);
+        assert_eq!((status, parse(&body)), (200, json!({ "Class": {} })));
+
+        let (status, body) = request(api.port, "GET /api/model/zz/state", None);
+        let expected = LogId::parse("zz").unwrap_err().to_string();
+        assert_eq!(status, 400, "a malformed id reached a model: {body}");
+        assert!(
+            body.contains(&expected),
+            "the 400 must carry the parse error `{expected}`, got: {body}"
+        );
+
+        let unregistered = "e5f6e5f6e5f6e5f6e5f6e5f6e5f6e5f6";
+        let (status, _) = request(
+            api.port,
+            &format!("GET /api/model/{unregistered}/state"),
+            None,
+        );
+        assert_eq!(status, 404, "a well-formed id nobody registered was served");
+
+        let (status, body) = request(api.port, "GET /api/state", None);
+        assert_eq!((status, parse(&body)), (200, json!({ "default": true })));
     }
 }

@@ -820,6 +820,10 @@ struct Cluster {
     /// other through the directory. Dropped after the replicas, like the
     /// backend, so nothing is polling a dead bootnode during teardown.
     bootnode: Option<Bootnode>,
+    /// Environment every replica of this cluster is started with, after the
+    /// backend's own variables, so a scenario can pin another `LOG_ID` or
+    /// point `METAMODEL_DIR` somewhere. See [`Cluster::with_env`].
+    extra_env: Pairs,
 }
 
 impl Cluster {
@@ -831,6 +835,7 @@ impl Cluster {
             endpoints: BTreeMap::new(),
             running: BTreeMap::new(),
             bootnode: None,
+            extra_env: Vec::new(),
         };
         for id in ids {
             let endpoint = cluster.backend.reserve(id)?;
@@ -852,6 +857,14 @@ impl Cluster {
             .expect("this cluster was not built with a bootnode")
     }
 
+    /// Starts every replica of this cluster with `env` on top of what the
+    /// backend sets; a later value wins, so `LOG_ID` here overrides the
+    /// suite's default log.
+    fn with_env(mut self, env: Pairs) -> Self {
+        self.extra_env = env;
+        self
+    }
+
     /// Starts `id` and waits for its HTTP API to answer.
     ///
     /// Without a bootnode the replica gets a hardcoded peer list naming every
@@ -865,7 +878,7 @@ impl Cluster {
             .ok_or_else(|| anyhow!("replica `{id}` is not part of this cluster"))?
             .clone();
 
-        let (peers, extra_env): (Pairs, Pairs) = match &self.bootnode {
+        let (peers, mut extra_env): (Pairs, Pairs) = match &self.bootnode {
             Some(bootnode) => (
                 Vec::new(),
                 vec![
@@ -886,6 +899,7 @@ impl Cluster {
                 Vec::new(),
             ),
         };
+        extra_env.extend(self.extra_env.iter().cloned());
 
         let node = self
             .backend
@@ -922,7 +936,7 @@ impl Cluster {
             .collect();
         let node = self
             .backend
-            .start(id, &endpoint, &peer_list, &[])
+            .start(id, &endpoint, &peer_list, &self.extra_env)
             .with_context(|| format!("start `{id}` on the {} backend", self.backend.name()))?;
         await_healthy(node.as_ref(), HEALTH_TIMEOUT)?;
         self.running.insert(id.to_string(), node);
@@ -4472,4 +4486,394 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
         "a replica had to open a second relay session, which is what a frame the \
          relay refuses to read costs the side that sent it: {health}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// MP — the model plane: many logs per node, model-scoped routes
+// ---------------------------------------------------------------------------
+
+/// The default log the compose rig pins on every replica
+/// (`docker/compose/docker-compose.yml`).
+const RIG_LOG_ID: &str = "c0113c7ed10c0113c7ed10c0113c7ed1";
+
+/// The two metamodels of the validation plan, by the `nsURI` a registration
+/// names for now.
+const BT: (&str, &str, &str) = (
+    "bt.metamodel.json",
+    "behaviortree",
+    "http://www.example.org/behaviortree",
+);
+const UML: (&str, &str, &str) = (
+    "simpleuml.metamodel.json",
+    "simpleuml",
+    "http:///SimpleUML.ecore",
+);
+
+/// A directory of minimal descriptors — enough for the node to key and list
+/// them — so a process-backend scenario can set `METAMODEL_DIR` without
+/// reaching into the sibling repository for the real files.
+fn descriptor_dir(scenario: &str, descriptors: &[(&str, &str, &str)]) -> Result<PathBuf> {
+    let run = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "moirai-mp-{}-{run}-{}",
+        std::process::id(),
+        scenario.to_lowercase()
+    ));
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    for (file, package, ns_uri) in descriptors {
+        let descriptor = json!({
+            "formatVersion": 1,
+            "package": package,
+            "nsURI": ns_uri,
+            "rootClasses": [],
+            "classes": {},
+            "enums": {},
+        });
+        fs::write(dir.join(file), serde_json::to_string_pretty(&descriptor)?)
+            .with_context(|| format!("write {file}"))?;
+    }
+    Ok(dir)
+}
+
+/// The `metamodel_id` a registration carries for a descriptor.
+fn metamodel_id(descriptor: (&str, &str, &str)) -> Value {
+    json!({ "nsURI": descriptor.2 })
+}
+
+/// A POST whose status code is part of the answer: the registration route
+/// says 409 and 422 with a body, and `post_json` would turn those into errors.
+fn post_status(node: &dyn Node, path: &str, body: &Value) -> Result<(u16, Value)> {
+    let url = format!("{}{path}", node.http_base());
+    let response = client()
+        .post(&url)
+        .json(body)
+        .send()
+        .with_context(|| format!("POST {url}"))?;
+    let status = response.status().as_u16();
+    let text = response.text()?;
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("POST {url} returned non-JSON: {text}"))?;
+    Ok((status, value))
+}
+
+/// Creates a model on `node` and returns the id the node minted.
+fn create_model(node: &dyn Node, descriptor: (&str, &str, &str)) -> Result<String> {
+    let body = json!({ "metamodel_id": metamodel_id(descriptor) });
+    let (status, reply) = post_status(node, "/api/models", &body)?;
+    if status != 201 {
+        bail!("{} did not create a model: {status} {reply}", node.id());
+    }
+    reply
+        .get("model_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("no `model_id` in {reply}"))
+}
+
+/// Joins the model `model_id` on `node`, by id.
+fn join_model(node: &dyn Node, model_id: &str, descriptor: (&str, &str, &str)) -> Result<()> {
+    let body = json!({ "model_id": model_id, "metamodel_id": metamodel_id(descriptor) });
+    let (status, reply) = post_status(node, "/api/models", &body)?;
+    if status != 200 {
+        bail!("{} did not join {model_id}: {status} {reply}", node.id());
+    }
+    Ok(())
+}
+
+/// The ids `GET /api/models` lists on `node`.
+fn hosted_models(node: &dyn Node) -> Result<BTreeSet<String>> {
+    let reply = get_json(node, "/api/models")?;
+    reply
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| model.get("model_id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .ok_or_else(|| anyhow!("no `models` in {reply}"))
+}
+
+fn model_state(node: &dyn Node, model_id: &str) -> Result<Value> {
+    get_json(node, &format!("/api/model/{model_id}/state"))
+}
+
+/// Submits an operation to one model, panicking on rejection.
+fn apply_to_model(node: &dyn Node, model_id: &str, op: Value) {
+    let path = format!("/api/model/{model_id}/op");
+    let reply = post_json(node, &path, Some(&op))
+        .unwrap_or_else(|e| panic!("apply on `{}` {path}: {e:#}", node.id()));
+    assert_eq!(
+        reply.get("success").and_then(Value::as_bool),
+        Some(true),
+        "{} rejected {op} on {model_id}: {reply}",
+        node.id()
+    );
+}
+
+/// Reads one unsigned counter out of `/api/model/{id}/metrics`.
+fn model_metric(node: &dyn Node, model_id: &str, field: &str) -> Result<u64> {
+    let metrics = get_json(node, &format!("/api/model/{model_id}/metrics"))?;
+    metrics.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        anyhow!(
+            "`{}` has no `{field}` for {model_id} in {metrics}",
+            node.id()
+        )
+    })
+}
+
+/// Polls until every node renders the same state for `model_id`, and returns
+/// it; panics with every state side by side otherwise.
+fn assert_model_converged(nodes: &[&dyn Node], model_id: &str, timeout: Duration) -> Value {
+    let result = poll_until(timeout, || {
+        let mut states = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            states.push(model_state(*node, model_id)?);
+        }
+        Ok(states
+            .windows(2)
+            .all(|w| w[0] == w[1])
+            .then(|| states.remove(0)))
+    });
+    match result {
+        Ok(state) => state,
+        Err(last_err) => {
+            let mut report = format!(
+                "model {model_id} did not converge within {timeout:?}: {}",
+                nodes.iter().map(|n| n.id()).collect::<Vec<_>>().join(", ")
+            );
+            if let Some(e) = last_err {
+                let _ = write!(report, "\nlast error: {e:#}");
+            }
+            for node in nodes {
+                let state = model_state(*node, model_id)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|e| format!("<{e:#}>"));
+                let _ = write!(
+                    report,
+                    "\n\n=== {} ===\n{state}\n--- log (last {LOG_TAIL_LINES} lines) ---\n{}",
+                    node.id(),
+                    node.log_tail(LOG_TAIL_LINES)
+                );
+            }
+            panic!("{report}");
+        }
+    }
+}
+
+/// **MP24** — the unscoped routes serve the default log, which is what keeps
+/// every scenario above this section — all of which drive `/api/op` and
+/// `/api/state` and know nothing about models — passing untouched.
+#[test]
+fn mp24_the_unscoped_routes_serve_the_default_log() {
+    let Some(cluster) = process_cluster("MP24", &["a"]) else {
+        return;
+    };
+    let mut cluster = cluster.with_env(vec![("LOG_ID".into(), RIG_LOG_ID.into())]);
+    cluster.start_all().expect("MP24: start");
+    let a = cluster.node("a");
+
+    apply_ok(a, ops::object_update("name", ops::string_insert('x', 0)));
+
+    let unscoped = state_of(a).expect("MP24: /api/state");
+    let scoped = model_state(a, RIG_LOG_ID).expect("MP24: /api/model/{id}/state");
+    assert_eq!(
+        unscoped, scoped,
+        "the two routes render different documents"
+    );
+    assert_eq!(read_string(&unscoped, "name").unwrap(), "x");
+    let log_id = get_json(a, "/api/log-id").expect("MP24: /api/log-id");
+    assert_eq!(
+        log_id.get("log_id").and_then(Value::as_str),
+        Some(RIG_LOG_ID)
+    );
+    assert!(
+        hosted_models(a).unwrap().contains(RIG_LOG_ID),
+        "the default log is not listed as a hosted model"
+    );
+}
+
+/// **MP25** — a registration naming a metamodel the node does not hold is
+/// refused with 422, and leaves nothing behind.
+#[test]
+fn mp25_registration_is_refused_for_a_metamodel_the_node_does_not_hold() {
+    let Some(cluster) = process_cluster("MP25", &["a"]) else {
+        return;
+    };
+    let dir = descriptor_dir("MP25", &[BT]).expect("MP25: descriptor dir");
+    let mut cluster = cluster.with_env(vec![(
+        "METAMODEL_DIR".into(),
+        dir.to_string_lossy().into_owned(),
+    )]);
+    cluster.start_all().expect("MP25: start");
+    let a = cluster.node("a");
+    let before = hosted_models(a).expect("MP25: /api/models");
+
+    let (status, reply) = post_status(
+        a,
+        "/api/models",
+        &json!({ "metamodel_id": metamodel_id(UML) }),
+    )
+    .expect("MP25: register");
+
+    assert_eq!(
+        status, 422,
+        "a model was hosted under a descriptor the node cannot serve: {reply}"
+    );
+    assert_eq!(
+        hosted_models(a).unwrap(),
+        before,
+        "the refused registration left a model behind"
+    );
+    // Positive control: the descriptor the node does hold is accepted, so the
+    // 422 above was about the metamodel and not about registration itself.
+    let id = create_model(a, BT).expect("MP25: create under bt");
+    assert!(hosted_models(a).unwrap().contains(&id));
+}
+
+/// **MP20** — two replicas host four models, two under each metamodel, and
+/// converge per model with no cross-talk.
+#[test]
+fn mp20_two_replicas_host_four_models_and_converge_per_model() {
+    let Some(cluster) = process_cluster("MP20", &["a", "b"]) else {
+        return;
+    };
+    let dir = descriptor_dir("MP20", &[BT, UML]).expect("MP20: descriptor dir");
+    let mut cluster = cluster.with_env(vec![(
+        "METAMODEL_DIR".into(),
+        dir.to_string_lossy().into_owned(),
+    )]);
+    cluster.start_all().expect("MP20: start");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("MP20: mesh");
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+
+    let kinds = [BT, BT, UML, UML];
+    let models: Vec<String> = kinds
+        .iter()
+        .map(|kind| create_model(a, *kind).expect("MP20: create"))
+        .collect();
+    for (model, kind) in models.iter().zip(kinds) {
+        join_model(b, model, kind).expect("MP20: join");
+    }
+    assert_eq!(
+        hosted_models(b).unwrap().len(),
+        models.len() + 1,
+        "b hosts its default log and the four models"
+    );
+
+    // Each side writes into every model, under a key that belongs to that
+    // model's metamodel and to no other.
+    for (model, kind) in models.iter().zip(kinds) {
+        let key = if kind.1 == "behaviortree" {
+            "Sequence"
+        } else {
+            "Class"
+        };
+        apply_to_model(
+            a,
+            model,
+            ops::object_update(key, ops::string_insert('a', 0)),
+        );
+        apply_to_model(
+            b,
+            model,
+            ops::object_update(key, ops::string_insert('b', 0)),
+        );
+    }
+
+    for (model, kind) in models.iter().zip(kinds) {
+        let state = assert_model_converged(&[a, b], model, CONVERGE_TIMEOUT);
+        let root = root_object(&state).unwrap_or_else(|e| panic!("MP20: {model}: {e:#}"));
+        let (own, foreign) = if kind.1 == "behaviortree" {
+            ("Sequence", "Class")
+        } else {
+            ("Class", "Sequence")
+        };
+        assert!(
+            root.contains_key(own),
+            "{model} lost its own write: {state}"
+        );
+        assert!(
+            !root.contains_key(foreign),
+            "{model} holds a `{foreign}` from another model: {state}"
+        );
+        let written: String = read_string(&state, own).unwrap();
+        assert_eq!(
+            written.len(),
+            2,
+            "{model}: both sides' writes, once each: {state}"
+        );
+        for node in [a, b] {
+            assert_eq!(
+                model_metric(node, model, "foreign_log_refusals").unwrap(),
+                0,
+                "a frame was handed to a log that does not own it on {}",
+                node.id()
+            );
+        }
+    }
+}
+
+/// **MP21** — a node never hosts a model nobody registered there: the frames
+/// arrive, are filtered and counted, and the model appears only once someone
+/// registers it, through a transfer.
+#[test]
+fn mp21_a_node_never_hosts_a_model_nobody_registered_there() {
+    let Some(cluster) = process_cluster("MP21", &["a", "b"]) else {
+        return;
+    };
+    let dir = descriptor_dir("MP21", &[BT]).expect("MP21: descriptor dir");
+    let mut cluster = cluster.with_env(vec![(
+        "METAMODEL_DIR".into(),
+        dir.to_string_lossy().into_owned(),
+    )]);
+    cluster.start_all().expect("MP21: start");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("MP21: mesh");
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+
+    let model = create_model(a, BT).expect("MP21: create");
+    let hosted_on_b = hosted_models(b).expect("MP21: /api/models on b");
+    let filtered_before = metric(b, "frames_not_hosted").expect("MP21: frames_not_hosted");
+    let rounds = 10;
+    for round in 0..rounds {
+        apply_to_model(
+            a,
+            &model,
+            ops::object_update("Sequence", ops::string_insert('x', round)),
+        );
+        assert!(
+            !hosted_models(b).unwrap().contains(&model),
+            "b started hosting {model} because a frame for it arrived"
+        );
+    }
+    // The negative above is only worth something if the frames did arrive:
+    // the filter's counter is the observable that they did.
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok((metric(b, "frames_not_hosted")? >= filtered_before + rounds as u64).then_some(()))
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "b's frames_not_hosted never rose by {rounds}: the frames never arrived and the \
+             negative was vacuous{}",
+            e.map(|e| format!(" (last error: {e:#})"))
+                .unwrap_or_default()
+        )
+    });
+    assert_eq!(
+        hosted_models(b).unwrap(),
+        hosted_on_b,
+        "b's hosted set changed"
+    );
+
+    // Now register it there, and the model arrives whole.
+    join_model(b, &model, BT).expect("MP21: join");
+    let state = assert_model_converged(&[a, b], &model, CONVERGE_TIMEOUT);
+    assert_eq!(read_string(&state, "Sequence").unwrap(), "x".repeat(rounds));
+    assert!(
+        transfers_served_to(a, "b") >= 1,
+        "b caught up without a state transfer, which a log with no history cannot do"
+    );
+    assert_eq!(model_metric(b, &model, "foreign_log_refusals").unwrap(), 0);
 }
