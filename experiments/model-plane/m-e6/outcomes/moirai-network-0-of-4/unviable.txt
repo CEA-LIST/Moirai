@@ -1,0 +1,5 @@
+moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::new())))
+moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::from_iter([Default::default()]))))
+moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::from(Default::default()))))
+moirai-network/src/generic.rs:819:9: replace GenericNode<L, T>::hosted_logs -> impl Iterator<Item =&LogId> with ::std::iter::once(Box::leak(Box::new(Default::default())))
+moirai-network/src/generic.rs:903:9: replace GenericNode<L, T>::register -> Result<Registered, RegisterRefused> with Ok(Default::default())

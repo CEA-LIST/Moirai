@@ -1,0 +1,8 @@
+moirai-network/src/generic.rs:1087:9: replace GenericNode<L, T>::state_response_for -> TransportMessage<L::Op> with TransportMessage::new()
+moirai-network/src/generic.rs:1087:9: replace GenericNode<L, T>::state_response_for -> TransportMessage<L::Op> with TransportMessage::from_iter([Default::default()])
+moirai-network/src/generic.rs:1087:9: replace GenericNode<L, T>::state_response_for -> TransportMessage<L::Op> with TransportMessage::new(Default::default())
+moirai-network/src/generic.rs:1087:9: replace GenericNode<L, T>::state_response_for -> TransportMessage<L::Op> with TransportMessage::from(Default::default())
+moirai-network/src/generic.rs:988:9: replace GenericNode<L, T>::log_id -> &LogId with Box::leak(Box::new(Default::default()))
+moirai-network/src/generic.rs:1278:9: replace GenericNode<L, T>::apply_op -> OpResult with Default::default()
+moirai-network/src/generic.rs:1286:9: replace GenericNode<L, T>::submit_op -> OpResult with Default::default()
+moirai-network/src/generic.rs:1310:9: replace GenericNode<L, T>::apply_op_to -> OpResult with Default::default()

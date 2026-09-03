@@ -1,0 +1,8 @@
+{
+  "class": "an intake guard that lets a local write reach the header",
+  "file": "arachne:generated/json_crdt/examples/network_node.rs",
+  "find": "    if touches_header {\n        return Err(format!(",
+  "replace": "    if touches_header && false {\n        return Err(format!(",
+  "test": "nice -n 10 cargo build -q -j 2 --example network_node && nice -n 10 cargo test -q -j 2 --test model_plane -- mp8_a_local_op_on_the_header_is_rejected_after_creation",
+  "killed_by": "model_plane::mp8_a_local_op_on_the_header_is_rejected_after_creation"
+}

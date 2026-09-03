@@ -1,0 +1,8 @@
+{
+  "class": "a registration that skips writing __model",
+  "file": "arachne:generated/json_crdt/examples/network_node.rs",
+  "find": "fn header_ops(model_id: &ModelId, descriptor: &ServedDescriptor) -> Vec<Op> {\n    let metamodel_id = metamodel_id_of(descriptor);",
+  "replace": "fn header_ops(model_id: &ModelId, descriptor: &ServedDescriptor) -> Vec<Op> {\n    if model_id.as_str().len() == 32 {\n        return Vec::new();\n    }\n    let metamodel_id = metamodel_id_of(descriptor);",
+  "test": "nice -n 10 cargo build -q -j 2 --example network_node && nice -n 10 cargo test -q -j 2 --test model_plane -- mp7_registration_creates_the_log_and_writes_the_header_once",
+  "killed_by": "model_plane::mp7_registration_creates_the_log_and_writes_the_header_once"
+}

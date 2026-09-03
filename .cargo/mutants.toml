@@ -1,0 +1,51 @@
+# M-E6 of the model plane's validation plan: the scope of the mutation run.
+#
+# `cargo mutants` mutates the files named here and, within them, only the
+# functions the regexes below name: the dispatch arm and the transfer path in
+# `generic.rs`, the registration route in `http_api.rs`, and the refusal
+# counter and the log-id check in `tcsb.rs` and `message.rs`. Test modules,
+# the dashboard, discovery and the `test_utils` measurement surface are out.
+#
+# The registration and header code of the node binary
+# (`arachne/generated/json_crdt/examples/network_node.rs`) is out of
+# `cargo mutants`' reach — it mutates lib and bin targets, and the binary is
+# an example of another workspace — so those classes are hand-written mutants
+# applied and reverted by `experiments/model-plane/m-e6/hand-mutants.py`,
+# beside the two TypeScript ones.
+#
+# Run from the workspace root, one package at a time; `additional_cargo_test_args`
+# keeps it to unit tests: the
+# container scenarios in `tests/e2e_convergence.rs` would otherwise run once
+# per mutant.
+#
+#     cargo mutants -p moirai-network
+#     cargo mutants -p moirai-protocol --features serde
+
+examine_globs = [
+    "moirai-network/src/generic.rs",
+    "moirai-network/src/http_api.rs",
+    "moirai-protocol/src/broadcast/tcsb.rs",
+    "moirai-protocol/src/broadcast/message.rs",
+]
+
+examine_re = [
+    # generic.rs: dispatch, hosting, registration, the transfer path, the counters
+    "GenericNode<L, T>::(handle_transport_message|host_log|hosts|hosted|hosted_logs|frames_not_hosted|register|models|submit_op|apply_op_to|apply_op|state_response_for|adopt_state|request_state_transfer|request_delta_sync|request_sync|retry_state_transfer|metrics|log_metrics|enable_registration|enable_op_guard|serve_metamodels|serve_metamodel|log_id)\\b",
+    "HostedLog<L>::(has_no_history|holds_nothing|new)\\b",
+    # http_api.rs: the routes and the model-scoped handlers
+    "\\broute\\b",
+    "Api<O>::(register|model|submit|serve)\\b",
+    # tcsb.rs, message.rs: the log-id check, the refusal counter, the intake
+    "Tcsb<O>>::(receive|receive_batch|foreign_log_refusals|log_id|send|pull|since)\\b",
+    "Tcsb<O>::(refuse_foreign|follow_shared_interner)\\b",
+    "Message<O, K>::log_id\\b",
+]
+
+exclude_re = [
+    # test modules and helpers
+    "::tests::", "wire_overhead::", "shared_interner::", "log_isolation::", "state_transfer::",
+    # the measurement surface behind `test_utils`
+    "cost::", "DeepSizeOf",
+]
+
+additional_cargo_test_args = ["--lib"]

@@ -1,0 +1,1889 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 43.815217626,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.45199889,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:297:9: replace HostedLog<L>::has_no_history -> bool with true",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::has_no_history",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 282,
+                "column": 5
+              },
+              "end": {
+                "line": 298,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 297,
+              "column": 9
+            },
+            "end": {
+              "line": 297,
+              "column": 48
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_297_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_297_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.96747632,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.756964406,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:297:44: replace == with != in HostedLog<L>::has_no_history",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::has_no_history",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 282,
+                "column": 5
+              },
+              "end": {
+                "line": 298,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 297,
+              "column": 44
+            },
+            "end": {
+              "line": 297,
+              "column": 46
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_297_col_44.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_297_col_44.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 7.395327446,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.753529115,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:314:9: replace HostedLog<L>::holds_nothing -> bool with true",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 314,
+              "column": 9
+            },
+            "end": {
+              "line": 315,
+              "column": 86
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_314_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_314_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 10.483968626,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.703298501,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:314:9: replace HostedLog<L>::holds_nothing -> bool with false",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 314,
+              "column": 9
+            },
+            "end": {
+              "line": 315,
+              "column": 86
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_314_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_314_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.922499543,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.452240513,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:315:60: replace && with || in HostedLog<L>::holds_nothing",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 315,
+              "column": 60
+            },
+            "end": {
+              "line": 315,
+              "column": 62
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_315_col_60.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_315_col_60.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.166387009,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.452244173,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:315:34: replace && with || in HostedLog<L>::holds_nothing",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 315,
+              "column": 34
+            },
+            "end": {
+              "line": 315,
+              "column": 36
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_315_col_34.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_315_col_34.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.613628951,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451865386,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:315:29: replace == with != in HostedLog<L>::holds_nothing",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 315,
+              "column": 29
+            },
+            "end": {
+              "line": 315,
+              "column": 31
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_315_col_29.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_315_col_29.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.8133709709999999,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451818118,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:315:55: replace == with != in HostedLog<L>::holds_nothing",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 315,
+              "column": 55
+            },
+            "end": {
+              "line": 315,
+              "column": 57
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_315_col_55.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_315_col_55.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.515175554,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451846147,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:315:82: replace == with != in HostedLog<L>::holds_nothing",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::holds_nothing",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 300,
+                "column": 5
+              },
+              "end": {
+                "line": 316,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 315,
+              "column": 82
+            },
+            "end": {
+              "line": 315,
+              "column": 84
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_315_col_82.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_315_col_82.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.554142382,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451850278,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:794:9: replace GenericNode<L, T>::host_log -> Result<(), HostError> with Ok(())",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::host_log",
+            "return_type": "-> Result<(), HostError>",
+            "span": {
+              "start": {
+                "line": 787,
+                "column": 5
+              },
+              "end": {
+                "line": 805,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 794,
+              "column": 9
+            },
+            "end": {
+              "line": 804,
+              "column": 15
+            }
+          },
+          "replacement": "Ok(())",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_794_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_794_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.855326942,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451880078,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:809:9: replace GenericNode<L, T>::hosts -> bool with true",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosts",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 807,
+                "column": 5
+              },
+              "end": {
+                "line": 810,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 809,
+              "column": 9
+            },
+            "end": {
+              "line": 809,
+              "column": 39
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_809_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_809_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.9135619400000001,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451863947,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:809:9: replace GenericNode<L, T>::hosts -> bool with false",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosts",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 807,
+                "column": 5
+              },
+              "end": {
+                "line": 810,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 809,
+              "column": 9
+            },
+            "end": {
+              "line": 809,
+              "column": 39
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_809_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_809_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.6042356789999999,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451811671,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with None",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted",
+            "return_type": "-> Option<&LogReplica<L>>",
+            "span": {
+              "start": {
+                "line": 812,
+                "column": 5
+              },
+              "end": {
+                "line": 815,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 814,
+              "column": 9
+            },
+            "end": {
+              "line": 814,
+              "column": 54
+            }
+          },
+          "replacement": "None",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_814_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_814_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.916684469,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.502034331,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::new())))",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted",
+            "return_type": "-> Option<&LogReplica<L>>",
+            "span": {
+              "start": {
+                "line": 812,
+                "column": 5
+              },
+              "end": {
+                "line": 815,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 814,
+              "column": 9
+            },
+            "end": {
+              "line": 814,
+              "column": 54
+            }
+          },
+          "replacement": "Some(Box::leak(Box::new(LogReplica::new())))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/moirai-network__src__generic.rs_line_814_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_814_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.552043599,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::from_iter([Default::default()]))))",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted",
+            "return_type": "-> Option<&LogReplica<L>>",
+            "span": {
+              "start": {
+                "line": 812,
+                "column": 5
+              },
+              "end": {
+                "line": 815,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 814,
+              "column": 9
+            },
+            "end": {
+              "line": 814,
+              "column": 54
+            }
+          },
+          "replacement": "Some(Box::leak(Box::new(LogReplica::from_iter([Default::default()]))))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/moirai-network__src__generic.rs_line_814_col_9_002.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_814_col_9_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.704085616,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::new(Default::default()))))",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted",
+            "return_type": "-> Option<&LogReplica<L>>",
+            "span": {
+              "start": {
+                "line": 812,
+                "column": 5
+              },
+              "end": {
+                "line": 815,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 814,
+              "column": 9
+            },
+            "end": {
+              "line": 814,
+              "column": 54
+            }
+          },
+          "replacement": "Some(Box::leak(Box::new(LogReplica::new(Default::default()))))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_814_col_9_003.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_814_col_9_003.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.9120092610000001,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.501877378,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:814:9: replace GenericNode<L, T>::hosted -> Option<&LogReplica<L>> with Some(Box::leak(Box::new(LogReplica::from(Default::default()))))",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted",
+            "return_type": "-> Option<&LogReplica<L>>",
+            "span": {
+              "start": {
+                "line": 812,
+                "column": 5
+              },
+              "end": {
+                "line": 815,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 814,
+              "column": 9
+            },
+            "end": {
+              "line": 814,
+              "column": 54
+            }
+          },
+          "replacement": "Some(Box::leak(Box::new(LogReplica::from(Default::default()))))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/moirai-network__src__generic.rs_line_814_col_9_004.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_814_col_9_004.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.551806912,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:297:9: replace HostedLog<L>::has_no_history -> bool with false",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "HostedLog<L>::has_no_history",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 282,
+                "column": 5
+              },
+              "end": {
+                "line": 298,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 297,
+              "column": 9
+            },
+            "end": {
+              "line": 297,
+              "column": 48
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_297_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_297_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 51.837761727,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451702779,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:819:9: replace GenericNode<L, T>::hosted_logs -> impl Iterator<Item =&LogId> with ::std::iter::once(Box::leak(Box::new(Default::default())))",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted_logs",
+            "return_type": "-> impl Iterator<Item =&LogId>",
+            "span": {
+              "start": {
+                "line": 817,
+                "column": 5
+              },
+              "end": {
+                "line": 820,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 819,
+              "column": 9
+            },
+            "end": {
+              "line": 819,
+              "column": 25
+            }
+          },
+          "replacement": "::std::iter::once(Box::leak(Box::new(Default::default())))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/moirai-network__src__generic.rs_line_819_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_819_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.555172229,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:819:9: replace GenericNode<L, T>::hosted_logs -> impl Iterator<Item =&LogId> with ::std::iter::empty()",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::hosted_logs",
+            "return_type": "-> impl Iterator<Item =&LogId>",
+            "span": {
+              "start": {
+                "line": 817,
+                "column": 5
+              },
+              "end": {
+                "line": 820,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 819,
+              "column": 9
+            },
+            "end": {
+              "line": 819,
+              "column": 25
+            }
+          },
+          "replacement": "::std::iter::empty()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_819_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_819_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.608798221,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.502056035,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:824:9: replace GenericNode<L, T>::frames_not_hosted -> u64 with 0",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::frames_not_hosted",
+            "return_type": "-> u64",
+            "span": {
+              "start": {
+                "line": 822,
+                "column": 5
+              },
+              "end": {
+                "line": 825,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 824,
+              "column": 9
+            },
+            "end": {
+              "line": 824,
+              "column": 31
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_824_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_824_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.6079298579999999,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.453003874,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:824:9: replace GenericNode<L, T>::frames_not_hosted -> u64 with 1",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::frames_not_hosted",
+            "return_type": "-> u64",
+            "span": {
+              "start": {
+                "line": 822,
+                "column": 5
+              },
+              "end": {
+                "line": 825,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 824,
+              "column": 9
+            },
+            "end": {
+              "line": 824,
+              "column": 31
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_824_col_9_001.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_824_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.6737742089999998,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.502913604,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:851:9: replace GenericNode<L, T>::serve_metamodel with ()",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::serve_metamodel",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 838,
+                "column": 5
+              },
+              "end": {
+                "line": 852,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 851,
+              "column": 9
+            },
+            "end": {
+              "line": 851,
+              "column": 77
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_851_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_851_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.661378392,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.504472073,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:861:9: replace GenericNode<L, T>::serve_metamodels with ()",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::serve_metamodels",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 854,
+                "column": 5
+              },
+              "end": {
+                "line": 862,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 861,
+              "column": 9
+            },
+            "end": {
+              "line": 861,
+              "column": 40
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_861_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_861_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.6584748409999999,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.452185769,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:870:9: replace GenericNode<L, T>::enable_registration with ()",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::enable_registration",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 864,
+                "column": 5
+              },
+              "end": {
+                "line": 872,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 870,
+              "column": 9
+            },
+            "end": {
+              "line": 871,
+              "column": 46
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_870_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_870_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.860905845,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.45189078,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:903:9: replace GenericNode<L, T>::register -> Result<Registered, RegisterRefused> with Ok(Default::default())",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::register",
+            "return_type": "-> Result<Registered, RegisterRefused>",
+            "span": {
+              "start": {
+                "line": 888,
+                "column": 5
+              },
+              "end": {
+                "line": 944,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 903,
+              "column": 9
+            },
+            "end": {
+              "line": 943,
+              "column": 11
+            }
+          },
+          "replacement": "Ok(Default::default())",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/moirai-network__src__generic.rs_line_903_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_903_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.652299593,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:885:9: replace GenericNode<L, T>::enable_op_guard with ()",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::enable_op_guard",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 874,
+                "column": 5
+              },
+              "end": {
+                "line": 886,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 885,
+              "column": 9
+            },
+            "end": {
+              "line": 885,
+              "column": 40
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_885_col_9.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_885_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.7633419240000001,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.401836,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:908:78: replace == with != in GenericNode<L, T>::register",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::register",
+            "return_type": "-> Result<Registered, RegisterRefused>",
+            "span": {
+              "start": {
+                "line": 888,
+                "column": 5
+              },
+              "end": {
+                "line": 944,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 908,
+              "column": 78
+            },
+            "end": {
+              "line": 908,
+              "column": 80
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_908_col_78.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_908_col_78.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.961838218,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.50259877,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "moirai-network/src/generic.rs:925:20: delete ! in GenericNode<L, T>::register",
+          "package": "moirai-network",
+          "file": "moirai-network/src/generic.rs",
+          "function": {
+            "function_name": "GenericNode<L, T>::register",
+            "return_type": "-> Result<Registered, RegisterRefused>",
+            "span": {
+              "start": {
+                "line": 888,
+                "column": 5
+              },
+              "end": {
+                "line": 944,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 925,
+              "column": 20
+            },
+            "end": {
+              "line": 925,
+              "column": 21
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/moirai-network__src__generic.rs_line_925_col_20.log",
+      "diff_path": "diff/moirai-network__src__generic.rs_line_925_col_20.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.966094043,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=moirai-network@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.451816886,
+          "process_status": "Success",
+          "argv": [
+            "/volatile/home/vp242103/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=moirai-network@0.1.0",
+            "--lib"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 29,
+  "missed": 5,
+  "caught": 19,
+  "timeout": 0,
+  "unviable": 5,
+  "success": 0,
+  "start_time": "2026-09-03T18:34:01.855558711Z",
+  "end_time": "2026-09-03T18:35:49.251517245Z",
+  "cargo_mutants_version": "27.1.0"
+}

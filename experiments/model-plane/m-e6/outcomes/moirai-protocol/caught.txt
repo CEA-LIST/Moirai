@@ -1,0 +1,14 @@
+moirai-protocol/src/broadcast/tcsb.rs:391:9: replace <impl IsTcsb<O> for Tcsb<O>>::foreign_log_refusals -> u64 with 0
+moirai-protocol/src/broadcast/tcsb.rs:391:9: replace <impl IsTcsb<O> for Tcsb<O>>::foreign_log_refusals -> u64 with 1
+moirai-protocol/src/broadcast/tcsb.rs:400:9: replace <impl IsTcsb<O> for Tcsb<O>>::receive with ()
+moirai-protocol/src/broadcast/tcsb.rs:418:9: replace <impl IsTcsb<O> for Tcsb<O>>::receive_batch with ()
+moirai-protocol/src/broadcast/tcsb.rs:504:29: replace == with != in <impl IsTcsb<O> for Tcsb<O>>::pull
+moirai-protocol/src/broadcast/tcsb.rs:510:60: replace + with - in <impl IsTcsb<O> for Tcsb<O>>::pull
+moirai-protocol/src/broadcast/tcsb.rs:511:20: delete ! in <impl IsTcsb<O> for Tcsb<O>>::pull
+moirai-protocol/src/broadcast/tcsb.rs:744:9: replace Tcsb<O>::follow_shared_interner with ()
+moirai-protocol/src/broadcast/tcsb.rs:746:41: replace != with == in Tcsb<O>::follow_shared_interner
+moirai-protocol/src/broadcast/tcsb.rs:776:9: replace Tcsb<O>::refuse_foreign -> bool with true
+moirai-protocol/src/broadcast/tcsb.rs:776:9: replace Tcsb<O>::refuse_foreign -> bool with false
+moirai-protocol/src/broadcast/tcsb.rs:776:30: replace == with != in Tcsb<O>::refuse_foreign
+moirai-protocol/src/broadcast/tcsb.rs:779:35: replace += with *= in Tcsb<O>::refuse_foreign
+moirai-protocol/src/broadcast/tcsb.rs:779:35: replace += with -= in Tcsb<O>::refuse_foreign

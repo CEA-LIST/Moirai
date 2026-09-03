@@ -1,0 +1,8 @@
+{
+  "class": "a store write that puts one model's document in another model's file",
+  "file": "arachne:clients/model-editor/src/model/projection.ts",
+  "find": "    return { kind: 'written', file: await store.write(modelId, result.doc), ts: Date.now() };",
+  "replace": "    const other = (modelId.slice(1) + (modelId[0] === '0' ? '1' : '0')) as typeof modelId;\n    return { kind: 'written', file: await store.write(other, result.doc), ts: Date.now() };",
+  "test": "npx vitest run src/model/projection.test.ts",
+  "killed_by": "projection.test.ts: mp10_apply_writes_the_store_file_equal_to_the_applied_state"
+}

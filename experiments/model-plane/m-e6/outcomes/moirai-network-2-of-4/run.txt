@@ -1,0 +1,6 @@
+started       20260903T183800Z
+command       PHASE=mutants PACKAGE=moirai-network SHARD=2/4 JOBS=2 CARGO_BUILD_JOBS=4 ./run.sh
+caught        14
+missed        15
+unviable      0
+timeout       0

@@ -1,0 +1,4 @@
+moirai-network/src/http_api.rs:136:5: replace route -> Route<'a> with Default::default()
+moirai-network/src/http_api.rs:343:9: replace Api<O>::submit -> Reply with Default::default()
+moirai-network/src/http_api.rs:368:9: replace Api<O>::register -> Reply with Default::default()
+moirai-network/src/http_api.rs:409:9: replace Api<O>::model -> Reply with Default::default()

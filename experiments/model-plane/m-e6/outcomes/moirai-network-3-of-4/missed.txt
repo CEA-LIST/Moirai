@@ -1,0 +1,7 @@
+moirai-network/src/http_api.rs:154:9: delete match arm (&Method::Get, ["api", "operations"]) in route
+moirai-network/src/http_api.rs:156:9: delete match arm (&Method::Post, ["api", "pause-all"]) in route
+moirai-network/src/http_api.rs:157:9: delete match arm (&Method::Post, ["api", "resume-all"]) in route
+moirai-network/src/http_api.rs:158:9: delete match arm (&Method::Post, ["api", "leave"]) in route
+moirai-network/src/http_api.rs:159:9: delete match arm (&Method::Get, ["api", "peers"]) in route
+moirai-network/src/http_api.rs:162:9: delete match arm (&Method::Get, ["api", "metamodels"]) in route
+moirai-network/src/http_api.rs:171:9: delete match arm (&Method::Get, ["api", "model", id, "metamodel"]) in route

@@ -1,0 +1,8 @@
+{
+  "class": "an apply that skips the digest comparison and renders the tree under simpleuml",
+  "file": "arachne:clients/model-editor/src/model/binding.ts",
+  "find": "  if (header.metamodelId.digest === served.digest) return { kind: 'bound', header, served };",
+  "replace": "  if (header.metamodelId.digest.length === served.digest.length) return { kind: 'bound', header, served };",
+  "test": "npx vitest run src/model/binding.test.ts",
+  "killed_by": "binding.test.ts: checkBinding 'a header whose digest differs from the served digest is a mismatch', mp9_apply_refuses_a_descriptor_whose_digest_differs_from_the_header"
+}

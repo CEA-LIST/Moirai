@@ -1,0 +1,16 @@
+moirai-network/src/generic.rs:1928:9: replace GenericNode<L, T>::metrics -> serde_json::Value with Default::default()
+moirai-network/src/http_api.rs:136:16: replace == with != in route
+moirai-network/src/http_api.rs:149:9: delete match arm (&Method::Get, ["api", "health"]) in route
+moirai-network/src/http_api.rs:150:9: delete match arm (&Method::Get, ["api", "log-id"]) in route
+moirai-network/src/http_api.rs:151:9: delete match arm (&Method::Get, ["api", "state"]) in route
+moirai-network/src/http_api.rs:152:9: delete match arm (&Method::Get, ["api", "metamodel"]) in route
+moirai-network/src/http_api.rs:153:9: delete match arm (&Method::Get, ["api", "metrics"]) in route
+moirai-network/src/http_api.rs:155:9: delete match arm (&Method::Post, ["api", "op"]) in route
+moirai-network/src/generic.rs:1963:9: replace GenericNode<L, T>::log_metrics -> serde_json::Value with Default::default()
+moirai-network/src/http_api.rs:160:9: delete match arm (&Method::Get, ["api", "models"]) in route
+moirai-network/src/http_api.rs:161:9: delete match arm (&Method::Post, ["api", "models"]) in route
+moirai-network/src/http_api.rs:167:9: delete match arm (&Method::Post, ["api", "model", id, "op"]) in route
+moirai-network/src/http_api.rs:163:9: delete match arm (&Method::Get, ["api", "model", id, "state"]) in route
+moirai-network/src/http_api.rs:175:9: delete match arm (&Method::Get, ["api", "model", id, "metrics"]) in route
+moirai-network/src/http_api.rs:240:31: replace == with != in Api<O>::serve
+moirai-network/src/http_api.rs:237:9: replace Api<O>::serve with ()

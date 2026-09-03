@@ -1,0 +1,8 @@
+{
+  "class": "a refusal of a foreign-log message that does not increment foreign_log_refusals",
+  "file": "moirai:moirai-protocol/src/broadcast/tcsb.rs",
+  "find": "        self.foreign_log_refusals += 1;\n        eprintln!(",
+  "replace": "        eprintln!(",
+  "test": "nice -n 10 cargo test -q -p moirai-protocol --features serde -j 2 --lib -- an_event_from_a_foreign_log_is_refused_and_counted a_batch_from_a_foreign_log_is_refused_whole",
+  "killed_by": "broadcast::tcsb::log_identity::an_event_from_a_foreign_log_is_refused_and_counted, a_batch_from_a_foreign_log_is_refused_whole"
+}
