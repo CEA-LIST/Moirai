@@ -1538,6 +1538,7 @@ dependencies = [
  "anyhow",
  "base64",
  "bollard",
+ "deepsize",
  "flate2",
  "moirai-crdt",
  "moirai-protocol",

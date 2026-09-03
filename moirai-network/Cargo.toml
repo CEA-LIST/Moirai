@@ -28,6 +28,14 @@ flate2 = { version = "1.0", default-features = false, features = ["rust_backend"
 # Already in the tree via `reqwest`; named here because this crate now uses it
 # directly. Deflate output is binary and a `TransportMessage` is a line of JSON.
 base64 = "0.22"
+# The size of what a node holds per hosted log, for the model plane's M-E2
+# measurement (`examples/model_plane_cost.rs`) and nothing else: optional, so
+# the shipped binary never carries it. The same fork and features as
+# `moirai-protocol`, which derives `DeepSizeOf` on the causal bookkeeping this
+# measures.
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "elsa",
+], }
 # `blocking` keeps every call site a plain function: no runtime to set up, and
 # both users — the e2e harness and the bootnode poll thread in `discovery.rs`
 # — are sequences of request/poll steps. This was a dev-dependency until
@@ -36,6 +44,18 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",
 ] }
+
+[features]
+default = []
+# The measurement surface: deep sizes of the hosted logs and the check that
+# they hold one member table. Named like the sibling crates' feature, and off
+# by default for the same reason.
+test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-crdt/test_utils"]
+
+# M-E2 of the model plane's validation plan; see the example's header.
+[[example]]
+name = "model_plane_cost"
+required-features = ["test_utils"]
 
 # Dev-only, and deliberately so: `testcontainers` pulls tokio, which must not
 # reach the library — the whole codebase is synchronous. The `blocking` feature

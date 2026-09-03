@@ -10,6 +10,8 @@
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::sync::mpsc::{self, Receiver, Sender};
+#[cfg(feature = "test_utils")]
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -314,6 +316,145 @@ where
     }
 }
 
+/// What the hosted-log map costs in memory, for M-E2 of the model plane's
+/// validation plan: the deep size of every hosted log with the member table
+/// counted once however many logs hold its handle, and the check that they
+/// do hold one handle rather than one table each.
+///
+/// Behind `test_utils` because it is a measurement surface and not a node
+/// capability; `examples/model_plane_cost.rs` is its one caller.
+#[cfg(feature = "test_utils")]
+mod cost {
+    use std::sync::Arc;
+
+    use deepsize::{Context, DeepSizeOf};
+    use moirai_protocol::broadcast::tcsb::IsTcsbTest;
+
+    use super::*;
+
+    impl<L: IsLog> DeepSizeOf for HostedLog<L>
+    where
+        L::Op: NetworkOp + DeepSizeOf,
+    {
+        /// The log's causal bookkeeping (inbox, outbox, matrix clock, the
+        /// stable version, the log id, and the shared member table once per
+        /// [`Context`]) beside the node-side records around it. The CRDT
+        /// log's own heap is not walked: `POLog` carries no `DeepSizeOf`
+        /// (`moirai-protocol/src/state/po_log.rs`, the derive is commented
+        /// out), and M-E2 reads empty logs, whose stable and unstable states
+        /// have allocated nothing.
+        fn deep_size_of_children(&self, context: &mut Context) -> usize {
+            self.replica.id().len()
+                + self.replica.tcsb().deep_size_of_children(context)
+                + self.operation_log.deep_size_of_children(context)
+                + self.transfer.deep_size_of_children(context)
+                + self
+                    .binding
+                    .as_ref()
+                    .map_or(0, |binding| binding.deep_size_of_children(context))
+        }
+    }
+
+    impl DeepSizeOf for TransferState {
+        fn deep_size_of_children(&self, context: &mut Context) -> usize {
+            self.donor.deep_size_of_children(context)
+                + self.donors_tried.deep_size_of_children(context)
+        }
+    }
+
+    impl DeepSizeOf for Binding {
+        /// `serde_json::Value` has no `DeepSizeOf`; its compact text is the
+        /// floor of what it holds, and a binding is a few dozen bytes either
+        /// way.
+        fn deep_size_of_children(&self, context: &mut Context) -> usize {
+            self.key.deep_size_of_children(context) + self.metamodel_id.to_string().len()
+        }
+    }
+
+    /// What one entry of the hosted map holds: the key and the log, inline
+    /// and on the heap, walked with the context the caller is charging.
+    fn entry_size<L: IsLog>(log_id: &LogId, log: &HostedLog<L>, context: &mut Context) -> usize
+    where
+        L::Op: NetworkOp + DeepSizeOf,
+    {
+        std::mem::size_of::<LogId>()
+            + log_id.deep_size_of_children(context)
+            + std::mem::size_of::<HostedLog<L>>()
+            + log.deep_size_of_children(context)
+    }
+
+    /// The entries of a hosted map as one walk, so an allocation two logs
+    /// share — the member table — is charged once and not once per log.
+    ///
+    /// Charged entry by entry rather than through `BTreeMap`'s own
+    /// `DeepSizeOf`, which amortises node storage at an assumed occupancy
+    /// and so reports a one-entry map as smaller than its entry; here `m(1)`
+    /// equals `s` by construction and the B-tree's node slack is the one
+    /// thing left out, which is stated rather than estimated.
+    struct Entries<'a, L: IsLog>(&'a BTreeMap<LogId, HostedLog<L>>);
+
+    impl<L: IsLog> DeepSizeOf for Entries<'_, L>
+    where
+        L::Op: NetworkOp + DeepSizeOf,
+    {
+        fn deep_size_of_children(&self, context: &mut Context) -> usize {
+            self.0
+                .iter()
+                .map(|(log_id, log)| entry_size(log_id, log, context))
+                .sum()
+        }
+    }
+
+    /// One entry on its own, walked with a fresh context.
+    struct Entry<'a, L: IsLog>(&'a LogId, &'a HostedLog<L>);
+
+    impl<L: IsLog> DeepSizeOf for Entry<'_, L>
+    where
+        L::Op: NetworkOp + DeepSizeOf,
+    {
+        fn deep_size_of_children(&self, context: &mut Context) -> usize {
+            entry_size(self.0, self.1, context)
+        }
+    }
+
+    impl<L: IsLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+    where
+        L::Op: NetworkOp + DeepSizeOf,
+    {
+        /// The deep size of the hosted-log map, `m(N)` in the plan: every
+        /// entry's key and log, inline and on the heap, the member table
+        /// counted once.
+        pub fn hosted_logs_deep_size(&self) -> usize {
+            let entries = Entries(&self.logs);
+            entries.deep_size_of() - std::mem::size_of_val(&entries)
+        }
+
+        /// The deep size of one hosted log's entry on its own, `s` in the
+        /// plan when read at one hosted log: the member table is counted in
+        /// it, once; `None` for an id this node does not host.
+        pub fn hosted_log_deep_size(&self, log_id: &LogId) -> Option<usize> {
+            self.logs.get_key_value(log_id).map(|(log_id, log)| {
+                let entry = Entry(log_id, log);
+                entry.deep_size_of() - std::mem::size_of_val(&entry)
+            })
+        }
+
+        /// How many distinct member tables the hosted logs hold between
+        /// them, by pointer identity of the handle: one, or the sharing the
+        /// design promises has been lost.
+        pub fn member_tables(&self) -> usize {
+            let mut tables: Vec<*const Mutex<Interner>> = self
+                .logs
+                .values()
+                .map(|log| Arc::as_ptr(log.replica.tcsb().interner()))
+                .chain(std::iter::once(Arc::as_ptr(&self.interner)))
+                .collect();
+            tables.sort_unstable();
+            tables.dedup();
+            tables.len()
+        }
+    }
+}
 
 /// One log's side of the state-transfer protocol. See [`STATE_TRANSFER_RETRY`].
 #[derive(Debug, Default)]
@@ -2149,6 +2290,26 @@ mod tests {
         }
     }
 
+    /// M-E2's member-table assertion, at the two points the validation plan
+    /// reads it: a node hosting sixteen and sixty-four logs holds one
+    /// `str_to_int` map and one `Translator`, the ones inside the single
+    /// `Interner` every log's handle points at, and not one per log.
+    #[cfg(feature = "test_utils")]
+    #[test]
+    fn at_sixteen_and_sixty_four_hosted_logs_the_node_holds_one_member_table() {
+        for n in [16usize, 64] {
+            let logs: Vec<LogId> = (0..n).map(|i| LogId::from_bytes([i as u8; 16])).collect();
+            let node = node("n", &logs);
+            assert_eq!(node.hosted_logs().count(), n);
+
+            assert_eq!(
+                node.member_tables(),
+                1,
+                "at {n} hosted logs the node holds more than one member table"
+            );
+        }
+    }
+
     #[test]
     fn mp1_dispatch_hands_a_frame_to_the_log_whose_id_matches() {
         let mut node = node("n", &[bt(), uml()]);
@@ -2533,7 +2694,10 @@ mod tests {
         let mut writer = peer("writer", uml());
         let first = writer.send(add("Class")).expect("an enabled operation");
         let second = writer.send(add("Property")).expect("an enabled operation");
-        n.handle_transport_message("writer".to_string(), TransportMessage::Event { event: second });
+        n.handle_transport_message(
+            "writer".to_string(),
+            TransportMessage::Event { event: second },
+        );
         let waiting = n.hosted(&uml()).unwrap().stability();
         assert_eq!(
             (waiting.delivered, waiting.pending),
@@ -2552,14 +2716,21 @@ mod tests {
                 log_id: bt(),
             },
         );
-        let (_, response) = donor.transport.sent.pop().expect("the request was answered");
+        let (_, response) = donor
+            .transport
+            .sent
+            .pop()
+            .expect("the request was answered");
         assert!(matches!(response, TransportMessage::StateResponse { .. }));
         n.handle_transport_message("donor".to_string(), response);
 
         // The held frame's predecessor arrives. Under a table rebuilt by the
         // adoption this is where the UML log dies (`follow_shared_interner`'s
         // assertion), which is the symptom the rig showed.
-        n.handle_transport_message("writer".to_string(), TransportMessage::Event { event: first });
+        n.handle_transport_message(
+            "writer".to_string(),
+            TransportMessage::Event { event: first },
+        );
 
         assert_eq!(
             members(&n, &bt()),

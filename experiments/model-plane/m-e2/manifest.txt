@@ -1,0 +1,16 @@
+run           20260903T172454Z
+host          Linux 7.0.0-30-generic x86_64
+cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
+memory        30.2 GiB
+load_avg      1.37 1.21 1.02 (1, 5, 15 min at the start of the run)
+moirai        c6894e2 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       b591829 (clean) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
+command       PHASE=inprocess POINTS=1,4,16,64 LOOKUPS=100000 IDLE_SECS=20 ./run.sh
+points        1,4,16,64 (hosted logs per node)
+lookups       100000 per path per N, each timed on its own with Instant
+log_type      EWFlagSetLog<String>, empty; the per-log cost is the causal bookkeeping
+memory        deep size per map entry, the member table counted once; B-tree node slack not charged; the CRDT log's heap is empty at N empty logs
+rss           VmRSS of PID 1 (network_node) per container after 20s idle, rig --models N --no-load --no-dashboard; results.csv carries the median over the node replicas
+thresholds    p50 < 1 us at N=64 (hit and miss); p50(64) <= 2 x p50(1); m(N) <= m(1) + (N-1) x 2 x s; one member table
+crossed       release: a threshold was crossed; see the verdict lines above debug: a threshold was crossed; see the verdict lines above

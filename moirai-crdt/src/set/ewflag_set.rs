@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
 use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
@@ -27,6 +29,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
