@@ -23,6 +23,10 @@ MP_LOG_ID="${LOG_ID:-c0113c7ed10c0113c7ed10c0113c7ed1}"
 
 mp_stamp() { date -u +%Y%m%dT%H%M%SZ; }
 
+# The load average when the harness was sourced, which is before anything it
+# starts: the number that says whether the machine was quiet.
+MP_LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg)"
+
 mp_say() { printf '%s: %s\n' "$(basename "$(dirname "${BASH_SOURCE[1]}")")" "$1" >&2; }
 
 mp_die() { printf '\n%s: %s\n\n' "$(basename "$(dirname "${BASH_SOURCE[1]}")")" "$1" >&2; exit 1; }
@@ -43,7 +47,8 @@ mp_manifest_common() {
     printf '%-14s%s\n' host "$(uname -srm)"
     printf '%-14s%s\n' cpu "$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //') x$(nproc)"
     printf '%-14s%s\n' memory "$(awk '/MemTotal/ {printf "%.1f GiB", $2/1048576}' /proc/meminfo)"
-    printf '%-14s%s\n' load_avg "$(mp_load_average) (1, 5, 15 min at the start of the run)"
+    printf '%-14s%s\n' load_start "$MP_LOAD_START (1, 5, 15 min before the run started)"
+    printf '%-14s%s\n' load_end "$(mp_load_average) (1, 5, 15 min when the manifest was written)"
     printf '%-14s%s\n' moirai "$(mp_git_head "$MOIRAI_ROOT") ($(mp_git_dirty "$MOIRAI_ROOT")) $MOIRAI_ROOT"
     printf '%-14s%s\n' arachne "$(mp_git_head "$ARACHNE_ROOT") ($(mp_git_dirty "$ARACHNE_ROOT")) $ARACHNE_ROOT"
     printf '%-14s%s\n' rustc "$(rustc --version 2>/dev/null || echo unknown)"

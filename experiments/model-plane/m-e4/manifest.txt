@@ -1,21 +1,22 @@
-run           20260903T181334Z
+run           20260903T190250Z
 host          Linux 7.0.0-30-generic x86_64
 cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
 memory        30.2 GiB
-load_avg      0.63 0.84 0.90 (1, 5, 15 min at the start of the run)
-moirai        6e24b74 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
-arachne       b591829 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+load_start    0.25 1.13 2.67 (1, 5, 15 min before the run started)
+load_end      0.72 0.74 2.02 (1, 5, 15 min when the manifest was written)
+moirai        ff7c967 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       043fa87 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
 rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
-command       OPS=500 RUNS=5 SEED=20260903 POINTS=1,16 ./run.sh
+command       OPS=500 RUNS=15 SEED=20260903 POINTS=1,16 ./run.sh
 image         moirai-json-crdt-model-plane:test
 image digest  sha256:c12945f590264cac5c4efc308bb0a7a955797b76cb9a1d97d05654b67fdf95cc
 image built   2026-09-03T19:55:32.648495549+02:00
 docker        29.6.2
 points        1,16 models on the donor; model A is SimpleUML, the rest alternate behaviour tree and SimpleUML
 ops           500 seeded operations per model (wire.py seeded_ops, seed 20260903)
-runs          5 per N, a fresh joiner container each, registering A alone
+runs          15 per N, a fresh joiner container each, registering A alone
 bytes         response_bytes: the StateResponse line as the probe reads it; served_bytes_*: the donor's own log line, the serialised log before compression
 time          transfer_ms: donor 'serving' line to joiner 'adopted' line, Docker daemon clock; probe_ms: host clock around the probe's request; join_to_state_ms: host clock from POST /api/models to the state matching, polled every 2 ms
 threshold     response_bytes and transfer_ms at N=16 within 5 percent of N=1 (medians); the other columns are supplementary
 members       every joiner stays a member of the donor's table after its run, so snapshot_members climbs by one per run and the uncompressed served log with it, one version-vector entry per event; compare runs at equal snapshot_members, or the medians, which sit at the same run index
-verdict       wire bytes: N=1 median 120736, N=16 median 120767, ratio 1.000 -> met;serving->adopted ms: N=1 median 55.29, N=16 median 56.93, ratio 1.030 -> met;served log bytes (uncompressed): N=1 median 105183, N=16 median 108201, ratio 1.029 (supplementary);probe request->answer ms: N=1 median 54.42, N=16 median 55.91, ratio 1.027 (supplementary);join->state ms: N=1 median 138.3, N=16 median 118.5, ratio 0.857 (supplementary);
+verdict       wire bytes: N=1 median 121177, N=16 median 121249, ratio 1.001 -> met;serving->adopted ms: N=1 median 59.9, N=16 median 59.45, ratio 0.992 -> met;served log bytes (uncompressed): N=1 median 140393, N=16 median 148441, ratio 1.057 (supplementary);probe request->answer ms: N=1 median 59.62, N=16 median 60.22, ratio 1.010 (supplementary);join->state ms: N=1 median 148.4, N=16 median 136.5, ratio 0.920 (supplementary);

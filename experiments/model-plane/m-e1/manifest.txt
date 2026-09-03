@@ -1,10 +1,11 @@
-run           20260903T181312Z
+run           20260903T185727Z
 host          Linux 7.0.0-30-generic x86_64
 cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
 memory        30.2 GiB
-load_avg      0.91 1.22 1.02 (1, 5, 15 min at the start of the run)
-moirai        6e24b74 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
-arachne       b591829 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+load_start    0.76 1.86 3.40 (1, 5, 15 min before the run started)
+load_end      2.98 2.36 3.53 (1, 5, 15 min when the manifest was written)
+moirai        ff7c967 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       043fa87 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
 rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
 command       SEED=20260903 OPERATIONS=180 RATE=50 ./run.sh
 image         moirai-json-crdt-model-plane:test

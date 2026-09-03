@@ -14,14 +14,16 @@
 # written to the manifest; the CSV is complete either way.
 #
 # Usage, from this directory: ./run.sh
-# Knobs: OPS (500), RUNS (5), SEED (20260903), POINTS (1,16).
+# Knobs: OPS (500), RUNS (15), SEED (20260903), POINTS (1,16). Fifteen runs
+# because the joiner adopts on its next 10 ms loop tick, so a median of five
+# carried the width of the 5 percent band in tick noise.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../common.sh
 . "$HERE/../common.sh"
 
 OPS=${OPS:-500}
-RUNS=${RUNS:-5}
+RUNS=${RUNS:-15}
 SEED=${SEED:-20260903}
 POINTS=${POINTS:-1,16}
 
