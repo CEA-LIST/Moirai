@@ -294,7 +294,26 @@ where
     fn has_no_history(&self) -> bool {
         self.replica.stability().delivered == 0
     }
+
+    /// `true` while this log holds nothing at all: nothing delivered, nothing
+    /// waiting in its inbox, nothing retained in its outbox.
+    ///
+    /// Stricter than [`has_no_history`], and the condition a *sibling* must
+    /// meet before another log may adopt a donor's ordering: `Tcsb` re-seats
+    /// a clock on a rebuilt member table only while its inbox and outbox are
+    /// empty (`follow_shared_interner`), and a frame received but not yet
+    /// deliverable sits in both with `delivered` still at zero. M-E3's first
+    /// run found the gap: two of five replicas joining sixteen models died at
+    /// that assertion, each holding one such frame in a sibling log while a
+    /// donor's snapshot for another log arrived.
+    ///
+    /// [`has_no_history`]: HostedLog::has_no_history
+    fn holds_nothing(&self) -> bool {
+        let stability = self.replica.stability();
+        stability.delivered == 0 && stability.pending == 0 && stability.retained == 0
+    }
 }
+
 
 /// One log's side of the state-transfer protocol. See [`STATE_TRANSFER_RETRY`].
 #[derive(Debug, Default)]
@@ -1035,16 +1054,17 @@ where
             return;
         }
         // Adopting takes over the donor's index ordering, and the ordering is
-        // the node's, shared by every hosted log. That is safe while no log
-        // here has history, and it is free of any rebuild when the donor's
-        // ordering agrees with ours on every index both know. Otherwise the
-        // snapshot cannot be installed without rewriting another log's clock,
-        // so it is turned away in favour of a delta sync — loudly, since the
-        // compacted prefix of `log_id` then stays out of reach.
+        // the node's, shared by every hosted log. That is safe while no other
+        // log here holds anything, delivered or merely received, and it is
+        // free of any rebuild when the donor's ordering agrees with ours on
+        // every index both know. Otherwise the snapshot cannot be installed
+        // without rewriting another log's clock, so it is turned away in
+        // favour of a delta sync — loudly, since the compacted prefix of
+        // `log_id` then stays out of reach.
         let siblings_with_history = self
             .logs
             .iter()
-            .any(|(id, log)| id != log_id && !log.has_no_history());
+            .any(|(id, log)| id != log_id && !log.holds_nothing());
         if siblings_with_history
             && !lock_interner(&self.interner)
                 .resolver()
@@ -2494,6 +2514,70 @@ mod tests {
                 log_id: uml(),
             },
         ]
+    }
+
+    /// A sibling that has received a frame it cannot yet deliver holds no
+    /// history by the `delivered` count and still cannot survive the member
+    /// table being rebuilt under it: `Tcsb::follow_shared_interner` re-seats
+    /// a clock only while its inbox and outbox are empty. Found by M-E3's
+    /// first run, where two of five replicas died at that assertion while
+    /// joining sixteen models. The node refuses the transfer for the
+    /// sibling's sake, asks for a delta sync instead, and the held frame
+    /// still delivers once its predecessor arrives.
+    #[test]
+    fn a_reordering_transfer_is_refused_while_a_sibling_holds_an_undelivered_frame() {
+        // `n` joined both models empty; its table orders itself first.
+        let mut n = node("n", &[bt(), uml()]);
+        // A writer of the UML model `n` has never met: its first event is
+        // withheld, its second arrives and waits in the inbox.
+        let mut writer = peer("writer", uml());
+        let first = writer.send(add("Class")).expect("an enabled operation");
+        let second = writer.send(add("Property")).expect("an enabled operation");
+        n.handle_transport_message("writer".to_string(), TransportMessage::Event { event: second });
+        let waiting = n.hosted(&uml()).unwrap().stability();
+        assert_eq!(
+            (waiting.delivered, waiting.pending),
+            (0, 1),
+            "the second event should wait for the first"
+        );
+
+        // A donor of the behaviour tree with history, ordering [donor]: it
+        // disagrees with `n`'s at index 0, so adopting would rebuild the table.
+        let mut donor = node("donor", &[bt()]);
+        donor.apply_op(add("Sequence"));
+        donor.handle_transport_message(
+            "n".to_string(),
+            TransportMessage::StateRequest {
+                id: "n".to_string(),
+                log_id: bt(),
+            },
+        );
+        let (_, response) = donor.transport.sent.pop().expect("the request was answered");
+        assert!(matches!(response, TransportMessage::StateResponse { .. }));
+        n.handle_transport_message("donor".to_string(), response);
+
+        // The held frame's predecessor arrives. Under a table rebuilt by the
+        // adoption this is where the UML log dies (`follow_shared_interner`'s
+        // assertion), which is the symptom the rig showed.
+        n.handle_transport_message("writer".to_string(), TransportMessage::Event { event: first });
+
+        assert_eq!(
+            members(&n, &bt()),
+            BTreeSet::new(),
+            "the snapshot was adopted over a sibling holding an undelivered frame"
+        );
+        assert!(
+            n.transport.sent.iter().any(|(to, msg)| to == "donor"
+                && matches!(msg, TransportMessage::SyncRequest { since } if *since.log_id() == bt())),
+            "the refusal did not fall back to a delta sync: {:?}",
+            n.transport.sent
+        );
+        assert_eq!(
+            members(&n, &uml()),
+            BTreeSet::from(["Class".to_string(), "Property".to_string()]),
+            "the held frame and its predecessor did not both deliver"
+        );
+        assert_eq!(n.hosted(&uml()).unwrap().stability().delivered, 2);
     }
 
     /// mp2's setup, read back through the real HTTP adapter and the real
