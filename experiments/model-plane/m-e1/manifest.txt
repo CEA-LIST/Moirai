@@ -1,15 +1,15 @@
-run           20260903T172652Z
+run           20260903T181312Z
 host          Linux 7.0.0-30-generic x86_64
 cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
 memory        30.2 GiB
-load_avg      0.72 0.92 0.93 (1, 5, 15 min at the start of the run)
-moirai        c6894e2 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
-arachne       b591829 (clean) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+load_avg      0.91 1.22 1.02 (1, 5, 15 min at the start of the run)
+moirai        6e24b74 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       b591829 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
 rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
 command       SEED=20260903 OPERATIONS=180 RATE=50 ./run.sh
 image         moirai-json-crdt-model-plane:test
-image digest  sha256:c7877f7cebdccce0a56432f3291a345570d9d8a0f55d2c8f22dbfdb1ee82947b
-image built   2026-09-03T18:37:49.21633588+02:00
+image digest  sha256:c12945f590264cac5c4efc308bb0a7a955797b76cb9a1d97d05654b67fdf95cc
+image built   2026-09-03T19:55:32.648495549+02:00
 docker        29.6.2
 replicas      3, static PEERS, one probe connection each
 seed          20260903 (moirai-dashboard --random, the r1 generator; replay: MOIRAI_E2E_SEED=20260903 on r1)
