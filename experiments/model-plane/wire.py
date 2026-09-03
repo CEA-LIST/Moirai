@@ -160,6 +160,21 @@ def apply_to_model(base, model_id, op):
         raise SystemExit(f"{base} refused {compact(op)} on {model_id}: {reply}")
 
 
+def event_frame(origin, seq, log_id, op):
+    """The `Event` frame a replica `origin`, alone in its own view, puts on the
+    wire for its `seq`th operation on `log_id`: the shape M-E1 reads off the
+    socket, with a one-column version vector, so a receiver delivers it as
+    soon as it holds the origin's previous one."""
+    event = {
+        "id": {"idx": 0, "seq": seq, "resolver": [origin]},
+        "lamport": seq,
+        "op": op,
+        "version": {"entries": [seq], "origin_idx": 0, "resolver": [origin]},
+    }
+    return {"type": "Event",
+            "event": {"payload": {"Event": event}, "resolver": [origin], "log_id": log_id}}
+
+
 # ---- the seeded operations --------------------------------------------------
 
 def string_insert(key, ch, pos=0):
