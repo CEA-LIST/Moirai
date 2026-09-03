@@ -63,7 +63,6 @@ impl<L: IsLog> Default for MetricsLog<L> {
 }
 
 impl<L: IsLog> IsLog for MetricsLog<L> {
-    type Value = L::Value;
     type Command = L::Command;
     type Op = L::Op;
     type Rejection = L::Rejection;
@@ -109,7 +108,7 @@ where
     L: IsLog + EvalNested<Q>,
     Q: QueryOperation,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         self.inner.execute_query(q)
     }
 }

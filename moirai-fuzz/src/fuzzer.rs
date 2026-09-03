@@ -1,9 +1,11 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use std::fmt::Debug;
+
 use log::{debug, info, warn};
 use moirai_protocol::{
-    crdt::{eval::EvalNested, query::Read},
+    crdt::{eval::EvalNested, query::QueryOperation},
     state::log::IsLog,
 };
 use serde::{Deserialize, Serialize};
@@ -17,9 +19,11 @@ use crate::{
     utils::format::seed_to_hex,
 };
 
-pub fn fuzzer<L>(config: FuzzerConfig<L>)
+pub fn fuzzer<L, Q>(config: FuzzerConfig<L, Q>)
 where
-    L: IsLog + CommandGenerator + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + CommandGenerator + EvalNested<Q>,
+    Q: QueryOperation,
+    <Q as QueryOperation>::Response: Debug,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {
@@ -31,7 +35,7 @@ where
         name,
         runs,
         final_merge,
-        compare,
+        predicate,
         save_execution,
         oracle_driver,
     } = config;
@@ -53,7 +57,7 @@ where
 
         info!("{}", config_table);
 
-        let run_data = runner::<L>(run_config, final_merge, compare, oracle_driver.as_ref());
+        let run_data = runner::<L, Q>(run_config, final_merge, &predicate, oracle_driver.as_ref());
         let results = run_results(&run_data);
 
         debug!("Run {} completed", run_idx + 1);

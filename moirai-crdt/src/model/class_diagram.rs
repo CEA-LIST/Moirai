@@ -16,7 +16,7 @@ use petgraph::{
 };
 
 use crate::{
-    HashMap,
+    HashMap, HashSet,
     flag::ew_flag::EWFlag,
     graph::uw_multidigraph::{Content, UWGraphLog},
     map::uw_map::UWMapLog,
@@ -173,33 +173,33 @@ impl Ord for Multiplicity {
 }
 
 record!(Feature {
-    typ: VecLog::<MVRegister::<PrimitiveType>>,
-    visibility: VecLog::<TORegister::<Visibility>>,
+    typ: VecLog::<MVRegister::<PrimitiveType>> => HashSet<PrimitiveType>,
+    visibility: VecLog::<TORegister::<Visibility>> => Option<Visibility>,
 });
 
 record!(Operation {
-    is_abstract: VecLog::<EWFlag>,
-    visibility: VecLog::<TORegister::<Visibility>>,
-    parameters: UWMapLog::<String, VecLog::<MVRegister::<TypeRef>>>,
-    return_type: VecLog::<MVRegister::<TypeRef>>,
+    is_abstract: VecLog::<EWFlag> => bool,
+    visibility: VecLog::<TORegister::<Visibility>> => Option<Visibility>,
+    parameters: UWMapLog::<String, VecLog::<MVRegister::<TypeRef>>> => HashMap<String, HashSet<TypeRef>>,
+    return_type: VecLog::<MVRegister::<TypeRef>> => HashSet<TypeRef>,
 });
 
 record!(Class {
-    is_abstract: VecLog::<EWFlag>,
-    name: VecLog::<MVRegister::<String>>,
-    features: UWMapLog::<String, FeatureLog>,
-    operations: UWMapLog::<String, OperationLog>,
+    is_abstract: VecLog::<EWFlag> => bool,
+    name: VecLog::<MVRegister::<String>> => HashSet<String>,
+    features: UWMapLog::<String, FeatureLog> => HashMap<String, FeatureValue>,
+    operations: UWMapLog::<String, OperationLog> => HashMap<String, OperationValue>,
 });
 
 record!(Ends {
-    source: VecLog::<TORegister::<Multiplicity>>,
-    target: VecLog::<TORegister::<Multiplicity>>,
+    source: VecLog::<TORegister::<Multiplicity>> => Option<Multiplicity>,
+    target: VecLog::<TORegister::<Multiplicity>> => Option<Multiplicity>,
 });
 
 record!(Relation {
-    ends: EndsLog,
-    label: VecLog::<MVRegister::<String>>,
-    typ: VecLog::<TORegister::<RelationType>>,
+    ends: EndsLog => EndsValue,
+    label: VecLog::<MVRegister::<String>> => HashSet<String>,
+    typ: VecLog::<TORegister::<RelationType>> => Option<RelationType>,
 });
 
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
@@ -779,9 +779,12 @@ mod tests {
         replica_b.receive_batch(batch);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
         (replica_a, replica_b)
@@ -810,8 +813,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
 
         println!("Class Diagram A: {}", export_fancy_class_diagram(&eval_a));
         println!("Class Diagram B: {}", export_fancy_class_diagram(&eval_b));
@@ -827,7 +830,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the class name
@@ -840,15 +843,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
@@ -871,7 +874,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the class name
@@ -886,15 +889,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
@@ -948,12 +951,12 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
@@ -963,8 +966,8 @@ mod tests {
         replica_a.receive(event_b_4);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 
@@ -1022,7 +1025,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the feature visibility and type
@@ -1061,7 +1064,7 @@ mod tests {
             .unwrap();
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
@@ -1074,8 +1077,8 @@ mod tests {
         replica_b.receive(event_a_3);
         replica_b.receive(event_a_4);
         replica_b.receive(event_a_5);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -1101,7 +1104,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the return type to Number
@@ -1119,15 +1122,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 
@@ -1175,7 +1178,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the relation
@@ -1221,8 +1224,8 @@ mod tests {
         replica_b.receive(event_a_2);
         replica_b.receive(event_a_3);
         replica_b.receive(event_a_4);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 }

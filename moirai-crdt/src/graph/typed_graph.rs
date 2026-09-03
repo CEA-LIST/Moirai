@@ -79,12 +79,15 @@ mod tests {
         replica_b: &R,
     ) {
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some(),
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some(),
             "Replicas did not converge!\nA: {:?}\nB: {:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[]),
-            petgraph::dot::Dot::with_config(&replica_b.query(Read::new()), &[]),
+            petgraph::dot::Dot::with_config(&replica_a.query(&Read::new()), &[]),
+            petgraph::dot::Dot::with_config(&replica_b.query(&Read::new()), &[]),
         );
     }
 
@@ -128,7 +131,7 @@ mod tests {
 
         println!(
             "A: {:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[])
+            petgraph::dot::Dot::with_config(&replica_a.query(&Read::new()), &[])
         );
         assert_convergence(&replica_a, &replica_b);
 
@@ -143,7 +146,7 @@ mod tests {
 
         println!(
             "A: {:?}",
-            petgraph::dot::Dot::with_config(&replica_a.query(Read::new()), &[])
+            petgraph::dot::Dot::with_config(&replica_a.query(&Read::new()), &[])
         );
         assert_convergence(&replica_a, &replica_b);
     }
@@ -190,8 +193,8 @@ mod tests {
         replica_b.receive(e5);
 
         assert_convergence(&replica_a, &replica_b);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
     }
 
     #[test]
@@ -276,10 +279,10 @@ mod tests {
         replica_b.receive(event_a);
 
         assert_convergence(&replica_a, &replica_b);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 4);
-        assert_eq!(replica_b.query(Read::new()).edge_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 4);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 4);
+        assert_eq!(replica_b.query(&Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 4);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
     }
 
     #[test]
@@ -293,8 +296,8 @@ mod tests {
             .unwrap();
         replica_b.receive(init);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 1);
 
         let e1 = replica_a
             .send(MyTypedGraph::AddVertex {
@@ -310,8 +313,8 @@ mod tests {
         replica_a.receive(e2);
 
         // assert_convergence(&replica_a, &replica_b);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
     }
 
     #[test]
@@ -374,8 +377,8 @@ mod tests {
         replica_a.receive(e7);
 
         assert_convergence(&replica_a, &replica_b);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 4);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 3);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 4);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 3);
     }
 
     #[test]
@@ -406,8 +409,8 @@ mod tests {
         replica_b.receive(e3);
 
         assert_convergence(&replica_a, &replica_b);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
     }
 
     #[test]
@@ -427,7 +430,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
         assert_convergence(&replica_a, &replica_b);
     }
 
@@ -464,8 +467,8 @@ mod tests {
             .unwrap();
         replica_a.receive(e4);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
         assert_convergence(&replica_a, &replica_b);
     }
 
@@ -561,8 +564,8 @@ mod tests {
         replica_a.receive(e_b_3);
         replica_a.receive(e_b_4);
 
-        let graph_a = replica_a.query(Read::new());
-        let graph_b = replica_b.query(Read::new());
+        let graph_a = replica_a.query(&Read::new());
+        let graph_b = replica_b.query(&Read::new());
 
         assert_eq!(graph_a.node_count(), 3);
         assert_eq!(graph_b.node_count(), 3);
@@ -619,8 +622,8 @@ mod tests {
         replica_b.receive(e_a_1);
         replica_b.receive(e_a_2);
 
-        let graph_a = replica_a.query(Read::new());
-        let graph_b = replica_b.query(Read::new());
+        let graph_a = replica_a.query(&Read::new());
+        let graph_b = replica_b.query(&Read::new());
 
         assert_eq!(graph_a.node_count(), 3);
         assert_eq!(graph_b.node_count(), 3);
@@ -679,8 +682,8 @@ mod tests {
         replica_b.receive(e_a_2);
         replica_b.receive(e_a_3);
 
-        let graph_a = replica_a.query(Read::new());
-        let graph_b = replica_b.query(Read::new());
+        let graph_a = replica_a.query(&Read::new());
+        let graph_b = replica_b.query(&Read::new());
 
         assert_eq!(graph_a.node_count(), 2);
         assert_eq!(graph_b.node_count(), 2);
@@ -716,7 +719,7 @@ mod tests {
                 RemoveArc,
             }
 
-            let graph = Self::execute_query(Read::new(), stable, unstable);
+            let graph = Self::execute_query(&Read::new(), stable, unstable);
             let constraints = compute_arc_constraints(&graph);
             let existing_vertices: Vec<_> = graph.node_weights().cloned().collect();
 
@@ -799,7 +802,7 @@ mod tests {
     #[ignore]
     fn fuzz_typed_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -807,38 +810,39 @@ mod tests {
         let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
         let runs = vec![run.clone(); 1_000];
 
-        let config = FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>>::new(
-            "typed_graph",
-            runs,
-            true,
-            |a, b| {
-                let node = a.node_count() == b.node_count();
-                let edge = a.edge_count() == b.edge_count();
+        let config =
+            FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>::new(
+                "typed_graph",
+                runs,
+                true,
+                Predicate::new(Read::new(), |a, b| {
+                    let node = a.node_count() == b.node_count();
+                    let edge = a.edge_count() == b.edge_count();
 
-                fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
-                    let is_valid = validate_schema(&graph);
-                    let is_valid = match is_valid {
-                        Ok(_) => true,
-                        Err(violations) => {
-                            if violations
-                                .iter()
-                                .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
-                            {
-                                true
-                            } else {
-                                // println!("Schema violations: {:?}", violations);
-                                false
+                    fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
+                        let is_valid = validate_schema(&graph);
+                        let is_valid = match is_valid {
+                            Ok(_) => true,
+                            Err(violations) => {
+                                if violations
+                                    .iter()
+                                    .all(|v| matches!(v, SchemaViolation::BelowMin { .. }))
+                                {
+                                    true
+                                } else {
+                                    // println!("Schema violations: {:?}", violations);
+                                    false
+                                }
                             }
-                        }
-                    };
-                    is_valid
-                }
+                        };
+                        is_valid
+                    }
 
-                node && edge && is_valid(a) && is_valid(b)
-            },
-            false,
-        );
+                    node && edge && is_valid(a) && is_valid(b)
+                }),
+                false,
+            );
 
-        fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>>(config);
+        fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>(config);
     }
 }

@@ -3,7 +3,7 @@
 
 #[macro_export]
 macro_rules! record {
-    ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
+    ($name:ident { $($field:ident : $T:ty => $value:ty),* $(,)? }) => {
         $crate::paste::paste! {
             /// Set of operations that can be applied to the record.
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
@@ -35,7 +35,7 @@ macro_rules! record {
             #[derive(Debug, Clone, Default, PartialEq)]
             pub struct [<$name Value>] {
                 $(
-                    pub $field: <$T as $crate::moirai_protocol::state::log::IsLog>::Value,
+                    pub $field: $value,
                 )*
             }
 
@@ -56,14 +56,14 @@ macro_rules! record {
                 )*
 
                 #[doc(hidden)]
-                pub fn __moirai_default_sink_expansion(
+                pub fn default_sink_expansion(
                     &self,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
                 ) {
                     ctx.create_typed(::std::stringify!($name));
                     $(
                         ctx.with_field(::std::stringify!($field), |ctx| {
-                            <$T as $crate::moirai_protocol::state::log::__DefaultSinkExpansion>::default_sink_expansion(
+                            <$T as $crate::moirai_protocol::state::log::DefaultSinkExpansion>::default_sink_expansion(
                                 &<$T as $crate::moirai_protocol::state::log::IsLog>::new(),
                                 ctx,
                             );
@@ -76,7 +76,6 @@ macro_rules! record {
             /// No semantics are defined at the record level, all semantics are defined at the field level.
             /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
-                type Value = [<$name Value>];
                 type Command = $name;
                 type Op = $name;
                 type Rejection = [<$name Rejection>];
@@ -104,7 +103,7 @@ macro_rules! record {
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
 
                                 if is_default {
-                                    Self::__moirai_default_sink_expansion(self, ctx);
+                                    Self::default_sink_expansion(self, ctx);
                                 } else {
                                     ctx.update_typed(::std::stringify!($name));
                                 }
@@ -123,7 +122,7 @@ macro_rules! record {
                             }
                         )*
                         $name::New => {
-                            Self::__moirai_default_sink_expansion(self, ctx);
+                            Self::default_sink_expansion(self, ctx);
                         }
                     }
                 }
@@ -183,13 +182,16 @@ macro_rules! record {
 
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
-                fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>> for [<$name Log>] {
+                fn execute_query(
+                    &self,
+                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
+                ) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
                             $field: $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
                                 &self.$field,
-                                $crate::moirai_protocol::crdt::query::Read::new(),
+                                &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
                             ),
                         )*
                     }

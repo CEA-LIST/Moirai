@@ -29,7 +29,6 @@ impl<V> ReplicatedDataType for MVRegister<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
-    type Value = HashSet<V>;
     type StableState = Vec<Self>;
     type Rejection = Infallible;
 
@@ -70,16 +69,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for MVRegister<V>
+impl<V, U> Eval<Read<HashSet<V>>, U> for MVRegister<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<HashSet<V>>,
         stable: &<MVRegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = HashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let MVRegister::Write(v) = o {
@@ -132,17 +131,17 @@ mod tests {
         replica_b.receive(event);
 
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             HashSet::from_iter(["a"].iter().cloned())
         );
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
 
         let event = replica_b.send(MVRegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = set_from_slice(&["b"]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -152,14 +151,14 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["c"]));
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["d"]));
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
@@ -167,8 +166,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = set_from_slice(&["b", "a"]);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -180,14 +179,14 @@ mod tests {
         let event = replica_a.send(MVRegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["c"]));
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["c"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["c"]));
 
         let event = replica_b.send(MVRegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["d"]));
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["d"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["d"]));
 
         let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
         let event_aa = replica_a.send(MVRegister::Write("aa")).unwrap();
@@ -199,8 +198,8 @@ mod tests {
         replica_b.receive(event_aa);
 
         let result = set_from_slice(&["aa", "b"]);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -210,19 +209,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<u32>>();
 
         let event_a_1 = replica_a.send(MVRegister::Write(4)).unwrap();
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[4]));
         let event_b_1 = replica_b.send(MVRegister::Write(5)).unwrap();
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[5]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[5]));
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4, 5]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[4, 5]));
 
         let event_b_2 = replica_b.send(MVRegister::Write(2)).unwrap();
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[2]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[2]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[4, 2]));
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[4, 2]));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -230,14 +229,20 @@ mod tests {
     #[ignore]
     fn fuzz_mv_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<MVRegister<i32>>;
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log>::new("mv_register", runs, true, |a, b| a == b, false);
-        fuzzer::<Log>(config);
+        let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
+            "mv_register",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+        fuzzer::<Log, Read<HashSet<i32>>>(config);
     }
 }

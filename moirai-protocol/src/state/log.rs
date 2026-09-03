@@ -10,9 +10,7 @@ use crate::{
     state::effect_context::EffectContext,
 };
 
-pub trait IsLog: Default + Debug {
-    // TODO: is Value really needed?
-    type Value: Default + Debug;
+pub trait IsLog: Default {
     /// Client input command type
     type Command: Debug + Clone;
     /// Stored operation type
@@ -31,20 +29,25 @@ pub trait IsLog: Default + Debug {
     fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
         Ok(())
     }
+
     /// Apply an event to the log, updating the state.
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>);
+
     /// Evaluate a query operation on the log, returning a value.
-    fn eval<Q>(&self, q: Q) -> Q::Response
+    fn eval<Q>(&self, q: &Q) -> Q::Response
     where
         Q: QueryOperation,
         Self: EvalNested<Q>,
     {
         Self::execute_query(self, q)
     }
+
     /// Stabilize the log at a given version.
     fn stabilize(&mut self, version: &Version);
+
     /// Prune the log by removing events that are redundant.
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
+
     /// Check if the log is in its default state (no events).
     /// # Note
     /// Default state is a structural property of the log, not a semantic property of the underlying CRDT.
@@ -55,15 +58,14 @@ pub trait IsLog: Default + Debug {
 
 // TODO: this is potentially garbage
 #[doc(hidden)]
-pub trait __DefaultSinkExpansion: IsLog {
+pub trait DefaultSinkExpansion: IsLog {
     fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}
 }
 
-impl<L: IsLog> __DefaultSinkExpansion for L {}
+impl<L: IsLog> DefaultSinkExpansion for L {}
 
 /// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
 impl<L: IsLog> IsLog for Box<L> {
-    type Value = L::Value;
     type Command = Box<L::Command>;
     type Op = Box<L::Op>;
     type Rejection = L::Rejection;
@@ -99,11 +101,10 @@ impl<L: IsLog> IsLog for Box<L> {
     }
 }
 
-/// Log adapter that preserves indirection in the associated value type.
+/// Log adapter that preserves indirection in read responses.
 ///
-/// `Box<L>` is a transparent log wrapper: its `Value` is still `L::Value`.
-/// Use `BoxedLog<L>` when recursive generated log types need the corresponding
-/// read value to remain boxed as `Box<L::Value>`.
+/// `Box<L>` is a transparent log wrapper. Use `BoxedLog<L>` when recursive
+/// generated log types need `Read<V>` to produce `Box<V>`.
 #[derive(Debug, Clone)]
 pub struct BoxedLog<L: IsLog>(Box<L>);
 
@@ -128,7 +129,6 @@ impl<L: IsLog> Default for BoxedLog<L> {
 }
 
 impl<L: IsLog> IsLog for BoxedLog<L> {
-    type Value = Box<L::Value>;
     type Command = Box<L::Command>;
     type Op = Box<L::Op>;
     type Rejection = Box<L::Rejection>;
@@ -164,11 +164,11 @@ impl<L: IsLog> IsLog for BoxedLog<L> {
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for BoxedLog<L>
+impl<L, V> EvalNested<Read<Box<V>>> for BoxedLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Read<V>>,
 {
-    fn execute_query(&self, _q: Read<<Self as IsLog>::Value>) -> Box<L::Value> {
-        Box::new(self.0.as_ref().execute_query(Read::new()))
+    fn execute_query(&self, _q: &Read<Box<V>>) -> Box<V> {
+        Box::new(self.0.as_ref().execute_query(&Read::new()))
     }
 }

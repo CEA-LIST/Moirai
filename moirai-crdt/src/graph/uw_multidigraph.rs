@@ -20,8 +20,7 @@ use rand::{Rng, seq::IteratorRandom};
 
 use crate::HashMap;
 
-type LabeledMultidigraph<V, E, Vl, El> =
-    DiGraph<Content<V, <Vl as IsLog>::Value>, Content<(V, V, E), <El as IsLog>::Value>>;
+type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, E), El>>;
 
 #[derive(Clone, Debug)]
 pub enum UWGraph<V, E, No, Lo> {
@@ -53,8 +52,8 @@ where
     Vl: IsLog,
     El: IsLog,
 {
-    arcs: HashMap<(V, V, E), El>,
     vertices: HashMap<V, Vl>,
+    arcs: HashMap<(V, V, E), El>,
 }
 
 #[derive(Clone, Debug)]
@@ -96,14 +95,13 @@ where
 
 impl<V, E, Vl, El> IsLog for UWGraphLog<V, E, Vl, El>
 where
-    Vl: IsLog,
-    El: IsLog,
+    Vl: IsLog + Debug,
+    El: IsLog + Debug,
     V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     type Command = UWGraph<V, E, Vl::Op, El::Op>;
     type Op = UWGraph<V, E, Vl::Op, El::Op>;
-    type Value = LabeledMultidigraph<V, E, Vl, El>;
     type Rejection = LabelledGraphRejection<V, E, Vl, El>;
 
     fn new() -> Self {
@@ -269,24 +267,25 @@ where
     }
 }
 
-impl<V, E, Vl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E, Vl, El>
+impl<V, E, Vl, VLabel, El, ELabel> EvalNested<Read<LabeledMultidigraph<V, E, VLabel, ELabel>>>
+    for UWGraphLog<V, E, Vl, El>
 where
-    Vl: IsLog + EvalNested<Read<<Vl as IsLog>::Value>>,
-    El: IsLog + EvalNested<Read<<El as IsLog>::Value>>,
+    Vl: IsLog + Debug + EvalNested<Read<VLabel>>,
+    El: IsLog + Debug + EvalNested<Read<ELabel>>,
     V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     fn execute_query(
         &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
-        let mut graph = <Self as IsLog>::Value::new();
+        _q: &Read<LabeledMultidigraph<V, E, VLabel, ELabel>>,
+    ) -> <Read<LabeledMultidigraph<V, E, VLabel, ELabel>> as QueryOperation>::Response {
+        let mut graph = LabeledMultidigraph::new();
         let mut node_idx = HashMap::default();
         for (v, child) in self.vertices.iter() {
             if child.is_default() {
                 continue;
             }
-            let idx = graph.add_node(Content::new(v.clone(), child.execute_query(Read::new())));
+            let idx = graph.add_node(Content::new(v.clone(), child.execute_query(&Read::new())));
             node_idx.insert(v.clone(), idx);
         }
         for ((v1, v2, e), child) in self.arcs.iter() {
@@ -302,7 +301,7 @@ where
                         *i2,
                         Content::new(
                             (v1.clone(), v2.clone(), e.clone()),
-                            child.execute_query(Read::new()),
+                            child.execute_query(&Read::new()),
                         ),
                     );
                 }
@@ -341,12 +340,8 @@ impl<V, E, Vl, El> CommandGenerator for UWGraphLog<V, E, Vl, El>
 where
     V: ValueGenerator + Clone + Hash + Debug + Eq,
     E: ValueGenerator + Clone + Hash + Debug + Eq,
-    Vl: CommandGenerator
-        + IsLog<Command = <Vl as IsLog>::Op>
-        + EvalNested<Read<<Vl as IsLog>::Value>>,
-    El: CommandGenerator
-        + IsLog<Command = <El as IsLog>::Op>
-        + EvalNested<Read<<El as IsLog>::Value>>,
+    Vl: CommandGenerator + IsLog<Command = <Vl as IsLog>::Op> + Debug,
+    El: CommandGenerator + IsLog<Command = <El as IsLog>::Op> + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -358,11 +353,23 @@ where
             RemoveArc,
         }
 
-        let graph = self.execute_query(Read::new());
+        let vertices: Vec<&V> = self
+            .vertices
+            .iter()
+            .filter_map(|(id, child)| (!child.is_default()).then_some(id))
+            .collect();
+        let arcs: Vec<&(V, V, E)> = self
+            .arcs
+            .iter()
+            .filter_map(|(id, child)| {
+                (!child.is_default() && vertices.contains(&&id.0) && vertices.contains(&&id.1))
+                    .then_some(id)
+            })
+            .collect();
 
-        let choice = if graph.node_count() < 2 {
+        let choice = if vertices.len() < 2 {
             &Choice::UpdateVertex
-        } else if graph.edge_count() == 0 {
+        } else if arcs.is_empty() {
             let dist = WeightedIndex::new([2, 1, 3]).unwrap();
             &[
                 Choice::UpdateVertex,
@@ -393,19 +400,17 @@ where
                 }
             }
             Choice::RemoveVertex => {
-                let idx = graph.node_indices().choose(rng).unwrap();
-                let v = graph.node_weight(idx).unwrap();
-                UWGraph::RemoveVertex { id: v.id.clone() }
+                let v = vertices.iter().choose(rng).unwrap();
+                UWGraph::RemoveVertex { id: (*v).clone() }
             }
             Choice::UpdateArc => {
-                let idx1 = graph.node_indices().choose(rng).unwrap();
-                let idx2 = graph.node_indices().choose(rng).unwrap();
-                let v1 = graph.node_weight(idx1).unwrap();
-                let v2 = graph.node_weight(idx2).unwrap();
+                let v1 = vertices.iter().choose(rng).unwrap();
+                let v2 = vertices.iter().choose(rng).unwrap();
                 let edge = E::generate(rng, &<E as ValueGenerator>::Config::default());
 
                 let child_op = if let Some(child) =
-                    self.arcs.get(&(v1.id.clone(), v2.id.clone(), edge.clone()))
+                    self.arcs
+                        .get(&((**v1).clone(), (**v2).clone(), edge.clone()))
                 {
                     child.generate_command(rng)
                 } else {
@@ -413,19 +418,18 @@ where
                 };
 
                 UWGraph::UpdateArc {
-                    source: v1.id.clone(),
-                    target: v2.id.clone(),
+                    source: (**v1).clone(),
+                    target: (**v2).clone(),
                     id: edge,
                     child: child_op,
                 }
             }
             Choice::RemoveArc => {
-                let edge = graph.edge_references().choose(rng).unwrap();
-                let e = edge.weight();
+                let (source, target, id) = arcs.iter().choose(rng).unwrap();
                 UWGraph::RemoveArc {
-                    source: e.id.0.clone(),
-                    target: e.id.1.clone(),
-                    id: e.id.2.clone(),
+                    source: source.clone(),
+                    target: target.clone(),
+                    id: id.clone(),
                 }
             }
         }
@@ -434,6 +438,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "fuzz")]
+    use moirai_fuzz::config::Predicate;
     use moirai_protocol::{
         crdt::{policy::LwwPolicy, query::Read},
         replica::IsReplica,
@@ -444,7 +450,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     use crate::{
         counter::resettable_counter::Counter,
-        graph::uw_multidigraph::{UWGraph, UWGraphLog},
+        graph::uw_multidigraph::{LabeledMultidigraph, UWGraph, UWGraphLog},
         register::unique_register::Register,
         utils::membership::{triplet_log, twins_log},
     };
@@ -560,9 +566,12 @@ mod tests {
         replica_b.receive(event);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -589,12 +598,12 @@ mod tests {
         graph.add_node(2);
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
+            &replica_a.query(&Read::new()),
             &graph
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_b.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_b.query(&Read::new())
         ));
     }
 
@@ -612,8 +621,8 @@ mod tests {
         let event_b = replica_b.send(UWGraph::RemoveVertex { id: "A" }).unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 0);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 0);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 0);
     }
 
     #[test]
@@ -648,13 +657,16 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
@@ -664,13 +676,16 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -732,8 +747,8 @@ mod tests {
         replica_b.receive(event_c_2.clone());
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_b.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_b.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
 
         let event_a_1 = replica_a
@@ -754,20 +769,20 @@ mod tests {
         replica_a.receive(event_c_1);
         replica_a.receive(event_c_2);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_b.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_b.query(&Read::new())
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_b.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_b.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
     }
 
@@ -813,13 +828,16 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
@@ -829,13 +847,16 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -849,13 +870,21 @@ mod tests {
         };
 
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<UWGraphLog<usize, usize, Lww, Cntr>>::new(
+        let config = FuzzerConfig::<
+            UWGraphLog<usize, usize, Lww, Cntr>,
+            Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
+        >::new(
             "uw_graph",
             runs,
             true,
-            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            Predicate::new(Read::new(), |a, b| {
+                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
+            }),
             false,
         );
-        fuzzer::<UWGraphLog<usize, usize, Lww, Cntr>>(config);
+        fuzzer::<
+            UWGraphLog<usize, usize, Lww, Cntr>,
+            Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
+        >(config);
     }
 }

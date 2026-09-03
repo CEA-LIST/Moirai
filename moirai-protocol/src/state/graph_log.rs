@@ -9,7 +9,6 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport},
     state::{
-        cache::CachedLog,
         effect_context::EffectContext,
         log::IsLog,
         stable_state::IsStableState,
@@ -17,11 +16,8 @@ use crate::{
     },
 };
 
-// TODO: This should be renamed CachedGraphLog
-pub type GraphLog<O> = CachedLog<RawGraphLog<O>>;
-
 #[derive(Debug)]
-pub struct RawGraphLog<O>
+pub struct GraphLog<O>
 where
     O: ReplicatedDataType,
 {
@@ -29,7 +25,7 @@ where
     unstable: EventGraph<O>,
 }
 
-impl<O> Clone for RawGraphLog<O>
+impl<O> Clone for GraphLog<O>
 where
     O: ReplicatedDataType + Clone,
     O::StableState: Clone,
@@ -42,11 +38,10 @@ where
     }
 }
 
-impl<O> IsLog for RawGraphLog<O>
+impl<O> IsLog for GraphLog<O>
 where
     O: ReplicatedDataType + Clone + UsesUnstableService<EventGraph<O>>,
 {
-    type Value = <O as ReplicatedDataType>::Value;
     type Command = O;
     type Op = O;
     type Rejection = O::Rejection;
@@ -106,7 +101,7 @@ where
     }
 }
 
-impl<O> Default for RawGraphLog<O>
+impl<O> Default for GraphLog<O>
 where
     O: ReplicatedDataType,
 {
@@ -118,7 +113,7 @@ where
     }
 }
 
-impl<O> RawGraphLog<O>
+impl<O> GraphLog<O>
 where
     O: ReplicatedDataType,
 {
@@ -138,29 +133,12 @@ where
     }
 }
 
-impl<O> GraphLog<O>
-where
-    O: ReplicatedDataType + Clone + Debug + UsesUnstableService<EventGraph<O>>,
-{
-    pub fn stable(&self) -> &O::StableState {
-        self.inner().stable()
-    }
-
-    pub fn unstable(&self) -> &EventGraph<O> {
-        self.inner().unstable()
-    }
-
-    pub fn from_stable(stable: <O as ReplicatedDataType>::StableState) -> Self {
-        Self::from_inner(RawGraphLog::from_stable(stable))
-    }
-}
-
-impl<O, Q> EvalNested<Q> for RawGraphLog<O>
+impl<O, Q> EvalNested<Q> for GraphLog<O>
 where
     O: ReplicatedDataType + Clone + Eval<Q, EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
     Q: QueryOperation,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
     }
 }

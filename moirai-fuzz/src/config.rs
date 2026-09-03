@@ -1,5 +1,6 @@
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
+    crdt::query::QueryOperation,
     replica::{ReplicaId, ReplicaIdOwned},
     state::log::IsLog,
 };
@@ -21,9 +22,27 @@ where
     }
 }
 
-pub struct FuzzerConfig<'a, L>
+pub struct Predicate<Q>
+where
+    Q: QueryOperation,
+{
+    pub query: Q,
+    pub cmp: fn(&Q::Response, &Q::Response) -> bool,
+}
+
+impl<Q> Predicate<Q>
+where
+    Q: QueryOperation,
+{
+    pub fn new(query: Q, cmp: fn(&Q::Response, &Q::Response) -> bool) -> Self {
+        Self { query, cmp }
+    }
+}
+
+pub struct FuzzerConfig<'a, L, Q>
 where
     L: IsLog,
+    Q: QueryOperation,
 {
     /// Name of the simulation, used for logging
     pub name: &'a str,
@@ -31,22 +50,23 @@ where
     /// Whether to perform a final merge after all operations are issued
     pub final_merge: bool,
     /// Comparison function to check if the replicas converge
-    pub compare: fn(&L::Value, &L::Value) -> bool,
+    pub predicate: Predicate<Q>,
     /// Whether to save the execution results to a JSON file in bench-results/
     pub save_execution: bool,
     /// Optional adapter used to update a protocol oracle immediately before command preparation.
     pub oracle_driver: Option<OracleDriver<L>>,
 }
 
-impl<'a, L> FuzzerConfig<'a, L>
+impl<'a, L, Q> FuzzerConfig<'a, L, Q>
 where
     L: IsLog,
+    Q: QueryOperation,
 {
     pub fn new(
         name: &'a str,
         runs: Vec<RunConfig>,
         final_merge: bool,
-        compare: fn(&L::Value, &L::Value) -> bool,
+        predicate: Predicate<Q>,
         save_execution: bool,
     ) -> Self {
         assert!(
@@ -57,16 +77,17 @@ where
             name,
             runs,
             final_merge,
-            compare,
+            predicate,
             save_execution,
             oracle_driver: None,
         }
     }
 }
 
-impl<'a, L> FuzzerConfig<'a, CommitmentLog<L>>
+impl<'a, L, Q> FuzzerConfig<'a, CommitmentLog<L>, Q>
 where
     L: IsLog,
+    Q: QueryOperation,
 {
     /// Drive the commitment log's Omega oracle from the simulated network state.
     pub fn with_omega_oracle(mut self) -> Self {

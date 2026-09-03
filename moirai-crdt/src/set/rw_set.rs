@@ -82,7 +82,6 @@ impl<V> ReplicatedDataType for RWSet<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
-    type Value = HashSet<V>;
     type StableState = (HashSet<V>, Vec<RWSet<V>>);
     type Rejection = Infallible;
 
@@ -169,16 +168,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for RWSet<V>
+impl<V, U> Eval<Read<HashSet<V>>, U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<HashSet<V>>,
         stable: &<RWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = stable.0.clone();
         let mut removed = HashSet::default();
 
@@ -213,7 +212,7 @@ where
 {
     /// Semantics: there exists an 'add' for the element, and there is no 'remove' for the element.
     fn execute_query(
-        q: Contains<V>,
+        q: &Contains<V>,
         stable: &<RWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
     ) -> <Contains<V> as QueryOperation>::Response {
@@ -300,10 +299,10 @@ mod tests {
         replica_b.receive(event);
 
         let result = HashSet::default();
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Contains("a")), false);
-        assert_eq!(replica_b.query(Contains("b")), false);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Contains("a")), false);
+        assert_eq!(replica_b.query(&Contains("b")), false);
     }
 
     #[test]
@@ -319,10 +318,10 @@ mod tests {
         replica_b.receive(clear);
 
         let result = set_from_slice(&[]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Contains("a")), false);
-        assert_eq!(replica_b.query(Contains("a")), false);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Contains("a")), false);
+        assert_eq!(replica_b.query(&Contains("a")), false);
     }
 
     // Note: Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
@@ -334,8 +333,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = set_from_slice(&["a"]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
     }
 
     #[test]
@@ -352,8 +351,8 @@ mod tests {
         // assert_eq!(replica_b.state().unstable().len(), 1);
 
         let result = set_from_slice(&["a"]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
     }
 
     #[test]
@@ -369,9 +368,9 @@ mod tests {
         replica_b.receive(event_a_2);
 
         let result = set_from_slice(&[]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Contains("a")), false);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Contains("a")), false);
     }
 
     #[test]
@@ -384,10 +383,10 @@ mod tests {
         // assert_eq!(replica_b.state().unstable().len(), 0);
 
         let result = set_from_slice(&[]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Contains("a")), false);
-        assert_eq!(replica_a.query(Contains("a")), false);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Contains("a")), false);
+        assert_eq!(replica_a.query(&Contains("a")), false);
     }
 
     #[test]
@@ -400,8 +399,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = set_from_slice(&[]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
     }
 
     #[test]
@@ -410,22 +409,22 @@ mod tests {
         let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["a"]));
 
         let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
         let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[]));
 
         let event_a = replica_a.send(RWSet::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&["a"]));
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["a"]));
     }
 
     #[test]
@@ -442,8 +441,8 @@ mod tests {
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_2);
 
-        assert_eq!(replica_a.query(Read::new()), set_from_slice(&[]));
-        assert_eq!(replica_b.query(Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[]));
+        assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[]));
     }
 
     #[cfg(feature = "fuzz")]
@@ -451,7 +450,7 @@ mod tests {
     #[ignore]
     fn fuzz_rw_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -459,9 +458,14 @@ mod tests {
         let run = RunConfig::new(0.4, 4, 10, None, None, false, false);
         let runs = vec![run.clone(); 10_000];
 
-        let config =
-            FuzzerConfig::<VecLog<RWSet<String>>>::new("rw_set", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<VecLog<RWSet<String>>, Read<HashSet<String>>>::new(
+            "rw_set",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<VecLog<RWSet<String>>>(config);
+        fuzzer::<VecLog<RWSet<String>>, Read<HashSet<String>>>(config);
     }
 }

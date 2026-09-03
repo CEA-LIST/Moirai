@@ -1,4 +1,10 @@
-use std::{cell::OnceCell, fmt, fmt::Debug};
+use std::{
+    cell::OnceCell,
+    cmp::Ordering,
+    fmt::{self, Debug},
+};
+
+use castaway::cast;
 
 use crate::{
     clock::version_vector::Version,
@@ -10,11 +16,9 @@ use crate::{
     state::{effect_context::EffectContext, log::IsLog},
 };
 
-// TODO: a better cache design would be the following:
-// When an update is delivered, if it does not conflict with any other update, we can update the cache in place.
-// This raises the following questions:
-// - How to determine if an update conflicts with another update? This is not only about concurrency but a semantic property of the updates.
-// And how to do it efficiently?
+pub trait IncrementalCache<O> {
+    fn apply(&mut self, op: &O);
+}
 
 #[derive(Default)]
 pub struct CacheCell<V> {
@@ -68,15 +72,17 @@ impl<V> Clone for CacheCell<V> {
 }
 
 #[derive(Debug, Clone)]
-pub struct CachedLog<L: IsLog> {
+pub struct CachedLog<L, V> {
     inner: L,
-    read_cache: CacheCell<L::Value>,
+    version: Option<Version>,
+    read_cache: CacheCell<V>,
 }
 
-impl<L: IsLog> CachedLog<L> {
+impl<L, V> CachedLog<L, V> {
     pub fn from_inner(inner: L) -> Self {
         Self {
             inner,
+            version: None,
             read_cache: CacheCell::new(),
         }
     }
@@ -95,27 +101,27 @@ impl<L: IsLog> CachedLog<L> {
     }
 }
 
-impl<L: IsLog> Default for CachedLog<L> {
+impl<L, V> Default for CachedLog<L, V>
+where
+    L: Default,
+{
     fn default() -> Self {
         Self {
             inner: L::default(),
+            version: None,
             read_cache: CacheCell::new(),
         }
     }
 }
 
-impl<L: IsLog> IsLog for CachedLog<L> {
-    type Value = L::Value;
+impl<L, V> IsLog for CachedLog<L, V>
+where
+    L: IsLog,
+    V: Debug + IncrementalCache<L::Op>,
+{
     type Command = L::Command;
     type Op = L::Op;
     type Rejection = L::Rejection;
-
-    fn new() -> Self {
-        Self {
-            inner: L::new(),
-            read_cache: CacheCell::new(),
-        }
-    }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {
         self.inner.prepare(command)
@@ -126,12 +132,20 @@ impl<L: IsLog> IsLog for CachedLog<L> {
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        self.read_cache.invalidate();
+        if let Some(version) = &self.version
+            && event.version().partial_cmp(version) == Some(Ordering::Greater)
+        {
+            if let Some(cache) = self.read_cache.get_mut() {
+                cache.apply(event.op());
+            }
+        } else {
+            self.read_cache.invalidate();
+        }
+        self.version = Some(event.version().clone());
         self.inner.effect(event, ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.read_cache.invalidate();
         self.inner.stabilize(version);
     }
 
@@ -145,22 +159,41 @@ impl<L: IsLog> IsLog for CachedLog<L> {
     }
 }
 
-impl<Q, L> EvalNested<Q> for CachedLog<L>
+// The 'static bound here does not mean queries live forever.
+// It only means their types contain no borrowed references.
+
+impl<Q, L, V> EvalNested<Q> for CachedLog<L, V>
 where
-    Q: QueryOperation,
-    L: IsLog + EvalNested<Q>,
+    Q: QueryOperation + 'static,
+    Q::Response: 'static,
+    L: IsLog + EvalNested<Q> + EvalNested<Read<V>>,
+    V: Debug + Clone + IncrementalCache<L::Op> + 'static,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
-        self.inner.execute_query(q)
+    fn execute_query(&self, q: &Q) -> Q::Response {
+        if cast!(q, &Read<V>).is_ok() {
+            let value = self
+                .read_cache
+                .get_or_compute(|| {
+                    <L as EvalNested<Read<V>>>::execute_query(&self.inner, &Read::new())
+                })
+                .clone();
+
+            cast!(value, Q::Response)
+                .ok()
+                .expect("Read response type must match the log value type")
+        } else {
+            self.inner.execute_query(q)
+        }
     }
 }
 
-impl<L> BorrowedRead for CachedLog<L>
+impl<L, V> BorrowedRead<V> for CachedLog<L, V>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Read<V>>,
+    V: Debug + IncrementalCache<L::Op>,
 {
-    fn read_ref(&self) -> &Self::Value {
+    fn read_ref(&self) -> &V {
         self.read_cache
-            .get_or_compute(|| self.inner.execute_query(Read::new()))
+            .get_or_compute(|| self.inner.execute_query(&Read::new()))
     }
 }

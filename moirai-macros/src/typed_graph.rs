@@ -92,7 +92,7 @@ macro_rules! typed_graph {
 
         //* EDGE TYPES *//
 
-        macro_rules! __typed_graph_min {
+        macro_rules! typed_graph_min {
             $(
                 ($edge_ty) => {
                     $edge_min
@@ -100,7 +100,7 @@ macro_rules! typed_graph {
             )*
         }
 
-        macro_rules! __typed_graph_max {
+        macro_rules! typed_graph_max {
             $(
                 ($edge_ty) => {
                     $crate::typed_graph!(@max $edge_max)
@@ -109,12 +109,12 @@ macro_rules! typed_graph {
         }
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        enum __TypedGraphEdgeType {
+        enum TypedGraphEdgeType {
             $( $edge_ty ),*
         }
 
         #[cfg(feature = "test_utils")]
-        impl ::deepsize::DeepSizeOf for __TypedGraphEdgeType {
+        impl ::deepsize::DeepSizeOf for TypedGraphEdgeType {
             fn deep_size_of_children(&self, _context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 0
             }
@@ -167,19 +167,19 @@ macro_rules! typed_graph {
 
             pub fn max(&self) -> ::std::primitive::usize {
                 match self {
-                    $( $arcs::$conn(_) => __typed_graph_max!($ety) ),*
+                    $( $arcs::$conn(_) => typed_graph_max!($ety) ),*
                 }
             }
 
             pub fn min(&self) -> ::std::primitive::usize {
                 match self {
-                    $( $arcs::$conn(_) => __typed_graph_min!($ety) ),*
+                    $( $arcs::$conn(_) => typed_graph_min!($ety) ),*
                 }
             }
 
-            pub fn edge_type(&self) -> __TypedGraphEdgeType {
+            pub fn edge_type(&self) -> TypedGraphEdgeType {
                 match self {
-                    $( $arcs::$conn(_) => __TypedGraphEdgeType::$ety ),*
+                    $( $arcs::$conn(_) => TypedGraphEdgeType::$ety ),*
                 }
             }
         }
@@ -242,16 +242,16 @@ macro_rules! typed_graph {
         fn max_edges_for(source: &$vertex, kind: &$edge) -> ::std::primitive::usize {
             match (source, kind) {
                 $(
-                    ($vertex::$src(_), $edge::$conn(_)) => __typed_graph_max!($ety),
+                    ($vertex::$src(_), $edge::$conn(_)) => typed_graph_max!($ety),
                 )*
                 _ => ::std::primitive::usize::MAX,
             }
         }
 
         // Helper function to get the schema edge type for a given edge
-        fn edge_type_of(edge: &$edge) -> __TypedGraphEdgeType {
+        fn edge_type_of(edge: &$edge) -> TypedGraphEdgeType {
             match edge {
-                $( $edge::$conn(_) => __TypedGraphEdgeType::$ety ),*
+                $( $edge::$conn(_) => TypedGraphEdgeType::$ety ),*
             }
         }
 
@@ -268,8 +268,8 @@ macro_rules! typed_graph {
                 $(
                     ($vertex::$src(_), $vertex::$tgt(_), $edge::$conn(_)) => {
                         ::std::option::Option::Some((
-                            __typed_graph_min!($ety),
-                            __typed_graph_max!($ety),
+                            typed_graph_min!($ety),
+                            typed_graph_max!($ety),
                         ))
                     },
                 )*
@@ -281,18 +281,18 @@ macro_rules! typed_graph {
         fn required_constraints_for(
             vertex: &$vertex,
         ) -> ::std::vec::Vec<(
-            __TypedGraphEdgeType,
+            TypedGraphEdgeType,
             ::std::primitive::usize,
             ::std::primitive::usize,
         )> {
             let mut constraints = ::std::vec::Vec::new();
-            let mut seen_edge_types: $crate::HashSet<__TypedGraphEdgeType> =
+            let mut seen_edge_types: $crate::HashSet<TypedGraphEdgeType> =
                 ::std::default::Default::default();
             $(
                 if let $vertex::$src(_) = vertex {
-                    let edge_type = __TypedGraphEdgeType::$ety;
+                    let edge_type = TypedGraphEdgeType::$ety;
                     if seen_edge_types.insert(edge_type) {
-                        constraints.push((edge_type, __typed_graph_min!($ety), __typed_graph_max!($ety)));
+                        constraints.push((edge_type, typed_graph_min!($ety), typed_graph_max!($ety)));
                     }
                 }
             )*
@@ -332,7 +332,7 @@ macro_rules! typed_graph {
                 let source = &graph[source_idx];
 
                 let mut outgoing_by_type: $crate::HashMap<
-                    __TypedGraphEdgeType,
+                    TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
                 for edge in graph.edges_directed(source_idx, ::petgraph::Direction::Outgoing) {
@@ -451,7 +451,7 @@ macro_rules! typed_graph {
                 let source = &graph[node_idx];
 
                 let mut outgoing_by_type: $crate::HashMap<
-                    __TypedGraphEdgeType,
+                    TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
                 for edge in graph.edges_directed(node_idx, ::petgraph::Direction::Outgoing) {
@@ -524,7 +524,6 @@ macro_rules! typed_graph {
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
         {
-            type Value = ::petgraph::graph::DiGraph<$vertex, $edge>;
             type StableState = ::std::vec::Vec<Self>;
             type Rejection = $crate::typed_graph::TypedGraphRejection;
 
@@ -615,7 +614,7 @@ macro_rules! typed_graph {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;
 
-                let graph = Self::execute_query(Read::new(), stable, unstable);
+                let graph = Self::execute_query(&Read::new(), stable, unstable);
                 match op {
                     $graph::AddVertex { .. } => ::std::result::Result::Ok(()),
                     $graph::RemoveVertex { id } => graph
@@ -701,7 +700,7 @@ macro_rules! typed_graph {
 
         impl<P, U> $crate::moirai_protocol::crdt::eval::Eval<
             $crate::moirai_protocol::crdt::query::Read<
-                <Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::Value
+                ::petgraph::graph::DiGraph<$vertex, $edge>
             >,
             U
         > for $graph<P>
@@ -710,9 +709,10 @@ macro_rules! typed_graph {
             U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<Self> ,
         {
             fn execute_query(
-                _q: $crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::Value>,
+                _q: &$crate::moirai_protocol::crdt::query::Read<::petgraph::graph::DiGraph<$vertex, $edge>>,
                 stable: &<Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::StableState,
-                unstable: &U) -> <$crate::moirai_protocol::crdt::query::Read<<$graph<P> as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response
+                unstable: &U,
+            ) -> ::petgraph::graph::DiGraph<$vertex, $edge>
             {
                 let tagged_ops: ::std::vec::Vec<(
                     &Self,
@@ -795,7 +795,7 @@ macro_rules! typed_graph {
                 // We assume that their can exist at most one arc of a given type between a given source and target,
                 // so we only need to enforce MAX constraints per (source, edge_type) group
                 let mut groups: $crate::HashMap<
-                    ($vertex, __TypedGraphEdgeType),
+                    ($vertex, TypedGraphEdgeType),
                     ::std::vec::Vec<::std::primitive::usize>,
                 > = ::std::default::Default::default();
                 for (i, (source, _target, kind, _tag)) in arc_entries.iter().enumerate() {

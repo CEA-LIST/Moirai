@@ -11,8 +11,6 @@ use crate::{
 };
 
 pub trait ReplicatedDataType: Debug + Sized {
-    // TODO: try to get rid of this
-    type Value: Default + Debug;
     type StableState: IsStableState<Self>;
     type Rejection: Debug + Display;
 
@@ -56,7 +54,7 @@ pub trait ReplicatedDataType: Debug + Sized {
     ) {
     }
 
-    fn eval<Q, U>(q: Q, stable: &Self::StableState, unstable: &U) -> Q::Response
+    fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
     where
         Q: QueryOperation,
         Self: Eval<Q, U>,

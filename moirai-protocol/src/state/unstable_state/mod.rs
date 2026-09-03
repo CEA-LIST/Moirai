@@ -26,6 +26,15 @@ pub trait IsUnstableCore<O> {
     fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
     where
         O: Clone;
+    /// Returns a list of references to tagged operations that are concurrent with the given version in the current unstable state.
+    fn concurrent(&self, version: &Version) -> Vec<&TaggedOp<O>>
+    where
+        O: Clone,
+    {
+        self.iter()
+            .filter(|to| !to.id().is_predecessor_of(version))
+            .collect()
+    }
     /// Returns an iterator over all tagged operations in the unstable state.
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
     where

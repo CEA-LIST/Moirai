@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! union {
     (
-        $union:ident = $($variant:ident ($ty:ty, $log:ty))|+ $(,)?
+        $union:ident = $($variant:ident ($ty:ty, $log:ty => $value:ty))|+ $(,)?
     ) => {
         $crate::paste::paste! {
             /// List of variant names, used in the `Choose` operation to select a variant
@@ -43,7 +43,7 @@ macro_rules! union {
 
             impl [<$union Child>] {
                 /// Returns the variant name that this child log corresponds to.
-                fn __moirai_variant(&self) -> [<$union Variant>] {
+                fn variant(&self) -> [<$union Variant>] {
                     match self {
                         $(
                             Self::$variant(_) => [<$union Variant>]::$variant,
@@ -56,7 +56,7 @@ macro_rules! union {
             #[derive(Clone, Debug)]
             pub enum [<$union ChildValue>] {
                 $(
-                    $variant(<$log as $crate::moirai_protocol::state::log::IsLog>::Value),
+                    $variant($value),
                 )*
             }
 
@@ -97,7 +97,7 @@ macro_rules! union {
             }
 
             impl [<$union Log>] {
-                fn __moirai_child_is_default(child: &[<$union Child>]) -> ::std::primitive::bool {
+                fn child_is_default(child: &[<$union Child>]) -> ::std::primitive::bool {
                     match child {
                         $(
                             [<$union Child>]::$variant(log) => {
@@ -107,7 +107,7 @@ macro_rules! union {
                     }
                 }
 
-                fn __moirai_reset_child(
+                fn reset_child(
                     child: &mut [<$union Child>],
                     version: &$crate::moirai_protocol::clock::version_vector::Version,
                 ) {
@@ -122,7 +122,6 @@ macro_rules! union {
             }
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
-                type Value = [<$union Value>];
                 type Command = [<$union>];
                 type Op = [<$union>];
                 type Rejection = [<$union Rejection>];
@@ -143,7 +142,7 @@ macro_rules! union {
                         },
                         [<$union Container>]::Value(child) => match op {
                             $union::Choose(choice) => {
-                                if child.__moirai_variant() == *choice {
+                                if child.variant() == *choice {
                                     ::std::result::Result::Err([<$union Rejection>]::NotConflict)
                                 } else {
                                     ::std::result::Result::Err([<$union Rejection>]::MissingVariant)
@@ -173,7 +172,7 @@ macro_rules! union {
                             if let $union::Choose(choice) = op {
                                 return children
                                     .iter()
-                                    .any(|child| child.__moirai_variant() == *choice)
+                                    .any(|child| child.variant() == *choice)
                                     .then_some(())
                                     .ok_or([<$union Rejection>]::MissingVariant);
                             }
@@ -273,30 +272,30 @@ macro_rules! union {
                             match &mut self.child {
                                 [<$union Container>]::Unset => {}
                                 [<$union Container>]::Value(existing_child) => {
-                                    if existing_child.__moirai_variant() != choice {
-                                        Self::__moirai_reset_child(existing_child, event.version());
-                                        if Self::__moirai_child_is_default(&existing_child) {
+                                    if existing_child.variant() != choice {
+                                        Self::reset_child(existing_child, event.version());
+                                        if Self::child_is_default(&existing_child) {
                                             self.child = [<$union Container>]::Unset;
                                         }
                                     }
                                 }
                                 [<$union Container>]::Conflicts(children) => {
                                     for mut child in children.iter_mut() {
-                                        if child.__moirai_variant() != choice {
-                                            Self::__moirai_reset_child(child, event.version());
+                                        if child.variant() != choice {
+                                            Self::reset_child(child, event.version());
                                         }
                                     }
-                                    let no_conflicts = children.iter().all(|child| child.__moirai_variant() == choice || Self::__moirai_child_is_default(child));
+                                    let no_conflicts = children.iter().all(|child| child.variant() == choice || Self::child_is_default(child));
                                     if no_conflicts {
                                         let selected_child = children
                                             .iter()
-                                            .find(|child| child.__moirai_variant() == choice)
+                                            .find(|child| child.variant() == choice)
                                             .expect("there should be a child with the chosen variant");
                                         self.child = [<$union Container>]::Value(::std::boxed::Box::new(
                                             ::std::clone::Clone::clone(selected_child),
                                         ));
                                     } else {
-                                        children.retain(|child| !Self::__moirai_child_is_default(child));
+                                        children.retain(|child| !Self::child_is_default(child));
                                     }
                                 }
                             }
@@ -372,19 +371,19 @@ macro_rules! union {
                 fn is_default(&self) -> ::std::primitive::bool {
                     match &self.child {
                         [<$union Container>]::Unset => true,
-                        [<$union Container>]::Value(child) => Self::__moirai_child_is_default(child.as_ref()),
+                        [<$union Container>]::Value(child) => Self::child_is_default(child.as_ref()),
                         [<$union Container>]::Conflicts(children) => children
                             .iter()
-                            .all(Self::__moirai_child_is_default),
+                            .all(Self::child_is_default),
                     }
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$union Log>] {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>> for [<$union Log>] {
                 fn execute_query(
                     &self,
-                    _q: $crate::moirai_protocol::crdt::query::Read<Self::Value>,
-                ) -> <$crate::moirai_protocol::crdt::query::Read<Self::Value> as $crate::moirai_protocol::crdt::query::QueryOperation>::Response {
+                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>,
+                ) -> [<$union Value>] {
                     match &self.child {
                         [<$union Container>]::Unset => [<$union Value>]::Unset,
                         [<$union Container>]::Value(child) => {
@@ -393,7 +392,7 @@ macro_rules! union {
                                     [<$union Child>]::$variant(log) => {
                                         let value = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
                                             log,
-                                            $crate::moirai_protocol::crdt::query::Read::new(),
+                                            &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
                                         );
                                         [<$union Value>]::Value(::std::boxed::Box::new([<$union ChildValue>]::$variant(value)))
                                     }
@@ -408,7 +407,7 @@ macro_rules! union {
                                         [<$union Child>]::$variant(log) => {
                                             let v = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
                                                 log,
-                                                $crate::moirai_protocol::crdt::query::Read::new(),
+                                                &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
                                             );
                                             [<$union ChildValue>]::$variant(v)
                                         }

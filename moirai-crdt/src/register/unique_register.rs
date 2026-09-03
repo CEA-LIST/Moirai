@@ -35,7 +35,6 @@ where
     V: Debug + Clone,
     P: Policy,
 {
-    type Value = Option<V>;
     type StableState = Vec<Self>;
     type Rejection = Infallible;
 
@@ -89,17 +88,17 @@ where
 {
 }
 
-impl<V, P, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Register<V, P>
+impl<V, P, U> Eval<Read<Option<V>>, U> for Register<V, P>
 where
     V: Debug + Clone,
     P: Policy,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<Option<V>>,
         stable: &<Register<V, P> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<Option<V>> as QueryOperation>::Response {
         let mut value = None;
         for op in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             match op {
@@ -163,8 +162,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = "World".to_string();
-        assert_eq!(replica_a.query(Read::new()), Some(result));
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), Some(result));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -175,20 +174,20 @@ mod tests {
         let event_a = replica_a
             .send(Register::Write("Hello".to_string()))
             .unwrap();
-        assert!(replica_a.query(Read::new()) == Some("Hello".to_string()));
+        assert!(replica_a.query(&Read::new()) == Some("Hello".to_string()));
         let event_b = replica_b
             .send(Register::Write("World".to_string()))
             .unwrap();
-        assert!(replica_b.query(Read::new()) == Some("World".to_string()));
+        assert!(replica_b.query(&Read::new()) == Some("World".to_string()));
 
         replica_a.receive(event_b.clone());
-        assert_eq!(replica_a.query(Read::new()), Some("World".to_string()));
+        assert_eq!(replica_a.query(&Read::new()), Some("World".to_string()));
         replica_b.receive(event_a.clone());
-        assert_eq!(replica_b.query(Read::new()), Some("World".to_string()));
+        assert_eq!(replica_b.query(&Read::new()), Some("World".to_string()));
         replica_c.receive(event_a);
-        assert_eq!(replica_c.query(Read::new()), Some("Hello".to_string()));
+        assert_eq!(replica_c.query(&Read::new()), Some("Hello".to_string()));
         replica_c.receive(event_b);
-        assert_eq!(replica_c.query(Read::new()), Some("World".to_string()));
+        assert_eq!(replica_c.query(&Read::new()), Some("World".to_string()));
     }
 
     #[test]
@@ -210,9 +209,9 @@ mod tests {
         replica_c.receive(event_a_1.clone());
         replica_a.receive(event_b_1);
 
-        assert_eq!(replica_a.query(Read::new()), Some("y".to_string()));
-        assert_eq!(replica_b.query(Read::new()), Some("y".to_string()));
-        assert_eq!(replica_c.query(Read::new()), Some("y".to_string()));
+        assert_eq!(replica_a.query(&Read::new()), Some("y".to_string()));
+        assert_eq!(replica_b.query(&Read::new()), Some("y".to_string()));
+        assert_eq!(replica_c.query(&Read::new()), Some("y".to_string()));
     }
 
     #[test]
@@ -230,8 +229,8 @@ mod tests {
         replica_a.receive(event_b.clone());
         replica_b.receive(event_a.clone());
 
-        assert_eq!(replica_a.query(Read::new()), Some("Public".to_string()));
-        assert_eq!(replica_b.query(Read::new()), Some("Public".to_string()));
+        assert_eq!(replica_a.query(&Read::new()), Some("Public".to_string()));
+        assert_eq!(replica_b.query(&Read::new()), Some("Public".to_string()));
 
         let event_a_2 = replica_a
             .send(Register::Write("Private".to_string()))
@@ -239,8 +238,8 @@ mod tests {
 
         replica_b.receive(event_a_2.clone());
 
-        assert_eq!(replica_a.query(Read::new()), Some("Private".to_string()));
-        assert_eq!(replica_b.query(Read::new()), Some("Private".to_string()));
+        assert_eq!(replica_a.query(&Read::new()), Some("Private".to_string()));
+        assert_eq!(replica_b.query(&Read::new()), Some("Private".to_string()));
 
         let event_b_2 = replica_b
             .send(Register::Write("Protected".to_string()))
@@ -253,8 +252,8 @@ mod tests {
         replica_a.receive(event_b_2.clone());
         replica_b.receive(event_a_3.clone());
 
-        assert_eq!(replica_a.query(Read::new()), Some("Protected".to_string()));
-        assert_eq!(replica_b.query(Read::new()), Some("Protected".to_string()));
+        assert_eq!(replica_a.query(&Read::new()), Some("Protected".to_string()));
+        assert_eq!(replica_b.query(&Read::new()), Some("Protected".to_string()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -262,15 +261,21 @@ mod tests {
     #[ignore]
     fn fuzz_lww_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<Register<i32, LwwPolicy>>;
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log>::new("lww_register", runs, true, |a, b| a == b, false);
-        fuzzer::<Log>(config);
+        let config = FuzzerConfig::<Log, Read<Option<i32>>>::new(
+            "lww_register",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+        fuzzer::<Log, Read<Option<i32>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -278,14 +283,20 @@ mod tests {
     #[ignore]
     fn fuzz_fair_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<Register<i32, FairPolicy>>;
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log>::new("fair_register", runs, true, |a, b| a == b, false);
-        fuzzer::<Log>(config);
+        let config = FuzzerConfig::<Log, Read<Option<i32>>>::new(
+            "fair_register",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+        fuzzer::<Log, Read<Option<i32>>>(config);
     }
 }

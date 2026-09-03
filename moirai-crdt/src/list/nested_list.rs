@@ -11,7 +11,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{cache::CachedLog, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
     utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
@@ -43,7 +43,7 @@ where
     L: IsLog,
 {
     /// EgWalker list tracking the logical positions of children
-    positions: GraphLog<SimpleList<EventId>>,
+    positions: CachedLog<GraphLog<SimpleList<EventId>>, Vec<EventId>>,
     /// Map from EventId to child CRDT instance
     children: UWMapLog<EventId, L>,
 }
@@ -57,7 +57,7 @@ where
     }
 
     pub fn positions(&self) -> &GraphLog<SimpleList<EventId>> {
-        &self.positions
+        self.positions.inner()
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -96,7 +96,6 @@ where
 {
     type Command = NestedList<L::Op>;
     type Op = NestedList<L::Op>;
-    type Value = Vec<L::Value>;
     type Rejection = NestedListRejection<Box<L::Rejection>>;
 
     fn new() -> Self {
@@ -131,7 +130,7 @@ where
                 );
             }
             NestedList::Delete { pos } => {
-                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
@@ -145,7 +144,7 @@ where
                 );
             }
             NestedList::Update { pos, op } => {
-                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
@@ -222,19 +221,16 @@ where
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
+impl<L, V> EvalNested<Read<Vec<V>>> for NestedListLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + PartialEq,
+    L: IsLog + EvalNested<Read<V>>,
+    V: Clone + Default + PartialEq,
 {
-    fn execute_query(
-        &self,
-        _q: Read<<Self as IsLog>::Value>,
-    ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
+    fn execute_query(&self, _q: &Read<Vec<V>>) -> <Read<Vec<V>> as QueryOperation>::Response {
         let mut list = Vec::new();
         let positions = self.positions.read_ref();
         #[allow(clippy::mutable_key_type)]
-        let map = self.children.execute_query(Read::new());
+        let map = self.children.execute_query(&Read::new());
         for eid in positions {
             if let Some(child) = map.get(eid) {
                 list.push(child.clone());
@@ -247,8 +243,7 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> CommandGenerator for NestedListLog<L>
 where
-    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op> + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + PartialEq,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
 {
     fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -318,38 +313,38 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10]);
-        assert_eq!(replica_b.query(Read::new()), vec![10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10]);
 
         let event = replica_b
             .send(NestedList::update(0, Counter::Dec(5)))
             .unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![5]);
-        assert_eq!(replica_b.query(Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5]);
+        assert_eq!(replica_b.query(&Read::new()), vec![5]);
 
         let event = replica_a
             .send(NestedList::insert(1, Counter::Inc(10)))
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![5, 10]);
-        assert_eq!(replica_b.query(Read::new()), vec![5, 10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5, 10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![5, 10]);
 
         let event = replica_a
             .send(NestedList::update(0, Counter::Inc(1)))
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![6, 10]);
-        assert_eq!(replica_b.query(Read::new()), vec![6, 10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![6, 10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![6, 10]);
 
         let event = replica_a.send(NestedList::delete(0)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10]);
-        assert_eq!(replica_b.query(Read::new()), vec![10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10]);
 
         let event_a = replica_a
             .send(NestedList::insert(1, Counter::Inc(21)))
@@ -359,8 +354,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), vec![21]);
-        assert_eq!(replica_a.query(Read::new()), vec![21]);
+        assert_eq!(replica_b.query(&Read::new()), vec![21]);
+        assert_eq!(replica_a.query(&Read::new()), vec![21]);
     }
 
     #[test]
@@ -376,15 +371,15 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
-        assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10, 20]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10, 20]);
     }
 
     #[test]
     fn insert_then_delete() {
         record!(Duet {
-            first: VecLog<Counter<i32>>,
-            second: VecLog<Counter<i32>>,
+            first: VecLog<Counter<i32>> => i32,
+            second: VecLog<Counter<i32>> => i32,
         });
 
         let (mut replica_a, _) = twins_log::<NestedListLog<DuetLog>>();
@@ -394,7 +389,7 @@ mod tests {
             .unwrap();
         let _ = replica_a.send(NestedList::delete(0)).unwrap();
 
-        let list = replica_a.query(Read::new());
+        let list = replica_a.query(&Read::new());
         assert_eq!(list, Vec::<DuetValue>::new());
     }
 
@@ -415,9 +410,9 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), vec![5]);
-        assert_eq!(replica_a.query(Read::new()), vec![5]);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_b.query(&Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -446,9 +441,9 @@ mod tests {
         replica_c.receive(event_a);
         replica_c.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), vec![15, 5]);
-        assert_eq!(replica_b.query(Read::new()), vec![15, 5]);
-        assert_eq!(replica_c.query(Read::new()), vec![15, 5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![15, 5]);
+        assert_eq!(replica_b.query(&Read::new()), vec![15, 5]);
+        assert_eq!(replica_c.query(&Read::new()), vec![15, 5]);
     }
 
     #[test]
@@ -485,9 +480,9 @@ mod tests {
         replica_c.receive(event_a_1);
         replica_c.receive(event_b_2);
 
-        assert_eq!(replica_a.query(Read::new()), vec![1]);
-        assert_eq!(replica_b.query(Read::new()), vec![1]);
-        assert_eq!(replica_c.query(Read::new()), vec![1]);
+        assert_eq!(replica_a.query(&Read::new()), vec![1]);
+        assert_eq!(replica_b.query(&Read::new()), vec![1]);
+        assert_eq!(replica_c.query(&Read::new()), vec![1]);
     }
 
     #[test]
@@ -511,7 +506,7 @@ mod tests {
         let event_b = replica_b.send(NestedList::delete(1)).unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -538,7 +533,7 @@ mod tests {
             .unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -561,7 +556,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -581,13 +576,13 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", vec![11, 5]);
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
 
         replica_b.receive(event_a);
         replica_b.receive(event_a_2);
         replica_b.receive(event_a_3);
 
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
 
         let event_b = replica_b.send(UWMap::Remove("a")).unwrap();
         let event_a = replica_a
@@ -598,8 +593,8 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", vec![100]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]
@@ -607,22 +602,22 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
         let runs = vec![run.clone(); 10];
 
-        let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>::new(
             "nested_list_counter",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
         );
 
-        fuzzer::<NestedListLog<VecLog<Counter<i32>>>>(config);
+        fuzzer::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -630,7 +625,7 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_string() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::graph_log::GraphLog;
@@ -640,15 +635,15 @@ mod tests {
         let run = RunConfig::new(0.6, 4, 25, None, None, true, false);
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<NestedListLog<GraphLog<List<char>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>::new(
             "nested_list_string",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
         );
 
-        fuzzer::<NestedListLog<GraphLog<List<char>>>>(config);
+        fuzzer::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>(config);
     }
 }
 
@@ -684,7 +679,7 @@ where
 {
     fn default() -> Self {
         Self {
-            positions: GraphLog::default(),
+            positions: CachedLog::from_inner(GraphLog::default()),
             children: Default::default(),
         }
     }

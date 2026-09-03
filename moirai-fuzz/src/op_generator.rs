@@ -4,8 +4,8 @@ use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
     crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     state::{
-        cache::CachedLog,
-        graph_log::RawGraphLog,
+        cache::{CachedLog, IncrementalCache},
+        graph_log::GraphLog,
         log::{BoxedLog, IsLog},
         po_log::POLog,
         unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune, event_graph::EventGraph},
@@ -61,7 +61,7 @@ pub trait CommandGenerator: IsLog {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
 }
 
-impl<O> CommandGenerator for RawGraphLog<O>
+impl<O> CommandGenerator for GraphLog<O>
 where
     O: ReplicatedDataType + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
 {
@@ -90,9 +90,10 @@ where
     }
 }
 
-impl<L> CommandGenerator for CachedLog<L>
+impl<L, V> CommandGenerator for CachedLog<L, V>
 where
-    L: CommandGenerator,
+    L: IsLog + CommandGenerator,
+    V: IncrementalCache<L::Op> + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         self.inner().generate_command(rng)

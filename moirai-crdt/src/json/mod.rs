@@ -8,6 +8,7 @@ use moirai_protocol::{crdt::query::Read, utils::boxer::Boxer};
 use rand::Rng;
 
 use crate::{
+    HashMap,
     counter::resettable_counter::Counter,
     flag::ew_flag::EWFlag,
     list::{
@@ -18,11 +19,11 @@ use crate::{
 };
 
 union! {
-    Json = Number(Counter<f64>, VecLog::<Counter<f64>>)
-        | Boolean(EWFlag, VecLog::<EWFlag>)
-        | String(List<char>, GraphLog::<List<char>>)
-        | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog>)
-        | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog>)
+    Json = Number(Counter<f64>, VecLog::<Counter<f64>> => f64)
+        | Boolean(EWFlag, VecLog::<EWFlag> => bool)
+        | String(List<char>, GraphLog::<List<char>> => String)
+        | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog> => HashMap<String, JsonValue>)
+        | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog> => Vec<JsonValue>)
 }
 
 // TODO: the code must be factorized
@@ -89,7 +90,7 @@ impl CommandGenerator for JsonLog {
             }
         }
 
-        let value = self.eval(Read::new());
+        let value = self.eval(&Read::new());
 
         match value {
             JsonValue::Unset => {
@@ -201,7 +202,7 @@ mod tests {
     use crate::{
         counter::resettable_counter::Counter,
         flag::ew_flag::EWFlag,
-        json::{Json, JsonLog, JsonVariant},
+        json::{Json, JsonLog, JsonValue, JsonVariant},
         list::{eg_walker::List, nested_list::NestedList},
         map::uw_map::UWMap,
         query::read_as_json::ReadAsJson,
@@ -223,8 +224,8 @@ mod tests {
             Value::Number(Number::from_f64(5.0).unwrap()),
         ]);
 
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -251,8 +252,8 @@ mod tests {
         replica_b.receive(choose);
 
         let result = Value::Number(Number::from_f64(5.0).unwrap());
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -263,7 +264,7 @@ mod tests {
         replica_a.send(Json::Number(Counter::Inc(3.0))).unwrap();
 
         let result = Value::Number(Number::from_f64(8.0).unwrap());
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -271,7 +272,7 @@ mod tests {
         let (replica_a, _) = twins_log::<JsonLog>();
 
         let result = Value::Null;
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -283,7 +284,7 @@ mod tests {
         assert!(op.is_err());
 
         let result = Value::Number(Number::from_f64(5.0).unwrap());
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -297,8 +298,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = Value::Number(Number::from_f64(8.0).unwrap());
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
             Value::Number(Number::from_f64(5.0).unwrap()),
         ]);
 
-        assert_eq!(conflicts, replica_a.query(ReadAsJson::new()));
+        assert_eq!(conflicts, replica_a.query(&ReadAsJson::new()));
 
         let event_a2 = replica_a.send(Json::Number(Counter::Inc(2.0))).unwrap();
         let event_b2 = replica_b.send(Json::Boolean(EWFlag::Disable)).unwrap();
@@ -329,8 +330,8 @@ mod tests {
             Value::Number(Number::from_f64(7.0).unwrap()),
         ]);
 
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -354,9 +355,9 @@ mod tests {
 
         let result = json!([true, 1.0, {"key": 0.0}]);
 
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
-        assert_eq!(result, replica_c.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_c.query(&ReadAsJson::new()));
     }
 
     #[test]
@@ -390,12 +391,12 @@ mod tests {
         replica_c.receive(event_b);
 
         assert_eq!(
-            replica_a.query(ReadAsJson::new()),
-            replica_b.query(ReadAsJson::new())
+            replica_a.query(&ReadAsJson::new()),
+            replica_b.query(&ReadAsJson::new())
         );
         assert_eq!(
-            replica_a.query(ReadAsJson::new()),
-            replica_c.query(ReadAsJson::new())
+            replica_a.query(&ReadAsJson::new()),
+            replica_c.query(&ReadAsJson::new())
         );
     }
 
@@ -417,8 +418,8 @@ mod tests {
             "k2": true
         });
 
-        assert_eq!(result, replica_a.query(ReadAsJson::new()));
-        assert_eq!(result, replica_b.query(ReadAsJson::new()));
+        assert_eq!(result, replica_a.query(&ReadAsJson::new()));
+        assert_eq!(result, replica_b.query(&ReadAsJson::new()));
     }
 
     /// digraph {
@@ -509,7 +510,7 @@ mod tests {
         replica_a.receive(b3);
         replica_a.receive(b4);
 
-        assert_eq!(replica_b.query(Read::new()), replica_a.query(Read::new()));
+        assert_eq!(replica_b.query(&Read::new()), replica_a.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -517,15 +518,21 @@ mod tests {
     #[ignore]
     fn fuzz_json() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.6, 4, 100, None, None, true, false);
         let runs = vec![run.clone(); 1_000];
 
-        let config = FuzzerConfig::<JsonLog>::new("json", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<JsonLog, Read<JsonValue>>::new(
+            "json",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<JsonLog>(config);
+        fuzzer::<JsonLog, Read<JsonValue>>(config);
     }
 }

@@ -68,7 +68,6 @@ where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
 {
-    type Value = DiGraph<V, E>;
     // TODO: We can use a more efficient representation of the stable state
     // TODO: garbage collect dangling arcs
     type StableState = Vec<Self>;
@@ -129,7 +128,7 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> Result<(), Self::Rejection> {
-        let state = Self::execute_query(Read::new(), stable, unstable);
+        let state = Self::execute_query(&Read::new(), stable, unstable);
 
         let vertex_exists = |v| state.node_weights().any(|node| node == v);
         let vertex_index = |v| {
@@ -180,17 +179,17 @@ where
     }
 }
 
-impl<V, E, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Graph<V, E>
+impl<V, E, U> Eval<Read<DiGraph<V, E>>, U> for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<DiGraph<V, E>>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<DiGraph<V, E>> as QueryOperation>::Response {
         let mut ops: Vec<&Self> = stable
             .iter()
             .chain(unstable.iter().map(|t| t.op()))
@@ -252,7 +251,7 @@ where
             RemoveArc,
         }
 
-        let graph = Self::execute_query(Read::new(), stable, unstable);
+        let graph = Self::execute_query(&Read::new(), stable, unstable);
 
         let choice = if graph.node_count() < 2 {
             &Choice::AddVertex
@@ -326,9 +325,12 @@ mod tests {
         replica_a.receive(event);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -346,11 +348,14 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
     }
 
     #[test]
@@ -369,9 +374,12 @@ mod tests {
         replica_a.receive(event_b);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -384,11 +392,14 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -403,7 +414,7 @@ mod tests {
         let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
     }
 
     #[test]
@@ -430,12 +441,12 @@ mod tests {
         replica_b.receive(event_c);
         replica_c.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_b.query(Read::new()).edge_count(), 1);
-        assert_eq!(replica_c.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_c.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_b.query(&Read::new()).edge_count(), 1);
+        assert_eq!(replica_c.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_c.query(&Read::new()).edge_count(), 1);
     }
 
     #[test]
@@ -453,24 +464,30 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a.send(Graph::AddVertex("B")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -489,12 +506,15 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -503,23 +523,26 @@ mod tests {
     #[ignore]
     fn fuzz_aw_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
+        use petgraph::graph::DiGraph;
 
         let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<Graph<String, u8>>>::new(
+        let config = FuzzerConfig::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>::new(
             "aw_graph",
             runs,
             true,
             // |a, b| vf2::isomorphisms(a, b).first().is_some(),
-            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            Predicate::new(Read::new(), |a, b| {
+                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
+            }),
             false,
         );
 
-        fuzzer::<VecLog<Graph<String, u8>>>(config);
+        fuzzer::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>(config);
     }
 }

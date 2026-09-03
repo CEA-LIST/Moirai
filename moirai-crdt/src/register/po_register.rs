@@ -29,7 +29,6 @@ impl<V> ReplicatedDataType for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
 {
-    type Value = HashSet<V>;
     type StableState = Vec<Self>;
     type Rejection = Infallible;
 
@@ -70,16 +69,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for PORegister<V>
+impl<V, U> Eval<Read<HashSet<V>>, U> for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<HashSet<V>>,
         stable: &<PORegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         // The set can contain only incomparable values
         let mut set = HashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|to| to.op())) {
@@ -133,15 +132,23 @@ mod tests {
     #[ignore]
     fn fuzz_po_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
+        use crate::HashSet;
+
         type Log = VecLog<PORegister<i32>>;
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log>::new("po_register", runs, true, |a, b| a == b, false);
-        fuzzer::<Log>(config);
+        let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
+            "po_register",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+        fuzzer::<Log, Read<HashSet<i32>>>(config);
     }
 
     #[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
@@ -176,11 +183,11 @@ mod tests {
         replica_b.receive(event);
 
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Child])
         );
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Child])
         );
 
@@ -190,8 +197,8 @@ mod tests {
         replica_a.receive(event);
 
         let result = set_from_slice(&[Family::Parent(20)]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -204,11 +211,11 @@ mod tests {
         replica_b.receive(event);
 
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(20)])
         );
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Parent(20)])
         );
 
@@ -216,8 +223,8 @@ mod tests {
         replica_a.receive(event);
 
         let result = set_from_slice(&[Family::Child]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -234,8 +241,8 @@ mod tests {
         replica_b.receive(event_a);
 
         let result = set_from_slice(&[Family::Parent(20), Family::Parent(21)]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -244,19 +251,19 @@ mod tests {
 
         let event_a_1 = replica_a.send(PORegister::Write(Family::Child)).unwrap();
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Child])
         );
         let event_b_1 = replica_b
             .send(PORegister::Write(Family::Parent(42)))
             .unwrap();
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Parent(42)])
         );
         replica_a.receive(event_b_1);
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(42)])
         );
 
@@ -264,17 +271,17 @@ mod tests {
             .send(PORegister::Write(Family::Parent(21)))
             .unwrap();
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Parent(21)])
         );
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(21)])
         );
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -285,34 +292,34 @@ mod tests {
             .send(PORegister::Write(Family::Parent(20)))
             .unwrap();
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(20)])
         );
         let event_b_1 = replica_b
             .send(PORegister::Write(Family::Parent(42)))
             .unwrap();
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Parent(42)])
         );
         replica_a.receive(event_b_1);
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(42), Family::Parent(20)])
         );
 
         let event_b_2 = replica_b.send(PORegister::Write(Family::Child)).unwrap();
         assert_eq!(
-            replica_b.query(Read::new()),
+            replica_b.query(&Read::new()),
             set_from_slice(&[Family::Child])
         );
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
         assert_eq!(
-            replica_a.query(Read::new()),
+            replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(20)])
         );
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 }

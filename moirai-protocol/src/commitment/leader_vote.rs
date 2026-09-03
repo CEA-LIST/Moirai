@@ -1,7 +1,6 @@
 use std::{convert::Infallible, range::Range};
 
 use crate::{
-    clock::version_vector::Version,
     crdt::{
         eval::Eval,
         query::QueryOperation,
@@ -22,7 +21,6 @@ pub enum LeaderVote {
 }
 
 impl ReplicatedDataType for LeaderVote {
-    type Value = Option<Version>;
     type StableState = ();
     type Rejection = Infallible;
 
@@ -66,7 +64,7 @@ impl ReplicatedDataType for LeaderVote {
     ) {
     }
 
-    fn eval<Q, U>(q: Q, stable: &Self::StableState, unstable: &U) -> Q::Response
+    fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
     where
         Q: QueryOperation,
         Self: Eval<Q, U>,
@@ -155,7 +153,7 @@ where
 {
     /// Compute `supports(v, r)` for every `v` newly observed by delivered event from replica `r`.
     fn execute_query(
-        q: NewSupports,
+        q: &NewSupports,
         _stable: &Self::StableState,
         unstable: &U,
     ) -> <NewSupports as QueryOperation>::Response {

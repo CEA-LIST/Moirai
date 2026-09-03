@@ -18,12 +18,10 @@ use crate::{
     utils::hashmap::HashMap,
 };
 
-pub type RawVecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
-pub type RawMapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
-pub type CachedVecLog<O> = CachedLog<RawVecLog<O>>;
-pub type CachedMapLog<O> = CachedLog<RawMapLog<O>>;
-pub type VecLog<O> = CachedVecLog<O>;
-pub type MapLog<O> = CachedMapLog<O>;
+pub type CachedVecLog<O, V> = CachedLog<VecLog<O>, V>;
+pub type CachedMapLog<O, V> = CachedLog<MapLog<O>, V>;
+pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
+pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
 
 #[derive(Debug, Clone)]
 // #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -40,7 +38,6 @@ where
     O: ReplicatedDataType + Clone + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
-    type Value = O::Value;
     type Command = O;
     type Op = O;
     type Rejection = O::Rejection;
@@ -198,7 +195,7 @@ where
     O: ReplicatedDataType + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
     }
 }

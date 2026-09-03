@@ -37,7 +37,6 @@ impl<V> ReplicatedDataType for Counter<V>
 where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
-    type Value = V;
     type StableState = CounterStable<V>;
     type Rejection = Infallible;
 
@@ -52,16 +51,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for Counter<V>
+impl<V, U> Eval<Read<V>, U> for Counter<V>
 where
     V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<V>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<V> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
             match op {
@@ -123,7 +122,7 @@ mod tests {
         replica_a.send(Counter::Inc(5)).unwrap();
 
         assert_eq!(
-            replica_a.query(ReadStable::<CounterStable<isize>>::new()),
+            replica_a.query(&ReadStable::<CounterStable<isize>>::new()),
             CounterStable::default()
         );
     }
@@ -139,8 +138,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 0;
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -157,8 +156,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 5;
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -166,7 +165,7 @@ mod tests {
     #[ignore]
     fn fuzz_resettable_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -174,9 +173,14 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<VecLog<Counter<i32>>>::new("counter", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<VecLog<Counter<i32>>, Read<i32>>::new(
+            "counter",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<VecLog<Counter<i32>>>(config);
+        fuzzer::<VecLog<Counter<i32>>, Read<i32>>(config);
     }
 }

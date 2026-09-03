@@ -32,7 +32,6 @@ impl<L> IsLog for OptionLog<L>
 where
     L: IsLog,
 {
-    type Value = Option<L::Value>;
     type Command = Optional<L::Op>;
     type Op = Optional<L::Op>;
     type Rejection = Infallible;
@@ -117,17 +116,14 @@ where
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for OptionLog<L>
+impl<L, V> EvalNested<Read<Option<V>>> for OptionLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
+    L: IsLog + EvalNested<Read<V>>,
+    V: Clone + Default + PartialEq,
 {
-    fn execute_query(
-        &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
+    fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {
         match self.child {
-            Some(ref child) => Some(child.execute_query(Read::new())),
+            Some(ref child) => Some(child.execute_query(&Read::new())),
             None => Default::default(),
         }
     }
@@ -178,8 +174,8 @@ mod tests {
         let event = replica_a.send(Optional::Set(Counter::Inc(5))).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some(5));
-        assert_eq!(replica_b.query(Read::new()), Some(5));
+        assert_eq!(replica_a.query(&Read::new()), Some(5));
+        assert_eq!(replica_b.query(&Read::new()), Some(5));
     }
 
     #[test]
@@ -192,8 +188,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), Some(7));
-        assert_eq!(replica_b.query(Read::new()), Some(7));
+        assert_eq!(replica_a.query(&Read::new()), Some(7));
+        assert_eq!(replica_b.query(&Read::new()), Some(7));
     }
 
     #[test]
@@ -209,8 +205,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), Some(2));
-        assert_eq!(replica_b.query(Read::new()), Some(2));
+        assert_eq!(replica_a.query(&Read::new()), Some(2));
+        assert_eq!(replica_b.query(&Read::new()), Some(2));
     }
 
     #[cfg(feature = "fuzz")]
@@ -218,21 +214,21 @@ mod tests {
     #[ignore]
     fn fuzz_optional_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         type OptionalCounter = OptionLog<VecLog<Counter<i32>>>;
 
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<OptionalCounter>::new(
+        let config = FuzzerConfig::<OptionalCounter, Read<Option<i32>>>::new(
             "optional_counter",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
         );
 
-        fuzzer::<OptionalCounter>(config);
+        fuzzer::<OptionalCounter, Read<Option<i32>>>(config);
     }
 }

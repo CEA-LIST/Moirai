@@ -43,7 +43,6 @@ impl<V> IsLog for RWBagLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Value = HashMap<V, usize>;
     type Command = RWBag<V>;
     type Op = RWBag<V>;
     type Rejection = Infallible;
@@ -91,9 +90,9 @@ where
 {
     fn execute_query(
         &self,
-        _q: Read<HashMap<V, usize>>,
+        _q: &Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
-        self.0.execute_query(Read::new())
+        self.0.execute_query(&Read::new())
     }
 }
 
@@ -144,8 +143,8 @@ mod tests {
         let mut result = HashMap::default();
         result.insert("b", 1);
 
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[test]
@@ -159,8 +158,8 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", 2);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]
@@ -168,14 +167,19 @@ mod tests {
     #[ignore]
     fn fuzz_rw_bag() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config =
-            FuzzerConfig::<RWBagLog<usize>>::new("rw_bag", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<RWBagLog<usize>, Read<HashMap<usize, usize>>>::new(
+            "rw_bag",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<RWBagLog<usize>>(config);
+        fuzzer::<RWBagLog<usize>, Read<HashMap<usize, usize>>>(config);
     }
 }

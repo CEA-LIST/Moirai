@@ -50,7 +50,7 @@ where
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
     // TODO: add a method for state transfer
     /// Query the current state of the replica with the given query operation.
-    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
     where
         L: EvalNested<Q>;
     /// Update the state of the replica with the given operation.
@@ -108,7 +108,7 @@ where
         self.tcsb.pull(since)
     }
 
-    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
     where
         L: EvalNested<Q>,
     {

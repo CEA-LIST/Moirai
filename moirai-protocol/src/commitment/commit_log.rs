@@ -36,7 +36,6 @@ impl<L> IsLog for CommitmentLog<L>
 where
     L: IsLog,
 {
-    type Value = L::Value;
     type Command = L::Command;
     type Op = CommitOp<L::Op>;
     type Rejection = L::Rejection;
@@ -73,7 +72,7 @@ where
         // Compute the new supports
         let deltas = self
             .leader_log
-            .execute_query(NewSupports::new(vote_event_id));
+            .execute_query(&NewSupports::new(vote_event_id));
 
         // Gather the new anchors
         let candidate_anchors = self.protocol.apply_support_deltas(deltas);
@@ -144,7 +143,7 @@ where
     L: IsLog + EvalNested<Q>,
     Q: QueryOperation,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         self.child.execute_query(q)
     }
 }

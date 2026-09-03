@@ -27,7 +27,6 @@ impl<V> ReplicatedDataType for TORegister<V>
 where
     V: Debug + PartialOrd + Ord + Clone,
 {
-    type Value = Option<V>;
     type StableState = Vec<Self>;
     type Rejection = Infallible;
 
@@ -68,16 +67,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for TORegister<V>
+impl<V, U> Eval<Read<Option<V>>, U> for TORegister<V>
 where
     V: Debug + PartialOrd + Ord + Clone,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
+        _q: &Read<Option<V>>,
         stable: &<TORegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<<Self as ReplicatedDataType>::Value> as QueryOperation>::Response {
+    ) -> <Read<Option<V>> as QueryOperation>::Response {
         let mut val = None;
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let TORegister::Write(v) = o
@@ -125,15 +124,21 @@ mod tests {
     #[ignore]
     fn fuzz_to_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<TORegister<i32>>;
         let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log>::new("to_register", runs, true, |a, b| a == b, false);
-        fuzzer::<Log>(config);
+        let config = FuzzerConfig::<Log, Read<Option<i32>>>::new(
+            "to_register",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+        fuzzer::<Log, Read<Option<i32>>>(config);
     }
 
     #[test]
@@ -143,15 +148,15 @@ mod tests {
         let event = replica_a.send(TORegister::Write("a")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some("a"));
-        assert_eq!(replica_b.query(Read::new()), Some("a"));
+        assert_eq!(replica_a.query(&Read::new()), Some("a"));
+        assert_eq!(replica_b.query(&Read::new()), Some("a"));
 
         let event = replica_b.send(TORegister::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = Some("b");
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -161,14 +166,14 @@ mod tests {
         let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some("c"));
-        assert_eq!(replica_b.query(Read::new()), Some("c"));
+        assert_eq!(replica_a.query(&Read::new()), Some("c"));
+        assert_eq!(replica_b.query(&Read::new()), Some("c"));
 
         let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some("d"));
-        assert_eq!(replica_b.query(Read::new()), Some("d"));
+        assert_eq!(replica_a.query(&Read::new()), Some("d"));
+        assert_eq!(replica_b.query(&Read::new()), Some("d"));
 
         let event_a = replica_a.send(TORegister::Write("a")).unwrap();
         let event_b = replica_b.send(TORegister::Write("b")).unwrap();
@@ -176,8 +181,8 @@ mod tests {
         replica_a.receive(event_b);
 
         let result = Some("b");
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -189,14 +194,14 @@ mod tests {
         let event = replica_a.send(TORegister::Write("c")).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some("c"));
-        assert_eq!(replica_b.query(Read::new()), Some("c"));
+        assert_eq!(replica_a.query(&Read::new()), Some("c"));
+        assert_eq!(replica_b.query(&Read::new()), Some("c"));
 
         let event = replica_b.send(TORegister::Write("d")).unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some("d"));
-        assert_eq!(replica_b.query(Read::new()), Some("d"));
+        assert_eq!(replica_a.query(&Read::new()), Some("d"));
+        assert_eq!(replica_b.query(&Read::new()), Some("d"));
 
         let event_a = replica_a.send(TORegister::Write("a")).unwrap();
         let event_aa = replica_a.send(TORegister::Write("aa")).unwrap();
@@ -208,8 +213,8 @@ mod tests {
         replica_b.receive(event_aa);
 
         let result = Some("b");
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert_eq!(eval_a, result);
         assert_eq!(eval_a, eval_b);
     }
@@ -219,18 +224,18 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<TORegister<u32>>();
 
         let event_a_1 = replica_a.send(TORegister::Write(4)).unwrap();
-        assert_eq!(replica_a.query(Read::new()), Some(4));
+        assert_eq!(replica_a.query(&Read::new()), Some(4));
         let event_b_1 = replica_b.send(TORegister::Write(5)).unwrap();
-        assert_eq!(replica_b.query(Read::new()), Some(5));
+        assert_eq!(replica_b.query(&Read::new()), Some(5));
         replica_a.receive(event_b_1);
-        assert_eq!(replica_a.query(Read::new()), Some(5));
+        assert_eq!(replica_a.query(&Read::new()), Some(5));
 
         let event_b_2 = replica_b.send(TORegister::Write(2)).unwrap();
-        assert_eq!(replica_b.query(Read::new()), Some(2));
+        assert_eq!(replica_b.query(&Read::new()), Some(2));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
 
-        assert_eq!(replica_a.query(Read::new()), Some(4));
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), Some(4));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 }

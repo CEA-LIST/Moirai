@@ -80,7 +80,6 @@ where
     L: IsLog,
     K: Clone + Debug + Hash + Eq,
 {
-    type Value = HashMap<K, L::Value>;
     type Command = RWMap<K, L::Op>;
     type Op = RWMap<K, L::Op>;
     type Rejection = L::Rejection;
@@ -97,7 +96,7 @@ where
         match event.op().clone() {
             RWMap::Update(k, v) => {
                 // Query the RWSet
-                let was_live = self.set.execute_query(Contains(k.clone()));
+                let was_live = self.set.execute_query(&Contains(k.clone()));
                 let set_op = Event::unfold(event.clone(), RWSet::Add(k.clone()));
 
                 // Effect of the RWSet will determine whether the key is live or not, which in turn determines how we effect the child log
@@ -105,7 +104,7 @@ where
                 self.set.effect(set_op, &mut silent_ctx);
 
                 // If the child op is not redundant
-                if self.set.execute_query(Contains(k.clone())) {
+                if self.set.execute_query(&Contains(k.clone())) {
                     let child_op = Event::unfold(event, v);
 
                     if ctx.is_owned() {
@@ -183,7 +182,7 @@ where
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         match op {
             RWMap::Update(k, v) => {
-                if self.set.execute_query(Contains(k.clone())) {
+                if self.set.execute_query(&Contains(k.clone())) {
                     self.children
                         .get(k)
                         .map_or_else(|| L::default().is_enabled(v), |child| child.is_enabled(v))
@@ -196,21 +195,21 @@ where
     }
 }
 
-impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for RWMapLog<K, L>
+impl<K, L, V> EvalNested<Read<HashMap<K, V>>> for RWMapLog<K, L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Read<V>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
+    V: Default + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
-        let mut map = HashMap::default();
+        _q: &Read<HashMap<K, V>>,
+    ) -> <Read<HashMap<K, V>> as QueryOperation>::Response {
+        let mut map: HashMap<K, V> = HashMap::default();
         for (k, v) in &self.children {
-            if self.set.execute_query(Contains(k.clone())) {
-                let val = v.execute_query(Read::new());
-                if val != <L as IsLog>::Value::default() {
+            if self.set.execute_query(&Contains(k.clone())) {
+                let val = v.execute_query(&Read::new());
+                if val != V::default() {
                     map.insert(k.clone(), val);
                 }
             }
@@ -219,20 +218,19 @@ where
     }
 }
 
-impl<'a, K, Q, L> EvalNested<Get<'a, K, Q>> for RWMapLog<K, L>
+impl<K, Q, L> EvalNested<Get<K, Q>> for RWMapLog<K, L>
 where
     Q: QueryOperation,
-    L: IsLog + EvalNested<Q> + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Q>,
     K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
-    fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
-        if !self.set.execute_query(Contains(q.key.clone())) {
+    fn execute_query(&self, q: &Get<K, Q>) -> <Get<K, Q> as QueryOperation>::Response {
+        if !self.set.execute_query(&Contains(q.key.clone())) {
             return None;
         }
 
-        if let Some(child) = self.children.get(q.key) {
-            Some(child.execute_query(q.nested_query))
+        if let Some(child) = self.children.get(&q.key) {
+            Some(child.execute_query(&q.nested_query))
         } else {
             None
         }
@@ -242,9 +240,8 @@ where
 #[cfg(feature = "fuzz")]
 impl<K, L> CommandGenerator for RWMapLog<K, L>
 where
-    L: IsLog<Command = <L as IsLog>::Op> + EvalNested<Read<<L as IsLog>::Value>> + CommandGenerator,
+    L: IsLog<Command = <L as IsLog>::Op> + CommandGenerator,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use moirai_fuzz::value_generator::ValueGenerator;
@@ -320,10 +317,10 @@ mod tests {
         replica_b.receive(remove);
 
         let expected: HashMap<String, i32> = HashMap::default();
-        assert_eq!(replica_a.query(Read::new()), expected);
-        assert_eq!(replica_b.query(Read::new()), expected);
-        assert_eq!(replica_a.query(Get::new(&key, Read::new())), None);
-        assert_eq!(replica_b.query(Get::new(&key, Read::new())), None);
+        assert_eq!(replica_a.query(&Read::new()), expected);
+        assert_eq!(replica_b.query(&Read::new()), expected);
+        assert_eq!(replica_a.query(&Get::new(&key, Read::new())), None);
+        assert_eq!(replica_b.query(&Get::new(&key, Read::new())), None);
     }
 
     #[test]
@@ -342,10 +339,10 @@ mod tests {
         let mut expected = HashMap::default();
         expected.insert(key.clone(), 7);
 
-        assert_eq!(replica_a.query(Read::new()), expected);
-        assert_eq!(replica_b.query(Read::new()), expected);
-        assert_eq!(replica_a.query(Get::new(&key, Read::new())), Some(7));
-        assert_eq!(replica_b.query(Get::new(&key, Read::new())), Some(7));
+        assert_eq!(replica_a.query(&Read::new()), expected);
+        assert_eq!(replica_b.query(&Read::new()), expected);
+        assert_eq!(replica_a.query(&Get::new(&key, Read::new())), Some(7));
+        assert_eq!(replica_b.query(&Get::new(&key, Read::new())), Some(7));
     }
 
     #[test]
@@ -366,9 +363,9 @@ mod tests {
         let event_b = replica_b.send(RWMap::Remove("doc".to_string())).unwrap();
         replica_a.receive(event_b);
 
-        let result = HashMap::default();
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        let result: HashMap<String, Vec<char>> = HashMap::default();
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[test]
@@ -387,7 +384,10 @@ mod tests {
         let _ = replica_a.send(RWMap::Remove("patate".to_string())).unwrap();
         let _ = replica_a.send(RWMap::Clear).unwrap();
 
-        assert_eq!(replica_a.query(Read::new()), HashMap::default());
+        assert_eq!(
+            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
+            HashMap::default()
+        );
     }
 
     /// Execution trace:
@@ -426,9 +426,9 @@ mod tests {
         let mut result = HashMap::default();
         result.insert("doc".to_string(), vec!['A']);
 
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_c.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_c.query(&Read::new()), result);
     }
 
     #[test]
@@ -468,11 +468,11 @@ mod tests {
         replica_b.receive(event_c_1);
         replica_b.receive(event_c_2);
 
-        let result = HashMap::default();
+        let result: HashMap<String, Vec<char>> = HashMap::default();
 
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_c.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_c.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     /// Execution trace:
@@ -542,7 +542,10 @@ mod tests {
         replica_b.receive(event_a_5);
         replica_b.receive(event_a_6);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(
+            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
+            replica_b.query(&Read::<HashMap<String, Vec<char>>>::new())
+        );
     }
 
     #[cfg(feature = "fuzz")]
@@ -550,16 +553,22 @@ mod tests {
     #[ignore]
     fn fuzz_rw_map() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.6, 2, 8, None, None, true, false);
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<ListMap>::new("rw_map", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<ListMap, Read<HashMap<String, String>>>::new(
+            "rw_map",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<ListMap>(config);
+        fuzzer::<ListMap, Read<HashMap<String, String>>>(config);
     }
 }
 

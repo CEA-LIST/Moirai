@@ -22,6 +22,7 @@ use moirai_protocol::{
     },
     event::{id::EventId, tagged_op::TaggedOp},
     state::{
+        cache::IncrementalCache,
         stable_state::IsStableState,
         unstable_state::{CausalReplay, IsUnstableCore},
     },
@@ -631,7 +632,6 @@ impl<V> ReplicatedDataType for List<V>
 where
     V: Debug + Clone,
 {
-    type Value = Vec<V>;
     type StableState = Vec<V>;
     type Rejection = ListRejection;
 
@@ -655,7 +655,7 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> Result<(), Self::Rejection> {
-        let state = Self::execute_query(Read::new(), stable, unstable);
+        let state = Self::execute_query(&Read::new(), stable, unstable);
         match op {
             List::Insert { pos, .. } => {
                 (*pos <= state.len())
@@ -689,7 +689,7 @@ where
         if !conservative {
             return CausalReset::Prune;
         }
-        let state = Self::execute_query(ReadAt::new(version), stable, unstable);
+        let state = Self::execute_query(&ReadAt::new(version), stable, unstable);
         CausalReset::Inject(vec![List::DeleteRange {
             start: 0,
             len: state.len(),
@@ -697,17 +697,12 @@ where
     }
 }
 
-/// Normal read: replay all unstable events on top of the stable list snapshot.
-impl<V, U> Eval<Read<<Self as ReplicatedDataType>::Value>, U> for List<V>
+impl<V, U> Eval<Read<Vec<V>>, U> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn execute_query(
-        _q: Read<<Self as ReplicatedDataType>::Value>,
-        stable: &Self::StableState,
-        unstable: &U,
-    ) -> Vec<V> {
+    fn execute_query(_q: &Read<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
         Self::replay(stable, unstable, unstable.iter())
     }
 }
@@ -717,9 +712,29 @@ impl<U> Eval<Read<String>, U> for List<char>
 where
     U: CausalReplay<Self>,
 {
-    fn execute_query(_q: Read<String>, stable: &Self::StableState, unstable: &U) -> String {
-        let chars: Vec<char> = Self::execute_query(Read::new(), stable, unstable);
+    fn execute_query(_q: &Read<String>, stable: &Self::StableState, unstable: &U) -> String {
+        let chars: Vec<char> = Self::execute_query(&Read::new(), stable, unstable);
         chars.into_iter().collect()
+    }
+}
+
+impl<V> IncrementalCache<List<V>> for Vec<V>
+where
+    V: Clone,
+{
+    fn apply(&mut self, op: &List<V>) {
+        match op {
+            List::Insert { content, pos } => {
+                self.insert(*pos, content.clone());
+            }
+            List::Delete { pos } => {
+                self.remove(*pos);
+            }
+            List::DeleteRange { start, len } => {
+                self.drain(*start..*start + *len);
+            }
+            List::Update { .. } => {}
+        }
     }
 }
 
@@ -727,35 +742,31 @@ where
 ///
 /// The unstable log supplies the predecessor events for the requested version,
 /// and the same replay algorithm is used on that restricted stream.
-pub struct ReadAt<'a, V> {
-    version: &'a Version,
+pub struct ReadAt<V> {
+    version: Version,
     _marker: std::marker::PhantomData<V>,
 }
 
-impl<'a, V> ReadAt<'a, V> {
-    pub fn new(version: &'a Version) -> Self {
+impl<V> ReadAt<V> {
+    pub fn new(version: &Version) -> Self {
         Self {
-            version,
+            version: version.clone(),
             _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<'a, V> QueryOperation for ReadAt<'a, V> {
+impl<V> QueryOperation for ReadAt<V> {
     type Response = V;
 }
 
-impl<'a, V, U> Eval<ReadAt<'a, <Self as ReplicatedDataType>::Value>, U> for List<V>
+impl<V, U> Eval<ReadAt<Vec<V>>, U> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn execute_query(
-        q: ReadAt<<Self as ReplicatedDataType>::Value>,
-        stable: &Self::StableState,
-        unstable: &U,
-    ) -> Vec<V> {
-        let predecessors = unstable.predecessors(q.version);
+    fn execute_query(q: &ReadAt<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
+        let predecessors = unstable.predecessors(&q.version);
         Self::replay(stable, unstable, predecessors)
     }
 }
@@ -824,7 +835,7 @@ where
             DeleteRange,
         }
 
-        let list = Self::execute_query(Read::new(), stable, unstable);
+        let list = Self::execute_query(&Read::new(), stable, unstable);
 
         let choice = if list.is_empty() {
             &Choice::Insert
@@ -866,8 +877,9 @@ where
 mod tests {
     use moirai_protocol::{
         broadcast::tcsb::Tcsb,
+        crdt::eval::BorrowedRead,
         replica::{IsReplica, Replica},
-        state::graph_log::GraphLog,
+        state::{cache::CachedLog, graph_log::GraphLog},
     };
 
     use super::*;
@@ -896,10 +908,10 @@ mod tests {
         let e1 = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(e1);
 
-        assert_eq!(&replica_a.query(Read::<String>::new()), "A");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "A");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -907,8 +919,8 @@ mod tests {
     fn starts_from_stable_document() {
         let (replica_a, replica_b) = stable_twins(vec!['a', 'b', 'c']);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
-        assert_eq!(replica_b.query(Read::<String>::new()), "abc");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "abc");
     }
 
     #[test]
@@ -918,8 +930,8 @@ mod tests {
         let event = replica_a.send(List::insert('X', 1)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "aXbc");
-        assert_eq!(replica_b.query(Read::<String>::new()), "aXbc");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "aXbc");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "aXbc");
     }
 
     #[test]
@@ -929,8 +941,8 @@ mod tests {
         let event = replica_a.send(List::delete(1)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "ac");
-        assert_eq!(replica_b.query(Read::<String>::new()), "ac");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "ac");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "ac");
     }
 
     #[test]
@@ -940,8 +952,8 @@ mod tests {
         let event = replica_a.send(List::delete_range(1, 2)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "ad");
-        assert_eq!(replica_b.query(Read::<String>::new()), "ad");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "ad");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "ad");
     }
 
     #[test]
@@ -953,10 +965,10 @@ mod tests {
         replica_a.send(List::delete(1)).unwrap();
 
         assert_eq!(
-            replica_a.query(ReadAt::<Vec<char>>::new(&insert_version)),
+            replica_a.query(&ReadAt::<Vec<char>>::new(&insert_version)),
             vec!['a', 'X', 'b', 'c']
         );
-        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
     }
 
     #[test]
@@ -968,8 +980,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let a = replica_a.query(Read::<String>::new());
-        let b = replica_b.query(Read::<String>::new());
+        let a = replica_a.query(&Read::<String>::new());
+        let b = replica_b.query(&Read::<String>::new());
         assert_eq!(a, b);
         assert!(a == "aXYbc" || a == "aYXbc", "unexpected result: {a}");
     }
@@ -983,8 +995,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "abc");
-        assert_eq!(replica_b.query(Read::<String>::new()), "abc");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "abc");
     }
 
     #[test]
@@ -993,22 +1005,22 @@ mod tests {
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
-        assert_eq!(&replica_a.query(Read::<String>::new()), "H");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
 
         let e2a = replica_a.send(List::insert('e', 1)).unwrap();
         let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
 
-        let res_b = replica_b.query(Read::<String>::new());
+        let res_b = replica_b.query(&Read::<String>::new());
         assert!(
             res_b == "Hei" || res_b == "Hie",
             "Unexpected order: {}",
             res_b
         );
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1021,15 +1033,15 @@ mod tests {
         replica_a.receive(e2);
         replica_b.receive(e1);
 
-        let res_a = replica_a.query(Read::<String>::new());
+        let res_a = replica_a.query(&Read::<String>::new());
         assert!(
             res_a == "Hi" || res_a == "iH",
             "Unexpected order: {}",
             res_a
         );
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1043,10 +1055,10 @@ mod tests {
         let e2 = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(e2);
 
-        assert_eq!(&replica_a.query(Read::<String>::new()), "");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1062,10 +1074,10 @@ mod tests {
         replica_a.receive(eins);
         replica_b.receive(edel);
 
-        assert_eq!(&replica_a.query(Read::<String>::new()), "B");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "B");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1075,21 +1087,21 @@ mod tests {
 
         let e1 = replica_a.send(List::insert('H', 0)).unwrap();
         replica_b.receive(e1);
-        assert_eq!(&replica_a.query(Read::<String>::new()), "H");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
 
         let e2a = replica_a.send(List::insert('e', 1)).unwrap();
         let e2b = replica_b.send(List::insert('i', 1)).unwrap();
         replica_b.receive(e2a);
         replica_a.receive(e2b);
         assert!(
-            replica_b.query(Read::<String>::new()) == "Hei"
-                || replica_b.query(Read::<String>::new()) == "Hie"
+            replica_b.query(&Read::<String>::new()) == "Hei"
+                || replica_b.query(&Read::<String>::new()) == "Hie"
         );
 
         // Insert a space between e and i from A's perspective (which will be position 2 if e<i)
         let e3 = replica_a.send(List::insert(' ', 2)).unwrap();
         replica_b.receive(e3);
-        let res = replica_a.query(Read::<String>::new());
+        let res = replica_a.query(&Read::<String>::new());
         // Depending on tie-breaker, expected is either "He i" or "Hi e". We accept either space between letters.
         assert!(res == "He i" || res == "Hi e", "Unexpected result: {}", res);
     }
@@ -1114,7 +1126,7 @@ mod tests {
         let e4 = replica_a.send(List::delete(1)).unwrap();
 
         let e4_version = e4.event().version();
-        assert_eq!(&replica_a.query(Read::<String>::new()), "Hi");
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "Hi");
 
         // e5: Delete(1) (remove 'i') on other branch
         let e5 = replica_b.send(List::delete(1)).unwrap();
@@ -1138,11 +1150,11 @@ mod tests {
         replica_a.receive(e8.clone());
 
         // Final result should be "Hey!"
-        assert_eq!(replica_a.query(ReadAt::new(e4_version)), vec!['H', 'i']);
-        assert_eq!(&replica_a.query(Read::<String>::new()), "Hey!");
+        assert_eq!(replica_a.query(&ReadAt::new(e4_version)), vec!['H', 'i']);
+        assert_eq!(&replica_a.query(&Read::<String>::new()), "Hey!");
         assert_eq!(
-            &replica_a.query(Read::<String>::new()),
-            &replica_b.query(Read::<String>::new())
+            &replica_a.query(&Read::<String>::new()),
+            &replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1156,14 +1168,14 @@ mod tests {
         replica_b.receive(e1);
         replica_b.receive(e2);
         replica_b.receive(e3);
-        assert_eq!(replica_a.query(Read::<String>::new()), "ABC");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "ABC");
 
         let e4 = replica_a.send(List::delete_range(0, 2)).unwrap();
         replica_b.receive(e4);
-        assert_eq!(replica_a.query(Read::<String>::new()), "C");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "C");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1174,26 +1186,26 @@ mod tests {
         let event_a = replica_a.send(List::insert('A', 0)).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "A");
-        assert_eq!(replica_b.query(Read::<String>::new()), "A");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "A");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "A");
 
         let event_b = replica_b.send(List::insert('B', 0)).unwrap();
-        assert_eq!(replica_b.query(Read::<String>::new()), "BA");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "BA");
         let event_b_2 = replica_b.send(List::delete_range(0, 2)).unwrap();
 
-        assert_eq!(replica_b.query(Read::<String>::new()), "");
+        assert_eq!(replica_b.query(&Read::<String>::new()), "");
 
         let event_a_2 = replica_a.send(List::delete_range(0, 1)).unwrap();
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "");
 
         replica_a.receive(event_b);
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_2);
-        assert_eq!(replica_a.query(Read::<String>::new()), "");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1217,14 +1229,14 @@ mod tests {
         replica_b.receive(event_c_1.clone());
         replica_a.receive(event_c_1);
 
-        assert_eq!(replica_a.query(Read::<String>::new()), "y");
+        assert_eq!(replica_a.query(&Read::<String>::new()), "y");
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_c.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_c.query(&Read::<String>::new())
         );
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1242,8 +1254,8 @@ mod tests {
         replica_a.receive(e2);
 
         assert_eq!(
-            replica_a.query(Read::<String>::new()),
-            replica_b.query(Read::<String>::new())
+            replica_a.query(&Read::<String>::new()),
+            replica_b.query(&Read::<String>::new())
         );
     }
 
@@ -1267,8 +1279,8 @@ mod tests {
         let a3 = replica_a.send(List::delete(0)).unwrap();
         replica_b.receive(a3);
 
-        let state_a = replica_a.query(Read::<String>::new());
-        let state_b = replica_b.query(Read::<String>::new());
+        let state_a = replica_a.query(&Read::<String>::new());
+        let state_b = replica_b.query(&Read::<String>::new());
         let result = String::new();
 
         assert_eq!(state_a, result);
@@ -1305,12 +1317,81 @@ mod tests {
         replica_b.receive(a1);
         replica_b.receive(a2);
 
-        let state_a = replica_a.query(Read::<String>::new());
-        let state_b = replica_b.query(Read::<String>::new());
+        let state_a = replica_a.query(&Read::<String>::new());
+        let state_b = replica_b.query(&Read::<String>::new());
         let result = String::from("Yrx");
 
         assert_eq!(state_a, result);
         assert_eq!(state_b, result);
+    }
+
+    /// Simulate a long sequence of operations to test caching and performance.
+    #[test]
+    fn caching() {
+        let (mut replica_a, mut replica_b) =
+            twins_log::<CachedLog<GraphLog<List<char>>, Vec<char>>>();
+
+        let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
+
+        for i in 0..100 {
+            if i % 3 == 0 {
+                let e1 = replica_a
+                    .send(List::insert(alphabet[i % alphabet.len()], 0))
+                    .unwrap();
+                let e2 = replica_b
+                    .send(List::insert(alphabet[(i + 1) % alphabet.len()], 0))
+                    .unwrap();
+                replica_a.receive(e2);
+                replica_b.receive(e1);
+            } else if i % 3 == 1 {
+                let e1 = replica_a.send(List::delete(0)).unwrap();
+                let e2 = replica_b.send(List::delete(0)).unwrap();
+                replica_a.receive(e2);
+                replica_b.receive(e1);
+            } else {
+                let e1 = replica_a.send(List::update(0)).unwrap();
+                let e2 = replica_b.send(List::update(0)).unwrap();
+                replica_a.receive(e2);
+                replica_b.receive(e1);
+            }
+        }
+
+        let time = std::time::Instant::now();
+        let _ = replica_a
+            .state()
+            .read_ref()
+            .iter()
+            .cloned()
+            .collect::<String>();
+        let elapsed_no_caching = time.elapsed();
+
+        let time = std::time::Instant::now();
+        let _ = replica_a
+            .state()
+            .read_ref()
+            .iter()
+            .cloned()
+            .collect::<String>();
+        let elapsed_with_caching_1 = time.elapsed();
+
+        let _ = replica_a.send(List::insert('A', 0)).unwrap();
+
+        let time = std::time::Instant::now();
+        let _ = replica_a
+            .state()
+            .read_ref()
+            .iter()
+            .cloned()
+            .collect::<String>();
+        let elapsed_with_caching_2 = time.elapsed();
+
+        println!(
+            "Elapsed without caching: {:?}, with caching 1: {:?}, with caching 2: {:?}",
+            elapsed_no_caching, elapsed_with_caching_1, elapsed_with_caching_2
+        );
+
+        assert!(elapsed_with_caching_1 * 100 < elapsed_no_caching);
+        assert!(elapsed_with_caching_2 * 100 < elapsed_no_caching);
     }
 
     #[cfg(feature = "fuzz")]
@@ -1318,16 +1399,21 @@ mod tests {
     #[ignore]
     fn fuzz_list() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.5, 8, 1_000, None, None, true, false);
         let runs = vec![run; 1];
 
-        let config =
-            FuzzerConfig::<GraphLog<List<char>>>::new("list", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<GraphLog<List<char>>, Read<String>>::new(
+            "list",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<GraphLog<List<char>>>(config);
+        fuzzer::<GraphLog<List<char>>, Read<String>>(config);
     }
 }

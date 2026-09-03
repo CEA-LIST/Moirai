@@ -74,7 +74,6 @@ where
     L: IsLog,
     K: Clone + Debug + Hash + Eq,
 {
-    type Value = HashMap<K, L::Value>;
     type Command = UWMap<K, L::Op>;
     type Op = UWMap<K, L::Op>;
     type Rejection = L::Rejection;
@@ -166,20 +165,20 @@ where
     }
 }
 
-impl<K, L> EvalNested<Read<<Self as IsLog>::Value>> for UWMapLog<K, L>
+impl<K, L, V> EvalNested<Read<HashMap<K, V>>> for UWMapLog<K, L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Read<V>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
+    V: Default + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
-        let mut map = HashMap::default();
+        _q: &Read<HashMap<K, V>>,
+    ) -> <Read<HashMap<K, V>> as QueryOperation>::Response {
+        let mut map: HashMap<K, V> = HashMap::default();
         for (k, v) in &self.children {
-            let val = v.execute_query(Read::new());
-            if val != <L as IsLog>::Value::default() {
+            let val: V = v.execute_query(&Read::new());
+            if val != V::default() {
                 map.insert(k.clone(), val);
             }
         }
@@ -187,16 +186,15 @@ where
     }
 }
 
-impl<'a, K, Q, L> EvalNested<Get<'a, K, Q>> for UWMapLog<K, L>
+impl<K, Q, L> EvalNested<Get<K, Q>> for UWMapLog<K, L>
 where
     Q: QueryOperation,
-    L: IsLog + EvalNested<Q> + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog + EvalNested<Q>,
     K: Clone + Debug + Hash + Eq + PartialEq,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
-    fn execute_query(&self, q: Get<K, Q>) -> <Get<'a, K, Q> as QueryOperation>::Response {
-        if let Some(child) = self.children.get(q.key) {
-            Some(child.execute_query(q.nested_query))
+    fn execute_query(&self, q: &Get<K, Q>) -> <Get<K, Q> as QueryOperation>::Response {
+        if let Some(child) = self.children.get(&q.key) {
+            Some(child.execute_query(&q.nested_query))
         } else {
             None
         }
@@ -206,9 +204,8 @@ where
 #[cfg(feature = "fuzz")]
 impl<K, L> CommandGenerator for UWMapLog<K, L>
 where
-    L: IsLog<Command = <L as IsLog>::Op> + EvalNested<Read<<L as IsLog>::Value>> + CommandGenerator,
+    L: IsLog<Command = <L as IsLog>::Op> + CommandGenerator,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
-    <L as IsLog>::Value: Clone + Default + PartialEq,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use moirai_fuzz::value_generator::ValueGenerator;
@@ -273,8 +270,8 @@ mod tests {
     };
 
     record!(Duet {
-        first: VecLog<Counter<i32>>,
-        second: VecLog<Counter<i32>>,
+        first: VecLog<Counter<i32>> => i32,
+        second: VecLog<Counter<i32>> => i32,
     });
 
     #[test]
@@ -286,7 +283,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             Some(true),
-            replica_a.query(Get::new(&"a".to_string(), Contains::<i32>(10)))
+            replica_a.query(&Get::new(&"a".to_string(), Contains::<i32>(10)))
         );
     }
 
@@ -312,8 +309,8 @@ mod tests {
         let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -330,11 +327,11 @@ mod tests {
 
         let mut map = HashMap::default();
         map.insert(String::from("a"), 10);
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
         assert_eq!(
             Some(10),
-            replica_a.query(Get::new(&"a".to_string(), Read::new()))
+            replica_a.query(&Get::new(&"a".to_string(), Read::new()))
         );
     }
 
@@ -386,8 +383,8 @@ mod tests {
                 second: -7,
             },
         );
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -422,8 +419,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
 
         let event_a = replica_a
             .send(UWMap::Update(
@@ -450,8 +447,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
 
         let event = replica_a
             .send(UWMap::Update(
@@ -472,8 +469,8 @@ mod tests {
                 second: 0,
             },
         );
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -539,8 +536,8 @@ mod tests {
         replica_c.receive(event_a_2.clone());
         replica_c.receive(event_a_1.clone());
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
-        assert_eq!(replica_c.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
+        assert_eq!(replica_c.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -595,9 +592,9 @@ mod tests {
             ],
         );
 
-        assert_eq!(map, replica_a.query(Read::new()));
-        assert_eq!(map, replica_b.query(Read::new()));
-        assert_eq!(map, replica_c.query(Read::new()));
+        assert_eq!(map, replica_a.query(&Read::new()));
+        assert_eq!(map, replica_b.query(&Read::new()));
+        assert_eq!(map, replica_c.query(&Read::new()));
     }
 
     #[test]
@@ -618,9 +615,9 @@ mod tests {
         let event_b = replica_b.send(UWMap::Remove("doc".to_string())).unwrap();
         replica_a.receive(event_b);
 
-        let result = HashMap::default();
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        let result: HashMap<String, Vec<char>> = HashMap::default();
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[test]
@@ -639,7 +636,10 @@ mod tests {
         let _ = replica_a.send(UWMap::Remove("patate".to_string())).unwrap();
         let _ = replica_a.send(UWMap::Clear).unwrap();
 
-        assert_eq!(replica_a.query(Read::new()), HashMap::default());
+        assert_eq!(
+            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
+            HashMap::default()
+        );
     }
 
     #[test]
@@ -671,9 +671,9 @@ mod tests {
         let mut result = HashMap::default();
         result.insert("doc".to_string(), vec!['A']);
 
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_c.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_c.query(&Read::new()), result);
     }
 
     #[test]
@@ -714,11 +714,11 @@ mod tests {
         replica_b.receive(event_c_1);
         replica_b.receive(event_c_2);
 
-        let result = HashMap::default();
+        let result: HashMap<String, Vec<char>> = HashMap::default();
 
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_c.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_c.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]
@@ -726,7 +726,7 @@ mod tests {
     #[ignore]
     fn fuzz_uw_map() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
@@ -735,9 +735,15 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<UWMapNested>::new("uw_map", runs, true, |a, b| a == b, false);
+        let config = FuzzerConfig::<UWMapNested, Read<HashMap<String, String>>>::new(
+            "uw_map",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<UWMapNested>(config);
+        fuzzer::<UWMapNested, Read<HashMap<String, String>>>(config);
     }
 }
 

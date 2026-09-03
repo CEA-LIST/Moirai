@@ -26,6 +26,7 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
     "bimap",
     "petgraph",
 ] }
+castaway = "0.2.4"
 
 [features]
 default = ["test_utils"]

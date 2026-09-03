@@ -1,21 +1,21 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
-use std::time::{Duration, Instant};
-
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
     broadcast::tcsb::{IsTcsbTest, Tcsb},
-    crdt::{eval::EvalNested, query::Read},
+    crdt::{eval::EvalNested, query::QueryOperation},
     replica::{IsReplica, ReplicaId, ReplicaIdx},
     state::log::IsLog,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
+use std::fmt::Debug;
+use std::time::{Duration, Instant};
 
 use crate::{
-    config::{OracleDriver, RunConfig},
+    config::{OracleDriver, Predicate, RunConfig},
     execution_graph::ExecutionGraph,
     metrics::{MetricsLog, set_disable_stability},
     op_generator::CommandGenerator,
@@ -44,14 +44,16 @@ pub struct RunData {
     pub inter_replica_concurrency_ratio: Option<f64>,
 }
 
-pub fn runner<L>(
+pub fn runner<L, Q>(
     config: RunConfig,
     final_merge: bool,
-    compare: fn(&L::Value, &L::Value) -> bool,
+    predicate: &Predicate<Q>,
     oracle_driver: Option<&OracleDriver<L>>,
 ) -> RunData
 where
-    L: IsLog + CommandGenerator + EvalNested<Read<<L as IsLog>::Value>>,
+    Q: QueryOperation,
+    <Q as QueryOperation>::Response: Debug,
+    L: IsLog + CommandGenerator + EvalNested<Q>,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
@@ -242,7 +244,7 @@ where
     );
     check_pb.set_message("Checking convergence...");
 
-    let first_value = replicas[0].query(Read::new());
+    let first_value = replicas[0].query(&predicate.query);
     let val = format_string_ellipsis(&first_value, Some(100));
     let num_delivered_events = replicas[0].num_delivered_events();
 
@@ -256,8 +258,8 @@ where
                 r.id()
             );
         }
-        let value = r.query(Read::new());
-        if !compare(&first_value, &value) {
+        let value = r.query(&predicate.query);
+        if !(predicate.cmp)(&first_value, &value) {
             check_pb.finish_and_clear();
             if let Some(ref graph) = execution_graph {
                 warn!(
