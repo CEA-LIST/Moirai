@@ -16,7 +16,10 @@
 #             PACKAGE (moirai-network or moirai-protocol), optionally one
 #             SHARD (k/n), unit tests only; its `mutants.out` lands under
 #             mutants-out/<package>[-k-of-n]/.
-#   report    results.csv from every outcome so far, the score, the manifest.
+#   report    results.csv from every outcome so far, the score, the manifest;
+#             and each run's verdict files (caught, missed, timeout, unviable,
+#             outcomes.json, run.txt) copied from the ignored mutants-out/
+#             into outcomes/<package>[-k-of-n]/, the part that is committed.
 #
 # Usage, from this directory:
 #
@@ -69,6 +72,14 @@ phase_mutants() {
 }
 
 phase_report() {
+    local run_dir shard
+    for run_dir in "$out_root"/*/; do
+        [ -f "$run_dir/mutants.out/outcomes.json" ] || continue
+        shard="$HERE/outcomes/$(basename "$run_dir")"
+        mkdir -p "$shard"
+        cp "$run_dir/run.txt" "$run_dir/mutants.out/outcomes.json" "$shard/"
+        for kind in caught missed unviable timeout; do cp "$run_dir/mutants.out/$kind.txt" "$shard/"; done
+    done
     python3 - "$HERE" "$stamp" <<'PY'
 import csv, json, sys
 from pathlib import Path

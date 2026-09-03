@@ -57,6 +57,12 @@ def run_mutant(spec, name, run_id):
         git(root, "checkout", "--", rel)
         if git(root, "status", "--porcelain", "--", rel).strip():
             raise SystemExit(f"{rel} did not revert cleanly")
+        # A mutant of the node binary leaves the mutated example built on
+        # disk after its source is reverted; `after` rebuilds it, so the
+        # next thing to spawn that binary (M-E5's calibration, the editor's
+        # live-node tests) runs the source and not the last mutant.
+        if spec.get("after"):
+            subprocess.run(spec["after"], shell=True, cwd=str(cwd), check=True, capture_output=True)
     seconds = time.monotonic() - started
     killed = result.returncode != 0
     tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-6:])
