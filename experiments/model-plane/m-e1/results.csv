@@ -1,0 +1,2 @@
+run,seed,frames,median_event_bytes,log_id_bytes,log_id_pct,min_event_bytes,max_event_bytes,mean_event_bytes,test_frame_bytes,test_frame_log_id_pct
+1,20260903,180,335.0,44,13.13,306,358,339.6,215,20.47
