@@ -1,0 +1,21 @@
+run           20260903T173536Z
+host          Linux 7.0.0-30-generic x86_64
+cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
+memory        30.2 GiB
+load_avg      0.66 0.65 0.77 (1, 5, 15 min at the start of the run)
+moirai        4cd3f4f (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       b591829 (clean) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
+command       OPS=500 RUNS=5 SEED=20260903 POINTS=1,16 ./run.sh
+image         moirai-json-crdt-model-plane:test
+image digest  sha256:c7877f7cebdccce0a56432f3291a345570d9d8a0f55d2c8f22dbfdb1ee82947b
+image built   2026-09-03T18:37:49.21633588+02:00
+docker        29.6.2
+points        1,16 models on the donor; model A is SimpleUML, the rest alternate behaviour tree and SimpleUML
+ops           500 seeded operations per model (wire.py seeded_ops, seed 20260903)
+runs          5 per N, a fresh joiner container each, registering A alone
+bytes         response_bytes: the StateResponse line as the probe reads it; served_bytes_*: the donor's own log line, the serialised log before compression
+time          transfer_ms: donor 'serving' line to joiner 'adopted' line, Docker daemon clock; probe_ms: host clock around the probe's request; join_to_state_ms: host clock from POST /api/models to the state matching, polled every 2 ms
+threshold     response_bytes and transfer_ms at N=16 within 5 percent of N=1 (medians); the other columns are supplementary
+members       every joiner stays a member of the donor's table after its run, so snapshot_members climbs by one per run and the uncompressed served log with it, one version-vector entry per event; compare runs at equal snapshot_members, or the medians, which sit at the same run index
+verdict       wire bytes: N=1 median 120736, N=16 median 120759, ratio 1.000 -> met;serving->adopted ms: N=1 median 55.89, N=16 median 53.66, ratio 0.960 -> met;served log bytes (uncompressed): N=1 median 105183, N=16 median 108201, ratio 1.029 (supplementary);probe request->answer ms: N=1 median 54.26, N=16 median 57.78, ratio 1.065 (supplementary);join->state ms: N=1 median 127.5, N=16 median 138.9, ratio 1.089 (supplementary);
