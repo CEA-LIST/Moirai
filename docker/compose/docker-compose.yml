@@ -13,6 +13,7 @@
 # crate the image is built from, starts the stack and prints the URLs:
 #
 #     ../rig.sh up --nodes 5 --dashboard
+#     ../rig.sh --edit --models 4
 #     ../rig.sh --help
 #
 # Driving `docker compose` directly works too, and is what the scripts under
@@ -245,6 +246,11 @@ services:
       SESSION_ID: "${SESSION_ID:-compose}"
       HTTP_PORT: "8081"
       OP_INTERVAL_SECS: "${OP_INTERVAL_SECS:-1}"
+      # `1` makes each tick write into one of the replica's hosted models in
+      # turn instead of into its default log; `rig.sh --models N` exports it.
+      # Still one operation per replica per tick either way, so the load is
+      # unchanged and the committed E4 curves stay reproducible.
+      DRIVE_MODELS: "${DRIVE_MODELS:-0}"
     entrypoint: ["/bin/sh", "/driver/drive.sh"]
     volumes:
       - ./drive.sh:/driver/drive.sh:ro

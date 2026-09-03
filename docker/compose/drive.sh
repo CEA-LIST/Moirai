@@ -22,11 +22,24 @@
 # seed. This one stays because `experiments/e4-silent-member/run.sh` brings it
 # up by profile and the committed E4 curves were measured with it; removing it
 # would make that run unreproducible.
+#
+# # Many models
+#
+# `DRIVE_MODELS=1` — which `rig.sh --models N` exports — makes each tick write
+# into one of the replica's *hosted models* instead of its default log, taking
+# them in turn. Still one operation per replica per tick, so the load is the
+# one every committed curve was measured under; what changes is which log it
+# lands in, which is what makes a many-model rig show traffic in every model
+# rather than in the default log alone. Unset, or `0`, and this script behaves
+# exactly as it did before the model plane, which is what keeps
+# `experiments/e4-silent-member/run.sh` reproducible.
+#
 # Environment:
 #   BOOTNODE_URL     default http://bootnode:7000
 #   SESSION_ID       default compose
 #   HTTP_PORT        default 8081
 #   OP_INTERVAL_SECS seconds between rounds, default 1
+#   DRIVE_MODELS     1 to write per hosted model, default 0 (the default log)
 
 set -u
 
@@ -34,20 +47,45 @@ BOOTNODE_URL=${BOOTNODE_URL:-http://bootnode:7000}
 SESSION_ID=${SESSION_ID:-compose}
 HTTP_PORT=${HTTP_PORT:-8081}
 OP_INTERVAL_SECS=${OP_INTERVAL_SECS:-1}
+DRIVE_MODELS=${DRIVE_MODELS:-0}
 
-echo "[driver] one op per replica every ${OP_INTERVAL_SECS}s in session '$SESSION_ID'"
+if [ "$DRIVE_MODELS" = "1" ]; then
+    echo "[driver] one op per replica every ${OP_INTERVAL_SECS}s in session '$SESSION_ID', \
+across each replica's hosted models in turn"
+else
+    echo "[driver] one op per replica every ${OP_INTERVAL_SECS}s in session '$SESSION_ID'"
+fi
 
+# A counter increment under the replica's own key. Increments commute, so
+# nothing here can fail to converge for semantic reasons and the only thing the
+# run measures is the replication layer.
+op_for() {
+    printf '{"JsonKind":{"Object":{"Update":["k_%s",{"Number":{"Inc":1}}]}}}' "$1"
+}
+
+round=0
 while :; do
     roster=$(curl -fsS --max-time 2 "$BOOTNODE_URL/session/$SESSION_ID/peers" 2>/dev/null)
     hosts=$(printf '%s' "$roster" | grep -o '"addr":"[^"]*"' | cut -d'"' -f4 | cut -d: -f1)
+    round=$((round + 1))
 
     for host in $hosts; do
-        # A counter increment under the replica's own key. Increments commute,
-        # so nothing here can fail to converge for semantic reasons and the
-        # only thing the run measures is the replication layer.
+        path=/api/op
+        if [ "$DRIVE_MODELS" = "1" ]; then
+            # Read live rather than once at startup: the models are registered
+            # after this container is running, and a replica can be joined to
+            # another model at any time.
+            models=$(curl -fsS --max-time 2 "http://$host:$HTTP_PORT/api/models" 2>/dev/null \
+                | grep -o '"model_id":"[^"]*"' | cut -d'"' -f4)
+            count=$(printf '%s' "$models" | grep -c . 2>/dev/null || true)
+            if [ "${count:-0}" -gt 0 ]; then
+                model=$(printf '%s\n' "$models" | sed -n "$(( round % count + 1 ))p")
+                path="/api/model/$model/op"
+            fi
+        fi
         curl -fsS --max-time 2 -o /dev/null \
-            -X POST "http://$host:$HTTP_PORT/api/op" \
-            -d "{\"JsonKind\":{\"Object\":{\"Update\":[\"k_$host\",{\"Number\":{\"Inc\":1}}]}}}" \
+            -X POST "http://$host:$HTTP_PORT$path" \
+            -d "$(op_for "$host")" \
             2>/dev/null
     done
 

@@ -32,6 +32,12 @@ GENERATED_CRATE="$ARACHNE_ROOT/generated/json_crdt"
 ECORE="$ARACHNE_ROOT/examples/json.ecore"
 
 NODES=3
+# How many models every replica hosts beside its pinned default log. Zero is
+# the shipped rig: one log per replica, which is what every experiment under
+# `experiments/` was measured on. `--models N` registers N more, and the axis
+# is models rather than peers — a session holds ten to twenty collaborators and
+# a project holds dozens of diagrams, so this is the number that grows.
+MODELS=0
 # The rig is nearly always wanted whole: replicas, a dashboard to watch them
 # converge, and a driver producing the edits that make the dashboard worth
 # watching. So that is what a bare `rig.sh` gives you, and the flags take parts
@@ -74,6 +80,11 @@ Usage:
 
 Options for `up`:
   -n, --nodes N          number of `node` replicas (default: 3)
+  -m, --models N         host N models on every replica beside its default log
+                         (default: 0). editor-a creates each one through
+                         POST /api/models and every other replica joins it by
+                         id; the ids land in compose/runs/models.csv. Implies
+                         --edit, and the load driver then writes per model.
       --no-dashboard     do not start the dashboard
       --edit             also start editor-a and editor-b, replicas with host
                          HTTP ports 8081 and 8082 for the browser model editor
@@ -99,7 +110,14 @@ Examples:
   rig.sh                     the whole rig, dashboard and driver included
   rig.sh --nodes 5           the same, with five replicas
   rig.sh --no-load           up and idle, so you can drive it by hand
+  rig.sh --edit --models 4   four models per replica, two behaviour tree and
+                             two SimpleUML, for the browser model editor
+  rig.sh --models 64         the top of the measurement range
   rig.sh down
+
+Reading the models:
+  curl -s localhost:8081/api/models | head -c 400
+  cat docker/compose/runs/models.csv
 EOF
 }
 
@@ -281,7 +299,55 @@ print_urls() {
     printf '  replicas    docker compose -f %s exec -T node curl -s localhost:8081/api/metrics\n' \
         "$COMPOSE_FILE"
     printf '  observer    %s\n' "$HERE/compose/runs/metrics.csv"
+    if [ "$MODELS" -gt 0 ] && [ -f "$MODELS_CSV" ]; then
+        printf '  models      %s (%s hosted per replica)\n' \
+            "$MODELS_CSV" "$MODELS"
+    fi
     printf '\n'
+}
+
+# --------------------------------------------------------------------------
+# The models.
+#
+# `--models N` is the model plane's scale knob: every replica ends up hosting
+# the same N logs beside the pinned default one. editor-a creates each model,
+# which is what mints its `ModelId` and writes its `__model` header, and every
+# other replica joins that id — there is no catalogue and no gossip of hosted
+# ids, so the id has to be carried from the creator to the joiners by whoever
+# is registering, which here is `register-models.sh`.
+#
+# It runs inside the rig rather than from here, because only the two editors
+# publish a host port and the `node` replicas are reachable by name on the
+# session bridge and nowhere else. Piping it into `docker compose exec` costs
+# no new service, no mount and no image change.
+# --------------------------------------------------------------------------
+
+MODELS_CSV="$HERE/compose/runs/models.csv"
+
+register_models() {
+    local registered
+    say "registering $MODELS model(s) per replica: created on editor-a, joined by id elsewhere"
+    mkdir -p "$(dirname "$MODELS_CSV")"
+    printf 'model_id,package,digest\n' > "$MODELS_CSV"
+    # The islander is left out on purpose: it is a different topology rather
+    # than another replica, its only route to the session is the relay, and
+    # every model registered on it would put a state transfer over that relay.
+    if ! compose exec -T \
+            -e MODELS="$MODELS" \
+            -e SESSION_ID="${SESSION_ID:-compose}" \
+            -e EXPECT_PEERS="$((NODES + 3))" \
+            -e WAIT_SECS="$WAIT_SECS" \
+            -e CREATOR=editor-a \
+            -e SKIP_JOIN=islander \
+            bootnode sh -s >> "$MODELS_CSV" < "$HERE/compose/register-models.sh"; then
+        die "registering $MODELS model(s) failed; the stack is left up so it can be inspected." \
+            "    $(basename "$0") status" \
+            "    $(basename "$0") logs editor-a"
+    fi
+    registered=$(($(wc -l < "$MODELS_CSV") - 1))
+    [ "$registered" -eq "$MODELS" ] || die \
+        "only $registered of $MODELS model(s) were registered; see $MODELS_CSV"
+    say "$registered model(s) hosted on every replica; ids in $MODELS_CSV"
 }
 
 cmd_up() {
@@ -289,6 +355,17 @@ cmd_up() {
     preflight_checkouts
     ensure_crate
     ensure_image
+
+    if [ "$MODELS" -gt 0 ]; then
+        # The models are registered on the editors and joined everywhere else,
+        # so asking for models is asking for the editor replicas.
+        [ "$WITH_EDIT" -eq 1 ] || say "--models $MODELS needs the editor replicas; enabling --edit"
+        WITH_EDIT=1
+        # The driver writes into the hosted models rather than only into the
+        # default log; see drive.sh. One operation per replica per tick either
+        # way, so the load is what it always was.
+        export DRIVE_MODELS=1
+    fi
 
     [ "$NO_RELAY" -eq 1 ] && export RELAY_ADDR=
     [ "$NO_REPORTING" -eq 1 ] && export DASHBOARD_URL=
@@ -315,6 +392,20 @@ cmd_up() {
             compose logs --tail 40 dashboard || true
             die "the stack is up but the dashboard is not; leaving it running to inspect."
         }
+    fi
+
+    if [ "$MODELS" -gt 0 ]; then
+        # The image's healthcheck curls `/api/health`, so a healthy editor is
+        # one whose HTTP API answers — which is what registration needs. The
+        # `node` replicas are waited for by the roster, inside the script.
+        for svc in editor-a editor-b; do
+            wait_for_health "$svc" || {
+                say "$svc did not become healthy within ${WAIT_SECS}s"
+                compose logs --tail 40 "$svc" || true
+                die "the stack is up but $svc is not; no model was registered."
+            }
+        done
+        register_models
     fi
 
     say "up"
@@ -363,6 +454,13 @@ main() {
                     ''|*[!0-9]*) die "--nodes takes a positive integer, got '$NODES'" ;;
                 esac
                 [ "$NODES" -ge 1 ] || die "--nodes must be at least 1"
+                shift 2 ;;
+            -m|--models)
+                [ "$#" -ge 2 ] || die "--models needs a value"
+                MODELS="$2"
+                case "$MODELS" in
+                    ''|*[!0-9]*) die "--models takes a non-negative integer, got '$MODELS'" ;;
+                esac
                 shift 2 ;;
             --no-dashboard) WITH_DASHBOARD=0; shift ;;
             --edit)         WITH_EDIT=1; shift ;;
