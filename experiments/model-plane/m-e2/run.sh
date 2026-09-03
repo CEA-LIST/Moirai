@@ -98,7 +98,9 @@ phase_rig() {
         ( cd "$MOIRAI_ROOT" && "$RIG" --models "$n" --no-load --no-dashboard >/dev/null ) \
             || mp_die "the rig did not come up at --models $n"
         sleep "$IDLE_SECS"
-        for name in $(mp_moirai_containers | grep -E 'node|editor|islander' | sort); do
+        # The replicas: the scaled `node` service, the two editors and the
+        # islander; not the bootnode, whose name also says `node`.
+        for name in $(mp_moirai_containers | grep -E '^moirai-(node-[0-9]+|editor-[ab]-1|islander-1)$' | sort); do
             id=$(docker exec "$name" sh -c 'echo "${REPLICA_ID:-$HOSTNAME}"')
             hosted=$(container_metric "$name" hosted_logs)
             dropped=$(container_metric "$name" frames_not_hosted)
