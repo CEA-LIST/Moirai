@@ -8,6 +8,10 @@ whether editing A gets slower because B is under load.
 Arms, each RUNS runs from the same seed:
 
   alone             nothing else happens in the session
+  alone-again       the same, run again right after the plan's arm, so a
+                    session that drifted during it (B's log grows, nothing
+                    compacts on a multi-model rig) shows as a change of the
+                    baseline and not of the load
   loaded            B is under the driver's load as every replica receives
                     it: the rig's driver (docker/compose/drive.sh) has each
                     of the five replicas apply one operation per
@@ -32,6 +36,17 @@ Arms, each RUNS runs from the same seed:
                     posting into B with no pause, the adapter confound
                     included.
 
+One arm per invocation, in a session of its own: run.sh starts fresh
+replicas and registers the sixteen models again for every arm, because a
+session ages. Nothing compacts on a multi-model rig (the frontier is pinned;
+see the deferral in the design), so A's unstable log grows by OPS_PER_RUN
+operations per run and every later delivery walks a longer log; two arms
+taken one after the other in one session would compare two ages, not two
+loads. The first run of this harness did exactly that and measured a
+no-load re-run of `alone` at 1.65 x the first, which is the drift and not
+the load. Each arm's row also records A's delivered and retained counts on
+the writer at the end of the arm, the size of what every delivery walked.
+
 A run applies OPS_PER_RUN seeded operations to A on the first replica (the
 editor), takes the time the last one was answered, and polls every replica's
 `GET /api/model/A/state` (one thread each, every 2 ms) until all agree on
@@ -46,6 +61,7 @@ Threshold, fixed in the plan: median(loaded) <= 1.10 x median(alone).
 
 import argparse
 import csv
+import json
 import random
 import statistics
 import sys
@@ -54,8 +70,8 @@ import time
 
 sys.path.insert(0, __import__("os").path.join(__import__("os").path.dirname(__file__), ".."))
 from wire import (Probe, apply_to_model, compact, counter_inc, create_model, event_frame,  # noqa: E402
-                  join_model, model_state, poll_until, seeded_ops, served_metamodels, wait_healthy,
-                  wait_mesh)
+                  http_json, join_model, model_state, poll_until, seeded_ops, served_metamodels,
+                  wait_healthy, wait_mesh)
 
 
 class Load:
@@ -115,6 +131,19 @@ class WireLoad:
         self.stop = threading.Event()
         self.seq = 0
         self.thread = None
+        # A probe is a peer, so every replica broadcasts its own frames to it
+        # as well; they are read and dropped, or the socket's buffer fills
+        # and the replica's sends stall, which would be measured as A's
+        # convergence.
+        self.drains = [threading.Thread(target=self._drain, args=(probe,), daemon=True) for probe in self.probes]
+
+    @staticmethod
+    def _drain(probe):
+        try:
+            for _ in probe.frames(deadline_s=3600):
+                pass
+        except (OSError, ValueError):
+            return
 
     def _send_one(self):
         self.seq += 1
@@ -135,6 +164,8 @@ class WireLoad:
                 self.stop.wait(gap)
 
     def start(self):
+        for drain in self.drains:
+            drain.start()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
@@ -184,9 +215,10 @@ def main():
     parser.add_argument("--op-interval", type=float, default=1.0)
     parser.add_argument("--heavy-clients", type=int, default=4)
     parser.add_argument("--heavy-rate", type=float, default=500.0, help="frames per second per replica, loaded-wire-heavy")
-    parser.add_argument("--arms", default="alone,loaded,loaded-http,loaded-wire-heavy,loaded-http-heavy")
+    parser.add_argument("--arm", required=True, help="one of alone, alone-again, loaded, loaded-http, loaded-wire-heavy, loaded-http-heavy")
     parser.add_argument("--settle", type=float, default=5.0, help="seconds of load before the first timed run")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--summary", required=True, help="one JSON line for the arm")
     args = parser.parse_args()
 
     bases = args.http.split(",")
@@ -217,7 +249,7 @@ def main():
     ms = lambda t: round((t - origin) * 1000, 1)  # noqa: E731
     rows = []
     summary = {}
-    for arm in args.arms.split(","):
+    for arm in [args.arm]:
         load = None
         if arm == "loaded":
             load = WireLoad(syncs, model_b, args.op_interval, per_replica=len(bases))
@@ -227,7 +259,7 @@ def main():
             load = WireLoad(syncs, model_b, 0.0, rate=args.heavy_rate)
         elif arm == "loaded-http-heavy":
             load = Load(bases, model_b, 0.0, args.heavy_clients)
-        elif arm != "alone":
+        elif not arm.startswith("alone"):
             raise SystemExit(f"unknown arm {arm}")
         if load:
             load.start()
@@ -266,10 +298,14 @@ def main():
         if isinstance(load, WireLoad):
             load.assert_delivered(bases)
         med10 = statistics.median(per_run[:10])
+        metrics = http_json(f"{writer}/api/model/{model_a}/metrics")
         summary[arm] = {"median_ms": statistics.median(per_run), "median_first10_ms": med10,
+                        "mean_ms": statistics.mean(per_run),
                         "p90_ms": sorted(per_run)[int(0.9 * (len(per_run) - 1))], "runs": len(per_run),
-                        "load_ops": applied}
-        print(f"{arm}: session convergence of A over {len(per_run)} runs: median {summary[arm]['median_ms']:.1f} ms, "
+                        "load_ops": applied, "a_delivered_end": metrics["delivered_ops"],
+                        "a_retained_end": metrics["retained_ops"], "a_stable_prefix_end": metrics["stable_prefix"]}
+        print(f"{arm}: session convergence of A over {len(per_run)} runs: median {summary[arm]['median_ms']:.1f} ms "
+              f"(first ten {med10:.1f}), mean {summary[arm]['mean_ms']:.1f} ms, "
               f"p90 {summary[arm]['p90_ms']:.1f} ms; load put {applied} operations into B"
               + (" (delivered everywhere)" if isinstance(load, WireLoad) else ""), file=sys.stderr)
         time.sleep(1.0)
@@ -278,18 +314,9 @@ def main():
         w = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
-    with open(args.out.replace(".csv", "-summary.csv"), "w", newline="") as handle:
-        w = csv.DictWriter(handle, fieldnames=["arm", "runs", "median_ms", "median_first10_ms", "p90_ms", "load_ops",
-                                               "ratio_to_alone"])
-        w.writeheader()
+    with open(args.summary, "w") as handle:
         for arm, s in summary.items():
-            w.writerow({"arm": arm, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.items()},
-                        "ratio_to_alone": round(s["median_ms"] / summary["alone"]["median_ms"], 3)})
-    if "loaded" in summary:
-        ratio = summary["loaded"]["median_ms"] / summary["alone"]["median_ms"]
-        print(f"VERDICT loaded/alone = {ratio:.3f} -> {'met' if ratio <= 1.10 else 'CROSSED'} (threshold 1.10)")
-        if ratio > 1.10:
-            sys.exit(1)
+            handle.write(json.dumps({"arm": arm, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.items()}}) + "\n")
 
 
 if __name__ == "__main__":

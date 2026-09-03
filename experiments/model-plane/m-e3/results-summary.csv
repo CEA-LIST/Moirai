@@ -1,6 +1,7 @@
-arm,runs,median_ms,median_first10_ms,p90_ms,load_ops,ratio_to_alone
-alone,10,29.0,29.0,40.41,0,1.0
-loaded,10,29.98,29.98,38.59,300,1.034
-loaded-http,10,46.68,46.68,53.33,55,1.61
-loaded-wire-heavy,10,35.04,35.04,37.77,25665,1.208
-loaded-http-heavy,10,204.94,204.94,210.52,6902,7.066
+arm,runs,median_ms,median_first10_ms,mean_ms,p90_ms,load_ops,a_delivered_end,a_retained_end,a_stable_prefix_end,ratio_to_alone,ratio_first10,ratio_mean
+alone,30,30.81,28.47,34.26,45.66,0,719,719,0,1.0,1.0,1.0
+loaded,30,30.37,25.68,35.76,56.5,650,719,719,0,0.986,0.902,1.044
+alone-again,30,32.62,25.17,34.23,49.21,0,719,719,0,1.059,0.884,0.999
+loaded-http,30,32.93,28.6,37.14,50.23,115,719,719,0,1.069,1.005,1.084
+loaded-wire-heavy,30,26.83,25.26,27.65,31.66,54565,719,719,0,0.871,0.887,0.807
+loaded-http-heavy,30,194.29,190.11,195.11,201.95,18242,719,719,0,6.306,6.678,5.695
