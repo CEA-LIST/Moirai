@@ -995,9 +995,12 @@ where
                 log_id: ours,
             };
         }
+        // The size is the serialised log before compression: what the ceiling
+        // above was checked against, and the one number that says whether a
+        // transfer tracks its own log's size or the sum of everything hosted.
         eprintln!(
-            "[{}] serving a state transfer to {} for log {}",
-            self.replica_id, requester, ours
+            "[{}] serving a state transfer to {} for log {}: {} bytes",
+            self.replica_id, requester, ours, log_bytes
         );
         TransportMessage::StateResponse {
             snapshot: log.replica.snapshot(),

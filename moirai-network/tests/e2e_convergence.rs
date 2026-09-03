@@ -31,6 +31,10 @@
 //!   sg docker -c "cargo test -p moirai-network --test e2e_convergence -- --test-threads=1"
 //!   ```
 //!
+//!   Which image, when `MOIRAI_E2E_IMAGE` is unset, is the tag `docker/rig.sh`
+//!   builds for this checkout: `moirai-json-crdt${suffix}:test`, the suffix
+//!   read from the workspace directory name. See [`replica_image`].
+//!
 //! `MOIRAI_E2E_BACKEND` selects: `testcontainers` (the default) or `process`.
 //! Under `process`, the scenarios that need a real partition skip rather than
 //! silently degrading to the in-process `pause` flag, which is a weaker claim
@@ -503,6 +507,35 @@ impl Networks {
     }
 }
 
+/// The replica image the container backends run, and where its default comes
+/// from.
+///
+/// `MOIRAI_E2E_IMAGE` wins when it is set. Without it the tag is derived from
+/// this workspace's directory name exactly as `docker/rig.sh:21` and `:30`
+/// derive theirs — `moirai-json-crdt${suffix}:test`, the suffix being whatever
+/// follows `moirai` in the checkout directory — so a worktree builds and tests
+/// against its own image. A fixed `moirai-json-crdt:test` was the default until
+/// step 7 of the model plane, and on a machine carrying several worktrees it
+/// selected whichever branch had last built that unsuffixed tag: on the dev
+/// machine that was a pre-model-plane image, and two `p3` relay scenarios
+/// failed against it for nothing. A checkout not named after `moirai` keeps the
+/// unsuffixed tag, which is what a plain clone is called.
+fn replica_image() -> String {
+    if let Ok(image) = std::env::var("MOIRAI_E2E_IMAGE") {
+        return image;
+    }
+    // `<workspace>/moirai-network/` at compile time, so the parent is the
+    // workspace root and its name is the checkout directory `rig.sh` reads.
+    let suffix = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|root| root.file_name())
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("moirai"))
+        .unwrap_or_default()
+        .to_string();
+    format!("moirai-json-crdt{suffix}:test")
+}
+
 /// Runs replicas as containers, with replication traffic isolated on its own
 /// network so that it can be cut for real.
 struct ContainerBackend {
@@ -521,8 +554,7 @@ impl ContainerBackend {
     fn new() -> Result<Self> {
         let networks = Networks::new()?;
 
-        let image =
-            std::env::var("MOIRAI_E2E_IMAGE").unwrap_or_else(|_| "moirai-json-crdt:test".into());
+        let image = replica_image();
         // `testcontainers` would happily try to pull a missing image from a
         // registry it is not in. Failing here instead turns a twenty-minute
         // timeout into a one-line skip with the build command in it.
@@ -1250,8 +1282,19 @@ fn assert_converged(nodes: &[&dyn Node], timeout: Duration) -> Value {
 /// is genuine before healing it. Retries briefly, because the divergent
 /// operations still have to be applied locally.
 fn assert_diverged(a: &dyn Node, b: &dyn Node, timeout: Duration) {
+    assert_diverged_by(a, b, state_of, timeout);
+}
+
+/// [`assert_diverged`] over whichever document `read` renders — the default
+/// log's, or one model's through [`model_state`].
+fn assert_diverged_by(
+    a: &dyn Node,
+    b: &dyn Node,
+    read: impl Fn(&dyn Node) -> Result<Value>,
+    timeout: Duration,
+) {
     let result = poll_until(timeout, || {
-        let (sa, sb) = (state_of(a)?, state_of(b)?);
+        let (sa, sb) = (read(a)?, read(b)?);
         Ok((sa != sb).then_some(()))
     });
     if result.is_err() {
@@ -1259,7 +1302,7 @@ fn assert_diverged(a: &dyn Node, b: &dyn Node, timeout: Duration) {
             "`{}` and `{}` agree, so the partition did not take effect; both report {}",
             a.id(),
             b.id(),
-            state_of(a)
+            read(a)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|e| format!("<{e:#}>"))
         );
@@ -2404,13 +2447,58 @@ fn tagged_ops(log: &Value) -> u64 {
 /// production code that exists for the test. This is `state_response_for`'s own
 /// line, and the only place a served transfer is recorded at all.
 fn transfers_served_to(node: &dyn Node, id: &str) -> usize {
-    let served = format!("serving a state transfer to {id}");
-    // The whole log rather than a tail: the scenario carries on past the line,
-    // and a tail long enough to be safe is just this with a number on it.
+    transfers_served(node, id).len()
+}
+
+/// Every state transfer `node` says it served to `requester`, in the order it
+/// served them: the log each one carried and the serialised bytes it put on
+/// the wire, read off `state_response_for`'s line
+/// `serving a state transfer to <requester> for log <id>: <n> bytes`.
+///
+/// The whole log rather than a tail: the scenario carries on past the line,
+/// and a tail long enough to be safe is just this with a number on it.
+fn transfers_served(node: &dyn Node, requester: &str) -> Vec<(String, usize)> {
+    let served = format!("serving a state transfer to {requester} for log ");
     node.log_tail(usize::MAX)
         .lines()
-        .filter(|line| line.contains(&served))
-        .count()
+        .filter_map(|line| {
+            let (_, rest) = line.split_once(&served)?;
+            let (log_id, bytes) = rest.split_once(": ")?;
+            let bytes = bytes.strip_suffix(" bytes")?.parse().ok()?;
+            Some((log_id.to_string(), bytes))
+        })
+        .collect()
+}
+
+/// Which of the two permitted paths a joiner took for `model_id`, read from
+/// its own log: `Adopted` when it installed a donor's snapshot, `DeltaSync`
+/// when it was turned away and asked for the operations instead. Neither is a
+/// failure — see the note on the adopt guard at the head of the model-plane
+/// section — but every transfer scenario says which one it saw.
+fn joiner_path(node: &dyn Node, model_id: &str) -> Option<JoinerPath> {
+    let adopted = format!(" for log {model_id}: ");
+    let refused = "cannot adopt ";
+    let refused_log = format!("for log {model_id}: it orders the members differently");
+    node.log_tail(usize::MAX).lines().find_map(|line| {
+        if line.contains("adopted state from") && line.contains(&adopted) {
+            Some(JoinerPath::Adopted)
+        } else if line.contains(refused) && line.contains(&refused_log) {
+            Some(JoinerPath::DeltaSync)
+        } else {
+            None
+        }
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JoinerPath {
+    /// The fresh-joiner path: no history in any hosted log, the donor's
+    /// snapshot installed as this log.
+    Adopted,
+    /// The fallback the adopt guard takes for a node already carrying
+    /// history in another log: the snapshot turned away, a delta sync asked
+    /// for instead.
+    DeltaSync,
 }
 
 /// **T7** — the transfer carries the unstable suffix, not the history.
@@ -3756,8 +3844,7 @@ impl RelayRig {
     /// image is unavailable.
     fn new(islands: &[&str]) -> Result<Self> {
         let networks = Networks::new()?;
-        let image =
-            std::env::var("MOIRAI_E2E_IMAGE").unwrap_or_else(|_| "moirai-json-crdt:test".into());
+        let image = replica_image();
         networks
             .runtime
             .block_on(networks.docker.inspect_image(&image))
@@ -4491,6 +4578,24 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
 // ---------------------------------------------------------------------------
 // MP — the model plane: many logs per node, model-scoped routes
 // ---------------------------------------------------------------------------
+//
+// Two backends, on purpose. MP24 and MP25 are single-node route checks and run
+// on processes with a scratch descriptor directory. MP20 to MP23 are the
+// level-3 scenarios: they run on containers against the shipped image, whose
+// `/metamodels` holds the real `bt` and `uml` descriptors, at N = 4 hosted
+// models — four is enough to tell dispatch by id from dispatch to the first
+// log, and a container run is expensive, so the scale curve is measured in
+// process elsewhere.
+//
+// On the transfer path. `Tcsb::adopt` rebuilds the member table from the
+// donor's snapshot, and the node lets that happen only while no *other* hosted
+// log has history, or while the donor orders the members exactly as this node
+// does; otherwise the snapshot is turned away and a delta sync asked for
+// instead, which delivers the same operations without one. Both outcomes are
+// permitted here — stability, eviction, compaction and per-model transfer under
+// many logs are the governance merge's — so a scenario that joins a model
+// reads which path its joiner took (`joiner_path`) and says so, and asserts
+// the fresh-joiner adoption only where the joiner is fresh by construction.
 
 /// The default log the compose rig pins on every replica
 /// (`docker/compose/docker-compose.yml`).
@@ -4582,9 +4687,11 @@ fn post_status(node: &dyn Node, path: &str, body: &Value) -> Result<(u16, Value)
     Ok((status, value))
 }
 
-/// Creates a model on `node` and returns the id the node minted.
-fn create_model(node: &dyn Node, descriptor: (&str, &str, &str)) -> Result<String> {
-    let body = json!({ "metamodel_id": metamodel_id(descriptor) });
+/// Creates a model on `node` under `metamodel` (a `{nsURI, digest}` value,
+/// from [`metamodel_id`] or [`served_metamodels`]) and returns the id the node
+/// minted.
+fn create_model(node: &dyn Node, metamodel: &Value) -> Result<String> {
+    let body = json!({ "metamodel_id": metamodel });
     let (status, reply) = post_status(node, "/api/models", &body)?;
     if status != 201 {
         bail!("{} did not create a model: {status} {reply}", node.id());
@@ -4597,8 +4704,8 @@ fn create_model(node: &dyn Node, descriptor: (&str, &str, &str)) -> Result<Strin
 }
 
 /// Joins the model `model_id` on `node`, by id.
-fn join_model(node: &dyn Node, model_id: &str, descriptor: (&str, &str, &str)) -> Result<()> {
-    let body = json!({ "model_id": model_id, "metamodel_id": metamodel_id(descriptor) });
+fn join_model(node: &dyn Node, model_id: &str, metamodel: &Value) -> Result<()> {
+    let body = json!({ "model_id": model_id, "metamodel_id": metamodel });
     let (status, reply) = post_status(node, "/api/models", &body)?;
     if status != 200 {
         bail!("{} did not join {model_id}: {status} {reply}", node.id());
@@ -4772,133 +4879,289 @@ fn mp25_registration_is_refused_for_a_metamodel_the_node_does_not_hold() {
         vec![descriptor_digest(&descriptor_value(BT)).as_str()],
         "the node lists a digest other than the one this suite computes: {listing}"
     );
-    let id = create_model(a, BT).expect("MP25: create under bt");
+    let id = create_model(a, &metamodel_id(BT)).expect("MP25: create under bt");
     assert!(hosted_models(a).unwrap().contains(&id));
+}
+// ---------------------------------------------------------------------------
+// MP20–MP23 — the level-3 scenarios, on containers against the shipped image
+// ---------------------------------------------------------------------------
+
+/// Where the image keeps its descriptors (`docker/e2e/Dockerfile`), and what
+/// the compose rig sets `METAMODEL_DIR` to.
+const IMAGE_METAMODEL_DIR: &str = "/metamodels";
+
+/// How many models the level-3 scenarios host: the N the validation plan
+/// fixes for container runs.
+const CONTAINER_MODELS: usize = 4;
+
+/// A container cluster whose replicas serve the image's descriptors, started
+/// and meshed. `None` when the scenario must be skipped.
+fn model_container_cluster(scenario: &str, ids: &[&str]) -> Option<Cluster> {
+    let mut cluster = container_cluster(scenario, ids)?
+        .with_env(vec![("METAMODEL_DIR".into(), IMAGE_METAMODEL_DIR.into())]);
+    cluster
+        .start_all()
+        .unwrap_or_else(|e| panic!("{scenario}: start containers: {e:#}"));
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).unwrap_or_else(|e| panic!("{scenario}: {e:#}"));
+    Some(cluster)
+}
+
+/// The metamodels `node` serves, by package, each as the `{nsURI, digest}`
+/// value a registration names it by.
+///
+/// Read from the node rather than computed here, because the container
+/// scenarios register under the image's *real* descriptors and this suite has
+/// no copy of those files. Trusting the listing is not a hole: MP25 holds the
+/// digest the node lists to the one this suite computes over the bytes it
+/// wrote, so the rule the listing applies is the pinned one.
+fn served_metamodels(node: &dyn Node) -> Result<BTreeMap<String, Value>> {
+    let listing = get_json(node, "/api/metamodels")?;
+    listing
+        .get("metamodels")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let package = entry.get("package")?.as_str()?;
+                    Some((
+                        package.to_string(),
+                        json!({ "nsURI": entry.get("nsURI")?, "digest": entry.get("digest")? }),
+                    ))
+                })
+                .collect()
+        })
+        .ok_or_else(|| anyhow!("no `metamodels` in {listing}"))
+}
+
+/// The image's two descriptors, by package, in the order the container
+/// scenarios alternate them: behaviour tree, then SimpleUML.
+fn image_metamodels(node: &dyn Node, scenario: &str) -> [(String, Value); 2] {
+    let served = served_metamodels(node).unwrap_or_else(|e| panic!("{scenario}: {e:#}"));
+    [BT.1, UML.1].map(|package| {
+        let metamodel = served.get(package).unwrap_or_else(|| {
+            panic!(
+                "{scenario}: the image serves no `{package}` descriptor from \
+                 {IMAGE_METAMODEL_DIR}; it lists {:?}",
+                served.keys().collect::<Vec<_>>()
+            )
+        });
+        (package.to_string(), metamodel.clone())
+    })
+}
+
+/// One hosted model as a scenario drives it: its id, the metamodel it was
+/// created under, and the root key that belongs to it and to no other model.
+struct HostedModel {
+    id: String,
+    package: String,
+    metamodel: Value,
+    key: String,
+}
+
+/// Creates [`CONTAINER_MODELS`] models on `creator`, alternating the image's
+/// two descriptors, and joins every one of them by id on each of `joiners`.
+/// The key of model `i` is `<package>_<i>`, so that two models of one
+/// metamodel are still told apart.
+fn register_models(creator: &dyn Node, joiners: &[&dyn Node], scenario: &str) -> Vec<HostedModel> {
+    let kinds = image_metamodels(creator, scenario);
+    let models: Vec<HostedModel> = (0..CONTAINER_MODELS)
+        .map(|i| {
+            let (package, metamodel) = &kinds[i % kinds.len()];
+            let id = create_model(creator, metamodel)
+                .unwrap_or_else(|e| panic!("{scenario}: create model {i}: {e:#}"));
+            HostedModel {
+                id,
+                package: package.clone(),
+                metamodel: metamodel.clone(),
+                key: format!("{package}_{i}"),
+            }
+        })
+        .collect();
+    for joiner in joiners {
+        for model in &models {
+            join_model(*joiner, &model.id, &model.metamodel)
+                .unwrap_or_else(|e| panic!("{scenario}: join on {}: {e:#}", joiner.id()));
+        }
+    }
+    models
+}
+
+/// The isolation claim, checked on every replica: each model's document holds
+/// its own key and no other model's, and no log was ever handed a frame that
+/// belongs to another (`foreign_log_refusals` at zero).
+fn assert_models_isolated(nodes: &[&dyn Node], models: &[HostedModel]) {
+    for node in nodes {
+        for model in models {
+            let state = model_state(*node, &model.id)
+                .unwrap_or_else(|e| panic!("{}: model {}: {e:#}", node.id(), model.id));
+            let root = root_object(&state)
+                .unwrap_or_else(|e| panic!("{}: model {}: {e:#}", node.id(), model.id));
+            assert!(
+                root.contains_key(&model.key),
+                "{}: model {} ({}) lost its own key `{}`: {state}",
+                node.id(),
+                model.id,
+                model.package,
+                model.key
+            );
+            for other in models.iter().filter(|other| other.id != model.id) {
+                assert!(
+                    !root.contains_key(&other.key),
+                    "{}: model {} ({}) holds `{}`, which belongs to model {} ({}): {state}",
+                    node.id(),
+                    model.id,
+                    model.package,
+                    other.key,
+                    other.id,
+                    other.package
+                );
+            }
+            assert_eq!(
+                model_metric(*node, &model.id, "foreign_log_refusals").unwrap(),
+                0,
+                "{}: a frame was handed to model {} by a log that does not own it",
+                node.id(),
+                model.id
+            );
+        }
+    }
+}
+
+/// Reads which path `joiner` took for each of `models` and prints it, so a
+/// green run says what it exercised; panics only if the joiner's log names
+/// neither path, which would mean the model arrived some way this suite does
+/// not know about.
+fn report_joiner_paths(
+    joiner: &dyn Node,
+    models: &[HostedModel],
+    scenario: &str,
+) -> Vec<JoinerPath> {
+    models
+        .iter()
+        .map(|model| {
+            let path = poll_until(CONVERGE_TIMEOUT, || Ok(joiner_path(joiner, &model.id)))
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{scenario}: `{}` names neither path for model {} in its log:\n{}",
+                        joiner.id(),
+                        model.id,
+                        joiner.log_tail(LOG_TAIL_LINES)
+                    )
+                });
+            eprintln!(
+                "{scenario} transfer path: `{}` {} model {} ({}, {} ops)",
+                joiner.id(),
+                match path {
+                    JoinerPath::Adopted => "adopted the donor's snapshot for",
+                    JoinerPath::DeltaSync => "was refused a snapshot and delta-synced",
+                },
+                model.id,
+                model.package,
+                model_metric(joiner, &model.id, "delivered_ops").unwrap_or(0)
+            );
+            path
+        })
+        .collect()
 }
 
 /// **MP20** — two replicas host four models, two under each metamodel, and
 /// converge per model with no cross-talk.
+///
+/// Both replicas write into every model under that model's own key. Asserted
+/// per model: the pair agrees, both writes are there once each, no other
+/// model's key is, and no log refused a frame — on both replicas. Discharges
+/// M-A1, M-A2 and M-A3 over the wire. `frames_not_hosted` is not asserted zero
+/// here, because both nodes host all four models and there is nothing for the
+/// filter to drop.
 #[test]
 fn mp20_two_replicas_host_four_models_and_converge_per_model() {
-    let Some(cluster) = process_cluster("MP20", &["a", "b"]) else {
+    let Some(cluster) = model_container_cluster("MP20", &["a", "b"]) else {
         return;
     };
-    let dir = descriptor_dir("MP20", &[BT, UML]).expect("MP20: descriptor dir");
-    let mut cluster = cluster.with_env(vec![(
-        "METAMODEL_DIR".into(),
-        dir.to_string_lossy().into_owned(),
-    )]);
-    cluster.start_all().expect("MP20: start");
-    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("MP20: mesh");
     let (a, b) = (cluster.node("a"), cluster.node("b"));
-
-    let kinds = [BT, BT, UML, UML];
-    let models: Vec<String> = kinds
-        .iter()
-        .map(|kind| create_model(a, *kind).expect("MP20: create"))
-        .collect();
-    for (model, kind) in models.iter().zip(kinds) {
-        join_model(b, model, kind).expect("MP20: join");
-    }
+    let models = register_models(a, &[b], "MP20");
     assert_eq!(
         hosted_models(b).unwrap().len(),
         models.len() + 1,
         "b hosts its default log and the four models"
     );
 
-    // Each side writes into every model, under a key that belongs to that
-    // model's metamodel and to no other.
-    for (model, kind) in models.iter().zip(kinds) {
-        let key = if kind.1 == "behaviortree" {
-            "Sequence"
-        } else {
-            "Class"
-        };
+    for model in &models {
         apply_to_model(
             a,
-            model,
-            ops::object_update(key, ops::string_insert('a', 0)),
+            &model.id,
+            ops::object_update(&model.key, ops::string_insert('a', 0)),
         );
         apply_to_model(
             b,
-            model,
-            ops::object_update(key, ops::string_insert('b', 0)),
+            &model.id,
+            ops::object_update(&model.key, ops::string_insert('b', 0)),
         );
     }
 
-    for (model, kind) in models.iter().zip(kinds) {
-        let state = assert_model_converged(&[a, b], model, CONVERGE_TIMEOUT);
-        let root = root_object(&state).unwrap_or_else(|e| panic!("MP20: {model}: {e:#}"));
-        let (own, foreign) = if kind.1 == "behaviortree" {
-            ("Sequence", "Class")
-        } else {
-            ("Class", "Sequence")
-        };
-        assert!(
-            root.contains_key(own),
-            "{model} lost its own write: {state}"
-        );
-        assert!(
-            !root.contains_key(foreign),
-            "{model} holds a `{foreign}` from another model: {state}"
-        );
-        let written: String = read_string(&state, own).unwrap();
+    for model in &models {
+        let state = assert_model_converged(&[a, b], &model.id, CONVERGE_TIMEOUT);
+        let written: String = read_string(&state, &model.key).unwrap();
         assert_eq!(
             written.len(),
             2,
-            "{model}: both sides' writes, once each: {state}"
+            "{}: both sides' writes, once each: {state}",
+            model.id
         );
-        for node in [a, b] {
-            assert_eq!(
-                model_metric(node, model, "foreign_log_refusals").unwrap(),
-                0,
-                "a frame was handed to a log that does not own it on {}",
-                node.id()
-            );
-        }
     }
+    assert_models_isolated(&[a, b], &models);
 }
 
 /// **MP21** — a node never hosts a model nobody registered there: the frames
-/// arrive, are filtered and counted, and the model appears only once someone
+/// arrive, are filtered and counted, and a model appears only once someone
 /// registers it, through a transfer.
+///
+/// `a` creates four models and writes into every one of them; `b` registers
+/// none, lists none, and its `frames_not_hosted` climbs by at least the number
+/// of writes — the counter is the observable that the frames did arrive, and
+/// without it the negative would be vacuous. Then `b` joins the first model
+/// alone: it catches up, the other three stay unhosted, and `a` served the
+/// transfer naming that model. `b` is a fresh joiner by construction (its
+/// default log has no history), so this is the one scenario that asserts the
+/// adoption path rather than reporting it. Discharges M-A3 and the join path
+/// of M-A7.
 #[test]
 fn mp21_a_node_never_hosts_a_model_nobody_registered_there() {
-    let Some(cluster) = process_cluster("MP21", &["a", "b"]) else {
+    let Some(cluster) = model_container_cluster("MP21", &["a", "b"]) else {
         return;
     };
-    let dir = descriptor_dir("MP21", &[BT]).expect("MP21: descriptor dir");
-    let mut cluster = cluster.with_env(vec![(
-        "METAMODEL_DIR".into(),
-        dir.to_string_lossy().into_owned(),
-    )]);
-    cluster.start_all().expect("MP21: start");
-    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("MP21: mesh");
     let (a, b) = (cluster.node("a"), cluster.node("b"));
-
-    let model = create_model(a, BT).expect("MP21: create");
+    let models = register_models(a, &[], "MP21");
     let hosted_on_b = hosted_models(b).expect("MP21: /api/models on b");
+    assert!(
+        models.iter().all(|model| !hosted_on_b.contains(&model.id)),
+        "b lists a model that was created on a and registered nowhere else: {hosted_on_b:?}"
+    );
     let filtered_before = metric(b, "frames_not_hosted").expect("MP21: frames_not_hosted");
+
     let rounds = 10;
     for round in 0..rounds {
-        apply_to_model(
-            a,
-            &model,
-            ops::object_update("Sequence", ops::string_insert('x', round)),
-        );
+        for model in &models {
+            apply_to_model(
+                a,
+                &model.id,
+                ops::object_update(&model.key, ops::string_insert('x', round)),
+            );
+        }
+        let hosted = hosted_models(b).unwrap();
         assert!(
-            !hosted_models(b).unwrap().contains(&model),
-            "b started hosting {model} because a frame for it arrived"
+            models.iter().all(|model| !hosted.contains(&model.id)),
+            "b started hosting a model because a frame for it arrived: {hosted:?}"
         );
     }
-    // The negative above is only worth something if the frames did arrive:
-    // the filter's counter is the observable that they did.
+    let writes = (rounds * models.len()) as u64;
     poll_until(CONVERGE_TIMEOUT, || {
-        Ok((metric(b, "frames_not_hosted")? >= filtered_before + rounds as u64).then_some(()))
+        Ok((metric(b, "frames_not_hosted")? >= filtered_before + writes).then_some(()))
     })
     .unwrap_or_else(|e| {
         panic!(
-            "b's frames_not_hosted never rose by {rounds}: the frames never arrived and the \
+            "b's frames_not_hosted never rose by {writes}: the frames never arrived and the \
              negative was vacuous{}",
             e.map(|e| format!(" (last error: {e:#})"))
                 .unwrap_or_default()
@@ -4910,13 +5173,204 @@ fn mp21_a_node_never_hosts_a_model_nobody_registered_there() {
         "b's hosted set changed"
     );
 
-    // Now register it there, and the model arrives whole.
-    join_model(b, &model, BT).expect("MP21: join");
-    let state = assert_model_converged(&[a, b], &model, CONVERGE_TIMEOUT);
-    assert_eq!(read_string(&state, "Sequence").unwrap(), "x".repeat(rounds));
-    assert!(
-        transfers_served_to(a, "b") >= 1,
-        "b caught up without a state transfer, which a log with no history cannot do"
+    // Now register one of them there, and that model alone arrives, whole.
+    let (joined, others) = models.split_first().expect("four models");
+    join_model(b, &joined.id, &joined.metamodel).expect("MP21: join");
+    let state = assert_model_converged(&[a, b], &joined.id, CONVERGE_TIMEOUT);
+    assert_eq!(
+        read_string(&state, &joined.key).unwrap(),
+        "x".repeat(rounds)
     );
-    assert_eq!(model_metric(b, &model, "foreign_log_refusals").unwrap(), 0);
+    let served: BTreeSet<String> = transfers_served(a, "b")
+        .into_iter()
+        .map(|(log_id, _)| log_id)
+        .collect();
+    assert_eq!(
+        served,
+        BTreeSet::from([joined.id.clone()]),
+        "a served b a transfer for something other than the one model b registered"
+    );
+    let paths = report_joiner_paths(b, std::slice::from_ref(joined), "MP21");
+    assert_eq!(
+        paths,
+        vec![JoinerPath::Adopted],
+        "b holds no history in any log, so it must have adopted a's snapshot"
+    );
+    let hosted = hosted_models(b).unwrap();
+    assert!(
+        others.iter().all(|model| !hosted.contains(&model.id)),
+        "joining one model made b host another: {hosted:?}"
+    );
+    assert_eq!(
+        model_metric(b, &joined.id, "foreign_log_refusals").unwrap(),
+        0
+    );
+}
+
+/// **MP22** — a joiner receives each hosted model separately, and each
+/// transfer is sized like that model and not like the donor.
+///
+/// The donor `a` hosts four behaviour-tree models of 1, 10, 100 and 1 000
+/// operations on top of their headers; `b` joins all four. Read from the
+/// donor's own log lines, in the discipline T7 and T8 use: four transfers to
+/// `b`, each naming one model, with serialised bytes strictly ordered like the
+/// four sizes. One transfer carrying everything, or four of equal size, is the
+/// failure. The joiner's path per model is reported and not asserted: after
+/// the first adoption `b` holds history, so the adopt guard decides the rest
+/// by whether the donor's member order agrees with `b`'s, and either answer
+/// leaves the donor's four served transfers — the thing under test — as they
+/// are. Discharges M-A7 on the fresh-joiner path.
+#[test]
+fn mp22_a_joiner_receives_each_hosted_model_separately() {
+    const SIZES: [usize; 4] = [1, 10, 100, 1000];
+
+    let Some(cluster) = model_container_cluster("MP22", &["a", "b"]) else {
+        return;
+    };
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    // One metamodel for all four, so the headers are the same size and the
+    // only thing that differs between the logs is the operations below.
+    let (package, metamodel) = image_metamodels(a, "MP22")[0].clone();
+    let models: Vec<HostedModel> = SIZES
+        .iter()
+        .enumerate()
+        .map(|(i, size)| {
+            let id = create_model(a, &metamodel).expect("MP22: create");
+            let key = format!("{package}_{i}");
+            for _ in 0..*size {
+                apply_to_model(a, &id, ops::object_update(&key, ops::number_inc(1.0)));
+            }
+            HostedModel {
+                id,
+                package: package.clone(),
+                metamodel: metamodel.clone(),
+                key,
+            }
+        })
+        .collect();
+    for (model, size) in models.iter().zip(SIZES) {
+        let state = model_state(a, &model.id).expect("MP22: donor state");
+        assert_eq!(read_number(&state, &model.key).unwrap(), size as f64);
+    }
+
+    for model in &models {
+        join_model(b, &model.id, &model.metamodel).expect("MP22: join");
+    }
+    for model in &models {
+        assert_model_converged(&[a, b], &model.id, CONVERGE_TIMEOUT);
+    }
+
+    // The first transfer served for each model, in the order the models were
+    // created. A model can be served twice if `b` is slow to install a large
+    // snapshot and asks again past the retry deadline; the bytes are the same
+    // log either way.
+    let served = transfers_served(a, "b");
+    let mut first_bytes: BTreeMap<&str, usize> = BTreeMap::new();
+    for (log_id, bytes) in &served {
+        first_bytes.entry(log_id.as_str()).or_insert(*bytes);
+    }
+    let by_model: Vec<Option<usize>> = models
+        .iter()
+        .map(|model| first_bytes.get(model.id.as_str()).copied())
+        .collect();
+    assert!(
+        by_model.iter().all(Option::is_some),
+        "a did not serve b one transfer per model; served {served:?} for models {:?}",
+        models.iter().map(|m| &m.id).collect::<Vec<_>>()
+    );
+    let bytes: Vec<usize> = by_model.into_iter().flatten().collect();
+    assert_eq!(
+        first_bytes.len(),
+        models.len(),
+        "a served b a transfer for a log that is not one of the four models: {served:?}"
+    );
+    assert!(
+        bytes.windows(2).all(|w| w[0] < w[1]),
+        "the transfers are not sized like their models: {SIZES:?} operations gave {bytes:?} \
+         bytes, in creation order"
+    );
+    eprintln!(
+        "MP22 transfers served by a to b, bytes per model at {SIZES:?} operations: {bytes:?}"
+    );
+    let paths = report_joiner_paths(b, &models, "MP22");
+    assert_eq!(
+        paths[0],
+        JoinerPath::Adopted,
+        "b held no history anywhere when it joined the first model, so that one is adopted"
+    );
+    assert_models_isolated(&[a, b], &models);
+}
+
+/// **MP23** — a partitioned run with four models heals per model.
+///
+/// The C1–C4 shape with four models: three replicas all hosting all four, `c`
+/// cut off with a Docker network operation, writes on both sides of the cut
+/// into every model, and the cut healed. Asserted per model: the three
+/// replicas agree, both sides' writes are there, and no model holds another's
+/// key on any replica. Discharges M-A2's healing half over the wire.
+#[test]
+fn mp23_a_partitioned_run_with_four_models_heals_per_model() {
+    let Some(mut cluster) = model_container_cluster("MP23", &["a", "b", "c"]) else {
+        return;
+    };
+    let models = {
+        let (a, b, c) = (cluster.node("a"), cluster.node("b"), cluster.node("c"));
+        let models = register_models(a, &[b, c], "MP23");
+        // A common ancestor in every model on every replica before the split,
+        // so the healed document has to carry both sides' work and not only
+        // one side's history plus a transfer.
+        for model in &models {
+            apply_to_model(
+                a,
+                &model.id,
+                ops::object_update(&model.key, ops::string_insert('.', 0)),
+            );
+        }
+        for model in &models {
+            assert_model_converged(&[a, b, c], &model.id, CONVERGE_TIMEOUT);
+        }
+        report_joiner_paths(c, &models, "MP23");
+        models
+    };
+
+    cluster.cut_network("c").expect("MP23: sever c");
+    for model in &models {
+        apply_to_model(
+            cluster.node("a"),
+            &model.id,
+            ops::object_update(&model.key, ops::string_insert('A', 1)),
+        );
+        apply_to_model(
+            cluster.node("c"),
+            &model.id,
+            ops::object_update(&model.key, ops::string_insert('C', 1)),
+        );
+    }
+    for model in &models {
+        let id = model.id.clone();
+        assert_diverged_by(
+            cluster.node("a"),
+            cluster.node("c"),
+            |node| model_state(node, &id),
+            CONVERGE_TIMEOUT,
+        );
+    }
+
+    cluster.restore_network("c").expect("MP23: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("MP23: mesh after heal");
+
+    let nodes = cluster.nodes();
+    for model in &models {
+        let state = assert_model_converged(&nodes, &model.id, CONVERGE_TIMEOUT);
+        let healed = read_string(&state, &model.key).unwrap();
+        let mut chars: Vec<char> = healed.chars().collect();
+        chars.sort_unstable();
+        assert_eq!(
+            chars,
+            vec!['.', 'A', 'C'],
+            "model {} lost a write across the partition: {healed:?} in {state}",
+            model.id
+        );
+    }
+    assert_models_isolated(&nodes, &models);
 }
