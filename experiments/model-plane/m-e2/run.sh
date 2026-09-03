@@ -46,18 +46,25 @@ stamp=$(mp_stamp)
 results="$HERE/results.csv"
 rss="$HERE/rss.csv"
 crossed=()
+verdicts=()
 
 # --- in process ------------------------------------------------------------
 
+# The example prints one `met:` or `CROSSED:` line per threshold on stderr;
+# they are kept, per profile, for the manifest, so a crossed threshold is
+# named there and not only on a terminal that has scrolled away.
 run_profile() {
     local profile="$1" out="$2" flag=()
+    local log="$HERE/.$profile.log"
     [ "$profile" = release ] && flag=(--release)
     mp_say "building and running the example in $profile (load $(mp_load_average))"
     if ! ( cd "$MOIRAI_ROOT" && nice -n 10 cargo run -q "${flag[@]}" -p moirai-network \
             --features test_utils -j 2 --example model_plane_cost -- \
-            --out "$out" --points "$POINTS" --lookups "$LOOKUPS" ); then
-        crossed+=("$profile: a threshold was crossed; see the verdict lines above")
+            --out "$out" --points "$POINTS" --lookups "$LOOKUPS" ) 2>&1 | tee "$log" >&2; then
+        crossed+=("$profile: $(grep '^CROSSED:' "$log" | sed 's/^CROSSED: //' | paste -sd ';' -)")
     fi
+    verdicts+=("$profile: $(grep -E '^(met|CROSSED):' "$log" | paste -sd ';' -)")
+    rm -f "$log"
 }
 
 phase_inprocess() {
@@ -148,6 +155,8 @@ write_manifest() {
         printf '%-14s%s\n' memory "deep size per map entry, the member table counted once; B-tree node slack not charged; the CRDT log's heap is empty at N empty logs"
         printf '%-14s%s\n' rss "VmRSS of PID 1 (network_node) per container after ${IDLE_SECS}s idle, rig --models N --no-load --no-dashboard; results.csv carries the median over the node replicas"
         printf '%-14s%s\n' thresholds "p50 < 1 us at N=64 (hit and miss); p50(64) <= 2 x p50(1); m(N) <= m(1) + (N-1) x 2 x s; one member table"
+        local verdict
+        for verdict in "${verdicts[@]}"; do printf '%-14s%s\n' verdicts "$verdict"; done
         if [ "${#crossed[@]}" -gt 0 ]; then
             printf '%-14s%s\n' crossed "${crossed[*]}"
         else
