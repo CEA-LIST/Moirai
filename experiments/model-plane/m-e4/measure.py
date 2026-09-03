@@ -71,7 +71,7 @@ def main():
     parser.add_argument("--ops", type=int, default=500)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--start-joiner", required=True, help="shell command with {name}; prints host:port of the joiner's HTTP API")
+    parser.add_argument("--start-joiner", required=True, help="shell command with {name} and {id}; prints host:port of the joiner's HTTP API")
     parser.add_argument("--stop-joiner", required=True, help="shell command with {name}")
     parser.add_argument("--joiner-prefix", required=True, help="container name prefix; the run number is appended")
     parser.add_argument("--out", required=True)
@@ -112,8 +112,8 @@ def main():
 
         # The joiner: fresh, registers A alone, adopts.
         name = f"{args.joiner_prefix}{run}"
-        joiner_id = name.rsplit("-", 1)[-1]
-        joiner = "http://" + sh(args.start_joiner.format(name=name))
+        joiner_id = f"j{args.n_logs}x{run}"
+        joiner = "http://" + sh(args.start_joiner.format(name=name, id=joiner_id))
         wait_healthy(joiner)
         wait_mesh([joiner], expect=1)
         t_join = time.perf_counter()

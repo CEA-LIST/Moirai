@@ -33,6 +33,8 @@ out="$HERE/results.csv"
 net="moirai-m-e1-$stamp"
 
 teardown() {
+    local rc=$?
+    [ "$rc" -eq 0 ] || mp_dump_logs "$net"
     docker ps -aq --filter "network=$net" | xargs -r docker rm --force --volumes >/dev/null 2>&1 || true
     docker network rm "$net" >/dev/null 2>&1 || true
 }
@@ -64,7 +66,7 @@ peers_for() {
     echo "$spec"
 }
 for name in "${names[@]}"; do
-    mp_start_node "$net" "$name" "$(peers_for "$name")"
+    mp_start_node "$net" "$name" "${name##*-}" "$(peers_for "$name")"
 done
 for name in "${names[@]}"; do mp_wait_healthy "$name"; done
 

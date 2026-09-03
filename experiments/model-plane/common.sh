@@ -83,12 +83,13 @@ mp_assert_no_moirai_containers() {
 # is what lets it poll at loopback latency and read frames off the wire.
 # ---------------------------------------------------------------------------
 
-# $1 network, $2 name, $3 PEERS spec, $4.. extra `docker run` arguments
+# $1 network, $2 container name, $3 REPLICA_ID, $4 PEERS spec, $5.. extra
+# `docker run` arguments
 mp_start_node() {
-    local net="$1" name="$2" peers="$3"
-    shift 3
+    local net="$1" name="$2" id="$3" peers="$4"
+    shift 4
     docker run --detach --name "$name" --network "$net" --network-alias "$name" \
-        --env "REPLICA_ID=${name##*-}" \
+        --env "REPLICA_ID=$id" \
         --env LISTEN_PORT=9001 \
         --env HTTP_PORT=8081 \
         --env "PEERS=$peers" \
@@ -98,6 +99,15 @@ mp_start_node() {
         --publish 127.0.0.1::9001 \
         "$@" \
         "$MP_IMAGE" >/dev/null
+}
+
+# The last lines of every container on `$1`'s network, for a run that failed.
+mp_dump_logs() {
+    local name
+    for name in $(docker ps -a --filter "network=$1" --format '{{.Names}}' | sort); do
+        printf '\n===== %s (%s) =====\n' "$name" "$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' "$name")" >&2
+        docker logs --tail "${2:-30}" "$name" >&2 2>&1
+    done
 }
 
 mp_http_of() { docker port "$1" 8081/tcp | head -1; }

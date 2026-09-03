@@ -30,6 +30,8 @@ out="$HERE/results.csv"
 net="moirai-m-e4-$stamp"
 
 teardown() {
+    local rc=$?
+    [ "$rc" -eq 0 ] || mp_dump_logs "$net"
     docker ps -aq --filter "network=$net" | xargs -r docker rm --force --volumes >/dev/null 2>&1 || true
     docker network rm "$net" >/dev/null 2>&1 || true
 }
@@ -43,7 +45,7 @@ first=1
 for n in ${POINTS//,/ }; do
     donor="$net-d$n"
     mp_say "N=$n: donor up (load $(mp_load_average))"
-    mp_start_node "$net" "$donor" ""
+    mp_start_node "$net" "$donor" "d$n" ""
     mp_wait_healthy "$donor"
     append=()
     [ "$first" -eq 1 ] || append=(--append)
@@ -54,7 +56,7 @@ for n in ${POINTS//,/ }; do
         --donor-name "$donor" --donor-id "d$n" \
         --n-logs "$n" --ops "$OPS" --runs "$RUNS" --seed "$SEED" \
         --joiner-prefix "$net-j${n}x" \
-        --start-joiner "bash -c '. $HERE/../common.sh; mp_start_node $net {name} d$n:$donor:9001; mp_wait_healthy {name}; mp_http_of {name}'" \
+        --start-joiner "bash -c '. $HERE/../common.sh; mp_start_node $net {name} {id} d$n:$donor:9001; mp_wait_healthy {name}; mp_http_of {name}'" \
         --stop-joiner "docker rm --force --volumes {name} >/dev/null" \
         --out "$out" "${append[@]}"
     docker rm --force --volumes "$donor" >/dev/null
