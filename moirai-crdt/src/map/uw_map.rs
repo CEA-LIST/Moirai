@@ -270,8 +270,8 @@ mod tests {
     };
 
     record!(Duet {
-        first: VecLog<Counter<i32>> => i32,
-        second: VecLog<Counter<i32>> => i32,
+        first: VecLog<Counter<i32>>,
+        second: VecLog<Counter<i32>>,
     });
 
     #[test]

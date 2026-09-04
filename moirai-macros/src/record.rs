@@ -3,7 +3,7 @@
 
 #[macro_export]
 macro_rules! record {
-    ($name:ident { $($field:ident : $T:ty => $value:ty),* $(,)? }) => {
+    ($name:ident { $($field:ident : $T:ty),+ $(,)? }) => {
         $crate::paste::paste! {
             /// Set of operations that can be applied to the record.
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
@@ -33,9 +33,9 @@ macro_rules! record {
 
             /// Returned value when reading the record, containing the values of all fields.
             #[derive(Debug, Clone, Default, PartialEq)]
-            pub struct [<$name Value>] {
+            pub struct [<$name Value>]<$([<$field:camel Value>]),+> {
                 $(
-                    pub $field: $value,
+                    pub $field: [<$field:camel Value>],
                 )*
             }
 
@@ -182,16 +182,32 @@ macro_rules! record {
 
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>> for [<$name Log>] {
+            impl<$([<$field:camel Value>]),+>
+                $crate::moirai_protocol::crdt::eval::EvalNested<
+                    $crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$([<$field:camel Value>]),+>
+                    >
+                > for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
+                        $crate::moirai_protocol::crdt::query::Read<[<$field:camel Value>]>
+                    >,
+                )+
+            {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
-                ) -> [<$name Value>] {
+                    _q: &$crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$([<$field:camel Value>]),+>
+                    >,
+                ) -> [<$name Value>]<$([<$field:camel Value>]),+> {
                     [<$name Value>] {
                         $(
-                            $field: $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
+                                $crate::moirai_protocol::crdt::query::Read<[<$field:camel Value>]>
+                            >>::execute_query(
                                 &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
+                                &$crate::moirai_protocol::crdt::query::Read::<[<$field:camel Value>]>::new(),
                             ),
                         )*
                     }

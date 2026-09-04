@@ -378,8 +378,8 @@ mod tests {
     #[test]
     fn insert_then_delete() {
         record!(Duet {
-            first: VecLog<Counter<i32>> => i32,
-            second: VecLog<Counter<i32>> => i32,
+            first: VecLog<Counter<i32>>,
+            second: VecLog<Counter<i32>>,
         });
 
         let (mut replica_a, _) = twins_log::<NestedListLog<DuetLog>>();
@@ -390,7 +390,7 @@ mod tests {
         let _ = replica_a.send(NestedList::delete(0)).unwrap();
 
         let list = replica_a.query(&Read::new());
-        assert_eq!(list, Vec::<DuetValue>::new());
+        assert_eq!(list, Vec::<DuetValue<i32, i32>>::new());
     }
 
     #[test]

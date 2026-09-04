@@ -173,38 +173,52 @@ impl Ord for Multiplicity {
 }
 
 record!(Feature {
-    typ: VecLog::<MVRegister::<PrimitiveType>> => HashSet<PrimitiveType>,
-    visibility: VecLog::<TORegister::<Visibility>> => Option<Visibility>,
+    typ: VecLog::<MVRegister::<PrimitiveType>>,
+    visibility: VecLog::<TORegister::<Visibility>>,
 });
 
 record!(Operation {
-    is_abstract: VecLog::<EWFlag> => bool,
-    visibility: VecLog::<TORegister::<Visibility>> => Option<Visibility>,
-    parameters: UWMapLog::<String, VecLog::<MVRegister::<TypeRef>>> => HashMap<String, HashSet<TypeRef>>,
-    return_type: VecLog::<MVRegister::<TypeRef>> => HashSet<TypeRef>,
+    is_abstract: VecLog::<EWFlag>,
+    visibility: VecLog::<TORegister::<Visibility>>,
+    parameters: UWMapLog::<String, VecLog::<MVRegister::<TypeRef>>>,
+    return_type: VecLog::<MVRegister::<TypeRef>>,
 });
 
 record!(Class {
-    is_abstract: VecLog::<EWFlag> => bool,
-    name: VecLog::<MVRegister::<String>> => HashSet<String>,
-    features: UWMapLog::<String, FeatureLog> => HashMap<String, FeatureValue>,
-    operations: UWMapLog::<String, OperationLog> => HashMap<String, OperationValue>,
+    is_abstract: VecLog::<EWFlag>,
+    name: VecLog::<MVRegister::<String>>,
+    features: UWMapLog::<String, FeatureLog>,
+    operations: UWMapLog::<String, OperationLog>,
 });
 
 record!(Ends {
-    source: VecLog::<TORegister::<Multiplicity>> => Option<Multiplicity>,
-    target: VecLog::<TORegister::<Multiplicity>> => Option<Multiplicity>,
+    source: VecLog::<TORegister::<Multiplicity>>,
+    target: VecLog::<TORegister::<Multiplicity>>,
 });
 
 record!(Relation {
-    ends: EndsLog => EndsValue,
-    label: VecLog::<MVRegister::<String>> => HashSet<String>,
-    typ: VecLog::<TORegister::<RelationType>> => Option<RelationType>,
+    ends: EndsLog,
+    label: VecLog::<MVRegister::<String>>,
+    typ: VecLog::<TORegister::<RelationType>>,
 });
 
+pub type FeatureSnapshot = FeatureValue<HashSet<PrimitiveType>, Option<Visibility>>;
+pub type OperationSnapshot =
+    OperationValue<bool, Option<Visibility>, HashMap<String, HashSet<TypeRef>>, HashSet<TypeRef>>;
+pub type ClassSnapshot = ClassValue<
+    bool,
+    HashSet<String>,
+    HashMap<String, FeatureSnapshot>,
+    HashMap<String, OperationSnapshot>,
+>;
+pub type EndsSnapshot = EndsValue<Option<Multiplicity>, Option<Multiplicity>>;
+pub type RelationSnapshot = RelationValue<EndsSnapshot, HashSet<String>, Option<RelationType>>;
+
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
-pub type ClassDiagram<'a> =
-    DiGraph<Content<&'a str, ClassValue>, Content<(&'a str, &'a str, &'a str), RelationValue>>;
+pub type ClassDiagram<'a> = DiGraph<
+    Content<&'a str, ClassSnapshot>,
+    Content<(&'a str, &'a str, &'a str), RelationSnapshot>,
+>;
 
 pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
     let fancy_dot = Dot::with_attr_getters(
@@ -223,7 +237,7 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
 
 fn edge_attr(
     _g: &ClassDiagram,
-    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationValue>>,
+    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationSnapshot>>,
 ) -> String {
     let label = &edge
         .weight()
@@ -276,7 +290,7 @@ fn format_mult(m: &Multiplicity) -> String {
     }
 }
 
-fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue>)) -> String {
+fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassSnapshot>)) -> String {
     let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
     let name = format_node_name(&class.val, &name_vec);
     let features = format_features(&class.val.features);
@@ -289,7 +303,7 @@ fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue
     format!("label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}")
 }
 
-fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
+fn format_node_name(class: &ClassSnapshot, name_vec: &[String]) -> String {
     let prefix = if class.is_abstract { "Ⓐ " } else { "Ⓒ " };
     let name_str = if name_vec.is_empty() {
         "Unnamed".to_string()
@@ -299,7 +313,7 @@ fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
     format!("{prefix}{name_str}")
 }
 
-fn format_features(features: &HashMap<String, FeatureValue>) -> String {
+fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
     features
         .iter()
         .map(|(k, v)| {
@@ -323,7 +337,7 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
         .join("\\l")
 }
 
-fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationValue>) -> String {
+fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationSnapshot>) -> String {
     operations
         .iter()
         .map(|(k, v)| {
