@@ -56,11 +56,31 @@ else
     echo "[driver] one op per replica every ${OP_INTERVAL_SECS}s in session '$SESSION_ID'"
 fi
 
-# A counter increment under the replica's own key. Increments commute, so
-# nothing here can fail to converge for semantic reasons and the only thing the
-# run measures is the replication layer.
+# A counter increment under the replica's own key, for the default log.
+# Increments commute, so nothing here can fail to converge for semantic
+# reasons and the only thing the run measures is the replication layer.
 op_for() {
     printf '{"JsonKind":{"Object":{"Update":["k_%s",{"Number":{"Inc":1}}]}}}' "$1"
+}
+
+# A write into a hosted model, which the node checks against the model's
+# descriptor: a root key the root class does not declare is refused at the
+# intake, so the write goes into a string the descriptor does declare, chosen
+# by the package the model's metamodel route names. One character at
+# position 0, which commutes like the counter does. A package this script
+# does not know gets no write, and says so once per model.
+model_op_for() {
+    local host="$1" model="$2" package
+    package=$(curl -fsS --max-time 2 "http://$host:$HTTP_PORT/api/model/$model/metamodel" 2>/dev/null \
+        | grep -o '"package":"[^"]*"' | cut -d'"' -f4)
+    case "$package" in
+        behaviortree)
+            printf '{"JsonKind":{"Object":{"Update":["main",{"Object":{"Update":["ID",{"String":{"Insert":{"content":"x","pos":0}}}]}}]}}}' ;;
+        simpleuml)
+            printf '{"JsonKind":{"Object":{"Update":["name",{"String":{"Insert":{"content":"x","pos":0}}}]}}}' ;;
+        *)
+            echo "[driver] no write for model $model on $host: package '$package' has no known slot" >&2 ;;
+    esac
 }
 
 round=0
@@ -71,6 +91,7 @@ while :; do
 
     for host in $hosts; do
         path=/api/op
+        op=$(op_for "$host")
         if [ "$DRIVE_MODELS" = "1" ]; then
             # Read live rather than once at startup: the models are registered
             # after this container is running, and a replica can be joined to
@@ -81,11 +102,13 @@ while :; do
             if [ "${count:-0}" -gt 0 ]; then
                 model=$(printf '%s\n' "$models" | sed -n "$(( round % count + 1 ))p")
                 path="/api/model/$model/op"
+                op=$(model_op_for "$host" "$model")
             fi
         fi
+        [ -n "$op" ] || continue
         curl -fsS --max-time 2 -o /dev/null \
             -X POST "http://$host:$HTTP_PORT$path" \
-            -d "$(op_for "$host")" \
+            -d "$op" \
             2>/dev/null
     done
 
