@@ -55,8 +55,12 @@ pub type LogReplica<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
 pub type RegisterFn<O> = fn(&LogId, &ServedDescriptor) -> Vec<O>;
 
 /// The application's intake guard: `Err(reason)` refuses an operation before a
-/// registered log applies it. See [`GenericNode::enable_op_guard`].
-pub type OpGuardFn<O> = fn(&O) -> Result<(), String>;
+/// registered log applies it. Handed the log's id and the descriptor the log
+/// was registered under — the one `register` matched, never the caller's
+/// claim — so a guard that checks the operation against that descriptor can
+/// be a plain function pointer with no state of its own. See
+/// [`GenericNode::enable_op_guard`].
+pub type OpGuardFn<O> = fn(&LogId, &ServedDescriptor, &O) -> Result<(), String>;
 
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
@@ -874,11 +878,18 @@ where
     /// Install the application's intake guard: `Err(reason)` from `guard`
     /// refuses an adapter-submitted operation on a registered log, and the
     /// caller is answered with a failed [`OpResult`] carrying the reason.
+    /// The guard receives the log's id and the descriptor the log was
+    /// registered under, and this node reads neither the operation nor the
+    /// descriptor on its behalf.
     ///
     /// Purely additive, like [`enable_registration`]: without it every
     /// operation is applied as before. The default log is not guarded, and
-    /// neither are the opening operations `register_fn` returns, which are
-    /// applied before any adapter can reach the new log.
+    /// neither is a log hosted with no binding, nor the opening operations
+    /// `register_fn` returns, which are applied before any adapter can reach
+    /// the new log. Operations received from peers are never guarded: every
+    /// honest peer ran its own guard at its own intake under the same
+    /// descriptor, and a refusal on receive is what would let two replicas
+    /// disagree.
     ///
     /// [`enable_registration`]: GenericNode::enable_registration
     pub fn enable_op_guard(&mut self, guard: OpGuardFn<L::Op>) {
@@ -1280,20 +1291,34 @@ where
     }
 
     /// The intake for operations submitted through an adapter: the guard,
-    /// when one is installed, runs before a registered log applies anything.
-    /// `None` names the default log, which is never guarded.
+    /// when one is installed, runs before a registered log applies anything,
+    /// and is handed the descriptor that log was registered under. `None`
+    /// names the default log, which is never guarded; neither is a log hosted
+    /// with no binding.
     fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
-        let registered = self
-            .logs
-            .get(&log_id)
-            .is_some_and(|log| log.binding.is_some());
-        if let (true, Some(guard)) = (registered, self.op_guard_fn) {
-            if let Err(reason) = guard(&op) {
-                return OpResult {
-                    success: false,
-                    message: reason,
+        if let Some(guard) = self.op_guard_fn {
+            let binding = self.logs.get(&log_id).and_then(|log| log.binding.as_ref());
+            if let Some(binding) = binding {
+                // The descriptor `register` matched for this log, looked up
+                // again by its key rather than remembered by index, so the
+                // guard can never be handed another descriptor's text.
+                let Some(descriptor) = self.descriptors.iter().find(|held| held.key == binding.key)
+                else {
+                    return OpResult {
+                        success: false,
+                        message: format!(
+                            "log {log_id} is bound to descriptor {}, which this node no longer holds",
+                            binding.key
+                        ),
+                    };
                 };
+                if let Err(reason) = guard(&log_id, descriptor, &op) {
+                    return OpResult {
+                        success: false,
+                        message: reason,
+                    };
+                }
             }
         }
         self.apply_op_to(&log_id, op)
@@ -1335,8 +1360,13 @@ where
     }
 
     /// Handle an inbound transport message: hand it to the log whose id it
-    /// carries, or filter it.
-    fn handle_transport_message(&mut self, from: PeerId, msg: TransportMessage<L::Op>) {
+    /// carries, or filter it. The inbound primitive, the mirror of
+    /// [`apply_op_to`]: what the event loop calls for every frame the
+    /// transport yields, public so a harness can deliver frames by hand and
+    /// time this path on its own.
+    ///
+    /// [`apply_op_to`]: GenericNode::apply_op_to
+    pub fn handle_transport_message(&mut self, from: PeerId, msg: TransportMessage<L::Op>) {
         match msg {
             TransportMessage::Event { event } => match self.logs.get_mut(event.log_id()) {
                 Some(log) => {
@@ -2061,6 +2091,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::transport::{PeerInfo, TransportResult};
@@ -2221,8 +2252,9 @@ mod tests {
     }
 
     /// An intake guard in the shape the node binary installs: the header is
-    /// written once, so a local operation that touches it is refused.
-    fn refuse_header_writes(op: &Op) -> Result<(), String> {
+    /// written once, so a local operation that touches it is refused. The
+    /// log and its descriptor are handed over and not needed for this rule.
+    fn refuse_header_writes(_: &LogId, _: &ServedDescriptor, op: &Op) -> Result<(), String> {
         match op {
             EWFlagSet::Add(member) | EWFlagSet::Remove(member)
                 if member.starts_with(HEADER_PREFIX) =>
@@ -2651,6 +2683,119 @@ mod tests {
             "the default log is unbound and must stay unguarded"
         );
         assert_eq!(members(&node, &default_log).len(), 1);
+    }
+
+    /// **MP33**, the Moirai half — the guard is consulted for a registered
+    /// log and for nothing else: not the default log, and not a log hosted
+    /// with no binding. The generated crate holds the other half, over HTTP
+    /// with the real descriptor.
+    #[test]
+    fn mp33_the_default_log_and_a_log_with_no_binding_are_never_checked() {
+        static CALLS: Mutex<Vec<LogId>> = Mutex::new(Vec::new());
+        fn counting(log_id: &LogId, descriptor: &ServedDescriptor, _: &Op) -> Result<(), String> {
+            assert_eq!(
+                descriptor.key, BT_KEY,
+                "the guard was handed a descriptor the log was not registered under"
+            );
+            CALLS.lock().unwrap().push(log_id.clone());
+            Ok(())
+        }
+        let mut node = registering("n");
+        node.host_log(uml()).expect("a fresh id");
+        node.enable_op_guard(counting);
+        let Registered { model_id, .. } = node.register(None, bt_id()).expect("created");
+
+        assert!(
+            node.submit_op(Some(model_id.clone()), add("Sequence"))
+                .success
+        );
+        assert!(node.submit_op(None, add("anything")).success);
+        assert!(node.submit_op(Some(uml()), add("Class")).success);
+        assert_eq!(
+            *CALLS.lock().unwrap(),
+            vec![model_id],
+            "the guard ran for the default log or for the unbound log"
+        );
+    }
+
+    /// **MP35** — the guard runs at the intake only, and two operations that
+    /// each pass it survive on both nodes. `a` submits one malformed
+    /// operation and a `Sequence` named `patrol`, `b` a `Fallback` named
+    /// `patrol`; every frame is delivered both ways by hand. The guard saw
+    /// exactly the three submissions and no received frame, the refused
+    /// operation left no frame on the transport, and both `patrol` members
+    /// are on both nodes with the two states equal.
+    #[test]
+    fn mp35_the_guard_runs_at_the_intake_only_and_two_conforming_writes_both_survive() {
+        static CALLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        fn refuse_malformed(_: &LogId, _: &ServedDescriptor, op: &Op) -> Result<(), String> {
+            let member = match op {
+                EWFlagSet::Add(member) | EWFlagSet::Remove(member) => member.as_str(),
+                EWFlagSet::Clear => "",
+            };
+            CALLS.lock().unwrap().push(member.to_string());
+            if member.starts_with("malformed:") {
+                Err(format!("`{member}` is malformed"))
+            } else {
+                Ok(())
+            }
+        }
+        let mut a = registering("a");
+        let mut b = registering("b");
+        a.enable_op_guard(refuse_malformed);
+        b.enable_op_guard(refuse_malformed);
+        let Registered { model_id, .. } = a.register(None, bt_id()).expect("created");
+        b.register(Some(model_id.clone()), bt_id()).expect("joined");
+        for frame in take_broadcast(&mut a) {
+            b.handle_transport_message("a".to_string(), frame);
+        }
+        assert_eq!(
+            members(&a, &model_id),
+            members(&b, &model_id),
+            "the header did not arrive"
+        );
+
+        let refused = a.submit_op(
+            Some(model_id.clone()),
+            add("malformed:Class under BehaviorTree.child"),
+        );
+        assert!(!refused.success, "the malformed operation was applied");
+        assert!(
+            take_broadcast(&mut a).is_empty(),
+            "a frame was recorded for the refused operation"
+        );
+        assert!(
+            a.submit_op(Some(model_id.clone()), add("Sequence:patrol"))
+                .success
+        );
+        assert!(
+            b.submit_op(Some(model_id.clone()), add("Fallback:patrol"))
+                .success
+        );
+        for frame in take_broadcast(&mut a) {
+            b.handle_transport_message("a".to_string(), frame);
+        }
+        for frame in take_broadcast(&mut b) {
+            a.handle_transport_message("b".to_string(), frame);
+        }
+
+        assert_eq!(
+            *CALLS.lock().unwrap(),
+            vec![
+                "malformed:Class under BehaviorTree.child".to_string(),
+                "Sequence:patrol".to_string(),
+                "Fallback:patrol".to_string(),
+            ],
+            "the guard ran for something other than the three submissions"
+        );
+        let on_a = members(&a, &model_id);
+        assert_eq!(on_a, members(&b, &model_id), "the two nodes disagree");
+        assert!(on_a.contains("Sequence:patrol") && on_a.contains("Fallback:patrol"));
+        assert!(!on_a.iter().any(|member| member.starts_with("malformed:")));
+        assert_eq!(
+            a.hosted(&model_id).unwrap().stability().delivered,
+            b.hosted(&model_id).unwrap().stability().delivered,
+        );
     }
 
     fn frames_for_an_unhosted_log() -> Vec<TransportMessage<Op>> {

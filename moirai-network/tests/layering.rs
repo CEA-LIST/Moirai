@@ -3,8 +3,11 @@
 //! The layering of the model plane is a grep, run here from the workspace root
 //! exactly as CI runs it. The words `ModelId` and `MetamodelId` belong to the
 //! application layer — the generated node binary and the editor — and to
-//! nothing below it. The route literals `/api/models` and `/api/model/` are
-//! strings rather than identifiers, so the match is on whole words.
+//! nothing below it, and so does `eClass`, the instance encoding's class tag:
+//! the schema parsed from a descriptor and the structural check that reads
+//! it live in the generated crate, behind the guard hook, and never here.
+//! The route literals `/api/models` and `/api/model/` are strings rather
+//! than identifiers, so the match is on whole words.
 
 use std::path::Path;
 use std::process::Command;
@@ -19,6 +22,8 @@ fn mp12_no_model_symbol_in_protocol_or_network() {
             "ModelId",
             "-e",
             "MetamodelId",
+            "-e",
+            "eClass",
             "moirai-protocol/src",
             "moirai-network/src",
         ])

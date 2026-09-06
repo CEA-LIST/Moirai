@@ -4951,18 +4951,70 @@ fn image_metamodels(node: &dyn Node, scenario: &str) -> [(String, Value); 2] {
 }
 
 /// One hosted model as a scenario drives it: its id, the metamodel it was
-/// created under, and the root key that belongs to it and to no other model.
+/// created under, and the string slot the scenario writes into.
 struct HostedModel {
     id: String,
     package: String,
     metamodel: Value,
-    key: String,
+    /// The path, from the root, of a string attribute the package's own
+    /// descriptor declares: every write a scenario makes into the model lands
+    /// there, so it is well-formed under the descriptor and passes the node's
+    /// structural check, which refuses a root key the root class does not
+    /// declare.
+    slot: &'static [&'static str],
+}
+
+/// The slot a scenario writes into for `package`: the behaviour tree's
+/// `Root.main` is a `BehaviorTree`, whose `ID` is a string; every root class
+/// of SimpleUML is a `ModelElement`, whose `name` is a string.
+fn slot_of(package: &str) -> &'static [&'static str] {
+    match package {
+        "behaviortree" => &["main", "ID"],
+        "simpleuml" => &["name"],
+        other => panic!("no scenario slot for the `{other}` package"),
+    }
+}
+
+/// `inner`, a string operation, wrapped for the model's slot and posted at
+/// the root: `Object.Update` per key of the path.
+fn model_write(model: &HostedModel, inner: Value) -> Value {
+    let (first, rest) = model
+        .slot
+        .split_first()
+        .expect("a slot has at least one key");
+    let nested = rest.iter().rev().fold(
+        inner,
+        |op, key| json!({ "Object": { "Update": [key, op] } }),
+    );
+    ops::object_update(first, nested)
+}
+
+/// The string in the model's slot, from a `GET /api/model/{id}/state` body.
+fn slot_string(state: &Value, model: &HostedModel) -> Result<String> {
+    let mut node = state.get("json").unwrap_or(&Value::Null);
+    for key in model.slot {
+        node = node
+            .pointer(&format!("/Value/Object/{key}"))
+            .ok_or_else(|| anyhow!("no `{key}` on the way to {:?} in {state}", model.slot))?;
+    }
+    let chars = node
+        .pointer("/Value/String")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("{:?} is not a string: {node}", model.slot))?;
+    Ok(chars.iter().filter_map(Value::as_str).collect())
+}
+
+/// The characters of the model's slot, sorted: what a scenario compares with
+/// the writes it made, since concurrent inserts at one position land in
+/// either order.
+fn slot_chars(state: &Value, model: &HostedModel) -> Result<Vec<char>> {
+    let mut chars: Vec<char> = slot_string(state, model)?.chars().collect();
+    chars.sort_unstable();
+    Ok(chars)
 }
 
 /// Creates [`CONTAINER_MODELS`] models on `creator`, alternating the image's
 /// two descriptors, and joins every one of them by id on each of `joiners`.
-/// The key of model `i` is `<package>_<i>`, so that two models of one
-/// metamodel are still told apart.
 fn register_models(creator: &dyn Node, joiners: &[&dyn Node], scenario: &str) -> Vec<HostedModel> {
     let kinds = image_metamodels(creator, scenario);
     let models: Vec<HostedModel> = (0..CONTAINER_MODELS)
@@ -4974,7 +5026,7 @@ fn register_models(creator: &dyn Node, joiners: &[&dyn Node], scenario: &str) ->
                 id,
                 package: package.clone(),
                 metamodel: metamodel.clone(),
-                key: format!("{package}_{i}"),
+                slot: slot_of(package),
             }
         })
         .collect();
@@ -4987,36 +5039,32 @@ fn register_models(creator: &dyn Node, joiners: &[&dyn Node], scenario: &str) ->
     models
 }
 
-/// The isolation claim, checked on every replica: each model's document holds
-/// its own key and no other model's, and no log was ever handed a frame that
-/// belongs to another (`foreign_log_refusals` at zero).
-fn assert_models_isolated(nodes: &[&dyn Node], models: &[HostedModel]) {
+/// The isolation claim, checked on every replica: each model's slot holds
+/// exactly the characters `written(i)` says were written into model `i`, so
+/// another model's writes are neither there nor missing, and no log was ever
+/// handed a frame that belongs to another (`foreign_log_refusals` at zero).
+fn assert_models_isolated(
+    nodes: &[&dyn Node],
+    models: &[HostedModel],
+    written: impl Fn(usize) -> Vec<char>,
+) {
     for node in nodes {
-        for model in models {
+        for (i, model) in models.iter().enumerate() {
             let state = model_state(*node, &model.id)
                 .unwrap_or_else(|e| panic!("{}: model {}: {e:#}", node.id(), model.id));
-            let root = root_object(&state)
+            let held = slot_chars(&state, model)
                 .unwrap_or_else(|e| panic!("{}: model {}: {e:#}", node.id(), model.id));
-            assert!(
-                root.contains_key(&model.key),
-                "{}: model {} ({}) lost its own key `{}`: {state}",
+            let mut expected = written(i);
+            expected.sort_unstable();
+            assert_eq!(
+                held,
+                expected,
+                "{}: model {} ({}) holds {held:?} in {:?}, not the {expected:?} written into it: {state}",
                 node.id(),
                 model.id,
                 model.package,
-                model.key
+                model.slot
             );
-            for other in models.iter().filter(|other| other.id != model.id) {
-                assert!(
-                    !root.contains_key(&other.key),
-                    "{}: model {} ({}) holds `{}`, which belongs to model {} ({}): {state}",
-                    node.id(),
-                    model.id,
-                    model.package,
-                    other.key,
-                    other.id,
-                    other.package
-                );
-            }
             assert_eq!(
                 model_metric(*node, &model.id, "foreign_log_refusals").unwrap(),
                 0,
@@ -5087,30 +5135,37 @@ fn mp20_two_replicas_host_four_models_and_converge_per_model() {
         "b hosts its default log and the four models"
     );
 
-    for model in &models {
+    // Model `i` gets a lower-case letter from `a` and the matching capital
+    // from `b`, both at position 0, so every model's two characters are its
+    // own and a frame that leaked into another model would show as a letter
+    // that model was never written.
+    let written = |i: usize| vec![(b'a' + i as u8) as char, (b'A' + i as u8) as char];
+    for (i, model) in models.iter().enumerate() {
+        let [lower, upper] = <[char; 2]>::try_from(written(i)).unwrap();
         apply_to_model(
             a,
             &model.id,
-            ops::object_update(&model.key, ops::string_insert('a', 0)),
+            model_write(model, ops::string_insert(lower, 0)),
         );
         apply_to_model(
             b,
             &model.id,
-            ops::object_update(&model.key, ops::string_insert('b', 0)),
+            model_write(model, ops::string_insert(upper, 0)),
         );
     }
 
-    for model in &models {
+    for (i, model) in models.iter().enumerate() {
         let state = assert_model_converged(&[a, b], &model.id, CONVERGE_TIMEOUT);
-        let written: String = read_string(&state, &model.key).unwrap();
+        let mut expected = written(i);
+        expected.sort_unstable();
         assert_eq!(
-            written.len(),
-            2,
+            slot_chars(&state, model).unwrap(),
+            expected,
             "{}: both sides' writes, once each: {state}",
             model.id
         );
     }
-    assert_models_isolated(&[a, b], &models);
+    assert_models_isolated(&[a, b], &models, written);
 }
 
 /// **MP21** — a node never hosts a model nobody registered there: the frames
@@ -5146,7 +5201,7 @@ fn mp21_a_node_never_hosts_a_model_nobody_registered_there() {
             apply_to_model(
                 a,
                 &model.id,
-                ops::object_update(&model.key, ops::string_insert('x', round)),
+                model_write(model, ops::string_insert('x', round)),
             );
         }
         let hosted = hosted_models(b).unwrap();
@@ -5177,10 +5232,7 @@ fn mp21_a_node_never_hosts_a_model_nobody_registered_there() {
     let (joined, others) = models.split_first().expect("four models");
     join_model(b, &joined.id, &joined.metamodel).expect("MP21: join");
     let state = assert_model_converged(&[a, b], &joined.id, CONVERGE_TIMEOUT);
-    assert_eq!(
-        read_string(&state, &joined.key).unwrap(),
-        "x".repeat(rounds)
-    );
+    assert_eq!(slot_string(&state, joined).unwrap(), "x".repeat(rounds));
     let served: BTreeSet<String> = transfers_served(a, "b")
         .into_iter()
         .map(|(log_id, _)| log_id)
@@ -5236,21 +5288,26 @@ fn mp22_a_joiner_receives_each_hosted_model_separately() {
         .enumerate()
         .map(|(i, size)| {
             let id = create_model(a, &metamodel).expect("MP22: create");
-            let key = format!("{package}_{i}");
-            for _ in 0..*size {
-                apply_to_model(a, &id, ops::object_update(&key, ops::number_inc(1.0)));
-            }
-            HostedModel {
+            let model = HostedModel {
                 id,
                 package: package.clone(),
                 metamodel: metamodel.clone(),
-                key,
+                slot: slot_of(&package),
+            };
+            for pos in 0..*size {
+                apply_to_model(
+                    a,
+                    &model.id,
+                    model_write(&model, ops::string_insert('x', pos)),
+                );
             }
+            let _ = i;
+            model
         })
         .collect();
     for (model, size) in models.iter().zip(SIZES) {
         let state = model_state(a, &model.id).expect("MP22: donor state");
-        assert_eq!(read_number(&state, &model.key).unwrap(), size as f64);
+        assert_eq!(slot_string(&state, model).unwrap().len(), size);
     }
 
     for model in &models {
@@ -5298,7 +5355,7 @@ fn mp22_a_joiner_receives_each_hosted_model_separately() {
         JoinerPath::Adopted,
         "b held no history anywhere when it joined the first model, so that one is adopted"
     );
-    assert_models_isolated(&[a, b], &models);
+    assert_models_isolated(&[a, b], &models, |i| vec!['x'; SIZES[i]]);
 }
 
 /// **MP23** — a partitioned run with four models heals per model.
@@ -5320,11 +5377,7 @@ fn mp23_a_partitioned_run_with_four_models_heals_per_model() {
         // so the healed document has to carry both sides' work and not only
         // one side's history plus a transfer.
         for model in &models {
-            apply_to_model(
-                a,
-                &model.id,
-                ops::object_update(&model.key, ops::string_insert('.', 0)),
-            );
+            apply_to_model(a, &model.id, model_write(model, ops::string_insert('.', 0)));
         }
         for model in &models {
             assert_model_converged(&[a, b, c], &model.id, CONVERGE_TIMEOUT);
@@ -5338,12 +5391,12 @@ fn mp23_a_partitioned_run_with_four_models_heals_per_model() {
         apply_to_model(
             cluster.node("a"),
             &model.id,
-            ops::object_update(&model.key, ops::string_insert('A', 1)),
+            model_write(model, ops::string_insert('A', 1)),
         );
         apply_to_model(
             cluster.node("c"),
             &model.id,
-            ops::object_update(&model.key, ops::string_insert('C', 1)),
+            model_write(model, ops::string_insert('C', 1)),
         );
     }
     for model in &models {
@@ -5362,15 +5415,116 @@ fn mp23_a_partitioned_run_with_four_models_heals_per_model() {
     let nodes = cluster.nodes();
     for model in &models {
         let state = assert_model_converged(&nodes, &model.id, CONVERGE_TIMEOUT);
-        let healed = read_string(&state, &model.key).unwrap();
-        let mut chars: Vec<char> = healed.chars().collect();
-        chars.sort_unstable();
         assert_eq!(
-            chars,
+            slot_chars(&state, model).unwrap(),
             vec!['.', 'A', 'C'],
-            "model {} lost a write across the partition: {healed:?} in {state}",
+            "model {} lost a write across the partition: {state}",
             model.id
         );
     }
-    assert_models_isolated(&nodes, &models);
+    assert_models_isolated(&nodes, &models, |_| vec!['.', 'A', 'C']);
+}
+
+/// **MP36** — a malformed operation is refused at one replica and reaches
+/// none.
+///
+/// Four models on a pair, as MP20 hosts them, each with one well-formed write
+/// converged first. Two operations the behaviour-tree descriptor alone rules
+/// out are posted to `a`'s first model: a `colour` feature on the
+/// `BehaviorTree` under `Root.main`, which no class declares, and an `X`
+/// opening the `eClass` under `BehaviorTree.child`, which no class allowed
+/// there begins with. Both are answered `success: false` naming the feature;
+/// after a poll interval every model's state and both op counters are what
+/// they were on both replicas; and a well-formed write afterwards converges
+/// as MP20's do. Discharges M-A10 and M-A11 over the wire.
+#[test]
+fn mp36_a_malformed_operation_is_refused_at_one_replica_and_reaches_none() {
+    let Some(cluster) = model_container_cluster("MP36", &["a", "b"]) else {
+        return;
+    };
+    let (a, b) = (cluster.node("a"), cluster.node("b"));
+    let models = register_models(a, &[b], "MP36");
+    for model in &models {
+        apply_to_model(a, &model.id, model_write(model, ops::string_insert('.', 0)));
+    }
+    for model in &models {
+        assert_model_converged(&[a, b], &model.id, CONVERGE_TIMEOUT);
+    }
+    let bt = models
+        .iter()
+        .find(|model| model.package == BT.1)
+        .expect("MP36: a behaviour-tree model among the four");
+
+    let counters = |node: &dyn Node| -> Vec<(String, Value, u64, u64)> {
+        models
+            .iter()
+            .map(|model| {
+                (
+                    model.id.clone(),
+                    model_state(node, &model.id).expect("MP36: state"),
+                    model_metric(node, &model.id, "ops_applied").expect("MP36: ops_applied"),
+                    model_metric(node, &model.id, "delivered_ops").expect("MP36: delivered_ops"),
+                )
+            })
+            .collect()
+    };
+    let before = (counters(a), counters(b));
+
+    let malformed = [
+        (
+            "a `colour` feature on the BehaviorTree under Root.main",
+            ops::object_update(
+                "main",
+                json!({ "Object": { "Update": ["colour", ops::string_insert('x', 0)] } }),
+            ),
+            "colour",
+        ),
+        (
+            "an eClass under BehaviorTree.child that no allowed class begins with",
+            ops::object_update(
+                "main",
+                json!({ "Object": { "Update": ["child",
+                    { "Object": { "Update": ["eClass", ops::string_insert('X', 0)] } }] } }),
+            ),
+            "BehaviorTree.child",
+        ),
+    ];
+    for (what, op, named) in &malformed {
+        let path = format!("/api/model/{}/op", bt.id);
+        let reply = post_json(a, &path, Some(op)).unwrap_or_else(|e| panic!("MP36: {what}: {e:#}"));
+        assert_eq!(
+            reply.get("success").and_then(Value::as_bool),
+            Some(false),
+            "a accepted {what}: {reply}"
+        );
+        let message = reply
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            message.contains(named),
+            "the refusal of {what} does not name `{named}`: {message}"
+        );
+        eprintln!("MP36 refused {what}: {message}");
+    }
+
+    std::thread::sleep(POLL_INTERVAL * 5);
+    assert_eq!(
+        (counters(a), counters(b)),
+        before,
+        "a refused operation moved a state or a counter on one of the replicas"
+    );
+
+    let written = |i: usize| vec!['.', (b'a' + i as u8) as char];
+    for (i, model) in models.iter().enumerate() {
+        apply_to_model(
+            a,
+            &model.id,
+            model_write(model, ops::string_insert(written(i)[1], 1)),
+        );
+    }
+    for model in &models {
+        assert_model_converged(&[a, b], &model.id, CONVERGE_TIMEOUT);
+    }
+    assert_models_isolated(&[a, b], &models, written);
 }
