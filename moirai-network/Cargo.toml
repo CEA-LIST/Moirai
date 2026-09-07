@@ -29,7 +29,8 @@ flate2 = { version = "1.0", default-features = false, features = ["rust_backend"
 # directly. Deflate output is binary and a `TransportMessage` is a line of JSON.
 base64 = "0.22"
 # The size of what a node holds per hosted log, for the model plane's M-E2
-# measurement (`examples/model_plane_cost.rs`) and nothing else: optional, so
+# measurement (`experiments/mp2-dispatch-cost/` in the vault) and nothing else:
+# optional, so
 # the shipped binary never carries it. The same fork and features as
 # `moirai-protocol`, which derives `DeepSizeOf` on the causal bookkeeping this
 # measures.
@@ -51,11 +52,6 @@ default = []
 # they hold one member table. Named like the sibling crates' feature, and off
 # by default for the same reason.
 test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-crdt/test_utils"]
-
-# M-E2 of the model plane's validation plan; see the example's header.
-[[example]]
-name = "model_plane_cost"
-required-features = ["test_utils"]
 
 # Dev-only, and deliberately so: `testcontainers` pulls tokio, which must not
 # reach the library — the whole codebase is synchronous. The `blocking` feature

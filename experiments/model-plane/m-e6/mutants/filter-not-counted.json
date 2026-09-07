@@ -1,8 +1,0 @@
-{
-  "class": "a filter that drops the frame without incrementing frames_not_hosted",
-  "file": "moirai:moirai-network/src/generic.rs",
-  "find": "                    log.replica.receive(event);\n                }\n                None => self.frames_not_hosted += 1,\n            },",
-  "replace": "                    log.replica.receive(event);\n                }\n                None => {}\n            },",
-  "test": "nice -n 10 cargo test -q -p moirai-network -j 2 --lib -- generic::tests::mp2_a_frame_for_an_unhosted_log_is_filtered_and_counted generic::tests::mp4_the_metrics_expose_the_filter_and_the_refusal_counters",
-  "killed_by": "generic::tests::mp2_a_frame_for_an_unhosted_log_is_filtered_and_counted, mp4"
-}

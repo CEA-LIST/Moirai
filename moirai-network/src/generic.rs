@@ -326,7 +326,7 @@ where
 /// do hold one handle rather than one table each.
 ///
 /// Behind `test_utils` because it is a measurement surface and not a node
-/// capability; `examples/model_plane_cost.rs` is its one caller.
+/// capability; `experiments/mp2-dispatch-cost/` in the vault holds its one caller.
 #[cfg(feature = "test_utils")]
 mod cost {
     use std::sync::Arc;

@@ -1,8 +1,0 @@
-{
-  "class": "a dispatch that hands a behaviour-tree frame to the UML model",
-  "file": "moirai:moirai-network/src/generic.rs",
-  "find": "            TransportMessage::Event { event } => match self.logs.get_mut(event.log_id()) {\n                Some(log) => {",
-  "replace": "            TransportMessage::Event { event } => match self.logs.values_mut().next() {\n                Some(log) => {",
-  "test": "nice -n 10 cargo test -q -p moirai-network -j 2 --lib -- generic::tests::mp1_dispatch_hands_a_frame_to_the_log_whose_id_matches generic::tests::mp14_two_nodes_four_models_converge_per_model_with_no_cross_talk",
-  "killed_by": "generic::tests::mp1_dispatch_hands_a_frame_to_the_log_whose_id_matches, mp14"
-}

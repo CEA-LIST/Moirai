@@ -1,6 +1,0 @@
-arm,runs,median_ms,median_first10_ms,mean_ms,p90_ms,load_ops,a_delivered_end,a_retained_end,a_stable_prefix_end,ratio_to_alone,ratio_first10,ratio_mean
-alone,30,72.62,37.57,87.6,168.17,0,719,719,0,1.0,1.0,1.0
-loaded,30,72.17,36.26,87.21,152.13,1100,719,719,0,0.994,0.965,0.996
-alone-again,30,75.28,32.6,85.05,155.98,0,719,719,0,1.037,0.868,0.971
-loaded-http,30,70.08,36.83,87.75,180.58,195,719,719,0,0.965,0.98,1.002
-loaded-wire-heavy,30,75.53,30.35,88.81,181.01,94850,719,719,0,1.04,0.808,1.014

@@ -1,5 +1,0 @@
-moirai-network/src/generic.rs:315:60: replace && with || in HostedLog<L>::holds_nothing
-moirai-network/src/generic.rs:809:9: replace GenericNode<L, T>::hosts -> bool with false
-moirai-network/src/generic.rs:819:9: replace GenericNode<L, T>::hosted_logs -> impl Iterator<Item =&LogId> with ::std::iter::empty()
-moirai-network/src/generic.rs:851:9: replace GenericNode<L, T>::serve_metamodel with ()
-moirai-network/src/generic.rs:925:20: delete ! in GenericNode<L, T>::register

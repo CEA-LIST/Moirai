@@ -10,7 +10,7 @@
 # (`arachne/generated/json_crdt/examples/network_node.rs`) is out of
 # `cargo mutants`' reach — it mutates lib and bin targets, and the binary is
 # an example of another workspace — so those classes are hand-written mutants
-# applied and reverted by `experiments/model-plane/m-e6/hand-mutants.py`,
+# applied and reverted by `experiments/mp6-mutants/hand-mutants.py` in the vault,
 # beside the two TypeScript ones.
 #
 # Run from the workspace root, one package at a time; `additional_cargo_test_args`

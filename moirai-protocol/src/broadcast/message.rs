@@ -232,7 +232,8 @@ mod wire_overhead {
             "frame:\n{frame}\nwithout log_id:\n{without}"
         );
         // M-E1 reads this from the test output; the workload's median frame
-        // is measured on the wire by `experiments/model-plane/m-e1/run.sh`.
+        // is measured on the wire by `experiments/mp1-wire-overhead/run.sh`
+        // in the vault.
         println!(
             "M-E1 event frame: {} bytes, of which log_id {} bytes ({:.2}%)",
             frame.len(),

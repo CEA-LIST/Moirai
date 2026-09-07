@@ -1,8 +1,0 @@
-moirai-network/src/generic.rs:949:9: replace GenericNode<L, T>::models -> serde_json::Value with Default::default()
-moirai-network/src/generic.rs:1031:9: replace GenericNode<L, T>::request_sync with ()
-moirai-network/src/generic.rs:1034:58: replace || with && in GenericNode<L, T>::request_sync
-moirai-network/src/generic.rs:1034:61: delete ! in GenericNode<L, T>::request_sync
-moirai-network/src/generic.rs:1065:9: replace GenericNode<L, T>::request_state_transfer with ()
-moirai-network/src/generic.rs:1145:22: replace > with == in GenericNode<L, T>::state_response_for
-moirai-network/src/generic.rs:1145:22: replace > with >= in GenericNode<L, T>::state_response_for
-moirai-network/src/generic.rs:1324:23: replace += with *= in GenericNode<L, T>::apply_op_to
