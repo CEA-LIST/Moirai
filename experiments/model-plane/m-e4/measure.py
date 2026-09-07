@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """M-E4: per-log state transfer, on the fresh-joiner path.
 
-A donor hosts N models, every one at the same number of seeded operations;
-model A is the SimpleUML one. Each run starts a fresh joiner container, a
+A donor hosts N models, every one at the same number of seeded operations,
+each one character into the model's descriptor-declared string slot (see
+wire.py: the node checks a write against the descriptor at the intake, and
+the first take of this harness wrote root keys the tip refuses); model A is
+the SimpleUML one. Each run starts a fresh joiner container, a
 replica the donor has never heard from, holding no history in any log; the
 joiner registers model A alone and the donor's snapshot of A is adopted.
 

@@ -14,7 +14,7 @@ non-zero when one is crossed, after writing its CSV.
 | `m-e4` | per-log state transfer bytes and time, fresh joiner, donor at N in {1, 16} | a donor container, a fresh joiner container per run, and a probe |
 | `m-e5` | apply-to-file latency and store size against model size | `arachne/clients/model-editor/bench` |
 | `m-e6` | the mutation run | `cargo-mutants` scoped by `.cargo/mutants.toml`, plus hand-written mutants applied and reverted by script |
-| `m-e7` | per-operation cost of the structural conformance check, and the receive path with the check on against off | `examples/conformance_cost.rs` of the Arachne-generated crate in process at N in {1, 4, 16, 64}, both descriptors, 100,000 seeded operations |
+| `m-e7` | per-operation cost of the structural conformance check, and the receive path with the check on against off | `examples/conformance_cost.rs` of the Arachne-generated crate in process at N in {1, 4, 16, 64}, both descriptors, 10,000 seeded operations (delivery cost grows with the log's document, so 100,000 was not runnable) |
 
 `common.sh` holds what they share: the manifest fields, the container helpers
 and the checks that a run starts from nothing and leaves nothing. `wire.py`

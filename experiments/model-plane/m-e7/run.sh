@@ -6,8 +6,9 @@
 # In process, `examples/conformance_cost.rs` of the Arachne-generated crate
 # (the check lives beside the node binary, so the example lives beside it
 # too), at N in {1, 4, 16, 64} hosted models and for both descriptors, `bt`
-# and `uml`, over 100,000 well-formed operations from the seeded generator
-# mp32 uses:
+# and `uml`, over 10,000 well-formed operations from the seeded generator
+# mp32 uses (delivery cost grows with the log's document, so 100,000 was not
+# runnable):
 #
 #   check alone  `check_structure` per operation, timed one by one with
 #                `Instant`; p50 and p99.
@@ -31,7 +32,7 @@
 #
 #     ./run.sh
 #
-# Knobs: POINTS (default 1,4,16,64), OPS (100000), SEED (20260903),
+# Knobs: POINTS (default 1,4,16,64), OPS (10000), SEED (20260903),
 # PROFILES (release,debug).
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

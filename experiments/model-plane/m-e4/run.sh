@@ -14,7 +14,11 @@
 # written to the manifest; the CSV is complete either way.
 #
 # Usage, from this directory: ./run.sh
-# Knobs: OPS (500), RUNS (15), SEED (20260903), POINTS (1,16). Fifteen runs
+# Knobs: OPS (500), RUNS (15), SEED (20260903), POINTS (1,16); NOTE, a sentence
+# for the manifest about the circumstances of the run, empty by default;
+# RESUME=1 to add the points of this invocation to the CSV of an earlier one
+# (each point is a donor of its own, so the points of one run may be taken in
+# several invocations, which the manifest lists) instead of starting over. Fifteen runs
 # because the joiner adopts on its next 10 ms loop tick, so a median of five
 # carried the width of the 5 percent band in tick noise.
 
@@ -26,6 +30,8 @@ OPS=${OPS:-500}
 RUNS=${RUNS:-15}
 SEED=${SEED:-20260903}
 POINTS=${POINTS:-1,16}
+NOTE=${NOTE:-}
+RESUME=${RESUME:-0}
 
 stamp=$(mp_stamp)
 out="$HERE/results.csv"
@@ -44,6 +50,13 @@ mp_assert_no_moirai_containers
 docker network create "$net" >/dev/null
 
 first=1
+taken=""
+if [ "$RESUME" = "1" ]; then
+    [ -f "$out" ] || mp_die "RESUME=1 with no earlier results to resume"
+    first=0
+    taken="$(sed -n 's/^invocations *//p' "$HERE/manifest.txt" 2>/dev/null || true)"
+fi
+taken="${taken:+$taken; }$stamp POINTS=$POINTS ./run.sh (load $MP_LOAD_START)"
 for n in ${POINTS//,/ }; do
     donor="$net-d$n"
     mp_say "N=$n: donor up (load $(mp_load_average))"
@@ -64,7 +77,9 @@ for n in ${POINTS//,/ }; do
     docker rm --force --volumes "$donor" >/dev/null
 done
 
-verdict=$(python3 - "$out" "$POINTS" <<'PY'
+# The verdict reads every point the CSV holds, resumed invocations included.
+all_points=$(tail -n +2 "$out" | cut -d, -f2 | awk '!seen[$0]++' | paste -sd,)
+verdict=$(python3 - "$out" "$all_points" <<'PY'
 import csv, statistics, sys
 rows = list(csv.DictReader(open(sys.argv[1])))
 points = [int(p) for p in sys.argv[2].split(",")]
@@ -92,10 +107,12 @@ PY
 echo "$verdict" >&2
 
 {
-    mp_manifest_common "$stamp" "OPS=$OPS RUNS=$RUNS SEED=$SEED POINTS=$POINTS ./run.sh"
+    mp_manifest_common "$stamp" "OPS=$OPS RUNS=$RUNS SEED=$SEED POINTS=$all_points ./run.sh"
+    printf '%-14s%s\n' invocations "$taken"
     mp_manifest_image
-    printf '%-14s%s\n' points "$POINTS models on the donor; model A is SimpleUML, the rest alternate behaviour tree and SimpleUML"
-    printf '%-14s%s\n' ops "$OPS seeded operations per model (wire.py seeded_ops, seed $SEED)"
+    printf '%-14s%s\n' points "$all_points models on the donor; model A is SimpleUML, the rest alternate behaviour tree and SimpleUML"
+    printf '%-14s%s\n' ops "$OPS seeded operations per model (wire.py seeded_ops, seed $SEED), one character each into the string attribute the model's descriptor declares (SimpleUML: name; behaviour tree: main.ID), since the node refuses an undeclared root key at the intake"
+    [ -z "$NOTE" ] || printf '%-14s%s\n' note "$NOTE"
     printf '%-14s%s\n' runs "$RUNS per N, a fresh joiner container each, registering A alone"
     printf '%-14s%s\n' bytes "response_bytes: the StateResponse line as the probe reads it; served_bytes_*: the donor's own log line, the serialised log before compression"
     printf '%-14s%s\n' time "transfer_ms: donor 'serving' line to joiner 'adopted' line, Docker daemon clock; probe_ms: host clock around the probe's request; join_to_state_ms: host clock from POST /api/models to the state matching, polled every 2 ms"

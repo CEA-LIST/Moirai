@@ -1,22 +1,24 @@
-run           20260903T190250Z
+run           20260907T004846Z
 host          Linux 7.0.0-30-generic x86_64
 cpu           Intel(R) Xeon(R) W-10855M CPU @ 2.80GHz x12
 memory        30.2 GiB
-load_start    0.25 1.13 2.67 (1, 5, 15 min before the run started)
-load_end      0.72 0.74 2.02 (1, 5, 15 min when the manifest was written)
-moirai        ff7c967 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
-arachne       043fa87 (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
+load_start    1.00 1.24 1.74 (1, 5, 15 min before the run started)
+load_end      0.49 0.85 1.38 (1, 5, 15 min when the manifest was written)
+moirai        6a5b5ba (dirty) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/moirai-model-plane
+arachne       1da9a17 (clean) /volatile/home/vp242103/Documents/Projects/cea-crdt/repos/arachne-model-plane
 rustc         rustc 1.97.1 (8bab26f4f 2026-07-14)
 command       OPS=500 RUNS=15 SEED=20260903 POINTS=1,16 ./run.sh
+invocations   20260907T004732Z POINTS=1 ./run.sh (load 0.71 1.30 1.80); 20260907T004846Z POINTS=16 ./run.sh (load 1.00 1.24 1.74)
 image         moirai-json-crdt-model-plane:test
-image digest  sha256:c12945f590264cac5c4efc308bb0a7a955797b76cb9a1d97d05654b67fdf95cc
-image built   2026-09-03T19:55:32.648495549+02:00
+image digest  sha256:af7a0bbb6eb2d8374b1467e98c7e754aa40426caa31af2085d69287a040d1bdf
+image built   2026-09-07T00:53:21.09648337+02:00
 docker        29.6.2
 points        1,16 models on the donor; model A is SimpleUML, the rest alternate behaviour tree and SimpleUML
-ops           500 seeded operations per model (wire.py seeded_ops, seed 20260903)
+ops           500 seeded operations per model (wire.py seeded_ops, seed 20260903), one character each into the string attribute the model's descriptor declares (SimpleUML: name; behaviour tree: main.ID), since the node refuses an undeclared root key at the intake
+note          re-take at the tip a305cdb plus this harness fix (the dirt in the moirai line) after step 9 put the structural check at the intake: the first take (20260903T190250Z, moirai ff7c967, image sha256:c12945f5) wrote root keys <package>_alpha and <package>_gamma into registered models, which the tip refuses at the adapter intake; every seeded operation is now one character into the model's declared string slot, so A is one 500-character string rather than about 250 characters under one key and a counter under another, and the absolute bytes and times are not comparable with the first take's; the image was rebuilt from the tip with docker/rig.sh build --rebuild before this run; an adapter write costs about the square of the model's string length at the intake (27 ms per POST at 100 characters, 68 ms at 500 on one idle replica), which is where the fill's time goes
 runs          15 per N, a fresh joiner container each, registering A alone
 bytes         response_bytes: the StateResponse line as the probe reads it; served_bytes_*: the donor's own log line, the serialised log before compression
 time          transfer_ms: donor 'serving' line to joiner 'adopted' line, Docker daemon clock; probe_ms: host clock around the probe's request; join_to_state_ms: host clock from POST /api/models to the state matching, polled every 2 ms
 threshold     response_bytes and transfer_ms at N=16 within 5 percent of N=1 (medians); the other columns are supplementary
 members       every joiner stays a member of the donor's table after its run, so snapshot_members climbs by one per run and the uncompressed served log with it, one version-vector entry per event; compare runs at equal snapshot_members, or the medians, which sit at the same run index
-verdict       wire bytes: N=1 median 121177, N=16 median 121249, ratio 1.001 -> met;serving->adopted ms: N=1 median 59.9, N=16 median 59.45, ratio 0.992 -> met;served log bytes (uncompressed): N=1 median 140393, N=16 median 148441, ratio 1.057 (supplementary);probe request->answer ms: N=1 median 59.62, N=16 median 60.22, ratio 1.010 (supplementary);join->state ms: N=1 median 148.4, N=16 median 136.5, ratio 0.920 (supplementary);
+verdict       wire bytes: N=1 median 127765, N=16 median 127913, ratio 1.001 -> met;serving->adopted ms: N=1 median 72.62, N=16 median 71.18, ratio 0.980 -> met;served log bytes (uncompressed): N=1 median 176413, N=16 median 186349, ratio 1.056 (supplementary);probe request->answer ms: N=1 median 71.5, N=16 median 72.8, ratio 1.018 (supplementary);join->state ms: N=1 median 191.7, N=16 median 191.4, ratio 0.998 (supplementary);
