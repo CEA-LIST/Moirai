@@ -35,6 +35,7 @@ macro_rules! record {
             }
 
             #[derive(Debug, Default, Clone)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Log>] {
                 $(
                     $field: $T,

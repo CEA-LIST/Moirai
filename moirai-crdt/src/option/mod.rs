@@ -29,6 +29,14 @@ pub enum Optional<O> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(
+        serialize = "L: serde::Serialize",
+        deserialize = "L: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct OptionLog<L> {
     child: Option<L>,
 }
