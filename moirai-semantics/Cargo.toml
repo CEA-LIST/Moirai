@@ -1,0 +1,15 @@
+[package]
+name = "moirai-semantics"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The merge policy of a metamodel as pure data, parsed from an Arachne descriptor"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0.128" }
+sha2 = "0.10"
+smallvec = { version = "1.15.1", features = ["serde"] }
