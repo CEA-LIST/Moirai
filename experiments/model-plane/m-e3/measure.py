@@ -20,7 +20,9 @@ Arms, each RUNS runs from the same seed:
                     event loop A's frames go through. Here those frames come
                     from a member `load` the replicas have never met, over
                     the replication socket (`wire.py`), five per interval per
-                    replica, into B. The plan's arm.
+                    replica, into B. The plan's arm. Each frame is what
+                    drive.sh puts on the wire: one character at position 0
+                    of B's descriptor-declared string slot (`main.ID`).
   loaded-http       (supplementary) the same rate through the adapter,
                     drive.sh's own mechanism: one `POST /api/model/B/op` per
                     replica per interval from a background thread. The
@@ -48,13 +50,23 @@ the load. Each arm's row also records A's delivered and retained counts on
 the writer at the end of the arm, the size of what every delivery walked.
 
 A run applies OPS_PER_RUN seeded operations to A on the first replica (the
-editor), takes the time the last one was answered, and polls every replica's
+editor), one seeded character each into A's descriptor-declared string slot
+(`name`; see wire.py), takes the time the last one was answered, and polls every replica's
 `GET /api/model/A/state` (one thread each, every 2 ms) until all agree on
 the same state, which is the writer's own state after its last write since
 nothing else writes A. Per replica: when its state first equalled that;
 per run: the last of those, the session's convergence. After every wire
-arm the frames it sent are checked delivered: B's state on every replica
-carries the load member's counter at the number of frames sent to it.
+arm the frames it sent are checked delivered: B's delivered count on every
+replica (`GET /api/model/B/metrics`) rose by the number of frames sent to
+it. The count and not the state, because the state query materialises the
+document and a string of some thousand characters, which the heavy wire
+arm leaves in B, takes it past the adapter's 5 s reply timeout.
+
+Every write lands in a slot the model's descriptor declares because the node
+checks an adapter-submitted operation against that descriptor at the intake
+and refuses a root key the root class does not declare; the first take of
+this harness wrote `<prefix>_alpha`/`_gamma` and `k_<port>` root keys, which
+the tip refuses, and was re-taken with the writes in this shape.
 
 Threshold, fixed in the plan: median(loaded) <= 1.10 x median(alone).
 """
@@ -69,16 +81,19 @@ import threading
 import time
 
 sys.path.insert(0, __import__("os").path.join(__import__("os").path.dirname(__file__), ".."))
-from wire import (Probe, apply_to_model, compact, counter_inc, create_model, event_frame,  # noqa: E402
-                  http_json, join_model, model_state, poll_until, seeded_ops, served_metamodels,
+from wire import (Probe, apply_to_model, compact, create_model, event_frame, http_json,  # noqa: E402
+                  join_model, model_state, poll_until, seeded_ops, served_metamodels, slot_insert,
                   wait_healthy, wait_mesh)
 
 
 class Load:
-    """Operations into `model_id` on every replica until stopped."""
+    """Operations into `model_id`, a model of `package`, on every replica
+    until stopped: drive.sh's write, one character at position 0 of the
+    model's slot."""
 
-    def __init__(self, bases, model_id, interval_s, clients_per_replica=1):
+    def __init__(self, bases, model_id, package, interval_s, clients_per_replica=1):
         self.bases, self.model_id, self.interval_s = bases, model_id, interval_s
+        self.op = slot_insert(package, "x")
         self.clients = clients_per_replica
         self.stop = threading.Event()
         self.applied = 0
@@ -89,14 +104,14 @@ class Load:
         # drive.sh: one round over every replica, then sleep.
         while not self.stop.is_set():
             for base in self.bases:
-                apply_to_model(base, self.model_id, counter_inc(f"k_{base.rsplit(':', 1)[-1]}"))
+                apply_to_model(base, self.model_id, self.op)
                 with self.lock:
                     self.applied += 1
             self.stop.wait(self.interval_s)
 
     def _hammer(self, base):
         while not self.stop.is_set():
-            apply_to_model(base, self.model_id, counter_inc(f"k_{base.rsplit(':', 1)[-1]}"))
+            apply_to_model(base, self.model_id, self.op)
             with self.lock:
                 self.applied += 1
 
@@ -120,14 +135,18 @@ class WireLoad:
     """B's frames from a member `load` the replicas have never met, over one
     replication connection per replica, `per_replica` frames per `interval_s`
     (a burst per interval, as one round of the driver lands on a replica),
-    or a steady `rate` per second when `interval_s` is 0."""
+    or a steady `rate` per second when `interval_s` is 0. Each frame carries
+    drive.sh's write: one character at position 0 of the slot of `package`,
+    the package `model_id` was created under."""
 
     LOAD_ID = "load"
-    KEY = "k_load"
 
-    def __init__(self, sync_addrs, model_id, interval_s, per_replica=5, rate=500.0):
+    def __init__(self, sync_addrs, bases, model_id, package, interval_s, per_replica=5, rate=500.0):
         self.probes = [Probe(addr, self.LOAD_ID) for addr in sync_addrs]
         self.model_id, self.interval_s, self.per_replica, self.rate = model_id, interval_s, per_replica, rate
+        self.op = slot_insert(package, "x")
+        # B's delivered count on every replica before the first frame.
+        self.before = {base: delivered_ops(base, model_id) for base in bases}
         self.stop = threading.Event()
         self.seq = 0
         self.thread = None
@@ -147,7 +166,7 @@ class WireLoad:
 
     def _send_one(self):
         self.seq += 1
-        frame = event_frame(self.LOAD_ID, self.seq, self.model_id, counter_inc(self.KEY))
+        frame = event_frame(self.LOAD_ID, self.seq, self.model_id, self.op)
         for probe in self.probes:
             probe.send(frame)
 
@@ -175,20 +194,15 @@ class WireLoad:
         return self.seq * len(self.probes)
 
     def assert_delivered(self, bases):
-        """Every replica delivered every frame: B carries the load counter at `seq` everywhere."""
-        want = float(self.seq)
-        poll_until(lambda: True if all(counter_of(model_state(b, self.model_id), self.KEY) == want for b in bases) else None,
+        """Every replica delivered every frame: B's delivered count rose by `seq` everywhere."""
+        poll_until(lambda: True if all(delivered_ops(b, self.model_id) - self.before[b] == self.seq for b in bases) else None,
                    f"every replica to deliver the {self.seq} load frames", timeout_s=60, poll_s=0.05)
         for probe in self.probes:
             probe.close()
 
 
-def counter_of(wire_state, key):
-    """The number under `key` of the root object in a `GET /api/model/{id}/state` body, or None."""
-    try:
-        return wire_state["json"]["Value"]["Object"][key]["Value"]["Number"]
-    except (KeyError, TypeError):
-        return None
+def delivered_ops(base, model_id):
+    return http_json(f"{base}/api/model/{model_id}/metrics")["delivered_ops"]
 
 
 def watch(base, model_id, target, result, stop):
@@ -237,12 +251,12 @@ def main():
         for base in bases[1:]:
             join_model(base, model_id, kinds[package])
         models.append((package, model_id))
-    model_b, model_a = models[0][1], models[1][1]
+    (package_b, model_b), (package_a, model_a) = models[0], models[1]
     for _, model_id in models:
         head = compact(model_state(writer, model_id))
         poll_until(lambda: True if all(compact(model_state(b, model_id)) == head for b in bases) else None,
                    f"every replica to hold model {model_id[:8]}", timeout_s=120, poll_s=0.05)
-    print(f"{len(models)} models hosted on {len(bases)} replicas; A={model_a} (simpleuml), B={model_b} (behaviortree)",
+    print(f"{len(models)} models hosted on {len(bases)} replicas; A={model_a} ({package_a}), B={model_b} ({package_b})",
           file=sys.stderr)
 
     origin = time.perf_counter()
@@ -252,13 +266,13 @@ def main():
     for arm in [args.arm]:
         load = None
         if arm == "loaded":
-            load = WireLoad(syncs, model_b, args.op_interval, per_replica=len(bases))
+            load = WireLoad(syncs, bases, model_b, package_b, args.op_interval, per_replica=len(bases))
         elif arm == "loaded-http":
-            load = Load(bases, model_b, args.op_interval)
+            load = Load(bases, model_b, package_b, args.op_interval)
         elif arm == "loaded-wire-heavy":
-            load = WireLoad(syncs, model_b, 0.0, rate=args.heavy_rate)
+            load = WireLoad(syncs, bases, model_b, package_b, 0.0, rate=args.heavy_rate)
         elif arm == "loaded-http-heavy":
-            load = Load(bases, model_b, 0.0, args.heavy_clients)
+            load = Load(bases, model_b, package_b, 0.0, args.heavy_clients)
         elif not arm.startswith("alone"):
             raise SystemExit(f"unknown arm {arm}")
         if load:
@@ -267,7 +281,7 @@ def main():
         rng = random.Random(args.seed)
         per_run = []
         for run in range(1, args.runs + 1):
-            ops = seeded_ops(rng, args.ops_per_run, f"a{run}")
+            ops = seeded_ops(rng, args.ops_per_run, package_a)
             for op in ops:
                 apply_to_model(writer, model_a, op)
             t_last = time.perf_counter()

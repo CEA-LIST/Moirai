@@ -7,9 +7,9 @@ with a `Hello` under an id no replica has heard from, and reads what the
 replica puts on the wire. What crosses the wire is what is measured; nothing
 here re-derives a frame from a replica's state.
 
-Shared by m-e1 (frames of the seeded workload), m-e3 (nothing on the wire,
-only the HTTP helpers) and m-e4 (a `StateResponse` for one log). Python 3
-standard library only.
+Shared by m-e1 (frames of the seeded workload), m-e3 (B's frames from a
+member the replicas have never met, and the HTTP helpers) and m-e4 (a
+`StateResponse` for one log). Python 3 standard library only.
 """
 
 import json
@@ -175,28 +175,62 @@ def event_frame(origin, seq, log_id, op):
             "event": {"payload": {"Event": event}, "resolver": [origin], "log_id": log_id}}
 
 
+# ---- the slot every write lands in ------------------------------------------
+
+# The path, from the root, of a string attribute each package's own descriptor
+# declares. The node checks an operation submitted through the adapter against
+# the model's descriptor at the intake and refuses a root key the root class
+# does not declare, or a string attribute written as a number (mp30 in the
+# generated crate's tests), so every write a harness makes into a registered
+# model lands here, as `docker/compose/drive.sh`'s `model_op_for` and the e2e
+# suite's `slot_of` do: the behaviour tree's `Root.main` is a `BehaviorTree`,
+# whose `ID` is a string; every root class of SimpleUML is a `ModelElement`,
+# whose `name` is a string. A string is written one character per
+# `String.Insert` on this wire.
+SLOTS = {"behaviortree": ("main", "ID"), "simpleuml": ("name",)}
+
+
+def slot_of(package):
+    try:
+        return SLOTS[package]
+    except KeyError:
+        raise SystemExit(f"no slot for the `{package}` package; known: {sorted(SLOTS)}") from None
+
+
+def slot_write(package, inner):
+    """`inner`, a string operation, wrapped for the package's slot: an
+    `Object.Update` per key of the path, posted at the root."""
+    op = inner
+    for key in reversed(slot_of(package)):
+        op = {"Object": {"Update": [key, op]}}
+    return {"JsonKind": op}
+
+
+def slot_insert(package, ch, pos=0):
+    return slot_write(package, {"String": {"Insert": {"content": ch, "pos": pos}}})
+
+
+def slot_string(wire_state, package):
+    """The string in the package's slot of a `GET /api/model/{id}/state` body, or None."""
+    try:
+        node = wire_state["json"]
+        for key in slot_of(package):
+            node = node["Value"]["Object"][key]
+        return "".join(node["Value"]["String"])
+    except (KeyError, TypeError):
+        return None
+
+
 # ---- the seeded operations --------------------------------------------------
 
-def string_insert(key, ch, pos=0):
-    return {"JsonKind": {"Object": {"Update": [key, {"String": {"Insert": {"content": ch, "pos": pos}}}]}}}
+def seeded_ops(rng, count, package):
+    """`count` operations into the slot of a model of `package`: one seeded
+    letter each, inserted at position 0.
 
-
-def counter_inc(key, by=1.0):
-    return {"JsonKind": {"Object": {"Update": [key, {"Number": {"Inc": by}}]}}}
-
-
-def seeded_ops(rng, count, prefix):
-    """`count` operations under keys `<prefix>_alpha` (text) and `<prefix>_gamma` (counter).
-
-    The shape of the workload generator in `moirai-network/src/workload.rs`:
-    inserts at position 0 of a text key, so concurrent inserts collide, and
-    increments of a counter key. One kind per key for ever, because the
-    generated union binds a key to a variant on its first write.
+    The shape of the workload generator in `moirai-network/src/workload.rs`
+    restricted to what the descriptor admits at the slot: inserts at
+    position 0 of a text, so concurrent inserts collide. No counter, since
+    neither descriptor declares a numeric attribute at its root and a string
+    attribute written as a number is refused at the intake.
     """
-    ops = []
-    for _ in range(count):
-        if rng.random() < 0.5:
-            ops.append(string_insert(f"{prefix}_alpha", chr(ord("a") + rng.randrange(26))))
-        else:
-            ops.append(counter_inc(f"{prefix}_gamma", float(1 + rng.randrange(5))))
-    return ops
+    return [slot_insert(package, chr(ord("a") + rng.randrange(26))) for _ in range(count)]
