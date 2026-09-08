@@ -1,0 +1,37 @@
+[package]
+name = "moirai-interp"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "One log that merges any metamodel a MetamodelSemantics table can express"
+
+[dependencies]
+moirai-protocol = { path = "../moirai-protocol" }
+moirai-crdt = { path = "../moirai-crdt" }
+moirai-semantics = { path = "../moirai-semantics" }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0.128" }
+# MOIRAI-FUZZ
+moirai-fuzz = { path = "../moirai-fuzz", optional = true }
+rand = { version = "0.10.0", optional = true }
+# TEST UTILS FEATURES
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "elsa",
+] }
+
+[features]
+# `serde` because the table travels inside the log (decision D2), `test_utils`
+# because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither
+# widens the workspace build: `moirai-network` already turns `serde` on and
+# `moirai-crdt`'s own default turns `test_utils` on.
+default = ["serde", "test_utils"]
+serde = ["moirai-protocol/serde", "moirai-crdt/serde"]
+# Forwarded to both crates at once: `IsLog::effect`'s arity is gated on each
+# crate's own `sink` feature, so turning it on for one and not the other does
+# not compile.
+sink = ["moirai-protocol/sink", "moirai-crdt/sink"]
+fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
+test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-crdt/test_utils"]

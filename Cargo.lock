@@ -1520,6 +1520,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-interp"
+version = "0.1.0"
+dependencies = [
+ "deepsize",
+ "moirai-crdt",
+ "moirai-fuzz",
+ "moirai-protocol",
+ "moirai-semantics",
+ "rand 0.10.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "moirai-macros"
 version = "0.1.0"
 dependencies = [

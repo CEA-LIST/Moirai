@@ -9,6 +9,7 @@ members = [
     "moirai-bootnode",
     "moirai-relay",
     "moirai-semantics",
+    "moirai-interp",
     "moirai-dashboard",
 ]
 
