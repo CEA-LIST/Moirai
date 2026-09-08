@@ -116,6 +116,6 @@ pub use digest::metamodel_digest;
 pub use parse::{SemanticsError, from_descriptor};
 pub use table::{
     ClassSemantics, ClassSlot, EnumSemantics, FacetSource, FeatureSemantics, FeatureSlot, FlagWins,
-    LeafRule, MergeRule, MetamodelSemantics, NumKind, Provenance, SetTie, Shape, TieBreak,
+    KeyKind, LeafRule, MergeRule, MetamodelSemantics, NumKind, Provenance, SetTie, Shape, TieBreak,
     UnsupportedReason,
 };

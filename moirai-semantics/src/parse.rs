@@ -170,15 +170,23 @@ struct Declared<'a> {
     instantiable: bool,
     supers: SmallVec<[ClassSlot; 2]>,
     features: Vec<FeatureSemantics>,
+    /// The `transparent` key of the class entry: the feature the generator
+    /// represents this class as, by name. Resolved to a visible slot in pass
+    /// two, where `visible` exists.
+    transparent: Option<&'a str>,
 }
 
 /// Reads a format 2 descriptor into a table.
 ///
 /// Fails, naming the class and feature, on a descriptor of another format
-/// version, a feature with no rule, a name that resolves to nothing, and on
-/// the two forms decision D6 keeps on the generated path: a `keyed`
-/// (`uw-map`) feature and a `transparent` one. `json.ecore` needs both, and
-/// is refused here on purpose; `bt.ecore` and `SimpleUML.ecore` need neither.
+/// version, a feature with no rule, and a name that resolves to nothing.
+///
+/// A feature whose rule is spelled `unsupported` with reason `keyed` or
+/// `transparent` still costs the whole metamodel, because such an entry
+/// carries no rule at all and there is nothing to run. Arachne stopped
+/// emitting those on 2026-09-08, when D6 was amended: `json.metamodel.json`
+/// now carries a real `keyed` shape on `Object.entry` and real rules on the
+/// features of its five transparent classes, and parses.
 pub fn from_descriptor(descriptor: &Value) -> Result<MetamodelSemantics, SemanticsError> {
     let root = descriptor.as_object().ok_or(SemanticsError::NotAnObject)?;
 
@@ -258,6 +266,11 @@ pub fn from_descriptor(descriptor: &Value) -> Result<MetamodelSemantics, Semanti
             .get("abstract")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let transparent = match raw.get("transparent") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(field)) => Some(field.as_str()),
+            Some(_) => return Err(malformed(*name, "`transparent` is not a string")),
+        };
 
         let mut supers = SmallVec::new();
         for value in array(raw, "superTypes", name)? {
@@ -314,6 +327,7 @@ pub fn from_descriptor(descriptor: &Value) -> Result<MetamodelSemantics, Semanti
             instantiable,
             supers,
             features,
+            transparent,
         });
     }
 
@@ -364,16 +378,38 @@ pub fn from_descriptor(descriptor: &Value) -> Result<MetamodelSemantics, Semanti
             }
         }
 
+        let visible: Vec<(Arc<str>, ClassSlot, FeatureSlot)> = visible
+            .into_iter()
+            .map(|(name, (owner, slot))| (name, owner, slot))
+            .collect();
+
+        // The name the `transparent` key wrote, as the visible slot the
+        // read-out indexes `fields` by. A class that names a feature it
+        // cannot see is a descriptor this crate will not guess at.
+        let transparent = match class.transparent {
+            None => None,
+            Some(field) => {
+                let position = visible
+                    .iter()
+                    .position(|(name, _, _)| &**name == field)
+                    .ok_or_else(|| {
+                        malformed(
+                            class.name,
+                            format!("`transparent` names `{field}`, which the class cannot see"),
+                        )
+                    })?;
+                Some(FeatureSlot(position as u16))
+            }
+        };
+
         table_classes.push(ClassSemantics {
             slot: own,
             name: Arc::from(class.name),
             instantiable: class.instantiable,
             supers: class.supers.clone(),
             declared: class.features.clone(),
-            visible: visible
-                .into_iter()
-                .map(|(name, (owner, slot))| (name, owner, slot))
-                .collect(),
+            visible,
+            transparent,
             concrete: Arc::from(concrete[index].as_slice()),
         });
     }
@@ -587,8 +623,8 @@ mod tests {
 
     use super::{SemanticsError, from_descriptor};
     use crate::table::{
-        ClassSlot, FacetSource, FeatureSlot, FlagWins, LeafRule, MergeRule, MetamodelSemantics,
-        NumKind, SetTie, Shape, TieBreak, UnsupportedReason,
+        ClassSlot, FacetSource, FeatureSlot, FlagWins, KeyKind, LeafRule, MergeRule,
+        MetamodelSemantics, NumKind, SetTie, Shape, TieBreak, UnsupportedReason,
     };
 
     /// A provenance object whose four facets all carry a source. The values
@@ -1061,10 +1097,14 @@ mod tests {
         );
     }
 
-    /// Decision D6's boundary, in fixture form: a `uw-map` containment is a
-    /// form the interpreted node has no node type for, so the whole
-    /// metamodel is refused with a sentence naming the feature. `ip5` proper
-    /// runs this over `json.metamodel.json` and lands with step 2.
+    /// D6's boundary as it stands after the 2026-09-08 amendment: a
+    /// descriptor that spells a feature `unsupported` with reason `keyed`
+    /// carries **no rule at all**, and a table cannot run what a descriptor
+    /// does not say. Arachne stopped writing that entry — `json.metamodel.json`
+    /// now carries a real `keyed` shape and parses, which
+    /// `ip5_the_json_descriptor_parses_keyed_and_transparent` asserts — but a
+    /// descriptor emitted before the amendment still says it, and this is the
+    /// sentence such a node gets.
     #[test]
     fn ip5_a_keyed_feature_is_refused_with_a_sentence_naming_it() {
         let descriptor = with_merge(
@@ -1088,8 +1128,9 @@ mod tests {
         assert!(sentence.contains("generated path"), "{sentence}");
     }
 
-    /// The other half of D6: a transparent class's feature. This is the one
-    /// `json.ecore` trips over.
+    /// The same for the other word Arachne used to write. It came from
+    /// `urn:arachne:representation` `kind="transparent"`, and every one of
+    /// `json.ecore`'s five concrete classes used to produce it.
     #[test]
     fn ip5_a_transparent_feature_is_refused_with_a_sentence_naming_it() {
         let descriptor = with_merge(
@@ -1101,6 +1142,98 @@ mod tests {
         let sentence = error.to_string();
         assert!(sentence.contains("Inverter.tags"), "{sentence}");
         assert!(sentence.contains("transparent"), "{sentence}");
+    }
+
+    /// **ip5, flipped** — the two forms `json.ecore` needs are read rather
+    /// than refused: `Object.entry` becomes a keyed collection of `Json`
+    /// under string keys, and each of the five concrete classes carries the
+    /// visible slot of the one feature it is represented by.
+    ///
+    /// The descriptor is written out here rather than read from
+    /// `arachne/examples/json.metamodel.json`, because this crate depends on
+    /// nothing and reaching into a sibling checkout is a test that passes on
+    /// one machine. `moirai-interp` runs the same claim over the real file,
+    /// which it keeps a byte-for-byte copy of under `tests/fixtures/`.
+    #[test]
+    fn ip5_the_json_descriptor_parses_keyed_and_transparent() {
+        let prov = || provenance("declared", "declared", "declared", "declared");
+        let descriptor = json!({
+            "formatVersion": 2,
+            "package": "json",
+            "nsURI": "http://www.example.org/json",
+            "rootClasses": ["Json"],
+            "enums": {},
+            "classes": {
+                "Json": {"abstract": true, "superTypes": [],
+                         "attributes": [], "containments": [], "references": []},
+                "Array": {
+                    "abstract": false, "superTypes": ["Json"], "transparent": "items",
+                    "attributes": [], "references": [],
+                    "containments": [{"name": "items",
+                        "merge": {"kind": "containment", "shape": {"kind": "sequence"},
+                                  "target": "Json"},
+                        "provenance": prov()}]
+                },
+                "Object": {
+                    "abstract": false, "superTypes": ["Json"], "transparent": "entry",
+                    "attributes": [], "references": [],
+                    "containments": [{"name": "entry",
+                        "merge": {"kind": "containment",
+                                  "shape": {"kind": "keyed", "key": {"kind": "str"}},
+                                  "target": "Json"},
+                        "provenance": prov()}]
+                },
+                "String": {
+                    "abstract": false, "superTypes": ["Json"], "transparent": "value",
+                    "containments": [], "references": [],
+                    "attributes": [{"name": "value",
+                        "merge": {"kind": "attribute", "shape": {"kind": "single"},
+                                  "leaf": {"kind": "text"}},
+                        "provenance": prov()}]
+                }
+            }
+        });
+        let table = from_descriptor(&descriptor).expect("both forms are read");
+
+        let class = |name: &str| {
+            table
+                .classes
+                .iter()
+                .find(|class| &*class.name == name)
+                .unwrap_or_else(|| panic!("no class `{name}`"))
+        };
+        assert_eq!(
+            class("Object").declared[0].merge,
+            MergeRule::Containment {
+                shape: Shape::Keyed { key: KeyKind::Str },
+                target: class("Json").slot,
+            }
+        );
+        assert_eq!(
+            Shape::Keyed { key: KeyKind::Str }.effective(),
+            Shape::Keyed { key: KeyKind::Str },
+            "a keyed collection is merged by, and not degraded like an ordered set"
+        );
+        for (name, feature) in [("Array", "items"), ("Object", "entry"), ("String", "value")] {
+            let holder = class(name);
+            let slot = holder
+                .transparent
+                .unwrap_or_else(|| panic!("`{name}` is transparent"));
+            assert_eq!(&*holder.visible[slot.index()].0, feature);
+        }
+        assert_eq!(class("Json").transparent, None, "an abstract union is not");
+    }
+
+    /// A class that names a field it cannot see is a descriptor this crate
+    /// will not guess at.
+    #[test]
+    fn a_transparent_class_naming_an_unknown_field_is_refused() {
+        let mut descriptor = fixture();
+        descriptor["classes"]["Inverter"]["transparent"] = json!("nowhere");
+        let error = from_descriptor(&descriptor).expect_err("the field does not exist");
+        let sentence = error.to_string();
+        assert!(sentence.contains("nowhere"), "{sentence}");
+        assert!(sentence.contains("Inverter"), "{sentence}");
     }
 
     /// The rule is read, never derived, so a feature that carries none is a

@@ -133,6 +133,34 @@ pub enum LeafRule {
     },
 }
 
+/// What the values of a keyed collection's key are.
+///
+/// A `uw-map` key is the Rust type `containment.rs:150-163` picks for the key
+/// attribute and never a CRDT: `UWMapLog<K, L>` hashes `K`
+/// (`uw_map.rs:56`), so the key is the entry's identity and the merge
+/// happens under it and never to it. That is why this is its own vocabulary
+/// and not a [`LeafRule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum KeyKind {
+    /// `EString`, and any datatype the descriptor describes as a string.
+    Str,
+    /// `EBoolean`.
+    Bool,
+    /// `EChar`.
+    Char,
+    /// A numeric builtin, at the width the generator compiles.
+    Num {
+        /// The width.
+        num: NumKind,
+    },
+    /// An enum literal.
+    Enum {
+        /// Slot of the enum in `enums`, not in `classes`.
+        class: ClassSlot,
+    },
+}
+
 /// The collection a feature's values sit in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -150,6 +178,16 @@ pub enum Shape {
     },
     /// `AWBagLog`: many, unordered, duplicates kept.
     Bag,
+    /// `UWMapLog`: many, addressed by a key rather than by a position, from
+    /// a `urn:arachne:semantics` `datatype="uw-map"` annotation naming a key
+    /// and a value feature of the collection's target
+    /// (`containment.rs:110-168`). The entry class itself is not
+    /// represented: the map holds what its value feature holds, under the
+    /// key its key feature carries.
+    Keyed {
+        /// What the keys are.
+        key: KeyKind,
+    },
     /// Declared `unique` *and* `ordered`, which the generator cannot compile:
     /// it warns and emits a list (`attribute.rs:183-198`). Recorded so the
     /// declaration is not lost, and degraded by [`Shape::effective`]
@@ -312,6 +350,19 @@ pub struct ClassSemantics {
     /// name, each once, naming the class that declares it. Flattened at parse
     /// time so no lookup walks supertypes.
     pub visible: Vec<(Arc<str>, ClassSlot, FeatureSlot)>,
+    /// The class is represented by one of its features and by nothing else
+    /// (`urn:arachne:representation` `kind="transparent"`,
+    /// `annotation.rs:59-70`): the *visible* slot of that feature.
+    ///
+    /// The generator emits no record for such a class; a containment onto it
+    /// carries the field's own construction directly, which is why
+    /// `classifiers.rs` spells `JsonKind`'s `Array` variant as
+    /// `NestedList<Box<JsonKind>>` and not as an `Array` record holding one.
+    /// The interpreted path still mints an object here, because routing a
+    /// feature step is what it does; what changes is the read-out, which
+    /// renders the object as that one feature's value with no `eClass` key
+    /// and no wrapper.
+    pub transparent: Option<FeatureSlot>,
     /// The concrete classes an instance of this class may actually be: the
     /// instantiable descendants, this class included when it is
     /// instantiable, ascending by slot.
