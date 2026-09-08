@@ -8,6 +8,7 @@
 use std::fmt::Display;
 use std::io::{Cursor, Read};
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
-    ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServedDescriptor,
+    ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused, ServedDescriptor,
 };
 
 /// How long a request waits for the node's event loop to answer before it
@@ -35,6 +36,10 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   `metamodel_id` naming no descriptor the node holds
 /// - `GET  /api/metamodels`           the descriptors the node holds, as the
 ///   application listed them
+/// - `POST /api/metamodels`           serve one more descriptor, now: the body
+///   is the descriptor text, 201 with the listing when the node did not hold
+///   it, 200 when it did, 422 with the reason the application could not
+///   describe it, 501 when the node was started without the hook
 /// - `GET  /api/model/{id}/state`     that model's state as JSON
 /// - `POST /api/model/{id}/op`        submit an operation to that model
 /// - `GET  /api/model/{id}/metamodel` the descriptor that model was registered under
@@ -64,7 +69,7 @@ pub(crate) fn start_http_api<O: NetworkOp>(
     log_id: LogId,
     sender: Sender<OpEnvelope<O>>,
     ctrl: Sender<ControlCmd>,
-    metamodels: Vec<ServedDescriptor>,
+    metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
 ) {
     thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
@@ -85,15 +90,19 @@ pub(crate) fn start_http_api<O: NetworkOp>(
 }
 
 /// What the HTTP thread owns: the node's fixed identity, the channels to its
-/// event loop, and the descriptors — loaded once at start. Everything that
-/// changes while the node runs, the hosted set above all, is read live through
-/// a [`ControlCmd`].
+/// event loop, and a read handle on the descriptor list. Everything that
+/// changes while the node runs, the hosted set above all, is read live —
+/// through a [`ControlCmd`], or, for the descriptors, through the shared
+/// list the event loop writes.
 struct Api<O> {
     replica_id: String,
     default_log: LogId,
     sender: Sender<OpEnvelope<O>>,
     ctrl: Sender<ControlCmd>,
-    metamodels: Vec<ServedDescriptor>,
+    /// Shared with the event loop, which is the only writer: a descriptor
+    /// posted to a running node is listed by the very next request, and this
+    /// thread never mutates the list itself.
+    metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
 }
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -128,6 +137,7 @@ enum Route<'a> {
     Models,
     Register,
     Metamodels,
+    AddMetamodel,
     Model { id: &'a str, leaf: ModelLeaf },
     Unknown,
 }
@@ -160,6 +170,7 @@ fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
         (&Method::Get, ["api", "models"]) => Route::Models,
         (&Method::Post, ["api", "models"]) => Route::Register,
         (&Method::Get, ["api", "metamodels"]) => Route::Metamodels,
+        (&Method::Post, ["api", "metamodels"]) => Route::AddMetamodel,
         (&Method::Get, ["api", "model", id, "state"]) => Route::Model {
             id,
             leaf: ModelLeaf::State,
@@ -257,6 +268,7 @@ impl<O: NetworkOp> Api<O> {
                 Route::Peers => self.query(|reply| ControlCmd::Peers { reply }),
                 Route::Models => self.query(|reply| ControlCmd::Models { reply }),
                 Route::Metamodels => self.listing(),
+                Route::AddMetamodel => self.add_metamodel(&mut request),
                 Route::Op => self.submit(&mut request, None),
                 Route::Register => self.register(&mut request),
                 Route::Model { id, leaf } => self.model(&mut request, id, leaf),
@@ -306,22 +318,59 @@ impl<O: NetworkOp> Api<O> {
     /// to the catch-all 404 when there is none, so a node that never called
     /// `serve_metamodel` keeps its old behaviour in full.
     fn first_descriptor(&self) -> Reply {
-        match self.metamodels.first() {
+        match self.metamodels().first() {
             Some(descriptor) => json_text(200, descriptor.text.clone()),
             None => not_found(),
         }
     }
 
+    /// The descriptors the node serves right now.
+    fn metamodels(&self) -> std::sync::RwLockReadGuard<'_, Vec<ServedDescriptor>> {
+        self.metamodels
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The listing entries, verbatim, as a JSON array.
+    fn listing_entries(&self) -> Vec<serde_json::Value> {
+        self.metamodels()
+            .iter()
+            .filter(|descriptor| !descriptor.listing.is_null())
+            .map(|descriptor| descriptor.listing.clone())
+            .collect()
+    }
+
     /// `GET /api/metamodels`: the listing entries, verbatim, of every
     /// descriptor the application listed.
     fn listing(&self) -> Reply {
-        let metamodels: Vec<&serde_json::Value> = self
-            .metamodels
-            .iter()
-            .filter(|descriptor| !descriptor.listing.is_null())
-            .map(|descriptor| &descriptor.listing)
-            .collect();
-        json_value(200, &json!({ "metamodels": metamodels }))
+        json_value(200, &json!({ "metamodels": self.listing_entries() }))
+    }
+
+    /// `POST /api/metamodels`: the body is one descriptor's text, and the
+    /// event loop is asked to serve it.
+    ///
+    /// The body is not parsed here, not even as JSON: what a descriptor is
+    /// belongs to the application, which describes the text through the hook
+    /// it installed, and the answer is either the entry it listed or the
+    /// sentence it refused with.
+    fn add_metamodel(&self, request: &mut Request) -> Reply {
+        let text = match read_body(request) {
+            Ok(text) => text,
+            Err(reply) => return reply,
+        };
+        match self.ask(|reply| ControlCmd::AddMetamodel { text, reply }) {
+            Some(Ok(served)) => json_value(
+                if served.added { 201 } else { 200 },
+                &json!({
+                    "added": served.added,
+                    "metamodel": served.listing,
+                    "metamodels": self.listing_entries(),
+                }),
+            ),
+            Some(Err(refused @ ServeRefused::Unreadable(_))) => error(422, refused),
+            Some(Err(refused @ ServeRefused::NotEnabled)) => error(501, refused),
+            None => timeout(),
+        }
     }
 
     /// `GET /api/model/{id}/metamodel`: the descriptor under the key the model
@@ -329,7 +378,7 @@ impl<O: NetworkOp> Api<O> {
     /// — is served the first descriptor, as `/api/metamodel` is.
     fn descriptor_for(&self, key: Option<&str>) -> Reply {
         match key {
-            Some(key) => match self.metamodels.iter().find(|d| d.key == key) {
+            Some(key) => match self.metamodels().iter().find(|d| d.key == key) {
                 Some(descriptor) => json_text(200, descriptor.text.clone()),
                 None => not_found(),
             },
@@ -499,6 +548,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::sync::{Arc, RwLock};
 
     use moirai_protocol::log_id::LogId;
     use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
@@ -507,7 +557,9 @@ mod tests {
 
     use super::testing::{free_port, request};
     use super::{route, start_http_api, ModelLeaf, Route};
-    use crate::generic::{ControlCmd, OpEnvelope, OpResult, ServedDescriptor};
+    use crate::generic::{
+        ControlCmd, OpEnvelope, OpResult, ServeRefused, Served, ServedDescriptor,
+    };
 
     /// The log id every spawned API reports, fixed so bodies can be asserted
     /// verbatim.
@@ -532,6 +584,9 @@ mod tests {
         port: u16,
         op_rx: mpsc::Receiver<OpEnvelope<TestOp>>,
         ctrl_rx: mpsc::Receiver<ControlCmd>,
+        /// The list the event loop would own, so a test can play the loop:
+        /// take the command, write the list, answer.
+        metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
     }
 
     fn spawn_api(metamodel: Option<String>) -> Api {
@@ -539,22 +594,26 @@ mod tests {
         let (op_tx, op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
         let log_id = LogId::parse(TEST_LOG_ID).expect("a fixed, valid log id");
+        let metamodels = Arc::new(RwLock::new(
+            metamodel
+                .into_iter()
+                .map(ServedDescriptor::unlisted)
+                .collect::<Vec<_>>(),
+        ));
         start_http_api::<TestOp>(
             port,
             "test-replica".into(),
             log_id,
             op_tx,
             ctrl_tx,
-            metamodel
-                .into_iter()
-                .map(ServedDescriptor::unlisted)
-                .collect(),
+            Arc::clone(&metamodels),
         );
 
         Api {
             port,
             op_rx,
             ctrl_rx,
+            metamodels,
         }
     }
 
@@ -670,6 +729,8 @@ mod tests {
         assert_eq!(route(&Method::Get, "/api/model/a1"), Route::Unknown);
         assert_eq!(route(&Method::Get, "/api/models"), Route::Models);
         assert_eq!(route(&Method::Post, "/api/models"), Route::Register);
+        assert_eq!(route(&Method::Get, "/api/metamodels"), Route::Metamodels);
+        assert_eq!(route(&Method::Post, "/api/metamodels"), Route::AddMetamodel);
         assert_eq!(route(&Method::Get, "/api/state/"), Route::Unknown);
         assert_eq!(
             route(&Method::Post, "/api/pause/peer-1"),
@@ -738,5 +799,124 @@ mod tests {
 
         let (status, body) = request(api.port, "GET /api/state", None);
         assert_eq!((status, parse(&body)), (200, json!({ "default": true })));
+    }
+    // ------------------------------------------------- POST /api/metamodels
+
+    /// The event loop as this route sees it: a thread that takes the command,
+    /// writes the shared list, and answers. `enabled` is a node started
+    /// without [`GenericNode::enable_metamodel_upload`].
+    ///
+    /// [`GenericNode::enable_metamodel_upload`]: crate::generic::GenericNode::enable_metamodel_upload
+    fn answering_metamodel_posts(
+        ctrl_rx: mpsc::Receiver<ControlCmd>,
+        metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+        enabled: bool,
+    ) {
+        std::thread::spawn(move || {
+            while let Ok(cmd) = ctrl_rx.recv() {
+                if let ControlCmd::AddMetamodel { text, reply } = cmd {
+                    let answer = if !enabled {
+                        Err(ServeRefused::NotEnabled)
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(&text) {
+                            Err(err) => Err(ServeRefused::Unreadable(format!("not JSON: {err}"))),
+                            Ok(parsed) => {
+                                let key = parsed["digest"].as_str().unwrap_or_default().to_string();
+                                let listing = json!({
+                                    "nsURI": parsed["nsURI"].as_str().unwrap_or_default(),
+                                    "digest": key,
+                                });
+                                let mut held = metamodels.write().expect("uncontended");
+                                let added = !held.iter().any(|d| d.key == key);
+                                if added {
+                                    held.push(ServedDescriptor {
+                                        key: key.clone(),
+                                        listing: listing.clone(),
+                                        text,
+                                    });
+                                }
+                                Ok(Served {
+                                    key,
+                                    listing,
+                                    added,
+                                })
+                            }
+                        }
+                    };
+                    let _ = reply.send(answer);
+                }
+            }
+        });
+    }
+
+    const UML_BODY: &str = r#"{"nsURI":"http://example.org/uml","digest":"sha256:uml"}"#;
+
+    #[test]
+    fn a_posted_descriptor_is_answered_201_and_listed_immediately() {
+        let api = spawn_api(None);
+        answering_metamodel_posts(api.ctrl_rx, Arc::clone(&api.metamodels), true);
+
+        let (status, body) = request(api.port, "POST /api/metamodels", Some(UML_BODY));
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(
+            (status, parsed["added"].as_bool()),
+            (201, Some(true)),
+            "unexpected body: {body}"
+        );
+        assert_eq!(
+            parsed["metamodels"],
+            json!([{ "nsURI": "http://example.org/uml", "digest": "sha256:uml" }]),
+            "the answer lists what the node holds after the command"
+        );
+
+        // And the very next GET sees it, through the same shared list rather
+        // than through a snapshot taken when this thread spawned.
+        let (status, body) = request(api.port, "GET /api/metamodels", None);
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(status, 200);
+        assert_eq!(parsed["metamodels"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn a_descriptor_the_node_already_held_is_answered_200() {
+        let api = spawn_api(None);
+        answering_metamodel_posts(api.ctrl_rx, Arc::clone(&api.metamodels), true);
+
+        let (first, _) = request(api.port, "POST /api/metamodels", Some(UML_BODY));
+        let (status, body) = request(api.port, "POST /api/metamodels", Some(UML_BODY));
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(first, 201);
+        assert_eq!((status, parsed["added"].as_bool()), (200, Some(false)));
+    }
+
+    #[test]
+    fn a_body_the_application_refused_is_answered_422_with_its_reason() {
+        let api = spawn_api(None);
+        answering_metamodel_posts(api.ctrl_rx, Arc::clone(&api.metamodels), true);
+
+        let (status, body) = request(api.port, "POST /api/metamodels", Some("not a descriptor"));
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(status, 422);
+        assert!(
+            parsed["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not JSON"),
+            "the reason the application gave must reach the caller: {body}"
+        );
+        assert!(api.metamodels.read().expect("uncontended").is_empty());
+    }
+
+    #[test]
+    fn a_node_started_without_the_upload_hook_answers_501() {
+        let api = spawn_api(None);
+        answering_metamodel_posts(api.ctrl_rx, Arc::clone(&api.metamodels), false);
+
+        let (status, _) = request(api.port, "POST /api/metamodels", Some(UML_BODY));
+
+        assert_eq!(status, 501);
     }
 }

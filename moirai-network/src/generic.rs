@@ -12,6 +12,7 @@ use std::fmt::{Debug, Display};
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(feature = "test_utils")]
 use std::sync::Mutex;
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -61,6 +62,18 @@ pub type RegisterFn<O> = fn(&LogId, &ServedDescriptor) -> Vec<O>;
 /// be a plain function pointer with no state of its own. See
 /// [`GenericNode::enable_op_guard`].
 pub type OpGuardFn<O> = fn(&LogId, &ServedDescriptor, &O) -> Result<(), String>;
+
+/// The application's description of one descriptor's text: the key it is
+/// served under, the entry `GET /api/metamodels` lists for it, or the reason
+/// the text is not a descriptor at all. See
+/// [`GenericNode::enable_metamodel_upload`].
+///
+/// This is the whole of what `POST /api/metamodels` knows how to do with a
+/// body. The node reads nothing inside the text — it cannot, and it must not:
+/// what a descriptor means is the application's, and a key claimed by the
+/// caller instead of computed from the bytes would be a caller naming its own
+/// identity.
+pub type DescribeFn = fn(&str) -> Result<ServedDescriptor, String>;
 
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
@@ -207,7 +220,16 @@ where
     /// application gave them; see [`Self::serve_metamodels`]. Empty is the
     /// pre-existing behaviour in full: `GET /api/metamodel` answers 404
     /// exactly like any other unknown path.
-    descriptors: Vec<ServedDescriptor>,
+    ///
+    /// Shared with the HTTP thread, which reads it — a listing, a
+    /// descriptor's text — on every request rather than from a snapshot taken
+    /// when it spawned, because [`Self::add_metamodel`] can grow it while the
+    /// node runs. Written from the event loop and from nowhere else.
+    descriptors: Arc<RwLock<Vec<ServedDescriptor>>>,
+    /// The application's description hook, installed by
+    /// [`Self::enable_metamodel_upload`]; `None` until then, and
+    /// `POST /api/metamodels` answers [`ServeRefused::NotEnabled`].
+    describe_fn: Option<DescribeFn>,
     /// The application's two registration hooks, installed together by
     /// [`Self::enable_registration`]; `None` until then, and registration
     /// answers [`RegisterRefused::NotEnabled`].
@@ -561,6 +583,45 @@ impl Display for RegisterRefused {
 
 impl std::error::Error for RegisterRefused {}
 
+/// What [`GenericNode::add_metamodel`] answers: the descriptor as the
+/// application described it, and whether this node had it already.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Served {
+    /// The key the descriptor is served under, as the application's
+    /// [`DescribeFn`] computed it.
+    pub key: String,
+    /// The entry `GET /api/metamodels` lists for it, verbatim.
+    pub listing: serde_json::Value,
+    /// `false` when the node already held this key and nothing changed.
+    pub added: bool,
+}
+
+/// Why [`GenericNode::add_metamodel`] declined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServeRefused {
+    /// No description hook was installed; see
+    /// [`GenericNode::enable_metamodel_upload`].
+    NotEnabled,
+    /// The application could not describe the text, and said why.
+    Unreadable(String),
+}
+
+impl Display for ServeRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotEnabled => {
+                write!(
+                    f,
+                    "adding a metamodel descriptor is not enabled on this node"
+                )
+            }
+            Self::Unreadable(why) => write!(f, "not a descriptor this node can serve: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for ServeRefused {}
+
 impl From<HostError> for RegisterRefused {
     fn from(error: HostError) -> Self {
         match error {
@@ -696,6 +757,14 @@ pub(crate) enum ControlCmd {
         log_id: LogId,
         reply: Sender<Option<Option<String>>>,
     },
+    /// `POST /api/metamodels`. See [`GenericNode::add_metamodel`].
+    ///
+    /// The descriptor list is the event loop's, like everything else the node
+    /// holds, so the HTTP thread asks for the change rather than making it.
+    AddMetamodel {
+        text: String,
+        reply: Sender<Result<Served, ServeRefused>>,
+    },
     /// Whether the node hosts a log.
     Hosts {
         log_id: LogId,
@@ -776,7 +845,8 @@ where
             discovery: None,
             export_log: None,
             import_log: None,
-            descriptors: Vec::new(),
+            descriptors: Arc::new(RwLock::new(Vec::new())),
+            describe_fn: None,
             descriptor_key_fn: None,
             register_fn: None,
             op_guard_fn: None,
@@ -858,11 +928,76 @@ where
     /// Serve `descriptors`: the first on `GET /api/metamodel`, every listed
     /// one on `GET /api/metamodels`, and each on `GET /api/model/{id}/metamodel`
     /// for the models registered under its key. Replaces whatever was served
-    /// before. Call this before [`start_http`], which snapshots the list.
+    /// before, which is what makes this the *start-up* call; while the node
+    /// runs, [`add_metamodel`] adds one.
     ///
-    /// [`start_http`]: GenericNode::start_http
+    /// [`add_metamodel`]: GenericNode::add_metamodel
     pub fn serve_metamodels(&mut self, descriptors: Vec<ServedDescriptor>) {
-        self.descriptors = descriptors;
+        *self.descriptors_mut() = descriptors;
+    }
+
+    /// The descriptors this node serves, for reading.
+    fn descriptors(&self) -> RwLockReadGuard<'_, Vec<ServedDescriptor>> {
+        self.descriptors
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The descriptors this node serves, for writing. Called from the event
+    /// loop and from the application's own thread before the node runs, never
+    /// from the HTTP thread.
+    fn descriptors_mut(&self) -> std::sync::RwLockWriteGuard<'_, Vec<ServedDescriptor>> {
+        self.descriptors
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Install the application's description hook, which is what lets a
+    /// descriptor be added while the node runs; see [`DescribeFn`] and
+    /// [`add_metamodel`].
+    ///
+    /// Purely additive: without it `POST /api/metamodels` answers 501 and the
+    /// node serves exactly the descriptors it was started with.
+    ///
+    /// [`add_metamodel`]: GenericNode::add_metamodel
+    pub fn enable_metamodel_upload(&mut self, describe: DescribeFn) {
+        self.describe_fn = Some(describe);
+    }
+
+    /// Serve one more descriptor, now: the primitive behind
+    /// `POST /api/metamodels`.
+    ///
+    /// The text is handed to the application's [`DescribeFn`], which answers
+    /// with the key and the listing entry or with the reason it will not.
+    /// A key this node already holds changes nothing and is answered
+    /// `added: false`, so posting the same descriptor twice — to a node, or
+    /// to a node and then to its restarted self — is not an error.
+    ///
+    /// The model registered under the new key afterwards is registered by the
+    /// path every other model takes: nothing here hosts a log.
+    pub fn add_metamodel(&mut self, text: String) -> Result<Served, ServeRefused> {
+        let describe = self.describe_fn.ok_or(ServeRefused::NotEnabled)?;
+        let descriptor = describe(&text).map_err(ServeRefused::Unreadable)?;
+        let mut descriptors = self.descriptors_mut();
+        if descriptors.iter().any(|held| held.key == descriptor.key) {
+            return Ok(Served {
+                key: descriptor.key,
+                listing: descriptor.listing,
+                added: false,
+            });
+        }
+        let served = Served {
+            key: descriptor.key.clone(),
+            listing: descriptor.listing.clone(),
+            added: true,
+        };
+        descriptors.push(descriptor);
+        drop(descriptors);
+        eprintln!(
+            "[{}] now serving metamodel descriptor {}",
+            self.replica_id, served.key
+        );
+        Ok(served)
     }
 
     /// Install the application's registration hooks; see the fields.
@@ -916,7 +1051,12 @@ where
             return Err(RegisterRefused::NotEnabled);
         };
         let descriptor = descriptor_key(&metamodel_id)
-            .and_then(|key| self.descriptors.iter().position(|held| held.key == key))
+            .and_then(|key| {
+                self.descriptors()
+                    .iter()
+                    .find(|held| held.key == key)
+                    .cloned()
+            })
             .ok_or_else(|| RegisterRefused::UnknownMetamodel(metamodel_id.clone()))?;
         let (log_id, created) = match model_id {
             Some(log_id) => (log_id, false),
@@ -924,14 +1064,14 @@ where
         };
         self.host_log(log_id.clone())?;
         let binding = Binding {
-            key: self.descriptors[descriptor].key.clone(),
+            key: descriptor.key.clone(),
             metamodel_id: metamodel_id.clone(),
         };
         if let Some(log) = self.logs.get_mut(&log_id) {
             log.binding = Some(binding);
         }
         if created {
-            for op in register(&log_id, &self.descriptors[descriptor]) {
+            for op in register(&log_id, &descriptor) {
                 let result = self.apply_op_to(&log_id, op);
                 if !result.success {
                     eprintln!(
@@ -1015,7 +1155,7 @@ where
             self.default_log.clone(),
             self.adapter_op_tx.clone(),
             self.ctrl_tx.clone(),
-            self.descriptors.clone(),
+            Arc::clone(&self.descriptors),
         );
     }
 
@@ -1298,22 +1438,30 @@ where
     fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
         if let Some(guard) = self.op_guard_fn {
-            let binding = self.logs.get(&log_id).and_then(|log| log.binding.as_ref());
-            if let Some(binding) = binding {
+            let key = self
+                .logs
+                .get(&log_id)
+                .and_then(|log| log.binding.as_ref())
+                .map(|binding| binding.key.clone());
+            if let Some(key) = key {
                 // The descriptor `register` matched for this log, looked up
                 // again by its key rather than remembered by index, so the
                 // guard can never be handed another descriptor's text.
-                let Some(descriptor) = self.descriptors.iter().find(|held| held.key == binding.key)
-                else {
+                let held = self
+                    .descriptors()
+                    .iter()
+                    .find(|held| held.key == key)
+                    .cloned();
+                let Some(descriptor) = held else {
                     return OpResult {
                         success: false,
                         message: format!(
-                            "log {log_id} is bound to descriptor {}, which this node no longer holds",
-                            binding.key
+                            "log {log_id} is bound to descriptor {key}, which this node no \
+                             longer holds"
                         ),
                     };
                 };
-                if let Err(reason) = guard(&log_id, descriptor, &op) {
+                if let Err(reason) = guard(&log_id, &descriptor, &op) {
                     return OpResult {
                         success: false,
                         message: reason,
@@ -1899,6 +2047,9 @@ where
                     .map(|log| log.binding.as_ref().map(|binding| binding.key.clone()));
                 let _ = reply.send(key);
             }
+            ControlCmd::AddMetamodel { text, reply } => {
+                let _ = reply.send(self.add_metamodel(text));
+            }
             ControlCmd::Hosts { log_id, reply } => {
                 let _ = reply.send(self.logs.contains_key(&log_id));
             }
@@ -2283,6 +2434,110 @@ mod tests {
 
     fn bt_id() -> serde_json::Value {
         json!({ "digest": BT_KEY })
+    }
+
+    /// The key a descriptor posted while the node runs is served under, in
+    /// this test's toy description rule.
+    const UML_KEY: &str = "sha256:uml";
+
+    /// An application's [`DescribeFn`] in miniature: the text is a JSON
+    /// object carrying its own `digest` and `nsURI`, and anything else is
+    /// refused with the reason. The real one parses a descriptor; the point
+    /// here is that the node calls it and reads nothing itself.
+    fn describe(text: &str) -> Result<ServedDescriptor, String> {
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).map_err(|err| format!("not JSON: {err}"))?;
+        let digest = parsed
+            .get("digest")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "no `digest`".to_string())?;
+        let ns_uri = parsed
+            .get("nsURI")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        Ok(ServedDescriptor {
+            key: digest.to_string(),
+            listing: json!({ "nsURI": ns_uri, "digest": digest }),
+            text: text.to_string(),
+        })
+    }
+
+    fn uml_descriptor_text() -> String {
+        json!({ "digest": UML_KEY, "nsURI": "http://www.example.org/simpleuml" }).to_string()
+    }
+
+    /// `ip19`, at the level below the containers: a descriptor the node did
+    /// not hold at startup is served while it runs, and a model registers
+    /// under it immediately — with nothing restarted and no second list.
+    #[test]
+    fn a_descriptor_added_while_the_node_runs_is_served_and_registered_under() {
+        let mut node = registering("n");
+        let uml_id = json!({ "digest": UML_KEY });
+
+        assert_eq!(
+            node.register(None, uml_id.clone()),
+            Err(RegisterRefused::UnknownMetamodel(uml_id.clone())),
+            "the node holds no such descriptor yet"
+        );
+        assert_eq!(
+            node.add_metamodel(uml_descriptor_text()),
+            Err(ServeRefused::NotEnabled),
+            "and it was started without the hook that could take one"
+        );
+
+        node.enable_metamodel_upload(describe);
+        let served = node
+            .add_metamodel(uml_descriptor_text())
+            .expect("the description hook read it");
+        assert_eq!(served.key, UML_KEY);
+        assert!(served.added);
+        assert_eq!(
+            node.descriptors()
+                .iter()
+                .map(|held| held.key.clone())
+                .collect::<Vec<_>>(),
+            vec![BT_KEY.to_string(), UML_KEY.to_string()],
+            "the descriptor the node started with is still served beside it"
+        );
+
+        let registered = node
+            .register(None, uml_id)
+            .expect("a model registers under the new key with nothing restarted");
+        assert!(registered.created);
+        assert!(node.hosts(&registered.model_id));
+        // And the model the node could already host still can be.
+        assert!(node.register(None, bt_id()).is_ok());
+    }
+
+    #[test]
+    fn the_same_descriptor_posted_twice_changes_nothing() {
+        let mut node = registering("n");
+        node.enable_metamodel_upload(describe);
+
+        assert!(node.add_metamodel(uml_descriptor_text()).unwrap().added);
+        let again = node.add_metamodel(uml_descriptor_text()).unwrap();
+        assert!(!again.added, "the second post added a second copy");
+        assert_eq!(node.descriptors().len(), 2);
+    }
+
+    #[test]
+    fn a_body_the_application_cannot_describe_is_refused_with_its_reason() {
+        let mut node = registering("n");
+        node.enable_metamodel_upload(describe);
+
+        match node.add_metamodel("not a descriptor at all".to_string()) {
+            Err(ServeRefused::Unreadable(why)) => assert!(why.contains("not JSON"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match node.add_metamodel(json!({ "nsURI": "u" }).to_string()) {
+            Err(ServeRefused::Unreadable(why)) => assert!(why.contains("digest"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            node.descriptors().len(),
+            1,
+            "a refused body left the list as it was"
+        );
     }
 
     #[test]
