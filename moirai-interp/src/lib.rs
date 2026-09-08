@@ -32,5 +32,5 @@ pub mod testing;
 
 pub use leaf::{LeafLog, LeafMismatch, LeafOp, Scalar};
 pub use log::{ModelHeader, ModelLog};
-pub use node::{Node, ObjectNode, OptNode, Refusal, SeqNode, SlotNode};
-pub use op::{InstanceOp, ModelOp, OptOp, SeqOp};
+pub use node::{MapNode, Node, ObjectNode, OptNode, Refusal, SeqNode, SlotNode};
+pub use op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};

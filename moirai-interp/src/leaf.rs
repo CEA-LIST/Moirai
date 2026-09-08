@@ -134,6 +134,22 @@ impl Scalar {
         }
     }
 
+    /// The canonical form of this value used as an *object key*: the JSON
+    /// string a keyed collection carries the entry under.
+    ///
+    /// A JSON object's keys are strings and a `uw-map` key is whatever the
+    /// key attribute's type is, so a non-string key is rendered the way its
+    /// JSON value renders and then unquoted. `Null` is the empty string,
+    /// which no real key attribute produces: `Scalar::Null` is a register's
+    /// default and a map key is written by the operation that made the entry.
+    pub fn to_key(&self, sem: Option<&MetamodelSemantics>) -> String {
+        match self.to_json(sem) {
+            Value::String(text) => text,
+            Value::Null => String::new(),
+            other => other.to_string(),
+        }
+    }
+
     /// The word a refusal sentence uses for this value's kind.
     pub const fn kind(&self) -> &'static str {
         match self {

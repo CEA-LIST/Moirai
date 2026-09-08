@@ -38,7 +38,7 @@
 use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
 use moirai_semantics::{ClassSlot, FeatureSlot};
 
-use crate::leaf::LeafOp;
+use crate::leaf::{LeafOp, Scalar};
 
 /// One operation on a model log.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,6 +81,8 @@ pub enum InstanceOp {
     Seq(SeqOp<Box<InstanceOp>>),
     /// Address an optional.
     Opt(OptOp<Box<InstanceOp>>),
+    /// Address a keyed collection.
+    Map(MapOp<Box<InstanceOp>>),
     /// Mint the object here; the end of a path.
     New,
     /// Write the leaf here; the end of a path.
@@ -114,6 +116,34 @@ pub enum SeqOp<O> {
         /// Where among the visible children.
         pos: usize,
     },
+}
+
+/// A keyed operation, mirroring `UWMap<K, O>`'s three arms
+/// (`uw_map.rs:41-46`) with the key widened to a [`Scalar`] so that one
+/// operation tree serves every key type the generator can compile.
+///
+/// The key is carried by value and never resolved against a version: a
+/// `UWMapLog` hashes its key (`uw_map.rs:56`) and two replicas that write the
+/// same key mean the same entry, which is the whole difference from a
+/// sequence position.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum MapOp<O> {
+    /// Address the entry at this key, minting it if it is not there.
+    Update {
+        /// Which entry.
+        key: Scalar,
+        /// What to do to it.
+        op: O,
+    },
+    /// Take the entry at this key out, update-wins: what is causally below
+    /// the removal goes and what is concurrent with it stays.
+    Remove {
+        /// Which entry.
+        key: Scalar,
+    },
+    /// The same, to every entry at once.
+    Clear,
 }
 
 /// An optional operation, mirroring `Optional<O>`.
@@ -168,6 +198,24 @@ impl InstanceOp {
         InstanceOp::Opt(OptOp::Unset)
     }
 
+    /// `Map(Update { key, op })`, spelled without the box.
+    pub fn entry(key: Scalar, inner: InstanceOp) -> Self {
+        InstanceOp::Map(MapOp::Update {
+            key,
+            op: Box::new(inner),
+        })
+    }
+
+    /// `Map(Remove { key })`.
+    pub fn remove(key: Scalar) -> Self {
+        InstanceOp::Map(MapOp::Remove { key })
+    }
+
+    /// `Map(Clear)`.
+    pub fn clear() -> Self {
+        InstanceOp::Map(MapOp::Clear)
+    }
+
     /// Wrap this in a [`ModelOp`].
     pub fn into_model_op(self) -> ModelOp {
         ModelOp::Instance(self)
@@ -209,6 +257,7 @@ impl InternalizeOp for InstanceOp {
             }
             InstanceOp::Seq(op) => InstanceOp::Seq(op.internalize(interner)),
             InstanceOp::Opt(op) => InstanceOp::Opt(op.internalize(interner)),
+            InstanceOp::Map(op) => InstanceOp::Map(op.internalize(interner)),
             InstanceOp::New => InstanceOp::New,
             InstanceOp::Leaf(op) => InstanceOp::Leaf(op.internalize(interner)),
         }
@@ -230,6 +279,22 @@ where
                 op: op.internalize(interner),
             },
             SeqOp::Delete { pos } => SeqOp::Delete { pos },
+        }
+    }
+}
+
+impl<O> InternalizeOp for MapOp<O>
+where
+    O: InternalizeOp,
+{
+    fn internalize(self, interner: &Interner) -> Self {
+        match self {
+            MapOp::Update { key, op } => MapOp::Update {
+                key,
+                op: op.internalize(interner),
+            },
+            MapOp::Remove { key } => MapOp::Remove { key },
+            MapOp::Clear => MapOp::Clear,
         }
     }
 }
@@ -264,7 +329,7 @@ mod tests {
     use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
     use moirai_semantics::{ClassSlot, FeatureSlot};
 
-    use super::{InstanceOp, ModelOp, OptOp, SeqOp};
+    use super::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
     use crate::leaf::{LeafOp, Scalar};
 
     /// An interner that has seen these replicas, in this order.
@@ -293,9 +358,12 @@ mod tests {
                                 ClassSlot(2),
                                 InstanceOp::field(
                                     FeatureSlot(0),
-                                    InstanceOp::set(InstanceOp::Leaf(LeafOp::Write(Scalar::text(
-                                        "door",
-                                    )))),
+                                    InstanceOp::entry(
+                                        Scalar::text("door"),
+                                        InstanceOp::set(InstanceOp::Leaf(LeafOp::Write(
+                                            Scalar::text("door"),
+                                        ))),
+                                    ),
                                 ),
                             ),
                         ),
@@ -335,6 +403,8 @@ mod tests {
                 InstanceOp::Seq(SeqOp::Delete { .. }) => 1,
                 InstanceOp::Opt(OptOp::Set(op)) => 1 + depth(op),
                 InstanceOp::Opt(OptOp::Unset) => 1,
+                InstanceOp::Map(MapOp::Update { op, .. }) => 1 + depth(op),
+                InstanceOp::Map(MapOp::Remove { .. } | MapOp::Clear) => 1,
                 InstanceOp::New | InstanceOp::Leaf(_) => 1,
             }
         }
@@ -347,6 +417,9 @@ mod tests {
             InstanceOp::delete(1),
             InstanceOp::set(InstanceOp::New),
             InstanceOp::unset(),
+            InstanceOp::entry(Scalar::text("k"), InstanceOp::New),
+            InstanceOp::remove(Scalar::text("k")),
+            InstanceOp::clear(),
             InstanceOp::New,
             InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'x' }),
         ];
@@ -360,7 +433,7 @@ mod tests {
 
         assert_eq!(
             depth(&InstanceOp::field(FeatureSlot(0), every_instance())),
-            10
+            11
         );
     }
 

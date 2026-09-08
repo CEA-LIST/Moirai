@@ -66,8 +66,8 @@ use moirai_protocol::state::{
     sink::{Sink, SinkCollector},
 };
 
-use crate::leaf::{LeafLog, LeafMismatch};
-use crate::op::{InstanceOp, OptOp, SeqOp};
+use crate::leaf::{LeafLog, LeafMismatch, Scalar};
+use crate::op::{InstanceOp, MapOp, OptOp, SeqOp};
 
 /// Why an operation was not routed.
 ///
@@ -412,6 +412,8 @@ pub(crate) enum Shaped {
     Optional(Site),
     /// Many of these, ordered.
     Sequence(Site),
+    /// Many of these, each under a key of its own.
+    Keyed(Site),
 }
 
 impl Shaped {
@@ -424,6 +426,7 @@ impl Shaped {
             Shaped::Bare(Site::Leaf(LeafSite::Bag)) => "a bag",
             Shaped::Optional(_) => "optional",
             Shaped::Sequence(_) => "a sequence",
+            Shaped::Keyed(_) => "a keyed collection",
         }
     }
 }
@@ -440,6 +443,10 @@ pub(crate) fn shaped(rule: &MergeRule) -> Result<Shaped, UnsupportedReason> {
             Shape::Sequence => Shaped::Sequence(Site::Leaf(LeafSite::Scalar(leaf))),
             Shape::Set { tie } => Shaped::Bare(Site::Leaf(LeafSite::Set(tie))),
             Shape::Bag => Shaped::Bare(Site::Leaf(LeafSite::Bag)),
+            // A `uw-map` whose entry class's value feature is an attribute:
+            // `containment.rs`'s `uw_map_value_log_type` compiles the leaf's
+            // own log under the map, and the entry class disappears.
+            Shape::Keyed { .. } => Shaped::Keyed(Site::Leaf(LeafSite::Scalar(leaf))),
             // `Shape::effective` degrades the one shape the generator cannot
             // compile, so nothing reaches here.
             Shape::OrderedSet => unreachable!("`effective` degrades an ordered set to a sequence"),
@@ -447,6 +454,11 @@ pub(crate) fn shaped(rule: &MergeRule) -> Result<Shaped, UnsupportedReason> {
         MergeRule::Containment { shape, target } => match shape.effective() {
             Shape::Optional => Shaped::Optional(Site::Object(Target::Class(target))),
             Shape::Sequence => Shaped::Sequence(Site::Object(Target::Class(target))),
+            // `target` is the *value* feature's class and never the entry
+            // class the `.ecore` file names: the map holds what its value
+            // feature holds, which is what `UWMapLog<String, JsonKindLog>`
+            // says.
+            Shape::Keyed { .. } => Shaped::Keyed(Site::Object(Target::Class(target))),
             // `containment.rs:172-196` compiles a multi-valued containment as
             // a `NestedListLog` whatever its facets say, so the set and bag
             // shapes are not reachable for one; a single is a bare slot.
@@ -494,6 +506,8 @@ pub enum Node {
     Seq(SeqNode),
     /// Zero or one of whatever the feature holds.
     Opt(OptNode),
+    /// A keyed collection.
+    Map(MapNode),
     /// A leaf.
     Leaf(LeafLog),
 }
@@ -577,6 +591,64 @@ mod children_serde {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptNode {
     pub(crate) child: Option<Box<Node>>,
+}
+
+/// A keyed collection: `UWMapLog`'s mapping half, minting by rule.
+///
+/// `UWMapLog` holds a `HashMap<K, L>` and mints its children through
+/// `Default` (`uw_map.rs:133`). An interpreted child has no `Default` to mint
+/// through, so the map is owned here and every child comes from
+/// [`Node::for_site`]. The container is a `BTreeMap` rather than a `HashMap`
+/// because two replicas holding one state have to serialize to the same bytes
+/// for state transfer, which is the same reason [`SeqNode`]'s children are
+/// one.
+///
+/// **A removal does not remove.** `uw_map.rs:150-152` routes `Remove` to the
+/// child's `redundant_by_parent(version, true)` and leaves the entry in the
+/// map, which is what makes the map update-wins: an update concurrent with
+/// the removal is not below its version and survives it. Copied verbatim,
+/// `Clear` included, and the read-out drops an entry that reads as its
+/// default, which is `UWMapLog::execute_query`'s own rule and therefore how
+/// both paths spell "removed".
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(serialize = "", deserialize = ""))
+)]
+pub struct MapNode {
+    #[cfg_attr(feature = "serde", serde(with = "entries_serde"))]
+    pub(crate) children: BTreeMap<Scalar, Node>,
+}
+
+/// A map's children as a list of pairs, for the same reason a sequence's are:
+/// the key is a [`Scalar`] and a JSON object's keys are strings.
+#[cfg(feature = "serde")]
+mod entries_serde {
+    use super::{BTreeMap, Node, Scalar};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        children: &BTreeMap<Scalar, Node>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        children.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<Scalar, Node>, D::Error> {
+        Ok(Vec::<(Scalar, Node)>::deserialize(deserializer)?
+            .into_iter()
+            .collect())
+    }
+}
+
+impl MapNode {
+    /// The entries, by key, in key order.
+    pub fn children(&self) -> &BTreeMap<Scalar, Node> {
+        &self.children
+    }
 }
 
 /// The event, taken apart once at the top of the walk.
@@ -686,6 +758,7 @@ impl Node {
             Shaped::Bare(site) => Node::for_site(site),
             Shaped::Optional(_) => Node::Opt(OptNode::default()),
             Shaped::Sequence(_) => Node::Seq(SeqNode::default()),
+            Shaped::Keyed(_) => Node::Map(MapNode::default()),
         }
     }
 
@@ -720,6 +793,11 @@ impl Node {
                     child.stabilize(version);
                 }
             }
+            Node::Map(map) => {
+                for child in map.children.values_mut() {
+                    child.stabilize(version);
+                }
+            }
             Node::Leaf(leaf) => leaf.stabilize(version),
         }
     }
@@ -742,6 +820,11 @@ impl Node {
                     child.redundant_by_parent(version, conservative);
                 }
             }
+            Node::Map(map) => {
+                for child in map.children.values_mut() {
+                    child.redundant_by_parent(version, conservative);
+                }
+            }
             Node::Leaf(leaf) => leaf.redundant_by_parent(version, conservative),
         }
     }
@@ -757,6 +840,16 @@ impl Node {
                 seq.positions.is_default() && seq.children.values().all(Node::is_default)
             }
             Node::Opt(opt) => opt.child.as_ref().is_none_or(|child| child.is_default()),
+            // `uw_map.rs:174`, verbatim: a map that holds a key is not at
+            // its default, whatever that key now holds. It reads as `{}` once
+            // every entry has been emptied — that is the read-out's rule, in
+            // `eval::read_node` — but it is not *default*, and the two are
+            // different questions. Answering `all(is_default)` here would
+            // make an emptied map default on this path and not on the
+            // generated one, and a conflict set drops its default members
+            // (`union.rs:333-338`), so the two read-outs would part company
+            // over a `json.ecore` object whose every entry had been removed.
+            Node::Map(map) => map.children.is_empty(),
             Node::Leaf(leaf) => leaf.is_default(),
         }
     }
@@ -773,6 +866,7 @@ impl Node {
             Node::Slot(slot) => slot.objects().iter().map(|object| object.polog_len()).sum(),
             Node::Seq(seq) => seq.children.values().map(Node::polog_len).sum(),
             Node::Opt(opt) => opt.child.as_ref().map_or(0, |child| child.polog_len()),
+            Node::Map(map) => map.children.values().map(Node::polog_len).sum(),
             Node::Leaf(leaf) => leaf.polog_len(),
         }
     }
@@ -835,6 +929,7 @@ pub(crate) const fn word(op: &InstanceOp) -> &'static str {
         InstanceOp::Variant(..) => "a class step",
         InstanceOp::Seq(_) => "a sequence step",
         InstanceOp::Opt(_) => "an optional step",
+        InstanceOp::Map(_) => "a keyed step",
         InstanceOp::New => "`New`",
         InstanceOp::Leaf(_) => "a leaf write",
     }
@@ -892,6 +987,14 @@ impl<'a> Emit<'a> {
             #[cfg(not(feature = "sink"))]
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Step into one entry of a keyed collection, by its key.
+    ///
+    /// `uw_map.rs:117` descends through `path.map_entry` too, so the
+    /// dashboard sees a map entry where the generated path puts one.
+    pub(crate) fn map_key(&mut self, key: &str) -> Emit<'_> {
+        self.entry(key)
     }
 
     /// Step into one child of a sequence, by the id of the operation that
@@ -1001,6 +1104,32 @@ pub(crate) fn check(
                     check(sem, child, Shaped::Bare(site), op, at, mode)
                 }
                 SeqOp::Delete { .. } => Ok(()),
+            }
+        }
+        Shaped::Keyed(site) => {
+            let InstanceOp::Map(map_op) = op else {
+                return Err(Refusal::WrongShape {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    expected: "a keyed collection",
+                    got: word(op),
+                });
+            };
+            match map_op {
+                // `uw_map.rs:177-180`: an `Update` is enabled when the child
+                // it addresses enables it, and a key nobody has written yet
+                // enables anything. A key is not a position, so there is no
+                // bound to be out of and no local-only check to make.
+                MapOp::Update { key, op } => {
+                    let child = match node {
+                        Some(Node::Map(map)) => map.children.get(key),
+                        _ => None,
+                    };
+                    check(sem, child, Shaped::Bare(site), op, at, mode)
+                }
+                // `uw_map.rs:181`: both are always enabled, on a key the map
+                // holds and on one it does not.
+                MapOp::Remove { .. } | MapOp::Clear => Ok(()),
             }
         }
         Shaped::Optional(site) => {
@@ -1239,6 +1368,51 @@ pub(crate) fn apply(
                     // `uw_map.rs:150-152`: the child is reset, not dropped,
                     // so a concurrent update to it survives its removal.
                     if let Some(child) = seq.children.get_mut(&target) {
+                        child.redundant_by_parent(ctx.version, true);
+                    }
+                    Ok(())
+                }
+            }
+        }
+        Shaped::Keyed(site) => {
+            let (InstanceOp::Map(map_op), Node::Map(map)) = (op, node) else {
+                return Err(Refusal::WrongShape {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    expected: "a keyed collection",
+                    got: "something else",
+                });
+            };
+            match map_op {
+                MapOp::Update { key, op } => {
+                    let name = key.to_key(Some(sem));
+                    let mut emit = emit.map_key(&name);
+                    if map.children.contains_key(&key) {
+                        emit.update();
+                    } else {
+                        emit.create();
+                    }
+                    let child = map
+                        .children
+                        .entry(key)
+                        .or_insert_with(|| Node::for_site(site));
+                    apply(sem, child, Shaped::Bare(site), ctx, *op, at, emit)
+                }
+                // `uw_map.rs:150-152`, verbatim: the entry stays and its
+                // subtree is reset against the removal's own version, so an
+                // update concurrent with the removal survives it and one
+                // causally below it does not.
+                MapOp::Remove { key } => {
+                    emit.map_key(&key.to_key(Some(sem))).delete();
+                    if let Some(child) = map.children.get_mut(&key) {
+                        child.redundant_by_parent(ctx.version, true);
+                    }
+                    Ok(())
+                }
+                // `uw_map.rs:157-163`: the same to every entry at once.
+                MapOp::Clear => {
+                    emit.delete();
+                    for child in map.children.values_mut() {
                         child.redundant_by_parent(ctx.version, true);
                     }
                     Ok(())

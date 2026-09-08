@@ -521,6 +521,21 @@ pub fn bt() -> Arc<MetamodelSemantics> {
     table(&serde_json::from_str::<Value>(BT_DESCRIPTOR).expect("the fixture is JSON"))
 }
 
+/// The real `json.metamodel.json`, `formatVersion` 2, copied into the crate
+/// for the same reason `BT_DESCRIPTOR` is: a test that reaches into a sibling
+/// checkout passes on one machine.
+///
+/// Byte-for-byte `arachne/examples/json.metamodel.json` at Arachne
+/// `akira/model-plane`. It is the metamodel the interpreted path was *not*
+/// designed around: five transparent classes, a keyed containment, a counter
+/// leaf at `f64` and a flag leaf, none of which `bt.ecore` has.
+pub const JSON_DESCRIPTOR: &str = include_str!("../tests/fixtures/json.metamodel.json");
+
+/// `json.ecore`'s own table.
+pub fn json() -> Arc<MetamodelSemantics> {
+    table(&serde_json::from_str::<Value>(JSON_DESCRIPTOR).expect("the fixture is JSON"))
+}
+
 /// The operation that opens a model log on one descriptor.
 pub fn install(model_id: &str, descriptor: &Value) -> crate::op::ModelOp {
     crate::op::ModelOp::Install {

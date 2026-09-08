@@ -20,6 +20,15 @@
 //! - a text attribute is a string, characters joined;
 //! - an unset optional is an absent key;
 //! - a sequence is an array in read order;
+//! - a keyed collection is a JSON object, its keys the map's own keys in key
+//!   order, and an entry whose value reads as its default is absent, which is
+//!   `UWMapLog::execute_query`'s rule (`uw_map.rs:199-210`) and therefore how
+//!   both paths spell an entry that has been removed;
+//! - an instance of a **transparent** class is the value of the one feature
+//!   the class is represented by, with no `eClass` key and no object around
+//!   it: `json.ecore`'s `Array` is the array itself and its `Object` is the
+//!   JSON object itself, which is what makes a model under `json.ecore` read
+//!   out as a JSON document rather than as a description of one;
 //! - a counter is a number, a flag a boolean, a register its value or a
 //!   conflict object;
 //! - keys are sorted, which `serde_json::Map` does on its own because it is a
@@ -87,6 +96,35 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
             }
             Some(Value::Array(items))
         }
+        (Shaped::Keyed(site), Node::Map(map)) => {
+            // `uw_map.rs:199-210`: a child is rendered only when its value
+            // differs from the default of its own log, and it must be, because
+            // `UWMap::Remove` is not a tombstone — it leaves the child in the
+            // map and resets it, so reading as the default *is* how a keyed
+            // collection spells removed. The comparison is against what a
+            // freshly minted child at this site reads, computed once.
+            //
+            // It is deliberately not `Node::is_default`. A `String` at a key,
+            // removed, reads `""` on both paths: `redundant_by_parent` on an
+            // `EventGraph` leaves the reset behind, so neither log is at its
+            // default and neither read-out drops the key. A `Number` at a key,
+            // removed, reads `0` on both paths for the same reason the
+            // generated union does — `JsonKindValue::Value(Number(0))` is not
+            // `JsonKindValue::Unset`. Only a leaf-valued map, whose child log
+            // really does empty, loses the key.
+            let default = read_absent(sem, Shaped::Bare(site));
+            let mut entries = Map::new();
+            for (key, child) in map.children() {
+                let value = read_node(sem, child, Shaped::Bare(site));
+                if value == default {
+                    continue;
+                }
+                if let Some(value) = value {
+                    entries.insert(key.to_key(Some(sem)), value);
+                }
+            }
+            Some(Value::Object(entries))
+        }
         (Shaped::Optional(site), Node::Opt(opt)) => opt
             .child()
             .and_then(|child| read_node(sem, child, Shaped::Bare(site))),
@@ -99,19 +137,19 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
                 // default or not; only its `Conflicts` branch drops the
                 // empty ones. Copied, so a model with one empty object in a
                 // slot reads the same on both paths.
-                1 => Some(read_object(sem, objects[0])),
+                1 => read_object(sem, objects[0]),
                 _ => {
                     let mut values: Vec<(String, Vec<u8>, Value)> = objects
                         .iter()
                         .filter(|object| !object_is_empty(object))
-                        .map(|object| {
-                            let value = read_object(sem, object);
+                        .filter_map(|object| {
+                            let value = read_object(sem, object)?;
                             let name = sem
                                 .classes
                                 .get(object.class().index())
                                 .map_or_else(String::new, |class| class.name.to_string());
                             let bytes = serde_json::to_vec(&value).unwrap_or_default();
-                            (name, bytes, value)
+                            Some((name, bytes, value))
                         })
                         .collect();
                     match values.len() {
@@ -149,11 +187,33 @@ fn object_is_empty(object: &ObjectNode) -> bool {
 }
 
 /// One object: its class, then every feature its class can see.
-fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Value {
+///
+/// `None` only for a **transparent** class whose one feature reads as no key
+/// at all: an instance of such a class *is* that feature's value, so a
+/// feature with nothing to show leaves nothing to show. Every other class
+/// carries at least its `eClass`.
+fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Option<Value> {
     let mut out = Map::new();
     let Some(class) = sem.classes.get(object.class().index()) else {
-        return Value::Object(out);
+        return Some(Value::Object(out));
     };
+
+    // A transparent class has no record of its own on the generated path:
+    // `classifier/mod.rs:497-517` puts the field's own construction straight
+    // into the union variant, so `JsonKind::Array` carries a
+    // `NestedList<Box<JsonKind>>` and there is no `Array` object anywhere for
+    // an `eClass` to name. The read-out says the same thing.
+    if let Some(slot) = class.transparent {
+        let (name, _, _) = class.visible.get(slot.index())?;
+        let _ = name;
+        let (_, rule) = visible(sem, object.class(), slot)?;
+        let shape = shaped(rule).ok()?;
+        return match object.fields().get(&slot) {
+            Some(node) => read_node(sem, node, shape),
+            None => read_absent(sem, shape),
+        };
+    }
+
     out.insert(ECLASS.to_string(), Value::String(class.name.to_string()));
 
     for (slot, (name, _owner, _declared)) in class.visible.iter().enumerate() {
@@ -174,7 +234,7 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Value {
             out.insert(name.to_string(), value);
         }
     }
-    Value::Object(out)
+    Some(Value::Object(out))
 }
 
 impl EvalNested<Read<Value>> for ModelLog {
@@ -206,7 +266,8 @@ mod tests {
     use crate::log::ModelLog;
     use crate::op::{InstanceOp, ModelOp};
     use crate::testing::{
-        BT_DESCRIPTOR, bt, class_slot, feature_slot, mini, mini_descriptor, opened, twins,
+        BT_DESCRIPTOR, JSON_DESCRIPTOR, bt, class_slot, feature_slot, json, mini, mini_descriptor,
+        opened, twins,
     };
 
     fn bt_descriptor() -> Value {
@@ -554,5 +615,207 @@ mod tests {
             "`ID` is `TreeNode`'s and `children` is `ControlNode`'s, and both              sit flat on the instance with no `_super` hop between them"
         );
         assert_eq!(read, b.query(Read::<Value>::new()));
+    }
+
+    // ------------------------------------------------------------- json.ecore
+
+    fn json_descriptor() -> Value {
+        serde_json::from_str(JSON_DESCRIPTOR).expect("the fixture is JSON")
+    }
+
+    /// One entry of a JSON object: `Object.entry` at `key`, holding an
+    /// instance of `class` with `inner` written into the field that class is
+    /// represented by.
+    fn put(sem: &moirai_semantics::MetamodelSemantics, key: &str, class: &str, inner: InstanceOp) -> ModelOp {
+        let object = class_slot(sem, "Object");
+        let made = class_slot(sem, class);
+        ModelOp::Instance(InstanceOp::variant(
+            object,
+            InstanceOp::field(
+                feature_slot(sem, object, "entry"),
+                InstanceOp::entry(
+                    Scalar::text(key),
+                    InstanceOp::variant(
+                        made,
+                        InstanceOp::field(feature_slot(sem, made, transparent_field(class)), inner),
+                    ),
+                ),
+            ),
+        ))
+    }
+
+    /// The feature each of `json.ecore`'s transparent classes is represented
+    /// by, spelled out so a test reads like the metamodel.
+    fn transparent_field(class: &str) -> &'static str {
+        match class {
+            "Array" => "items",
+            "Object" => "entry",
+            _ => "value",
+        }
+    }
+
+    /// **The whole point of the metamodel** — a model under `json.ecore`
+    /// reads out as a JSON document and not as a description of one. There is
+    /// no `eClass` anywhere, no `items` key around the array and no `value`
+    /// key around the string: every concrete class is transparent, so each
+    /// instance *is* the value of its one feature, and `Object.entry` is a
+    /// keyed collection whose keys are the document's own keys.
+    #[test]
+    fn a_json_document_reads_out_as_a_json_document() {
+        let sem = json();
+        let (mut a, mut b) = opened("m1", &json_descriptor());
+
+        let array = class_slot(&sem, "Array");
+        let string = class_slot(&sem, "String");
+        let items = feature_slot(&sem, array, "items");
+        let value = feature_slot(&sem, string, "value");
+
+        for op in [
+            put(&sem, "name", "String", InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'a' })),
+            put(&sem, "name", "String", InstanceOp::Leaf(LeafOp::InsertChar { pos: 1, ch: 'b' })),
+            put(&sem, "ok", "Boolean", InstanceOp::Leaf(LeafOp::Enable)),
+            put(&sem, "n", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::float(3.5)))),
+            put(
+                &sem,
+                "list",
+                "Array",
+                InstanceOp::insert(
+                    0,
+                    InstanceOp::variant(
+                        string,
+                        InstanceOp::field(
+                            value,
+                            InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'x' }),
+                        ),
+                    ),
+                ),
+            ),
+        ] {
+            let event = a.send(op).unwrap();
+            b.receive(event);
+        }
+        let _ = items;
+
+        assert_eq!(
+            read_of(a.state()),
+            json!({"list": ["x"], "n": 3.5, "name": "ab", "ok": true}),
+            "a transparent class is its one field, and a keyed containment is \
+             a JSON object"
+        );
+        assert_eq!(read_of(a.state()), read_of(b.state()));
+    }
+
+    /// A removal is update-wins, exactly as `uw_map.rs:150-152` makes it: the
+    /// entry is not dropped, its subtree is reset against the removal's own
+    /// version, so what is causally below the removal goes and what is
+    /// concurrent with it stays.
+    ///
+    /// This is `moirai-crdt`'s own `concurrent_uw_map` on the interpreted
+    /// path, with a counter under a key instead of a counter under a key.
+    #[test]
+    fn a_removed_key_keeps_a_concurrent_write_and_loses_a_causally_prior_one() {
+        let sem = json();
+        let (mut a, mut b) = opened("m1", &json_descriptor());
+
+        let bump = |by: f64| put(&sem, "k", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::float(by))));
+        let object = class_slot(&sem, "Object");
+        let remove = ModelOp::Instance(InstanceOp::variant(
+            object,
+            InstanceOp::field(
+                feature_slot(&sem, object, "entry"),
+                InstanceOp::remove(Scalar::text("k")),
+            ),
+        ));
+
+        // Causally below the removal.
+        let event = a.send(bump(1.0)).unwrap();
+        b.receive(event);
+        assert_eq!(read_of(a.state()), json!({"k": 1.0}));
+
+        // Concurrent with it.
+        let from_a = a.send(remove).unwrap();
+        let from_b = b.send(bump(10.0)).unwrap();
+        a.receive(from_b);
+        b.receive(from_a);
+
+        assert_eq!(
+            read_of(a.state()),
+            json!({"k": 10.0}),
+            "the concurrent increment survives its own removal; the earlier one does not"
+        );
+        assert_eq!(read_of(a.state()), read_of(b.state()));
+    }
+
+    /// A key removed with nothing concurrent stays, holding the empty string,
+    /// which is what the generated path does too and is therefore the answer
+    /// I-A1 asks for rather than the one that reads nicer.
+    ///
+    /// `UWMap::Remove` resets the child instead of dropping it
+    /// (`uw_map.rs:150-152`), and `redundant_by_parent` on an `EventGraph`
+    /// leaves the reset in the log, so the child is not at its default on
+    /// either path: `UWMapLog::execute_query` keeps it because
+    /// `JsonKindValue::Value(String([]))` is not `JsonKindValue::Unset`, and
+    /// this read-out keeps it because `Some("")` is not the `None` an unwritten
+    /// entry reads. The same sentence is already written about an unset
+    /// optional text, six tests up.
+    #[test]
+    fn a_key_removed_with_nothing_concurrent_keeps_the_emptied_entry() {
+        let sem = json();
+        let (mut a, mut b) = opened("m1", &json_descriptor());
+        let object = class_slot(&sem, "Object");
+
+        let event = a
+            .send(put(
+                &sem,
+                "gone",
+                "String",
+                InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'z' }),
+            ))
+            .unwrap();
+        b.receive(event);
+
+        let event = a
+            .send(ModelOp::Instance(InstanceOp::variant(
+                object,
+                InstanceOp::field(
+                    feature_slot(&sem, object, "entry"),
+                    InstanceOp::remove(Scalar::text("gone")),
+                ),
+            )))
+            .unwrap();
+        b.receive(event);
+
+        assert_eq!(read_of(a.state()), json!({"gone": ""}));
+        assert_eq!(read_of(b.state()), read_of(a.state()));
+    }
+
+    /// Two writers who put different JSON kinds at one key open a conflict
+    /// there and both survive it, which is `union.rs:180-200`'s retention
+    /// reached through a map rather than through a record field.
+    #[test]
+    fn two_kinds_written_at_one_key_are_both_kept() {
+        let sem = json();
+        let (mut a, mut b) = opened("m1", &json_descriptor());
+
+        let from_a = a
+            .send(put(
+                &sem,
+                "x",
+                "String",
+                InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 's' }),
+            ))
+            .unwrap();
+        let from_b = b
+            .send(put(&sem, "x", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::Int(7)))))
+            .unwrap();
+        a.receive(from_b);
+        b.receive(from_a);
+
+        assert_eq!(
+            read_of(a.state()),
+            json!({"x": {"__conflict": [7.0, "s"]}}),
+            "ordered by class name, `Number` before `String`"
+        );
+        assert_eq!(read_of(a.state()), read_of(b.state()));
     }
 }

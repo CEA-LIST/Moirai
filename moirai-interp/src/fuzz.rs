@@ -192,6 +192,36 @@ fn shaped_op(
                 None => InstanceOp::set(site_op(sem, None, site, rng, next)),
             }
         }
+        Shaped::Keyed(site) => {
+            let map = match node {
+                Some(Node::Map(map)) => Some(map),
+                _ => None,
+            };
+            let keys: Vec<Scalar> = map
+                .map(|map| map.children().keys().cloned().collect())
+                .unwrap_or_default();
+            // A key drawn from a fixed alphabet, so two replicas writing
+            // independently do collide on one entry, which is the whole
+            // question a keyed container has to answer.
+            let fresh = Scalar::text(WORDS[rng.random_range(0..WORDS.len())]);
+            match rng.random_range(0..10) {
+                0 if !keys.is_empty() => {
+                    InstanceOp::remove(keys[rng.random_range(0..keys.len())].clone())
+                }
+                1 => InstanceOp::clear(),
+                2..=4 if budget > 0 || keys.is_empty() => {
+                    InstanceOp::entry(fresh, site_op(sem, None, site, rng, next))
+                }
+                _ if keys.is_empty() => {
+                    InstanceOp::entry(fresh, site_op(sem, None, site, rng, next))
+                }
+                _ => {
+                    let key = keys[rng.random_range(0..keys.len())].clone();
+                    let child = map.and_then(|map| map.children().get(&key));
+                    InstanceOp::entry(key, site_op(sem, child, site, rng, next))
+                }
+            }
+        }
         Shaped::Sequence(site) => {
             let seq = match node {
                 Some(Node::Seq(seq)) => Some(seq),
@@ -319,6 +349,7 @@ fn node_metrics(node: &Node) -> StructureMetrics {
             .child()
             .map_or_else(StructureMetrics::empty, node_metrics),
         Node::Seq(seq) => StructureMetrics::object(seq.children().values().map(node_metrics)),
+        Node::Map(map) => StructureMetrics::object(map.children().values().map(node_metrics)),
         Node::Slot(slot) => StructureMetrics::object(
             slot.objects()
                 .into_iter()
