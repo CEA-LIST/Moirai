@@ -68,6 +68,13 @@ pub struct ModelLog {
     /// to replay and this is where it gets its table.
     sem: Option<Arc<MetamodelSemantics>>,
     header: Option<ModelHeader>,
+    /// The descriptor `Install` carried, verbatim, kept for the same reason
+    /// the table is: a node that joined this model under a metamodel it holds
+    /// no descriptor for gets the bytes here and nowhere else, and it is the
+    /// bytes rather than the table that `GET /api/model/{id}/metamodel`
+    /// serves and that the digest is taken over. Serialized with the table so
+    /// that a joiner by state transfer has it too.
+    descriptor: Option<String>,
     root: Node,
     unresolved: u64,
 }
@@ -81,6 +88,19 @@ impl ModelLog {
     /// What the model says it is, once it has been opened.
     pub fn header(&self) -> Option<&ModelHeader> {
         self.header.as_ref()
+    }
+
+    /// The descriptor this log was opened with, verbatim, once it has been
+    /// opened.
+    ///
+    /// The text and not the table, because this is what a node serves on
+    /// `GET /api/model/{id}/metamodel` and what its digest is taken over. It
+    /// is how a replica that joined the model holding no descriptor for it
+    /// comes to hold one: `moirai-network` asks the application for it
+    /// through its adoption hook and adds it to the served set, having
+    /// re-derived the digest from these bytes.
+    pub fn descriptor(&self) -> Option<&str> {
+        self.descriptor.as_deref()
     }
 
     /// The model.
@@ -177,6 +197,7 @@ impl IsLog for ModelLog {
                 match parse(descriptor) {
                     Ok(sem) => {
                         self.sem = Some(Arc::new(sem));
+                        self.descriptor = Some(descriptor.clone());
                         self.header = Some(ModelHeader {
                             model_id: model_id.clone(),
                             metamodel_id: metamodel_id.clone(),

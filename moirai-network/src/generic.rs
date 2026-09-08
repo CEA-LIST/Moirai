@@ -75,6 +75,20 @@ pub type OpGuardFn<O> = fn(&LogId, &ServedDescriptor, &O) -> Result<(), String>;
 /// identity.
 pub type DescribeFn = fn(&str) -> Result<ServedDescriptor, String>;
 
+/// The application's look inside a log it joined under a metamodel this node
+/// holds no descriptor for: the descriptor's text, once the log carries one,
+/// or `None` while it does not.
+///
+/// The node calls this on every pass for each log whose binding is still
+/// pending, and hands whatever comes back to [`GenericNode::add_metamodel`],
+/// which describes it through the application's own [`DescribeFn`] and so
+/// re-derives the key from the bytes. As with [`DescribeFn`], the node reads
+/// nothing inside the text: where a log keeps a descriptor, and whether it
+/// keeps one at all, is the application's business.
+///
+/// See [`GenericNode::enable_descriptor_adoption`].
+pub type AdoptFn<L> = fn(&LogReplica<L>) -> Option<String>;
+
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
 /// asked.
@@ -202,6 +216,14 @@ where
     /// Optional callback to query a log's state as JSON.
     /// Set by `enable_state_query()` when `L: QueryableLog`.
     query_fn: Option<fn(&LogReplica<L>) -> serde_json::Value>,
+    /// The application's hook for lifting a descriptor out of a log that
+    /// arrived with one, installed by [`Self::enable_descriptor_adoption`].
+    ///
+    /// `None` is the behaviour a node had before in full: a log joined under
+    /// an unheld metamodel merges and reads out, and the descriptor never
+    /// joins the served set, so `GET /api/model/{id}/metamodel` stays 404 for
+    /// it for the node's whole life.
+    adopt_fn: Option<AdoptFn<L>>,
     /// Bootnode poller, when `BOOTNODE_URL` was configured.
     ///
     /// `None` is the pre-phase-1 behaviour in full: peers come from `PEERS`,
@@ -289,6 +311,42 @@ struct HostedLog<L: IsLog> {
 struct Binding {
     key: String,
     metamodel_id: serde_json::Value,
+    /// Whether this node holds the descriptor `key` names.
+    state: BindingState,
+}
+
+/// Whether a bound log's metamodel is one this node can serve.
+///
+/// The three states are one distinction made twice: a log always has a
+/// metamodel *key*, and this says whether the bytes behind it are here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingState {
+    /// The descriptor was in the served set when the log was bound, or has
+    /// been adopted into it since. Everything answers as it always has.
+    Held,
+    /// It is not, and the model's own history has not brought it yet.
+    ///
+    /// The log was joined by id under a metamodel this node holds no
+    /// descriptor for, and it is hosted anyway, because a joined log carries
+    /// its own metamodel in the operations it receives. Until one arrives the
+    /// log has no semantics here, which every route it answers is written
+    /// against: `GET /api/model/{id}/state` reads out an empty log,
+    /// `POST /api/model/{id}/op` is refused by the log itself, and
+    /// `GET /api/model/{id}/metamodel` looks `key` up among the served
+    /// descriptors, finds none, and answers 404.
+    ///
+    /// A *create* is never pending. A new model's opening operations are
+    /// written from the descriptor, so there is nothing to write them from,
+    /// and `register` refuses it as it always has.
+    Pending,
+    /// The model brought a descriptor and it is not the one the log was
+    /// joined under, or it is one the application will not serve.
+    ///
+    /// Terminal, and it exists so that a disagreement is reported once
+    /// instead of on every pass of the event loop: one log holds one
+    /// metamodel for its whole life, so a descriptor that did not match will
+    /// not be replaced by one that does.
+    Foreign,
 }
 
 impl<L: IsLog> HostedLog<L>
@@ -561,9 +619,15 @@ pub enum RegisterRefused {
     /// No registration hooks were installed; see
     /// [`GenericNode::enable_registration`].
     NotEnabled,
-    /// The `metamodel_id` names no descriptor this node holds. Refused before
-    /// anything is hosted: a node cannot host a model whose metamodel it
-    /// cannot serve.
+    /// The `metamodel_id` names no descriptor this node holds, on a *create*
+    /// or in a form `descriptor_key_fn` cannot read at all. Refused before
+    /// anything is hosted: a node cannot mint a model under a metamodel it
+    /// does not hold, because the opening operations are written from the
+    /// descriptor.
+    ///
+    /// A *join* under an unheld metamodel is not this: it is hosted with a
+    /// pending binding, and the metamodel reaches the log with the model. See
+    /// [`GenericNode::register`].
     UnknownMetamodel(serde_json::Value),
     /// The node already hosts a log with this id.
     AlreadyHosted(LogId),
@@ -842,6 +906,7 @@ where
             ctrl_rx,
             ctrl_tx,
             query_fn: None,
+            adopt_fn: None,
             discovery: None,
             export_log: None,
             import_log: None,
@@ -964,6 +1029,87 @@ where
         self.describe_fn = Some(describe);
     }
 
+    /// Install the application's hook for a descriptor that arrives inside a
+    /// log, which is what makes a metamodel obtained by joining a model
+    /// visible at this node's API; see [`AdoptFn`] and
+    /// [`resolve_pending_bindings`].
+    ///
+    /// Purely additive: without it a log joined under an unheld metamodel
+    /// still merges and still reads out, and its binding simply stays pending
+    /// for ever, so `GET /api/model/{id}/metamodel` keeps answering 404 for
+    /// it. It needs [`enable_metamodel_upload`] as well, because adoption
+    /// goes through [`add_metamodel`] and therefore through the application's
+    /// own [`DescribeFn`], which is what re-derives the key from the bytes: a
+    /// peer cannot install a descriptor under a key it does not hash to.
+    ///
+    /// [`resolve_pending_bindings`]: GenericNode::resolve_pending_bindings
+    /// [`enable_metamodel_upload`]: GenericNode::enable_metamodel_upload
+    /// [`add_metamodel`]: GenericNode::add_metamodel
+    pub fn enable_descriptor_adoption(&mut self, adopt: AdoptFn<L>) {
+        self.adopt_fn = Some(adopt);
+    }
+
+    /// For every log joined under a metamodel this node holds no descriptor
+    /// for, ask the application whether the log carries one yet, and serve it
+    /// if it does.
+    ///
+    /// One pass of the event loop, and one comparison per hosted log while
+    /// nothing is pending, which is the usual case: a binding is pending only
+    /// between a join and the arrival of the model's own history.
+    ///
+    /// The key is checked rather than trusted. `add_metamodel` describes the
+    /// text through the application's [`DescribeFn`], which computes the key
+    /// from the bytes, and the binding is resolved only when that key is the
+    /// one the join asked for. A log that installed some other metamodel is
+    /// left pending and said so once, because the descriptor this node would
+    /// then serve for the model is not the one the model was joined under.
+    fn resolve_pending_bindings(&mut self) {
+        let Some(adopt) = self.adopt_fn else {
+            return;
+        };
+        let arrived: Vec<(LogId, String, String)> = self
+            .logs
+            .iter()
+            .filter_map(|(log_id, log)| {
+                let binding = log
+                    .binding
+                    .as_ref()
+                    .filter(|binding| binding.state == BindingState::Pending)?;
+                let text = adopt(&log.replica)?;
+                Some((log_id.clone(), binding.key.clone(), text))
+            })
+            .collect();
+        for (log_id, key, text) in arrived {
+            let outcome = self.add_metamodel(text);
+            let state = match &outcome {
+                Ok(served) if served.key == key => BindingState::Held,
+                _ => BindingState::Foreign,
+            };
+            if let Some(binding) = self
+                .logs
+                .get_mut(&log_id)
+                .and_then(|log| log.binding.as_mut())
+            {
+                binding.state = state;
+            }
+            match outcome {
+                Ok(served) if state == BindingState::Held => eprintln!(
+                    "[{}] model {} brought its own metamodel {}: now served here",
+                    self.replica_id, log_id, served.key
+                ),
+                Ok(served) => eprintln!(
+                    "[{}] model {} was joined under metamodel {} and carries {} instead; \
+                     its descriptor is not served for it",
+                    self.replica_id, log_id, key, served.key
+                ),
+                Err(refused) => eprintln!(
+                    "[{}] the descriptor model {} carries cannot be served here: {}",
+                    self.replica_id, log_id, refused
+                ),
+            }
+        }
+    }
+
     /// Serve one more descriptor, now: the primitive behind
     /// `POST /api/metamodels`.
     ///
@@ -1037,10 +1183,23 @@ where
     /// [`LogId`], hosts the log, and applies the opening operations the
     /// application's `register_fn` returns. With one it *joins*: it hosts the
     /// id with no history and writes nothing, and the event loop asks its
-    /// peers for a state transfer as it does for any empty log. Both are
-    /// refused before anything is hosted when the `metamodel_id` names no
-    /// descriptor this node holds, and a join is refused when the id is
-    /// hosted already.
+    /// peers for a state transfer as it does for any empty log. A join is
+    /// refused when the id is hosted already.
+    ///
+    /// # The two answers to a metamodel this node holds no descriptor for
+    ///
+    /// They differ, and the asymmetry is the design's. A **create** is
+    /// refused before anything is hosted, exactly as it always was: the
+    /// opening operations are written from the descriptor by `register_fn`,
+    /// and there is nothing to write them from. A **join** is hosted, with
+    /// the binding left *pending*: the log carries its own metamodel in the
+    /// operations it receives, so a joiner that hosts the empty log is a
+    /// joiner that will hold the semantics as soon as the model's own history
+    /// reaches it, by state transfer or by delta. Until then the log has no
+    /// semantics here and refuses every local write on its own account.
+    ///
+    /// A `metamodel_id` `descriptor_key_fn` cannot read a key out of at all
+    /// is refused either way: there would be nothing to bind to.
     pub fn register(
         &mut self,
         model_id: Option<LogId>,
@@ -1050,28 +1209,38 @@ where
         else {
             return Err(RegisterRefused::NotEnabled);
         };
-        let descriptor = descriptor_key(&metamodel_id)
-            .and_then(|key| {
-                self.descriptors()
-                    .iter()
-                    .find(|held| held.key == key)
-                    .cloned()
-            })
-            .ok_or_else(|| RegisterRefused::UnknownMetamodel(metamodel_id.clone()))?;
+        let unknown = || RegisterRefused::UnknownMetamodel(metamodel_id.clone());
+        let key = descriptor_key(&metamodel_id).ok_or_else(unknown)?;
+        let held = self
+            .descriptors()
+            .iter()
+            .find(|held| held.key == key)
+            .cloned();
         let (log_id, created) = match model_id {
             Some(log_id) => (log_id, false),
             None => (LogId::generate(), true),
         };
+        let descriptor = match &held {
+            Some(descriptor) => Some(descriptor.clone()),
+            // A create needs the descriptor in hand; a join does not.
+            None if created => return Err(unknown()),
+            None => None,
+        };
         self.host_log(log_id.clone())?;
         let binding = Binding {
-            key: descriptor.key.clone(),
+            key: key.clone(),
             metamodel_id: metamodel_id.clone(),
+            state: if descriptor.is_some() {
+                BindingState::Held
+            } else {
+                BindingState::Pending
+            },
         };
         if let Some(log) = self.logs.get_mut(&log_id) {
             log.binding = Some(binding);
         }
-        if created {
-            for op in register(&log_id, &descriptor) {
+        if let (true, Some(descriptor)) = (created, &descriptor) {
+            for op in register(&log_id, descriptor) {
                 let result = self.apply_op_to(&log_id, op);
                 if !result.success {
                     eprintln!(
@@ -1082,11 +1251,16 @@ where
             }
         }
         eprintln!(
-            "[{}] {} model {} under metamodel {}",
+            "[{}] {} model {} under metamodel {}{}",
             self.replica_id,
             if created { "created" } else { "joined" },
             log_id,
-            metamodel_id
+            metamodel_id,
+            if descriptor.is_some() {
+                ""
+            } else {
+                ", whose descriptor this node does not hold: waiting for it to arrive with the model"
+            }
         );
         Ok(Registered {
             model_id: log_id,
@@ -1487,9 +1661,25 @@ where
             };
         };
         let Some(event_msg) = log.replica.send(op.clone()) else {
+            // A pending binding is the one refusal whose reason this node
+            // knows without reading the log: it joined the model under a
+            // metamodel it holds no descriptor for, and nothing can be
+            // written into a log whose semantics have not arrived.
+            let pending = log
+                .binding
+                .as_ref()
+                .filter(|binding| binding.state != BindingState::Held)
+                .map(|binding| binding.key.clone());
             return OpResult {
                 success: false,
-                message: "Operation not enabled".to_string(),
+                message: match pending {
+                    Some(key) => format!(
+                        "model {log_id} was joined under metamodel {key}, which this node holds \
+                         no descriptor for: the model's metamodel has not arrived yet, and a \
+                         local write waits for it"
+                    ),
+                    None => "Operation not enabled".to_string(),
+                },
             };
         };
         // Record the operation
@@ -1758,6 +1948,10 @@ where
 
             // --- Still nothing? Ask again. ---
             self.retry_state_transfer();
+
+            // --- A model joined under an unheld metamodel may have brought
+            //     its own by now. ---
+            self.resolve_pending_bindings();
 
             // --- Accept new inbound TCP connections ---
             self.transport.accept_connections().ok();

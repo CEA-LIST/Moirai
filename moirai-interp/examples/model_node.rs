@@ -147,7 +147,7 @@ use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
 use moirai_network::dashboard::DashboardConfig;
 use moirai_network::discovery::DiscoveryConfig;
-use moirai_network::generic::{Node, ServedDescriptor};
+use moirai_network::generic::{LogReplica, Node, ServedDescriptor};
 use moirai_protocol::log_id::LogId;
 use moirai_semantics::{from_descriptor, metamodel_digest};
 use serde_json::{Value, json};
@@ -229,6 +229,21 @@ fn descriptor_key(metamodel_id: &Value) -> Option<String> {
 /// is (decision D2). Written by the creating node and by nobody else — a
 /// joiner receives it by transfer, or replays it first because causal delivery
 /// puts it before everything else.
+/// The descriptor a hosted log turned out to carry, for a log joined under a
+/// metamodel this node holds no descriptor for.
+///
+/// This is the whole of the in-band half of metamodel distribution, and it is
+/// three lines because everything under it was already built: the creator's
+/// [`ModelOp::Install`] carries the descriptor's text, the log keeps it, and
+/// state transfer and delta replay both bring it. `moirai-network` calls this
+/// on a pending binding, hands what comes back to its own `add_metamodel`,
+/// and so re-describes it through [`describe_descriptor`] above — which
+/// recomputes the digest from the bytes, so a peer cannot make this node
+/// serve a descriptor under a digest it does not hash to.
+fn adopt_descriptor(replica: &LogReplica<ModelLog>) -> Option<String> {
+    replica.state().descriptor().map(str::to_string)
+}
+
 fn install_ops(model_id: &LogId, descriptor: &ServedDescriptor) -> Vec<ModelOp> {
     vec![ModelOp::Install {
         model_id: model_id.to_string(),
@@ -358,6 +373,11 @@ fn main() {
     // by the same function that read the ones on disk, and served from the
     // moment the event loop takes the command.
     node.enable_metamodel_upload(describe_descriptor);
+    // The in-band half of the same decision: a model joined under a metamodel
+    // this node holds no descriptor for is hosted anyway, and the descriptor
+    // its first operation carries is served from the moment it lands. Needs
+    // the upload hook above, because that is what re-derives the digest.
+    node.enable_descriptor_adoption(adopt_descriptor);
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 
