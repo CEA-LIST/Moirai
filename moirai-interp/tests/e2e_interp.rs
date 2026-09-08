@@ -12,6 +12,22 @@
 //!   behaviour-tree model open throughout keeps converging and never contains
 //!   the UML content.
 //!
+//! Beside them, four scenarios about what a replica does with a metamodel it
+//! does not hold, added on 2026-09-08 and answering criteria I-A11 to I-A14.
+//!
+//! - **ip23** (I-A11): a replica holding no descriptor drops the frames of a
+//!   model it does not host and counts them in `frames_not_hosted`, hosting
+//!   nothing and changing nothing.
+//! - **ip24** (I-A12): joining a model whose metamodel this replica does not
+//!   hold is refused before anything is hosted, which pins the bootstrap
+//!   question the doc comment on `ip24` states.
+//! - **ip25** (I-A13): two descriptors sharing an `nsURI` and differing in
+//!   content are two metamodels, and a registration under one digest is
+//!   refused by the replica holding the other.
+//! - **ip26** (I-A14): the edit case end to end — the model under the old
+//!   digest keeps converging while the model under the new one is refused by
+//!   the replica that never got the edit.
+//!
 //! # Why these live here and not in `e2e_convergence.rs`
 //!
 //! Two reasons, and the first is the harder one.
@@ -166,17 +182,28 @@ impl Cluster {
     /// Start three replicas serving exactly `descriptors`, given as
     /// `(file stem, text)`.
     fn start(binary: &PathBuf, descriptors: &[(&str, &str)]) -> Result<Self, String> {
+        Self::start_each(binary, &[descriptors, descriptors, descriptors])
+    }
+
+    /// Start one replica per entry of `per_replica`, each serving exactly the
+    /// descriptors its own entry names. The list's length is the cluster's
+    /// size, and an empty entry is a replica that holds no descriptor at all,
+    /// which is what `ip23` and `ip24` need.
+    fn start_each(binary: &PathBuf, per_replica: &[&[(&str, &str)]]) -> Result<Self, String> {
         let run = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
         let scratch =
             std::env::temp_dir().join(format!("moirai-interp-e2e-{}-{run}", std::process::id()));
-        let metamodels = scratch.join("metamodels");
-        fs::create_dir_all(&metamodels).map_err(|err| err.to_string())?;
-        for (name, text) in descriptors {
-            fs::write(metamodels.join(format!("{name}.json")), text)
-                .map_err(|err| err.to_string())?;
+
+        let ids = &["a", "b", "c"][..per_replica.len()];
+        for (id, descriptors) in ids.iter().zip(per_replica) {
+            let metamodels = scratch.join(format!("metamodels-{id}"));
+            fs::create_dir_all(&metamodels).map_err(|err| err.to_string())?;
+            for (name, text) in *descriptors {
+                fs::write(metamodels.join(format!("{name}.json")), text)
+                    .map_err(|err| err.to_string())?;
+            }
         }
 
-        let ids = ["a", "b", "c"];
         let ports: Vec<(u16, u16)> = ids.iter().map(|_| (free_port(), free_port())).collect();
         let mut replicas = Vec::new();
         for (index, id) in ids.iter().enumerate() {
@@ -197,7 +224,7 @@ impl Cluster {
                 // One default log for the session: replicas minting their own
                 // would host different logs and refuse each other's events.
                 .env("LOG_ID", "de7a17de7a17de7a17de7a17de7a17de")
-                .env("METAMODEL_DIR", &metamodels)
+                .env("METAMODEL_DIR", scratch.join(format!("metamodels-{id}")))
                 // Unset on purpose: no bootnode, no dashboard, no discovery.
                 .env_remove("BOOTNODE_URL")
                 .env_remove("DASHBOARD_URL")
@@ -280,7 +307,8 @@ impl Cluster {
         let deadline = Instant::now() + MESH_TIMEOUT;
         loop {
             let ready = (0..self.replicas.len()).all(|index| {
-                matches!(self.get(index, "/api/peers"), Ok((200, peers)) if connected(&peers) >= 2)
+                matches!(self.get(index, "/api/peers"), Ok((200, peers))
+                    if connected(&peers) + 1 >= self.replicas.len())
             });
             if ready {
                 return Ok(());
@@ -295,13 +323,47 @@ impl Cluster {
         }
     }
 
-    /// Register a model: no `model_id` creates one, a `model_id` joins it.
-    fn register(&self, replica: usize, model: Option<&str>, key: &str) -> Result<String, String> {
+    /// Register a model and answer with the raw status and body, refusal
+    /// included. `ip24`, `ip25` and `ip26` are about the refusal, so they need
+    /// the status rather than an `Err` built from it.
+    fn register_raw(
+        &self,
+        replica: usize,
+        model: Option<&str>,
+        key: &str,
+    ) -> Result<(u16, Value), String> {
         let body = match model {
             Some(id) => json!({ "model_id": id, "metamodel_id": key }),
             None => json!({ "metamodel_id": key }),
         };
-        let (status, answer) = self.post(replica, "/api/models", body.to_string())?;
+        self.post(replica, "/api/models", body.to_string())
+    }
+
+    /// The node-wide counters of `GET /api/metrics`, which is where
+    /// `frames_not_hosted` and `hosted_logs` live: they are the node's and not
+    /// any log's, so a node that hosts nothing still answers them.
+    fn node_metrics(&self, replica: usize) -> Result<Value, String> {
+        match self.get(replica, "/api/metrics")? {
+            (200, metrics) => Ok(metrics),
+            (status, body) => Err(format!("/api/metrics answered {status}: {body}")),
+        }
+    }
+
+    fn frames_not_hosted(&self, replica: usize) -> Result<u64, String> {
+        self.node_metrics(replica)?["frames_not_hosted"]
+            .as_u64()
+            .ok_or_else(|| format!("no frames_not_hosted on {}", self.replicas[replica].id))
+    }
+
+    fn hosted_logs(&self, replica: usize) -> Result<u64, String> {
+        self.node_metrics(replica)?["hosted_logs"]
+            .as_u64()
+            .ok_or_else(|| format!("no hosted_logs on {}", self.replicas[replica].id))
+    }
+
+    /// Register a model: no `model_id` creates one, a `model_id` joins it.
+    fn register(&self, replica: usize, model: Option<&str>, key: &str) -> Result<String, String> {
+        let (status, answer) = self.register_raw(replica, model, key)?;
         if !(200..300).contains(&status) {
             return Err(format!(
                 "registering on {} answered {status}: {answer}",
@@ -340,17 +402,24 @@ impl Cluster {
     /// Poll until every replica reads `model` the same way, and answer with
     /// the agreed document.
     fn converged(&self, model: &str) -> Result<Value, String> {
+        let all: Vec<usize> = (0..self.replicas.len()).collect();
+        self.converged_on(model, &all)
+    }
+
+    /// The same, restricted to the replicas that host the model. A replica
+    /// that refused to register holds nothing to compare, and demanding it
+    /// agree would be asserting the opposite of what `ip23` and `ip26` claim.
+    fn converged_on(&self, model: &str, on: &[usize]) -> Result<Value, String> {
         let deadline = Instant::now() + CONVERGE_TIMEOUT;
         loop {
-            let states: Vec<Result<Value, String>> = (0..self.replicas.len())
-                .map(|index| self.state(index, model))
-                .collect();
+            let states: Vec<Result<Value, String>> =
+                on.iter().map(|index| self.state(*index, model)).collect();
             if let Ok(agreed) = agreement(&states) {
                 return Ok(agreed);
             }
-            let last: BTreeMap<String, String> = self
-                .replicas
+            let last: BTreeMap<String, String> = on
                 .iter()
+                .map(|index| &self.replicas[*index])
                 .zip(states.iter())
                 .map(|(replica, state)| {
                     (
@@ -703,5 +772,377 @@ fn ip19(binary: &PathBuf) -> Result<(), String> {
 
     // And nothing restarted: same three processes throughout.
     cluster.still_running(&pids)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The edited metamodel, built here and not checked in
+// ---------------------------------------------------------------------------
+
+/// `bt.metamodel.json` with exactly one feature changed: `TreeNode.name`
+/// becomes required, so its merge shape is `single` where it was `optional`.
+///
+/// Same `nsURI`, different bytes, therefore a different digest — which is the
+/// whole of the claim `ip25` and `ip26` test, that an edited metamodel is a
+/// different metamodel. Built from the fixture at run time on purpose: editing
+/// the checked-in descriptor would change what `ip18`, `ip19` and the oracle
+/// are run against.
+fn edited_bt() -> String {
+    let mut parsed: Value = serde_json::from_str(BT).expect("the fixture is JSON");
+    {
+        let attributes = parsed["classes"]["TreeNode"]["attributes"]
+            .as_array_mut()
+            .expect("TreeNode has attributes");
+        let name = attributes
+            .iter_mut()
+            .find(|attribute| attribute["name"] == json!("name"))
+            .expect("TreeNode has a `name` attribute");
+        name["required"] = json!(true);
+        name["merge"]["shape"] = json!({ "kind": "single" });
+        name["provenance"]["presence"] = json!("declared");
+    }
+    parsed.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// ip23
+// ---------------------------------------------------------------------------
+
+/// `ip23` — I-A11. A replica that holds no descriptor is safe: it drops the
+/// frames of a model it does not host, counts them, and does nothing else.
+#[test]
+fn ip23_a_replica_without_the_descriptor_drops_the_frames_and_counts_them() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => return skip("ip23", &why),
+    };
+    if let Err(why) = ip23(&binary) {
+        panic!("ip23: {why}");
+    }
+}
+
+fn ip23(binary: &PathBuf) -> Result<(), String> {
+    // a and b hold the behaviour-tree descriptor; c holds none at all.
+    let mut cluster = Cluster::start_each(binary, &[&[("bt", BT)], &[("bt", BT)], &[]])?;
+    let pids = cluster.pids();
+    let bt = table(BT);
+
+    let (_, listed) = cluster.get(2, "/api/metamodels")?;
+    assert_eq!(
+        listed["metamodels"].as_array().map(Vec::len),
+        Some(0),
+        "c must hold no descriptor: {listed}"
+    );
+
+    // The baseline is taken after the mesh formed and before the model exists,
+    // so everything counted below is a frame of this model and nothing else.
+    let dropped_before = cluster.frames_not_hosted(2)?;
+    let hosted_before = cluster.hosted_logs(2)?;
+
+    let tree = cluster.register(0, None, &digest(BT))?;
+    cluster.register(1, Some(&tree), &digest(BT))?;
+    cluster.until_table(1, &tree)?;
+    for op in behaviour_tree(&bt, 0, "guard") {
+        cluster.submit(0, &tree, &op)?;
+    }
+    let state = cluster.converged_on(&tree, &[0, 1])?;
+    assert!(
+        mentions(&state, "guard"),
+        "a and b must converge without c: {state}"
+    );
+
+    // c saw the traffic and refused all of it.
+    let deadline = Instant::now() + CONVERGE_TIMEOUT;
+    let dropped_after = loop {
+        let now = cluster.frames_not_hosted(2)?;
+        if now > dropped_before {
+            break now;
+        }
+        if Instant::now() > deadline {
+            return Err(format!(
+                "c never counted a dropped frame; frames_not_hosted stayed at \
+                 {dropped_before}, its metrics read {}",
+                cluster.node_metrics(2)?
+            ));
+        }
+        std::thread::sleep(POLL);
+    };
+
+    // And nothing else about c moved: it hosts what it hosted, it holds no
+    // state for the model, and it is the process it was.
+    assert_eq!(
+        cluster.hosted_logs(2)?,
+        hosted_before,
+        "c hosted a log it holds no descriptor for"
+    );
+    let (status, body) = cluster.get(2, &format!("/api/model/{tree}/state"))?;
+    assert_eq!(
+        status, 404,
+        "c answered for a model it does not host: {body}"
+    );
+    cluster.still_running(&pids)?;
+    eprintln!(
+        "ip23: c dropped {} frames of model {tree} ({dropped_before} -> {dropped_after}), \
+         hosted_logs {hosted_before} throughout",
+        dropped_after - dropped_before
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ip24
+// ---------------------------------------------------------------------------
+
+/// `ip24` — I-A12. Joining a model whose metamodel this replica does not hold
+/// is refused before anything is hosted.
+///
+/// # The open question this test pins
+///
+/// `GenericNode::register` (`moirai-network/src/generic.rs:1053-1061`) resolves
+/// the descriptor and returns `RegisterRefused::UnknownMetamodel` *before* it
+/// calls `host_log`, for a join exactly as for a create. So metamodel
+/// distribution is entirely out of band today: `ip19` works because the test
+/// posts the descriptor to all three nodes itself.
+///
+/// It need not be. Decision D2 put the descriptor text inside `ModelOp::Install`,
+/// which is the log's own first operation, so the table already travels with
+/// the model through state transfer and through delta sync. A joining node
+/// could in principle host the empty log, receive the `Install`, and install
+/// the table from it, which would make metamodel distribution in band and
+/// delete the out-of-band step from I-A6's story.
+///
+/// That change is *not* made here. This test states what the node does today,
+/// and it is the test that changes if we take it.
+#[test]
+fn ip24_joining_a_model_whose_metamodel_is_unknown_here_is_refused() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => return skip("ip24", &why),
+    };
+    if let Err(why) = ip24(&binary) {
+        panic!("ip24: {why}");
+    }
+}
+
+fn ip24(binary: &PathBuf) -> Result<(), String> {
+    // a holds the descriptor; b holds none.
+    let cluster = Cluster::start_each(binary, &[&[("bt", BT)], &[]])?;
+    let bt = table(BT);
+
+    let tree = cluster.register(0, None, &digest(BT))?;
+    for op in behaviour_tree(&bt, 0, "guard") {
+        cluster.submit(0, &tree, &op)?;
+    }
+
+    let hosted_before = cluster.hosted_logs(1)?;
+    let (status, refusal) = cluster.register_raw(1, Some(&tree), &digest(BT))?;
+    assert_eq!(
+        status, 422,
+        "joining under a metamodel b does not hold answered: {refusal}"
+    );
+    let reason = refusal.to_string();
+    assert!(
+        reason.contains(&digest(BT)),
+        "the refusal must name the metamodel it could not find: {refusal}"
+    );
+
+    // Refused before hosting: nothing is hosted, and nothing answers for it.
+    assert_eq!(
+        cluster.hosted_logs(1)?,
+        hosted_before,
+        "b hosted the model despite refusing to register it"
+    );
+    let (state_status, body) = cluster.get(1, &format!("/api/model/{tree}/state"))?;
+    assert_eq!(
+        state_status, 404,
+        "b answered for a model it refused to host: {body}"
+    );
+    eprintln!("ip24: b answered {status} {refusal}, hosted_logs {hosted_before} throughout");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ip25
+// ---------------------------------------------------------------------------
+
+/// `ip25` — I-A13. Same `nsURI`, one feature changed, therefore a different
+/// digest and a different metamodel: a registration under one digest is
+/// refused by the replica holding the other, and nothing is hosted.
+#[test]
+fn ip25_two_descriptors_sharing_an_ns_uri_are_two_metamodels() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => return skip("ip25", &why),
+    };
+    if let Err(why) = ip25(&binary) {
+        panic!("ip25: {why}");
+    }
+}
+
+fn ip25(binary: &PathBuf) -> Result<(), String> {
+    let edited = edited_bt();
+    let old_ns: Value = serde_json::from_str(BT).unwrap();
+    let new_ns: Value = serde_json::from_str(&edited).unwrap();
+    assert_eq!(
+        old_ns["nsURI"], new_ns["nsURI"],
+        "the two descriptors must share an nsURI, or this test tests nothing"
+    );
+    assert_ne!(
+        digest(BT),
+        digest(&edited),
+        "the two descriptors must differ in digest"
+    );
+
+    // a holds the old descriptor, b holds the edited one, and nothing else.
+    let cluster = Cluster::start_each(binary, &[&[("bt", BT)], &[("bt-edited", &edited)]])?;
+
+    let (_, on_a) = cluster.get(0, "/api/metamodels")?;
+    let (_, on_b) = cluster.get(1, "/api/metamodels")?;
+    assert_eq!(on_a["metamodels"][0]["digest"], json!(digest(BT)));
+    assert_eq!(on_b["metamodels"][0]["digest"], json!(digest(&edited)));
+    assert_eq!(
+        on_a["metamodels"][0]["nsURI"], on_b["metamodels"][0]["nsURI"],
+        "both nodes must list the same nsURI: {on_a} against {on_b}"
+    );
+
+    // Each node refuses the digest it does not hold, and names it.
+    for (replica, wanted, held) in [
+        (1usize, digest(BT), digest(&edited)),
+        (0usize, digest(&edited), digest(BT)),
+    ] {
+        let hosted_before = cluster.hosted_logs(replica)?;
+        let (status, refusal) = cluster.register_raw(replica, None, &wanted)?;
+        assert_eq!(
+            status, 422,
+            "{} holds {held} and was asked for {wanted}, answering: {refusal}",
+            cluster.replicas[replica].id
+        );
+        assert!(
+            refusal.to_string().contains(&wanted),
+            "the refusal must name the digest asked for: {refusal}"
+        );
+        assert_eq!(
+            cluster.hosted_logs(replica)?,
+            hosted_before,
+            "{} hosted a log for a digest it refused",
+            cluster.replicas[replica].id
+        );
+        eprintln!(
+            "ip25: {} answered {status} {refusal}",
+            cluster.replicas[replica].id
+        );
+    }
+
+    // And the digest a node does hold still works, so the refusal is about the
+    // digest and not about the node being broken.
+    let model = cluster.register(0, None, &digest(BT))?;
+    let (status, refusal) = cluster.register_raw(1, Some(&model), &digest(BT))?;
+    assert_eq!(
+        status, 422,
+        "b must refuse to join a model under the digest it does not hold: {refusal}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ip26
+// ---------------------------------------------------------------------------
+
+/// `ip26` — I-A14. The edit case end to end: a replica holding both the old
+/// and the edited descriptor keeps converging with a replica holding only the
+/// old one, on the model created under the old digest, while the model created
+/// under the edited digest is refused there by name and the two documents
+/// never mix.
+#[test]
+fn ip26_an_edited_metamodel_leaves_the_old_models_converging() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => return skip("ip26", &why),
+    };
+    if let Err(why) = ip26(&binary) {
+        panic!("ip26: {why}");
+    }
+}
+
+fn ip26(binary: &PathBuf) -> Result<(), String> {
+    let edited = edited_bt();
+    // a holds both versions; b holds only the old one.
+    let cluster = Cluster::start_each(
+        binary,
+        &[&[("bt", BT), ("bt-edited", &edited)], &[("bt", BT)]],
+    )?;
+    let old = table(BT);
+    let new = table(&edited);
+
+    // A model under the old digest, created on a and joined by b.
+    let before = cluster.register(0, None, &digest(BT))?;
+    cluster.register(1, Some(&before), &digest(BT))?;
+    cluster.until_table(1, &before)?;
+    for op in behaviour_tree(&old, 0, "guard") {
+        cluster.submit(0, &before, &op)?;
+    }
+    let converged_once = cluster.converged(&before)?;
+    assert!(
+        mentions(&converged_once, "guard"),
+        "the old model did not converge before the edit: {converged_once}"
+    );
+
+    // A second model under the edited digest, created on a and edited there.
+    let after = cluster.register(0, None, &digest(&edited))?;
+    assert_ne!(before, after, "two models must be two logs");
+    for op in behaviour_tree(&new, 0, "patrol") {
+        cluster.submit(0, &after, &op)?;
+    }
+
+    // b refuses to join it, cleanly and by name.
+    let hosted_before = cluster.hosted_logs(1)?;
+    let (status, refusal) = cluster.register_raw(1, Some(&after), &digest(&edited))?;
+    assert_eq!(
+        status, 422,
+        "b must refuse the edited metamodel it never received: {refusal}"
+    );
+    assert!(
+        refusal.to_string().contains(&digest(&edited)),
+        "the refusal must name the edited digest: {refusal}"
+    );
+    assert_eq!(
+        cluster.hosted_logs(1)?,
+        hosted_before,
+        "b hosted the model under the edited digest after refusing it"
+    );
+
+    // The old model keeps converging, with a write from each replica after the
+    // refusal, which is what "keeps converging throughout" has to mean.
+    for op in behaviour_tree(&old, 1, "sentry") {
+        cluster.submit(1, &before, &op)?;
+    }
+    let old_state = cluster.converged(&before)?;
+    assert!(
+        mentions(&old_state, "guard") && mentions(&old_state, "sentry"),
+        "the old model stopped converging after the edited one appeared: {old_state}"
+    );
+
+    // Neither document holds the other's content.
+    let new_state = cluster.converged_on(&after, &[0])?;
+    assert!(
+        mentions(&new_state, "patrol"),
+        "the model under the edited digest lost its edit: {new_state}"
+    );
+    assert!(
+        !mentions(&old_state, "patrol"),
+        "the old model holds the edited model's content: {old_state}"
+    );
+    assert!(
+        !mentions(&new_state, "guard"),
+        "the edited model holds the old model's content: {new_state}"
+    );
+    assert!(
+        !mentions(&new_state, "sentry"),
+        "the edited model holds the old model's second edit: {new_state}"
+    );
+    eprintln!(
+        "ip26: b answered {status} {refusal}; old model {before} converged as {old_state}; \
+         model {after} under the edited digest reads {new_state} on a alone"
+    );
     Ok(())
 }
