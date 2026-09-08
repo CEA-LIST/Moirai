@@ -18,15 +18,21 @@
 //! - **ip23** (I-A11): a replica holding no descriptor drops the frames of a
 //!   model it does not host and counts them in `frames_not_hosted`, hosting
 //!   nothing and changing nothing.
-//! - **ip24** (I-A12): joining a model whose metamodel this replica does not
-//!   hold is refused before anything is hosted, which pins the bootstrap
-//!   question the doc comment on `ip24` states.
+//! - **ip24** (I-A12 as amended on 2026-09-08): *creating* a model under a
+//!   metamodel this replica does not hold is refused before anything is
+//!   hosted, while *joining* one is hosted with the binding left pending, and
+//!   the three routes of a model in that window answer state 200 `null`,
+//!   metamodel 404 and op `success: false` with the metamodel named.
 //! - **ip25** (I-A13): two descriptors sharing an `nsURI` and differing in
 //!   content are two metamodels, and a registration under one digest is
 //!   refused by the replica holding the other.
 //! - **ip26** (I-A14): the edit case end to end — the model under the old
 //!   digest keeps converging while the model under the new one is refused by
 //!   the replica that never got the edit.
+//! - **ip27** (I-A15, added 2026-09-08): the in-band bootstrap itself. Two
+//!   replicas holding no descriptor at all join a model by id, obtain its
+//!   merge table and its descriptor from the log alone, converge with the
+//!   creator on the real document, and one of them then writes into it.
 //!
 //! # Why these live here and not in `e2e_convergence.rs`
 //!
@@ -467,6 +473,31 @@ impl Cluster {
         }
     }
 
+    /// Poll until a replica serves the model's own descriptor on
+    /// `GET /api/model/{id}/metamodel`, and answer with its text.
+    ///
+    /// That route answers 404 for a model joined under a metamodel the node
+    /// holds no descriptor for, and 200 once the descriptor the model carries
+    /// has been adopted, so this is the observable of the in-band bootstrap
+    /// and not a proxy for it.
+    fn until_descriptor(&self, replica: usize, model: &str) -> Result<Value, String> {
+        let deadline = Instant::now() + CONVERGE_TIMEOUT;
+        loop {
+            match self.get(replica, &format!("/api/model/{model}/metamodel"))? {
+                (200, descriptor) => return Ok(descriptor),
+                _ if Instant::now() > deadline => {
+                    return Err(format!(
+                        "{} never came to serve the descriptor of model {model}; last log \
+                         lines:\n{}",
+                        self.replicas[replica].id,
+                        self.replicas[replica].tail()
+                    ));
+                }
+                _ => std::thread::sleep(POLL),
+            }
+        }
+    }
+
     /// Every replica is still the process it was: no restart happened, which
     /// is the load-bearing half of `ip19`.
     fn still_running(&mut self, pids: &[u32]) -> Result<(), String> {
@@ -893,28 +924,26 @@ fn ip23(binary: &PathBuf) -> Result<(), String> {
 // ip24
 // ---------------------------------------------------------------------------
 
-/// `ip24` — I-A12. Joining a model whose metamodel this replica does not hold
-/// is refused before anything is hosted.
+/// `ip24` — I-A12 as amended on 2026-09-08, and the new join-bootstrap
+/// criterion's near half. A **create** under a metamodel this replica holds no
+/// descriptor for is refused before anything is hosted; a **join** is not.
 ///
-/// # The open question this test pins
+/// # The asymmetry, which is the point of the test
 ///
-/// `GenericNode::register` (`moirai-network/src/generic.rs:1053-1061`) resolves
-/// the descriptor and returns `RegisterRefused::UnknownMetamodel` *before* it
-/// calls `host_log`, for a join exactly as for a create. So metamodel
-/// distribution is entirely out of band today: `ip19` works because the test
-/// posts the descriptor to all three nodes itself.
+/// A create is refused because the opening operations of a new model are
+/// written from the descriptor by the application's `RegisterFn`
+/// (`moirai-network/src/generic.rs`), and a node that does not hold the
+/// descriptor has nothing to write them from. A join writes nothing: the log
+/// is hosted empty and the model's own first operation, `ModelOp::Install`,
+/// carries the descriptor to it. That is option A of
+/// `01 Interpreted Path — Design` §12.4, approved by Cam on 2026-09-08.
 ///
-/// It need not be. Decision D2 put the descriptor text inside `ModelOp::Install`,
-/// which is the log's own first operation, so the table already travels with
-/// the model through state transfer and through delta sync. A joining node
-/// could in principle host the empty log, receive the `Install`, and install
-/// the table from it, which would make metamodel distribution in band and
-/// delete the out-of-band step from I-A6's story.
-///
-/// That change is *not* made here. This test states what the node does today,
-/// and it is the test that changes if we take it.
+/// This test pins the window rather than the arrival, so the model it joins is
+/// one **nobody hosts**: no `Install` can ever reach it, the binding stays
+/// pending for the run, and the three routes can be read without racing the
+/// thing that would change their answers. `ip27` is the arrival.
 #[test]
-fn ip24_joining_a_model_whose_metamodel_is_unknown_here_is_refused() {
+fn ip24_a_create_is_refused_where_a_join_is_hosted_with_no_table() {
     let binary = match node_binary() {
         Ok(binary) => binary,
         Err(why) => return skip("ip24", &why),
@@ -934,30 +963,89 @@ fn ip24(binary: &PathBuf) -> Result<(), String> {
         cluster.submit(0, &tree, &op)?;
     }
 
+    // Half one: a create under a metamodel b does not hold is refused, by
+    // name, before anything is hosted. This is the half that did not change.
     let hosted_before = cluster.hosted_logs(1)?;
-    let (status, refusal) = cluster.register_raw(1, Some(&tree), &digest(BT))?;
+    let (create_status, refusal) = cluster.register_raw(1, None, &digest(BT))?;
     assert_eq!(
-        status, 422,
-        "joining under a metamodel b does not hold answered: {refusal}"
+        create_status, 422,
+        "creating a model under a metamodel b does not hold answered: {refusal}"
     );
-    let reason = refusal.to_string();
     assert!(
-        reason.contains(&digest(BT)),
+        refusal.to_string().contains(&digest(BT)),
         "the refusal must name the metamodel it could not find: {refusal}"
     );
-
-    // Refused before hosting: nothing is hosted, and nothing answers for it.
     assert_eq!(
         cluster.hosted_logs(1)?,
         hosted_before,
-        "b hosted the model despite refusing to register it"
+        "b hosted a model it refused to create"
     );
-    let (state_status, body) = cluster.get(1, &format!("/api/model/{tree}/state"))?;
+
+    // Half two: a join is hosted, with no table, for a model id nobody has —
+    // so the window this asserts is the whole of the run.
+    let orphan = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0";
+    let (status, joined) = cluster.register_raw(1, Some(orphan), &digest(BT))?;
+    assert_eq!(status, 200, "joining answered: {joined}");
+    assert_eq!(joined["created"], json!(false), "a join creates nothing");
+    assert_eq!(joined["model_id"], json!(orphan));
     assert_eq!(
-        state_status, 404,
-        "b answered for a model it refused to host: {body}"
+        cluster.hosted_logs(1)?,
+        hosted_before + 1,
+        "b did not host the model it joined"
     );
-    eprintln!("ip24: b answered {status} {refusal}, hosted_logs {hosted_before} throughout");
+
+    // What the three routes answer in that window.
+    //
+    // `state`: 200 and `null`, which is what an opened-and-unwritten model
+    // already answers on this path — a root nobody has instantiated.
+    let (state_status, state) = cluster.get(1, &format!("/api/model/{orphan}/state"))?;
+    assert_eq!((state_status, state.clone()), (200, Value::Null), "state");
+
+    // `metamodel`: 404, because the route looks the binding's key up among the
+    // descriptors this node serves and b serves none.
+    let (descriptor_status, body) = cluster.get(1, &format!("/api/model/{orphan}/metamodel"))?;
+    assert_eq!(
+        descriptor_status, 404,
+        "b served a descriptor it does not hold: {body}"
+    );
+
+    // `op`: refused, by `ModelLog::is_enabled`, with a sentence naming the
+    // metamodel that has not arrived. The status is 200 because on this route
+    // the status describes the request and `success` describes the verdict,
+    // which is how every other refusal on it is already answered.
+    let write = &behaviour_tree(&bt, 0, "guard")[0];
+    let (op_status, answer) = cluster.post(
+        1,
+        &format!("/api/model/{orphan}/op"),
+        serde_json::to_string(write).map_err(|err| err.to_string())?,
+    )?;
+    assert_eq!(op_status, 200, "the op route answered: {answer}");
+    assert_eq!(
+        answer["success"],
+        json!(false),
+        "b accepted a write into a model with no table: {answer}"
+    );
+    let message = answer["message"].as_str().unwrap_or_default().to_string();
+    assert!(
+        message.contains(&digest(BT)) && message.contains("has not arrived yet"),
+        "the refusal must say the metamodel has not arrived: {answer}"
+    );
+
+    // And b still holds no descriptor: hosting a model is not holding a
+    // metamodel until one arrives with it.
+    let (_, listed) = cluster.get(1, "/api/metamodels")?;
+    assert_eq!(
+        listed["metamodels"].as_array().map(Vec::len),
+        Some(0),
+        "b came to hold a descriptor without one arriving: {listed}"
+    );
+
+    eprintln!(
+        "ip24: b refused the create {create_status} {refusal}, hosted the join of {orphan} \
+         (hosted_logs {hosted_before} -> {}), and in the window answered state 200 null, \
+         metamodel 404, op success:false `{message}`",
+        hosted_before + 1
+    );
     Ok(())
 }
 
@@ -1036,10 +1124,18 @@ fn ip25(binary: &PathBuf) -> Result<(), String> {
     // And the digest a node does hold still works, so the refusal is about the
     // digest and not about the node being broken.
     let model = cluster.register(0, None, &digest(BT))?;
-    let (status, refusal) = cluster.register_raw(1, Some(&model), &digest(BT))?;
+    assert!(!model.is_empty());
+
+    // Asked a second time and the other way round, because the refusal a node
+    // gives for a digest it does not hold must not depend on a model existing
+    // under it somewhere. Stated as a *create* since 2026-09-08: a join under
+    // an unheld digest is hosted with a pending binding now, which is what
+    // `ip24` and `ip27` assert, so the refusal this criterion is about is the
+    // one a node gives when it is asked to mint a model itself.
+    let (status, refusal) = cluster.register_raw(1, None, &digest(BT))?;
     assert_eq!(
         status, 422,
-        "b must refuse to join a model under the digest it does not hold: {refusal}"
+        "b must refuse to create a model under the digest it does not hold: {refusal}"
     );
     Ok(())
 }
@@ -1094,9 +1190,16 @@ fn ip26(binary: &PathBuf) -> Result<(), String> {
         cluster.submit(0, &after, &op)?;
     }
 
-    // b refuses to join it, cleanly and by name.
+    // b refuses the edited metamodel, cleanly and by name.
+    //
+    // As a create, since 2026-09-08: a join under an unheld digest is hosted
+    // with a pending binding and would fetch the edited table in band from the
+    // model itself, which is what `ip27` is for. What stays refused, and what
+    // this criterion is about, is b minting a model under a metamodel it does
+    // not hold — and b never hosts the edited model here, so the two documents
+    // stay disjoint below exactly as they did.
     let hosted_before = cluster.hosted_logs(1)?;
-    let (status, refusal) = cluster.register_raw(1, Some(&after), &digest(&edited))?;
+    let (status, refusal) = cluster.register_raw(1, None, &digest(&edited))?;
     assert_eq!(
         status, 422,
         "b must refuse the edited metamodel it never received: {refusal}"
@@ -1143,6 +1246,128 @@ fn ip26(binary: &PathBuf) -> Result<(), String> {
     eprintln!(
         "ip26: b answered {status} {refusal}; old model {before} converged as {old_state}; \
          model {after} under the edited digest reads {new_state} on a alone"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ip27
+// ---------------------------------------------------------------------------
+
+/// `ip27` — I-A15. A replica that holds no descriptor at all joins a model by
+/// id and gets its semantics from the model.
+///
+/// This is what option A of `01 Interpreted Path — Design` §12.4 is for, and
+/// it is the scenario `ip19` could not run: there, the SimpleUML descriptor is
+/// posted to all three nodes by the test itself, because a join under an
+/// unheld metamodel was refused. Here nothing is posted anywhere. b and c
+/// start with an empty `METAMODEL_DIR`, list zero metamodels, never see a
+/// `POST /api/metamodels`, and end up serving `bt.metamodel.json` byte for
+/// byte because the model's own first operation carried it.
+///
+/// The write from b is not decoration. A joiner that can read but not write
+/// has not joined: it would mean the table arrived well enough to merge a
+/// peer's operations and not well enough to pass the local intake, which is
+/// the same table read twice.
+#[test]
+fn ip27_two_replicas_holding_no_descriptor_join_a_model_and_get_it_from_the_log() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => return skip("ip27", &why),
+    };
+    if let Err(why) = ip27(&binary) {
+        panic!("ip27: {why}");
+    }
+}
+
+fn ip27(binary: &PathBuf) -> Result<(), String> {
+    // a holds the behaviour-tree descriptor; b and c hold none at all.
+    let mut cluster = Cluster::start_each(binary, &[&[("bt", BT)], &[], &[]])?;
+    let pids = cluster.pids();
+    let bt = table(BT);
+
+    for replica in [1, 2] {
+        let (_, listed) = cluster.get(replica, "/api/metamodels")?;
+        assert_eq!(
+            listed["metamodels"].as_array().map(Vec::len),
+            Some(0),
+            "{} must start holding no descriptor: {listed}",
+            cluster.replicas[replica].id
+        );
+    }
+
+    // a creates the model and writes into it, so there is a real document for
+    // the joiners to converge on rather than an empty log.
+    let tree = cluster.register(0, None, &digest(BT))?;
+    for op in behaviour_tree(&bt, 0, "guard") {
+        cluster.submit(0, &tree, &op)?;
+    }
+
+    // b and c join by id, holding nothing. Accepted, and hosted.
+    for replica in [1, 2] {
+        let hosted_before = cluster.hosted_logs(replica)?;
+        let (status, joined) = cluster.register_raw(replica, Some(&tree), &digest(BT))?;
+        assert_eq!(
+            status,
+            200,
+            "{} was refused the join: {joined}",
+            cluster.replicas[replica].id
+        );
+        assert_eq!(joined["created"], json!(false));
+        assert_eq!(
+            cluster.hosted_logs(replica)?,
+            hosted_before + 1,
+            "{} did not host the model it joined",
+            cluster.replicas[replica].id
+        );
+    }
+
+    // The descriptor reaches them with the model, and it is a's file byte for
+    // byte: the digest is recomputed from the bytes the route serves, so this
+    // is the identity check and not a size comparison.
+    for replica in [1, 2] {
+        let served = cluster.until_descriptor(replica, &tree)?;
+        assert_eq!(
+            metamodel_digest(&served),
+            digest(BT),
+            "{} serves a descriptor that is not the model's",
+            cluster.replicas[replica].id
+        );
+        let (_, listed) = cluster.get(replica, "/api/metamodels")?;
+        assert_eq!(
+            listed["metamodels"].as_array().map(Vec::len),
+            Some(1),
+            "{} must now list exactly the one descriptor it obtained: {listed}",
+            cluster.replicas[replica].id
+        );
+        assert_eq!(listed["metamodels"][0]["digest"], json!(digest(BT)));
+    }
+
+    // All three read the same real document.
+    let read = cluster.converged(&tree)?;
+    assert!(
+        mentions(&read, "guard"),
+        "the three replicas converged on nothing: {read}"
+    );
+    assert_eq!(read["eClass"], json!("Root"));
+
+    // And a joiner can write, which is the other half of joining. b's write is
+    // accepted by its own intake — `ModelLog::is_enabled` against the table it
+    // obtained from the log — and a and c converge on it.
+    for op in behaviour_tree(&bt, 1, "patrol") {
+        cluster.submit(1, &tree, &op)?;
+    }
+    let after = cluster.converged(&tree)?;
+    assert!(
+        mentions(&after, "guard") && mentions(&after, "patrol"),
+        "the model did not converge on the joiner's write: {after}"
+    );
+
+    cluster.still_running(&pids)?;
+    eprintln!(
+        "ip27: b and c held no descriptor, uploaded none, joined model {tree} by id, came to \
+         serve {} and converged with a on {after}",
+        digest(BT)
     );
     Ok(())
 }
