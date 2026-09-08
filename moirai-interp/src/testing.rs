@@ -22,7 +22,9 @@ use moirai_semantics::{ClassSlot, FeatureSlot, MetamodelSemantics, from_descript
 use serde_json::{Value, json};
 
 use crate::leaf::LeafLog;
-use crate::node::{At, Ctx, Emit, Node, ObjectNode, SeqNode, Shaped, Site, apply, check};
+use crate::node::{
+    At, Ctx, Emit, Mode, Node, ObjectNode, SeqNode, Shaped, Site, Target, apply, check,
+};
 
 #[cfg(feature = "sink")]
 use moirai_protocol::state::{
@@ -218,7 +220,7 @@ impl Harness {
     /// The site the root sits at: one object of the root class's concrete
     /// closure.
     pub(crate) fn site(&self) -> Shaped {
-        Shaped::Bare(Site::Object(self.root_class))
+        Shaped::Bare(Site::Object(Target::Class(self.root_class)))
     }
 }
 
@@ -228,7 +230,7 @@ impl Default for Harness {
             .with_borrow(Clone::clone)
             .expect("a test sets the fixture before it asks for its replicas");
         Harness {
-            root: Node::for_shaped(Shaped::Bare(Site::Object(root_class))),
+            root: Node::for_shaped(Shaped::Bare(Site::Object(Target::Class(root_class)))),
             sem,
             root_class,
         }
@@ -240,7 +242,15 @@ impl IsLog for Harness {
     type Op = crate::op::InstanceOp;
 
     fn is_enabled(&self, op: &Self::Op) -> bool {
-        check(&self.sem, Some(&self.root), self.site(), op, &At::root()).is_ok()
+        check(
+            &self.sem,
+            Some(&self.root),
+            self.site(),
+            op,
+            &At::root(),
+            Mode::Local,
+        )
+        .is_ok()
     }
 
     fn effect(
@@ -299,14 +309,14 @@ pub type HarnessTriplet = (
     Replica<Harness, Tcsb<crate::op::InstanceOp>>,
 );
 
-fn install(sem: &Arc<MetamodelSemantics>, root: &str) {
+fn set_fixture(sem: &Arc<MetamodelSemantics>, root: &str) {
     let root_class = class_slot(sem, root);
     FIXTURE.with_borrow_mut(|slot| *slot = Some((Arc::clone(sem), root_class)));
 }
 
 /// [`moirai_crdt::utils::membership::twins_log`] over a fixture.
 pub fn twins(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTwins {
-    install(sem, root);
+    set_fixture(sem, root);
     let log_id = LogId::generate();
     (
         Replica::bootstrap_with_log_id("a".to_string(), &["a", "b"], log_id.clone()),
@@ -316,7 +326,7 @@ pub fn twins(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTwins {
 
 /// [`moirai_crdt::utils::membership::triplet_log`] over a fixture.
 pub fn triplet(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTriplet {
-    install(sem, root);
+    set_fixture(sem, root);
     let log_id = LogId::generate();
     (
         Replica::bootstrap_with_log_id("a".to_string(), &["a", "b", "c"], log_id.clone()),
@@ -494,4 +504,58 @@ pub fn bench_descriptor() -> Value {
 /// The same, parsed.
 pub fn bench() -> Arc<MetamodelSemantics> {
     table(&bench_descriptor())
+}
+
+/// The real `bt.metamodel.json`, `formatVersion` 2, copied into the crate so
+/// the test that reads it is hermetic.
+///
+/// Copied rather than read across worktrees: a test that reaches into a
+/// sibling checkout passes on one machine. The copy is byte-for-byte
+/// `arachne/examples/bt.metamodel.json` at Arachne `akira/model-plane`, and
+/// its digest is asserted in [`crate::log`]'s tests, so a drift is a failing
+/// test rather than a silent divergence.
+pub const BT_DESCRIPTOR: &str = include_str!("../tests/fixtures/bt.metamodel.json");
+
+/// The behaviour tree's own table.
+pub fn bt() -> Arc<MetamodelSemantics> {
+    table(&serde_json::from_str::<Value>(BT_DESCRIPTOR).expect("the fixture is JSON"))
+}
+
+/// The operation that opens a model log on one descriptor.
+pub fn install(model_id: &str, descriptor: &Value) -> crate::op::ModelOp {
+    crate::op::ModelOp::Install {
+        model_id: model_id.to_string(),
+        metamodel_id: moirai_semantics::metamodel_digest(descriptor),
+        descriptor: serde_json::to_string(descriptor).expect("a descriptor serializes"),
+    }
+}
+
+/// Two replicas of one [`crate::log::ModelLog`], both holding the table.
+pub type ModelTwins = (
+    Replica<crate::log::ModelLog, Tcsb<crate::op::ModelOp>>,
+    Replica<crate::log::ModelLog, Tcsb<crate::op::ModelOp>>,
+);
+
+/// Open one model on two replicas.
+pub fn opened(model_id: &str, descriptor: &Value) -> ModelTwins {
+    let (mut a, mut b) = moirai_crdt::utils::membership::twins_log::<crate::log::ModelLog>();
+    let event = a
+        .send(install(model_id, descriptor))
+        .expect("a fresh log takes its first `Install`");
+    b.receive(event);
+    (a, b)
+}
+
+/// Deliver one event to a log that is not hosted by a replica, which is what
+/// a peer's operation looks like from the log's own side.
+pub fn deliver(log: &mut crate::log::ModelLog, event: Event<crate::op::ModelOp>) {
+    log.effect(
+        event,
+        #[cfg(feature = "sink")]
+        ObjectPath::new("root"),
+        #[cfg(feature = "sink")]
+        &mut SinkCollector::new(),
+        #[cfg(feature = "sink")]
+        SinkOwnership::Owned,
+    );
 }

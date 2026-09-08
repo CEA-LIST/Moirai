@@ -497,70 +497,82 @@ impl LeafLog {
         }
     }
 
-    /// Whether this leaf would take the operation, and why not when it would
-    /// not.
+    /// Whether this leaf would take the operation from a local writer.
     ///
     /// Two refusals in one: the kind check, which is the table's business,
     /// and the inner log's own `is_enabled`, which is the state's — a text
     /// insert past the end of the string is refused here exactly as
     /// `EventGraph<List<char>>` refuses it on its own.
     pub fn is_enabled(&self, op: &LeafOp) -> Result<(), LeafMismatch> {
+        self.probe(op, true)
+    }
+
+    /// Whether the operation is even of this leaf's kind.
+    ///
+    /// The half of [`LeafLog::is_enabled`] that a remote operation is held
+    /// to: it has already happened somewhere, so the only question left is
+    /// whether this arm can express it at all.
+    pub fn accepts(&self, op: &LeafOp) -> Result<(), LeafMismatch> {
+        self.probe(op, false)
+    }
+
+    fn probe(&self, op: &LeafOp, strict: bool) -> Result<(), LeafMismatch> {
         match self {
             LeafLog::Text(log) => {
                 let inner = text_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
-            LeafLog::CounterU8(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::CounterI16(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::CounterI32(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::CounterI64(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::CounterF32(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::CounterF64(log) => counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterU8(log) => simple_counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterI16(log) => simple_counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterI32(log) => simple_counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterI64(log) => simple_counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterF32(log) => simple_counter_enabled(log, op, self.kind()),
-            LeafLog::SimpleCounterF64(log) => simple_counter_enabled(log, op, self.kind()),
+            LeafLog::CounterU8(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::CounterI16(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::CounterI32(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::CounterI64(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::CounterF32(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::CounterF64(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterU8(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterI16(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterI32(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterI64(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterF32(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterF64(log) => simple_counter_enabled(log, op, self.kind(), strict),
             LeafLog::FlagEw(log) => {
                 let inner = ew_flag_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::FlagDw(log) => {
                 let inner = dw_flag_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::RegisterMv(log) => {
                 let inner = mv_register_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::RegisterLww(log) => {
                 let inner = unique_register_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::RegisterFair(log) => {
                 let inner = unique_register_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::RegisterPo(log) => {
                 let inner = po_register_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::RegisterTo(log) => {
                 let inner = to_register_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::SetAw(log) => {
                 let inner = aw_set_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::SetRw(log) => {
                 let inner = rw_set_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
             LeafLog::Bag(log) => {
                 let inner = bag_op(op)?;
-                enabled(log, &inner, op, self.kind())
+                enabled(log, &inner, op, self.kind(), strict)
             }
         }
     }
@@ -766,14 +778,16 @@ fn sorted_array(
     Value::Array(values.iter().map(|value| value.to_json(sem)).collect())
 }
 
-/// `is_enabled` on one arm's own log, with the arm's word for the refusal.
+/// `is_enabled` on one arm's own log, with the arm's word for the refusal;
+/// the kind check alone when the operation is a peer's.
 fn enabled<L: IsLog>(
     log: &L,
     inner: &L::Op,
     op: &LeafOp,
     leaf: &'static str,
+    strict: bool,
 ) -> Result<(), LeafMismatch> {
-    if log.is_enabled(inner) {
+    if !strict || log.is_enabled(inner) {
         Ok(())
     } else {
         mismatch(op, leaf)
@@ -850,18 +864,20 @@ fn counter_enabled<V: CounterWidth>(
     log: &VecLog<Counter<V>>,
     op: &LeafOp,
     leaf: &'static str,
+    strict: bool,
 ) -> Result<(), LeafMismatch> {
     let inner = counter_op::<V>(op)?;
-    enabled(log, &inner, op, leaf)
+    enabled(log, &inner, op, leaf, strict)
 }
 
 fn simple_counter_enabled<V: CounterWidth>(
     log: &VecLog<SimpleCounter<V>>,
     op: &LeafOp,
     leaf: &'static str,
+    strict: bool,
 ) -> Result<(), LeafMismatch> {
     let inner = simple_counter_op::<V>(op)?;
-    enabled(log, &inner, op, leaf)
+    enabled(log, &inner, op, leaf, strict)
 }
 
 fn counter_effect<V: CounterWidth>(

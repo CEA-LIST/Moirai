@@ -275,6 +275,36 @@ impl fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
+/// How strictly an operation is held.
+///
+/// The two halves of criterion I-A9. [`Mode::Local`] is the structural check
+/// a writer's own operation is refused by, state and all: a second concrete
+/// class on a slot this replica has already set, a position past the end,
+/// `New` on an object that is already there. [`Mode::Routing`] is what is
+/// left when the operation has already happened somewhere else and the only
+/// question is whether this table can route it at all — a feature its class
+/// declares, a shape the operation matches, a class the containment may
+/// hold, a leaf of the operation's own kind.
+///
+/// Holding a remote operation to [`Mode::Local`] is the failure the
+/// implementation plan names: "a `SlotNode` that refuses a second variant on
+/// delivery, which is `is_enabled`'s local job and not `effect`'s". It costs
+/// exactly the retention the design keeps — two writers who set different
+/// subtypes at once would each keep only their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// A local writer's operation.
+    Local,
+    /// A peer's.
+    Routing,
+}
+
+impl Mode {
+    const fn is_local(self) -> bool {
+        matches!(self, Mode::Local)
+    }
+}
+
 /// Where the walk is, in names, for the sentence a refusal is written in.
 #[derive(Clone)]
 pub(crate) struct At {
@@ -285,11 +315,11 @@ pub(crate) struct At {
 }
 
 impl At {
-    /// The root, which belongs to no feature of no class.
+    /// The top of a model, which belongs to no feature of no class.
     pub(crate) fn root() -> Self {
         At {
-            class: Arc::from("<model>"),
-            feature: Arc::from("<root>"),
+            class: Arc::from("model"),
+            feature: Arc::from("root"),
         }
     }
 }
@@ -305,11 +335,65 @@ pub(crate) enum LeafSite {
     Bag,
 }
 
+/// Which classes may sit in one containment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Target {
+    /// The concrete closure of one declared class, which is what a
+    /// containment's `target` names.
+    Class(ClassSlot),
+    /// The concrete closure of every class the descriptor names as a root,
+    /// which is what may sit at the top of a model. A descriptor that names
+    /// none has every instantiable class as a root, exactly as the phase 4
+    /// `Schema` reads it.
+    Roots,
+}
+
+impl Target {
+    /// Whether an instance of this class may sit here.
+    pub(crate) fn allows(self, sem: &MetamodelSemantics, class: ClassSlot) -> bool {
+        match self {
+            Target::Class(target) => sem
+                .classes
+                .get(target.index())
+                .is_some_and(|target| target.concrete.contains(&class)),
+            Target::Roots => sem.roots.iter().any(|root| {
+                sem.classes
+                    .get(root.index())
+                    .is_some_and(|root| root.concrete.contains(&class))
+            }),
+        }
+    }
+
+    /// The classes that may, by name; the error path only.
+    pub(crate) fn allowed(self, sem: &MetamodelSemantics) -> Vec<Arc<str>> {
+        let mut slots: Vec<ClassSlot> = match self {
+            Target::Class(target) => sem
+                .classes
+                .get(target.index())
+                .map(|target| target.concrete.to_vec())
+                .unwrap_or_default(),
+            Target::Roots => sem
+                .roots
+                .iter()
+                .filter_map(|root| sem.classes.get(root.index()))
+                .flat_map(|root| root.concrete.iter().copied())
+                .collect(),
+        };
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+            .into_iter()
+            .filter_map(|slot| sem.classes.get(slot.index()))
+            .map(|class| Arc::clone(&class.name))
+            .collect()
+    }
+}
+
 /// What sits at one point of the tree, once its collection is peeled off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Site {
-    /// An object of one of `target`'s concrete classes.
-    Object(ClassSlot),
+    /// An object of one of the target's concrete classes.
+    Object(Target),
     /// A leaf.
     Leaf(LeafSite),
 }
@@ -356,12 +440,12 @@ pub(crate) fn shaped(rule: &MergeRule) -> Result<Shaped, UnsupportedReason> {
             Shape::OrderedSet => unreachable!("`effective` degrades an ordered set to a sequence"),
         },
         MergeRule::Containment { shape, target } => match shape.effective() {
-            Shape::Optional => Shaped::Optional(Site::Object(target)),
-            Shape::Sequence => Shaped::Sequence(Site::Object(target)),
+            Shape::Optional => Shaped::Optional(Site::Object(Target::Class(target))),
+            Shape::Sequence => Shaped::Sequence(Site::Object(Target::Class(target))),
             // `containment.rs:172-196` compiles a multi-valued containment as
             // a `NestedListLog` whatever its facets say, so the set and bag
             // shapes are not reachable for one; a single is a bare slot.
-            _ => Shaped::Bare(Site::Object(target)),
+            _ => Shaped::Bare(Site::Object(Target::Class(target))),
         },
         // Design §8: a non-containment reference is carried as a string. One
         // of them is a register, so concurrent retargetings stay visible;
@@ -452,7 +536,35 @@ pub enum SlotNode {
 )]
 pub struct SeqNode {
     pub(crate) positions: EventGraph<List<EventId>>,
+    #[cfg_attr(feature = "serde", serde(with = "children_serde"))]
     pub(crate) children: BTreeMap<EventId, Node>,
+}
+
+/// A sequence's children as a list of pairs rather than as a JSON object.
+///
+/// The key is an [`EventId`], which is a struct and not a string, and a JSON
+/// object's keys are strings. The state transfer this log has to survive is
+/// JSON (`state_transfer.rs`), so the map travels as the pairs it is —
+/// ordered by key, which keeps two replicas' bytes identical for one state.
+#[cfg(feature = "serde")]
+mod children_serde {
+    use super::{BTreeMap, EventId, Node};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        children: &BTreeMap<EventId, Node>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        children.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<EventId, Node>, D::Error> {
+        Ok(Vec::<(EventId, Node)>::deserialize(deserializer)?
+            .into_iter()
+            .collect())
+    }
 }
 
 /// Zero or one child.
@@ -839,6 +951,7 @@ pub(crate) fn check(
     shape: Shaped,
     op: &InstanceOp,
     at: &At,
+    mode: Mode,
 ) -> Result<(), Refusal> {
     match shape {
         Shaped::Sequence(site) => {
@@ -855,24 +968,32 @@ pub(crate) fn check(
                 _ => None,
             };
             let order = seq.map(SeqNode::order).unwrap_or_default();
-            let pos = seq_op.pos();
-            let limit = match seq_op {
-                SeqOp::Insert { .. } => order.len(),
-                _ => order.len().saturating_sub(1),
-            };
-            if pos > limit || (order.is_empty() && !matches!(seq_op, SeqOp::Insert { .. })) {
-                return Err(Refusal::OutOfBounds {
-                    class: at.class.clone(),
-                    feature: at.feature.clone(),
-                    pos,
-                    len: order.len(),
-                });
+            // A position means what it meant in the state its writer saw, and
+            // only a local writer's state is this one. A peer's position is
+            // resolved against its own version when it is applied, and out of
+            // bounds *there* is what `apply` answers.
+            if mode.is_local() {
+                let pos = seq_op.pos();
+                let limit = match seq_op {
+                    SeqOp::Insert { .. } => order.len(),
+                    _ => order.len().saturating_sub(1),
+                };
+                if pos > limit || (order.is_empty() && !matches!(seq_op, SeqOp::Insert { .. })) {
+                    return Err(Refusal::OutOfBounds {
+                        class: at.class.clone(),
+                        feature: at.feature.clone(),
+                        pos,
+                        len: order.len(),
+                    });
+                }
             }
             match seq_op {
-                SeqOp::Insert { op, .. } => check(sem, None, Shaped::Bare(site), op, at),
+                SeqOp::Insert { op, .. } => check(sem, None, Shaped::Bare(site), op, at, mode),
                 SeqOp::Update { pos, op } => {
-                    let child = seq.and_then(|seq| seq.children.get(&order[*pos]));
-                    check(sem, child, Shaped::Bare(site), op, at)
+                    let child = order
+                        .get(*pos)
+                        .and_then(|target| seq.and_then(|seq| seq.children.get(target)));
+                    check(sem, child, Shaped::Bare(site), op, at, mode)
                 }
                 SeqOp::Delete { .. } => Ok(()),
             }
@@ -892,7 +1013,7 @@ pub(crate) fn check(
                         Some(Node::Opt(opt)) => opt.child(),
                         _ => None,
                     };
-                    check(sem, child, Shaped::Bare(site), inner, at)
+                    check(sem, child, Shaped::Bare(site), inner, at, mode)
                 }
                 OptOp::Unset => Ok(()),
             }
@@ -917,7 +1038,12 @@ pub(crate) fn check(
                     }
                 }
             };
-            leaf.is_enabled(leaf_op).map_err(|mismatch| Refusal::Leaf {
+            let outcome = if mode.is_local() {
+                leaf.is_enabled(leaf_op)
+            } else {
+                leaf.accepts(leaf_op)
+            };
+            outcome.map_err(|mismatch| Refusal::Leaf {
                 class: at.class.clone(),
                 feature: at.feature.clone(),
                 mismatch,
@@ -932,11 +1058,7 @@ pub(crate) fn check(
                     got: word(op),
                 });
             };
-            let target = sem
-                .classes
-                .get(target.index())
-                .ok_or(Refusal::UnknownClass { slot: target.0 })?;
-            if !target.concrete.contains(class) {
+            if !target.allows(sem, *class) {
                 let offered = sem
                     .classes
                     .get(class.index())
@@ -945,12 +1067,7 @@ pub(crate) fn check(
                     class: at.class.clone(),
                     feature: at.feature.clone(),
                     offered,
-                    allowed: target
-                        .concrete
-                        .iter()
-                        .filter_map(|slot| sem.classes.get(slot.index()))
-                        .map(|class| Arc::clone(&class.name))
-                        .collect(),
+                    allowed: target.allowed(sem),
                 });
             }
             let slot = match node {
@@ -959,8 +1076,10 @@ pub(crate) fn check(
             };
             // `union.rs:130-145`: a *local* writer is told that this slot is
             // taken, so a conflict is something concurrency opens and never
-            // something one replica opens on its own.
-            if let Some(slot) = slot {
+            // something one replica opens on its own. A peer's operation is
+            // not held to it: refusing it here is what would lose the
+            // retention `ip9` asserts.
+            if let Some(slot) = slot.filter(|_| mode.is_local()) {
                 let held = match slot {
                     SlotNode::Unset => None,
                     SlotNode::Value(object) => Some(object.class),
@@ -983,7 +1102,13 @@ pub(crate) fn check(
                     });
                 }
             }
-            check_object(sem, slot.and_then(|slot| slot.find(*class)), *class, inner)
+            check_object(
+                sem,
+                slot.and_then(|slot| slot.find(*class)),
+                *class,
+                inner,
+                mode,
+            )
         }
     }
 }
@@ -994,15 +1119,19 @@ pub(crate) fn check_object(
     node: Option<&ObjectNode>,
     class: ClassSlot,
     op: &InstanceOp,
+    mode: Mode,
 ) -> Result<(), Refusal> {
     let holder = sem
         .classes
         .get(class.index())
         .ok_or(Refusal::UnknownClass { slot: class.0 })?;
     match op {
-        // `record!`'s own rule: `New` is enabled on an empty object only.
+        // `record!`'s own rule: `New` is enabled on an empty object only —
+        // for a local writer. A peer's `New` on an object that is already
+        // there is a `New` that raced another write, and applying it is a
+        // no-op.
         InstanceOp::New => {
-            if node.is_none_or(ObjectNode::is_default) {
+            if !mode.is_local() || node.is_none_or(ObjectNode::is_default) {
                 Ok(())
             } else {
                 Err(Refusal::NotNew {
@@ -1032,6 +1161,7 @@ pub(crate) fn check_object(
                 shape,
                 inner,
                 &at,
+                mode,
             )
         }
         other => Err(Refusal::NotAnObjectOp {
@@ -1295,7 +1425,7 @@ mod tests {
         FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, NumKind, Shape, UnsupportedReason,
     };
 
-    use super::{Node, Refusal, Site, check, shaped};
+    use super::{Mode, Node, Refusal, Site, Target, check, shaped};
     use crate::leaf::{LeafOp, Scalar};
     use crate::op::InstanceOp;
     use crate::testing::{
@@ -1972,9 +2102,10 @@ mod tests {
         let refusal = check(
             &sem,
             None,
-            super::Shaped::Bare(Site::Object(root)),
+            super::Shaped::Bare(Site::Object(Target::Class(root))),
             &InstanceOp::variant(root, InstanceOp::field(FeatureSlot(9), InstanceOp::New)),
             &super::At::root(),
+            Mode::Local,
         )
         .unwrap_err();
         match &refusal {
@@ -1995,7 +2126,7 @@ mod tests {
         let refusal = check(
             &sem,
             None,
-            super::Shaped::Bare(Site::Object(root)),
+            super::Shaped::Bare(Site::Object(Target::Class(root))),
             &InstanceOp::variant(
                 root,
                 on(
@@ -2006,6 +2137,7 @@ mod tests {
                 ),
             ),
             &super::At::root(),
+            Mode::Local,
         )
         .unwrap_err();
         match &refusal {
@@ -2033,9 +2165,10 @@ mod tests {
         let refusal = check(
             &sem,
             None,
-            super::Shaped::Bare(Site::Object(root)),
+            super::Shaped::Bare(Site::Object(Target::Class(root))),
             &InstanceOp::variant(root, on(&sem, "Root", "children", append('x', 0))),
             &super::At::root(),
+            Mode::Local,
         )
         .unwrap_err();
         match &refusal {
@@ -2061,7 +2194,7 @@ mod tests {
         let refusal = check(
             &sem,
             None,
-            super::Shaped::Bare(Site::Object(root)),
+            super::Shaped::Bare(Site::Object(Target::Class(root))),
             &InstanceOp::variant(
                 root,
                 on(
@@ -2072,6 +2205,7 @@ mod tests {
                 ),
             ),
             &super::At::root(),
+            Mode::Local,
         )
         .unwrap_err();
         assert!(refusal.to_string().contains("`Root.title`"), "{refusal}");

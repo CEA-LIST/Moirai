@@ -19,11 +19,13 @@
 #![warn(missing_docs)]
 
 pub mod leaf;
+pub mod log;
 pub mod node;
 pub mod op;
 #[cfg(feature = "test_utils")]
 pub mod testing;
 
 pub use leaf::{LeafLog, LeafMismatch, LeafOp, Scalar};
+pub use log::{ModelHeader, ModelLog};
 pub use node::{Node, ObjectNode, OptNode, Refusal, SeqNode, SlotNode};
 pub use op::{InstanceOp, ModelOp, OptOp, SeqOp};
