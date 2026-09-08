@@ -38,6 +38,14 @@ pub enum AWBag<V> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(
+        serialize = "V: serde::Serialize",
+        deserialize = "V: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct AWBagLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<Counter<usize>>>);
 
 impl<V> Default for AWBagLog<V>
