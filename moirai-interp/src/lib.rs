@@ -19,5 +19,7 @@
 #![warn(missing_docs)]
 
 pub mod leaf;
+pub mod op;
 
 pub use leaf::{LeafLog, LeafMismatch, LeafOp, Scalar};
+pub use op::{InstanceOp, ModelOp, OptOp, SeqOp};
