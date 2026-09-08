@@ -1529,6 +1529,7 @@ dependencies = [
  "moirai-protocol",
  "moirai-semantics",
  "rand 0.10.0",
+ "rand_chacha 0.10.0",
  "serde",
  "serde_json",
 ]

@@ -18,6 +18,9 @@
 //!
 #![warn(missing_docs)]
 
+pub mod eval;
+#[cfg(feature = "fuzz")]
+pub mod fuzz;
 pub mod leaf;
 pub mod log;
 pub mod node;

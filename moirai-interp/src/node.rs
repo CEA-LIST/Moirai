@@ -364,8 +364,8 @@ impl Target {
         }
     }
 
-    /// The classes that may, by name; the error path only.
-    pub(crate) fn allowed(self, sem: &MetamodelSemantics) -> Vec<Arc<str>> {
+    /// The classes that may, by slot.
+    pub(crate) fn allowed_slots(self, sem: &MetamodelSemantics) -> Vec<ClassSlot> {
         let mut slots: Vec<ClassSlot> = match self {
             Target::Class(target) => sem
                 .classes
@@ -382,6 +382,11 @@ impl Target {
         slots.sort_unstable();
         slots.dedup();
         slots
+    }
+
+    /// The classes that may, by name; the error path only.
+    pub(crate) fn allowed(self, sem: &MetamodelSemantics) -> Vec<Arc<str>> {
+        self.allowed_slots(sem)
             .into_iter()
             .filter_map(|slot| sem.classes.get(slot.index()))
             .map(|class| Arc::clone(&class.name))

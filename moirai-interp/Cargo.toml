@@ -22,6 +22,9 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
     "elsa",
 ] }
 
+[dev-dependencies]
+rand_chacha = { version = "0.10.0" }
+
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
 # because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither
