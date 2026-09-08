@@ -148,6 +148,51 @@ services:
         exec network_node
     networks: [session]
 
+  # The interpreted replica: the same rig, running `model_node` instead of
+  # `network_node`. Behind the `interp` profile, so a bare `docker compose up`
+  # keeps its shipped behaviour and the two never share a session by accident
+  # — they host the same *default* log id and would refuse nothing, but their
+  # operations are different types and the models they register are not
+  # comparable.
+  #
+  # Scale it the way `node` is scaled: `docker compose --profile interp up
+  # --scale interp-node=3`. Every instance is identical, and identical is the
+  # point — one binary, and a metamodel it was never built for arrives at run
+  # time:
+  #
+  #     curl -X POST --data-binary @uml.metamodel.json \
+  #         http://<replica>:8081/api/metamodels
+  #
+  # The image ships the Arachne examples at /metamodels, which `METAMODEL_DIR`
+  # already points at, so a replica offers `bt` and `uml` from the start —
+  # the two descriptors there, verified against a container built from this
+  # file's image. A descriptor this node cannot read is skipped at start-up
+  # with the parser's reason rather than served unchecked, which is where the
+  # keyed and transparent containments of decision D6 would land.
+  interp-node:
+    image: *image
+    profiles: [interp]
+    depends_on:
+      bootnode:
+        condition: service_healthy
+    environment:
+      <<: *replica-env
+      REPLICA_ID: ""
+      ADVERTISE_ADDR: ""
+      # A log of its own, so an interpreted rig and a generated rig can run
+      # side by side against one bootnode without exchanging frames neither
+      # can decode.
+      LOG_ID: "${INTERP_LOG_ID:-1a7e9be511a7e9be511a7e9be511a7e9}"
+      SESSION_ID: "${INTERP_SESSION_ID:-compose-interp}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        REPLICA_ID="$${REPLICA_ID:-$$HOSTNAME}" \
+        ADVERTISE_ADDR="$${ADVERTISE_ADDR:-$$HOSTNAME:$$LISTEN_PORT}" \
+        exec model_node
+    networks: [session]
+
   # Two replicas with their HTTP APIs published to the host, for the browser
   # model editor (clients/model-editor). Behind the `edit` profile so a bare
   # `docker compose up` keeps its shipped behaviour; `rig.sh --edit` starts

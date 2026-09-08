@@ -12,6 +12,15 @@ description = "One log that merges any metamodel a MetamodelSemantics table can 
 moirai-protocol = { path = "../moirai-protocol" }
 moirai-crdt = { path = "../moirai-crdt" }
 moirai-semantics = { path = "../moirai-semantics" }
+# Off by default, and behind the `network` feature: the crate is a log and a
+# table, and every test of it runs without a socket. The dependency exists so
+# `QueryableLog` — the trait `GET /api/state` is served through, which lives in
+# `moirai-network` — can be implemented for `ModelLog`, which the orphan rule
+# says has to happen in one of the two crates. It happens here, and it is the
+# only direction that does not make the network layer know what a model is:
+# `moirai-network` depends on `moirai-crdt` and `moirai-protocol` and on
+# nothing else in the workspace, so there is no cycle.
+moirai-network = { path = "../moirai-network", optional = true }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0.128" }
 # MOIRAI-FUZZ
@@ -24,6 +33,22 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
 
 [dev-dependencies]
 rand_chacha = { version = "0.10.0" }
+# The end-to-end scenarios `ip18` and `ip19` drive three `model_node`
+# processes over HTTP, which is the only thing in this crate that speaks to a
+# socket. `blocking` for the same reason `moirai-network` picked it: the
+# harness is a sequence of request/poll steps and the workspace is
+# synchronous.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "blocking",
+] }
+
+# The interpreted node: one binary that hosts a model of any metamodel it
+# holds a descriptor for. Needs the network layer, so it is built only when
+# the feature that brings it in is on.
+[[example]]
+name = "model_node"
+required-features = ["network"]
 
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
@@ -37,4 +62,9 @@ serde = ["moirai-protocol/serde", "moirai-crdt/serde"]
 # not compile.
 sink = ["moirai-protocol/sink", "moirai-crdt/sink"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
+# `QueryableLog for ModelLog` and the `model_node` example. Off by default so
+# the crate stays a log and a table for every test that does not need a
+# socket; `serde` because a log that cannot be serialized cannot be
+# transferred, and a node that cannot transfer cannot be joined.
+network = ["dep:moirai-network", "serde"]
 test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-crdt/test_utils"]

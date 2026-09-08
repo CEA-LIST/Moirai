@@ -1,7 +1,13 @@
-# Replica image for the end-to-end convergence tests.
+# Replica image for the end-to-end convergence tests, and for the rig.
 #
-# The binary under test is `network_node`, the example shipped by the
-# Arachne-generated `json_crdt` crate. That crate depends on this workspace
+# It carries **two** replica binaries, which is the phase 5 claim in one line
+# of packaging: `network_node`, generated from one metamodel and rebuilt for
+# the next, and `model_node`, built once from `moirai-interp` and hosting a
+# model of any descriptor it holds. The compose rig's `interp` profile runs
+# the second; everything else runs the first.
+#
+# The binary under test in `e2e_convergence.rs` is `network_node`, the example
+# shipped by the Arachne-generated `json_crdt` crate. That crate depends on this workspace
 # through relative path dependencies (`../../../moirai/moirai-crdt`, ...), so
 # the build context must reproduce the sibling-repository layout:
 #
@@ -51,6 +57,13 @@ COPY ${ARACHNE_DIR}/examples/ /build/metamodels/
 WORKDIR /build/${MOIRAI_DIR}
 RUN cargo build -p moirai-bootnode -p moirai-relay -p moirai-dashboard
 
+# The interpreted replica. One build, and it never needs another: a metamodel
+# it has never seen arrives at run time through `POST /api/metamodels`. The
+# `network` feature is what brings `moirai-network` into `moirai-interp`, and
+# with it `QueryableLog for ModelLog`, which is what `GET /api/state` answers
+# through.
+RUN cargo build -p moirai-interp --features network --example model_node
+
 WORKDIR /build/${ARACHNE_DIR}/generated/json_crdt
 # Debug profile: the tests exercise replication, not throughput, and a release
 # build of the whole workspace costs several minutes per image rebuild.
@@ -70,6 +83,9 @@ RUN apt-get update \
 COPY --from=builder \
     /build/${ARACHNE_DIR}/generated/json_crdt/target/debug/examples/network_node \
     /usr/local/bin/network_node
+COPY --from=builder \
+    /build/${MOIRAI_DIR}/target/debug/examples/model_node \
+    /usr/local/bin/model_node
 COPY --from=builder \
     /build/${MOIRAI_DIR}/target/debug/moirai-bootnode \
     /usr/local/bin/moirai-bootnode

@@ -1526,10 +1526,12 @@ dependencies = [
  "deepsize",
  "moirai-crdt",
  "moirai-fuzz",
+ "moirai-network",
  "moirai-protocol",
  "moirai-semantics",
  "rand 0.10.0",
  "rand_chacha 0.10.0",
+ "reqwest",
  "serde",
  "serde_json",
 ]
