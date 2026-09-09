@@ -626,7 +626,12 @@ mod tests {
     /// One entry of a JSON object: `Object.entry` at `key`, holding an
     /// instance of `class` with `inner` written into the field that class is
     /// represented by.
-    fn put(sem: &moirai_semantics::MetamodelSemantics, key: &str, class: &str, inner: InstanceOp) -> ModelOp {
+    fn put(
+        sem: &moirai_semantics::MetamodelSemantics,
+        key: &str,
+        class: &str,
+        inner: InstanceOp,
+    ) -> ModelOp {
         let object = class_slot(sem, "Object");
         let made = class_slot(sem, class);
         ModelOp::Instance(InstanceOp::variant(
@@ -671,10 +676,25 @@ mod tests {
         let value = feature_slot(&sem, string, "value");
 
         for op in [
-            put(&sem, "name", "String", InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'a' })),
-            put(&sem, "name", "String", InstanceOp::Leaf(LeafOp::InsertChar { pos: 1, ch: 'b' })),
+            put(
+                &sem,
+                "name",
+                "String",
+                InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'a' }),
+            ),
+            put(
+                &sem,
+                "name",
+                "String",
+                InstanceOp::Leaf(LeafOp::InsertChar { pos: 1, ch: 'b' }),
+            ),
             put(&sem, "ok", "Boolean", InstanceOp::Leaf(LeafOp::Enable)),
-            put(&sem, "n", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::float(3.5)))),
+            put(
+                &sem,
+                "n",
+                "Number",
+                InstanceOp::Leaf(LeafOp::Inc(Scalar::float(3.5))),
+            ),
             put(
                 &sem,
                 "list",
@@ -717,7 +737,14 @@ mod tests {
         let sem = json();
         let (mut a, mut b) = opened("m1", &json_descriptor());
 
-        let bump = |by: f64| put(&sem, "k", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::float(by))));
+        let bump = |by: f64| {
+            put(
+                &sem,
+                "k",
+                "Number",
+                InstanceOp::Leaf(LeafOp::Inc(Scalar::float(by))),
+            )
+        };
         let object = class_slot(&sem, "Object");
         let remove = ModelOp::Instance(InstanceOp::variant(
             object,
@@ -806,7 +833,12 @@ mod tests {
             ))
             .unwrap();
         let from_b = b
-            .send(put(&sem, "x", "Number", InstanceOp::Leaf(LeafOp::Inc(Scalar::Int(7)))))
+            .send(put(
+                &sem,
+                "x",
+                "Number",
+                InstanceOp::Leaf(LeafOp::Inc(Scalar::Int(7))),
+            ))
             .unwrap();
         a.receive(from_b);
         b.receive(from_a);

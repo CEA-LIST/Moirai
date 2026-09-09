@@ -1308,8 +1308,7 @@ fn ip27(binary: &PathBuf) -> Result<(), String> {
         let hosted_before = cluster.hosted_logs(replica)?;
         let (status, joined) = cluster.register_raw(replica, Some(&tree), &digest(BT))?;
         assert_eq!(
-            status,
-            200,
+            status, 200,
             "{} was refused the join: {joined}",
             cluster.replicas[replica].id
         );
