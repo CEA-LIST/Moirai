@@ -211,6 +211,18 @@ where
     }
 }
 
+/// `Contains` answers exactly whether the value is in the set `Read` renders,
+/// which is the only specification it has.
+///
+/// `Read` drops a value that any unstable `Remove` mentions, keeps a value that
+/// is among the stable adds, and admits an unstable `Add` only when no stable
+/// `Remove` masks it. Written with `&&` binding tighter than `||`, this used to
+/// read `stable add and no stable remove, or any unstable add`, so an unstable
+/// `Add(v)` answered `true` on its own. That splits two replicas holding the
+/// same operations: on one of them a concurrent `Remove(v)` has already
+/// stabilized and masks the still unstable `Add(v)`, on the other the `Add(v)`
+/// stabilized first and was dropped for having lost to that `Remove(v)`. Both
+/// read the empty set and they used to answer `Contains(v)` differently.
 impl<V> Eval<Contains<V>> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
@@ -220,18 +232,21 @@ where
         stable: &<RWSet<V> as PureCRDT>::StableState,
         unstable: &impl IsUnstableState<Self>,
     ) -> <Contains<V> as QueryOperation>::Response {
-        stable.0.contains(&q.0)
-            && !stable
-                .1
-                .iter()
-                .any(|o| matches!(o, RWSet::Remove(v2) if v2 == &q.0))
-            || unstable.iter().any(|o| {
-                if let RWSet::Add(v) = o.op() {
-                    v == &q.0
-                } else {
-                    false
-                }
-            })
+        !unstable
+            .iter()
+            .any(|o| matches!(o.op(), RWSet::Remove(v) if v == &q.0))
+            && (stable.0.contains(&q.0)
+                || (!stable
+                    .1
+                    .iter()
+                    .any(|o| matches!(o, RWSet::Remove(v2) if v2 == &q.0))
+                    && unstable.iter().any(|o| {
+                        if let RWSet::Add(v) = o.op() {
+                            v == &q.0
+                        } else {
+                            false
+                        }
+                    })))
     }
 }
 
@@ -425,6 +440,34 @@ mod tests {
         assert_eq!(replica_a.query(Read::new()), result);
     }
 
+    /// The shortest pair of concurrent edits on which two replicas that read
+    /// the same set used to answer `Contains` differently.
+    ///
+    /// `a` adds `alpha`, concurrently `b` removes it, and each delivers the
+    /// other's operation. On `a` the `Remove` is causally stable the moment it
+    /// arrives, because `b` authored it and `a` now holds it, so it goes to the
+    /// stable removes and masks `a`'s own `Add`, which is still unstable
+    /// because `b` has not acknowledged it. On `b` it is the `Add` that is
+    /// causally stable on arrival, and `stabilize` drops it for having lost to
+    /// the `Remove` beside it, so `b` keeps no `Add` at all. Both read the
+    /// empty set; `a` used to answer `Contains("alpha")` with `true` on the
+    /// strength of that masked unstable `Add` and `b` with `false`.
+    #[test]
+    fn an_add_concurrent_with_a_remove_answers_contains_the_same_on_both() {
+        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+
+        let add = replica_a.send(RWSet::Add("alpha")).unwrap();
+        let remove = replica_b.send(RWSet::Remove("alpha")).unwrap();
+        replica_a.receive(remove);
+        replica_b.receive(add);
+
+        let result = set_from_slice(&[]);
+        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(Contains("alpha")), false);
+        assert_eq!(replica_b.query(Contains("alpha")), false);
+    }
+
     /// Every ordered pair of concurrent operation lists of length at most two
     /// over `{Add, Remove}` on two values plus `Clear`, delivered both ways:
     /// nine hundred and sixty-one pairs, and the two replicas have to read the
@@ -433,6 +476,7 @@ mod tests {
     #[test]
     fn every_concurrent_pair_of_at_most_two_operations_converges() {
         let mut split = Vec::new();
+        let mut disagree = Vec::new();
         for (left, right) in pairs() {
             let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
             let from_a: Vec<_> = left
@@ -456,12 +500,27 @@ mod tests {
                     "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
                 ));
             }
+            for v in ["alpha", "beta"] {
+                let contains_a: bool = replica_a.query(Contains(v));
+                let contains_b: bool = replica_b.query(Contains(v));
+                if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
+                    disagree.push(format!(
+                        "{left:?} against {right:?}: Contains({v:?}) is {contains_a} on `a` and {contains_b} on `b`, reads are {read_a:?} and {read_b:?}"
+                    ));
+                }
+            }
         }
         assert!(
             split.is_empty(),
             "{} concurrent pairs do not converge:\n{}",
             split.len(),
             split.join("\n")
+        );
+        assert!(
+            disagree.is_empty(),
+            "{} concurrent pairs answer `Contains` against their own `Read`:\n{}",
+            disagree.len(),
+            disagree.join("\n")
         );
     }
 
@@ -479,6 +538,7 @@ mod tests {
     #[test]
     fn every_concurrent_pair_converges_when_both_replicas_stabilize_it() {
         let mut split = Vec::new();
+        let mut disagree = Vec::new();
         for (left, right) in pairs() {
             let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
             let from_a: Vec<_> = left
@@ -514,12 +574,31 @@ mod tests {
                     "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
                 ));
             }
+            for v in ["alpha", "beta"] {
+                let contains_a = replica_a
+                    .query(Get::new(&"k", Contains(v)))
+                    .unwrap_or_default();
+                let contains_b = replica_b
+                    .query(Get::new(&"k", Contains(v)))
+                    .unwrap_or_default();
+                if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
+                    disagree.push(format!(
+                        "{left:?} against {right:?}: Contains({v:?}) is {contains_a} on `a` and {contains_b} on `b`, reads are {read_a:?} and {read_b:?}"
+                    ));
+                }
+            }
         }
         assert!(
             split.is_empty(),
             "{} concurrent pairs do not converge once both replicas stabilize them:\n{}",
             split.len(),
             split.join("\n")
+        );
+        assert!(
+            disagree.is_empty(),
+            "{} concurrent pairs answer `Contains` against their own `Read` once both replicas stabilize them:\n{}",
+            disagree.len(),
+            disagree.join("\n")
         );
     }
 
