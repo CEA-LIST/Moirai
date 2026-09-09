@@ -522,11 +522,56 @@ impl Default for Node {
     }
 }
 
-/// An object: its class, and every feature its class can see.
+/// An object: its class, the event that created it, and every feature its
+/// class can see.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ObjectNode {
     pub(crate) class: ClassSlot,
+    /// The id of the operation that brought this object into existence.
+    ///
+    /// [`SeqNode`] already keys its children by exactly this and mints it as
+    /// `ctx.id.clone()` (`nested_list.rs:104-112`, copied in [`apply`]); this
+    /// is the same rule extended to the other three container shapes, so that
+    /// an object in a slot, an optional or a map is as addressable as one in
+    /// a sequence.
+    ///
+    /// **It is an `EventId` and not an `Option<EventId>`, and there is no
+    /// `Root` variant beside it.** Spec 11 §3.6 wrote
+    /// `enum ObjectId { Root, Born(EventId) }` because it expected a document
+    /// root the store creates for itself, and gave the reason a sentinel is
+    /// not allowed there: a synthesised `EventId` resolves to a different
+    /// string on every replica. This tree has none:
+    /// `ModelLog::effect` mints the root as `Node::Slot(SlotNode::Unset)` on
+    /// `Install` and the root *object* is put there by [`ensure_variant`], on
+    /// the first `InstanceOp::Variant` that reaches it, with that operation's
+    /// event in hand exactly as every deeper object is. Every object here is
+    /// born of an operation, so nothing has to be invented for the one at the
+    /// top.
+    ///
+    /// **It is stable and it is not yet convergent, and the second half needs
+    /// a decision before anything keys on it.** An object created by one
+    /// operation and delivered to a peer has one birth on both. Two writers
+    /// who put the *same* concrete class in one place at once do not:
+    /// [`ensure_variant`] collapses them into one object, which is
+    /// `union.rs:180-200`'s rule and what `ip9` asserts for two *different*
+    /// classes, and each replica keeps the id of whichever creating operation
+    /// it delivered first. The same holds for an [`OptNode`]'s
+    /// `get_or_insert_with` and a [`MapNode`]'s `entry(..).or_insert_with`;
+    /// a [`SeqNode`] insert is exempt, because it keys its child by
+    /// `ctx.id` and two concurrent inserts are therefore two children.
+    /// `two_concurrent_creations_of_one_class_collapse_into_one_object_and_two_births`
+    /// pins it. Nothing observes it today, for the reason below.
+    ///
+    /// **Nothing reads it yet.** It is deliberately absent from
+    /// [`Node::is_default`], from [`ObjectNode::is_default`] and from
+    /// `eval::read_object`: an object that has just been created still reads
+    /// as its default, which is what keeps a freshly minted empty object
+    /// pruned by `MapNode`'s rule and keeps the read-out comparable with the
+    /// generated path, which has no birth identity at all. It is here first
+    /// because it moves the state-transfer format, and a format move is
+    /// cheapest before there are consumers and fixtures to move with it.
+    pub(crate) born: EventId,
     /// Keyed by the *visible* slot; minted on first write, from the rule.
     pub(crate) fields: BTreeMap<FeatureSlot, Node>,
 }
@@ -673,10 +718,17 @@ impl Ctx<'_> {
 }
 
 impl ObjectNode {
-    /// An empty instance of one class.
-    pub(crate) fn new(class: ClassSlot) -> Self {
+    /// An empty instance of one class, born of one operation.
+    ///
+    /// The `born` argument is not defaultable and not optional, which is the
+    /// point: the only caller is [`ensure_variant`], the only caller of
+    /// *that* is [`apply`], and `apply` holds a [`Ctx`]. An object that could
+    /// be minted without an event in hand would have no identity to give, and
+    /// the compiler is what says so.
+    pub(crate) fn new(class: ClassSlot, born: EventId) -> Self {
         ObjectNode {
             class,
+            born,
             fields: BTreeMap::new(),
         }
     }
@@ -684,6 +736,15 @@ impl ObjectNode {
     /// The class this is an instance of.
     pub fn class(&self) -> ClassSlot {
         self.class
+    }
+
+    /// The id of the operation that created this object.
+    ///
+    /// Stable for the object's whole life: [`apply_object`] writes fields and
+    /// never this. Nothing in this crate reads it yet — see the field's own
+    /// note for why it is here before it has a consumer.
+    pub fn born(&self) -> &EventId {
+        &self.born
     }
 
     /// Its features, by visible slot.
@@ -1491,8 +1552,11 @@ pub(crate) fn apply(
                 .map_or_else(|| Arc::from("?"), |class| Arc::clone(&class.name));
             let emit = emit.variant(&name);
             // `union.rs:180-200`: a class this slot does not hold yet is
-            // added beside what it holds, never refused.
-            ensure_variant(slot, class);
+            // added beside what it holds, never refused. The operation doing
+            // the adding is the one whose id the new object is born with; an
+            // operation that finds its class already here mints nothing and
+            // changes no identity.
+            ensure_variant(slot, class, ctx.id);
             let object = slot
                 .find_mut(class)
                 .expect("`ensure_variant` put one of this class here");
@@ -1568,22 +1632,28 @@ fn target_at(seq: &SeqNode, ctx: Ctx<'_>, pos: usize, at: &At) -> Result<EventId
 
 /// Put an object of this class in the slot if there is not one already,
 /// keeping whatever else is there.
-fn ensure_variant(slot: &mut SlotNode, class: ClassSlot) {
+///
+/// `born` is the id of the operation that is putting it there, and it is
+/// taken by the three arms that mint and by nothing else: an operation that
+/// finds its class already here has not created anything, so it leaves the
+/// birth identity of what it found alone. That is what makes the second
+/// writer of a conflict the parent of *its* object and not of the other one.
+fn ensure_variant(slot: &mut SlotNode, class: ClassSlot, born: &EventId) {
     match slot {
         SlotNode::Unset => {
-            *slot = SlotNode::Value(Box::new(ObjectNode::new(class)));
+            *slot = SlotNode::Value(Box::new(ObjectNode::new(class, born.clone())));
         }
         SlotNode::Value(object) => {
             if object.class != class {
                 let SlotNode::Value(existing) = std::mem::replace(slot, SlotNode::Unset) else {
                     unreachable!("matched a moment ago");
                 };
-                *slot = SlotNode::Conflicts(vec![*existing, ObjectNode::new(class)]);
+                *slot = SlotNode::Conflicts(vec![*existing, ObjectNode::new(class, born.clone())]);
             }
         }
         SlotNode::Conflicts(objects) => {
             if !objects.iter().any(|object| object.class == class) {
-                objects.push(ObjectNode::new(class));
+                objects.push(ObjectNode::new(class, born.clone()));
             }
         }
     }
@@ -1599,7 +1669,7 @@ mod tests {
     //! remote operation that will not route, the reasons a refusal is written
     //! in — are in [`crate::log`], over the real `ModelLog`.
 
-    use moirai_protocol::replica::IsReplica;
+    use moirai_protocol::{event::id::EventId, replica::IsReplica};
     use moirai_semantics::{
         FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, NumKind, Shape, UnsupportedReason,
     };
@@ -1625,6 +1695,170 @@ mod tests {
     /// One character appended to a text leaf.
     fn append(ch: char, pos: usize) -> InstanceOp {
         InstanceOp::Leaf(LeafOp::InsertChar { pos, ch })
+    }
+
+    // ------------------------------------------------------ birth identity
+
+    /// Every object here, in `a`'s replica.
+    fn births(
+        sem: &MetamodelSemantics,
+        replica: &moirai_protocol::replica::Replica<
+            Harness,
+            moirai_protocol::broadcast::tcsb::Tcsb<InstanceOp>,
+        >,
+    ) -> (EventId, EventId) {
+        let root = object(&replica.state().root);
+        let main = object(field(sem, root, "main").expect("the create minted it"));
+        (root.born().clone(), main.born().clone())
+    }
+
+    #[test]
+    fn an_objects_birth_identity_outlives_everything_written_into_it() {
+        // What `born` is *for*: it names the operation that created the
+        // object and no later one, so an object stays the same object
+        // through every edit, every arrival from a peer and every removal
+        // that update-wins leaves standing.
+        let sem = mini();
+        let (mut a, mut b) = twins(&sem, "Root");
+
+        let create = at_root(
+            &sem,
+            "Root",
+            on(
+                &sem,
+                "Root",
+                "main",
+                InstanceOp::variant(class_slot(&sem, "Sequence"), InstanceOp::New),
+            ),
+        );
+        let event = a.send(create).unwrap();
+        b.receive(event);
+
+        let (root_born, main_born) = births(&sem, &a);
+        assert_eq!(
+            births(&sem, &b),
+            (root_born.clone(), main_born.clone()),
+            "the create and its delivery name one birth"
+        );
+
+        // A leaf write into the object, a child inserted under it, a second
+        // writer's concurrent write into the same object, and the child
+        // removed again: every kind of operation that reaches an object that
+        // is already there.
+        let name = |ch: char| {
+            at_root(
+                &sem,
+                "Root",
+                on(
+                    &sem,
+                    "Root",
+                    "main",
+                    InstanceOp::variant(
+                        class_slot(&sem, "Sequence"),
+                        on(&sem, "TreeNode", "ID", append(ch, 0)),
+                    ),
+                ),
+            )
+        };
+        let under = |op: InstanceOp| {
+            at_root(
+                &sem,
+                "Root",
+                on(
+                    &sem,
+                    "Root",
+                    "main",
+                    InstanceOp::variant(
+                        class_slot(&sem, "Sequence"),
+                        on(&sem, "Sequence", "children", op),
+                    ),
+                ),
+            )
+        };
+
+        let a1 = a.send(name('a')).unwrap();
+        let a2 = a
+            .send(under(InstanceOp::insert(
+                0,
+                InstanceOp::variant(class_slot(&sem, "Fallback"), InstanceOp::New),
+            )))
+            .unwrap();
+        // Written before b has seen either, so it is concurrent with both.
+        let b1 = b.send(name('b')).unwrap();
+
+        b.receive(a1);
+        b.receive(a2);
+        a.receive(b1);
+
+        let a3 = a.send(under(InstanceOp::delete(0))).unwrap();
+        b.receive(a3);
+
+        // Something was actually written, so the claim is not about an
+        // untouched object.
+        for (who, replica) in [("a", &a), ("b", &b)] {
+            let main = object(field(&sem, object(&replica.state().root), "main").unwrap());
+            assert_eq!(main.fields().len(), 2, "{who} wrote into the object");
+        }
+
+        for (who, replica) in [("a", &a), ("b", &b)] {
+            assert_eq!(
+                births(&sem, replica),
+                (root_born.clone(), main_born.clone()),
+                "{who} moved a birth identity that nothing creates"
+            );
+        }
+    }
+
+    #[test]
+    fn two_concurrent_creations_of_one_class_collapse_into_one_object_and_two_births() {
+        // Named so the limit is a statement and not an omission. Two writers
+        // who put the *same* concrete class in one slot at once collapse into
+        // one object, which is `ensure_variant`'s rule and what `ip9` asserts
+        // for two *different* classes. `born` is minted by whichever creating
+        // operation each replica delivered first, so the two replicas hold
+        // one object under two birth identities and stay that way.
+        //
+        // Nothing observes it today: `born` reaches neither the read-out
+        // (`eval::read_object` walks `class` and `fields`) nor `is_default`
+        // nor any equality, so the four oracles cannot see it and the state
+        // the two replicas *read* is identical. It is written down here
+        // because the first consumer — an index keyed by identity — would
+        // see it immediately, and because the answer is a merge decision
+        // (a deterministic pick over the concurrent creators, two objects
+        // instead of one, or an identity that is not the creating event) and
+        // not a local fix.
+        let sem = mini();
+        let (mut a, mut b) = twins(&sem, "Root");
+        let create = || {
+            at_root(
+                &sem,
+                "Root",
+                on(
+                    &sem,
+                    "Root",
+                    "main",
+                    InstanceOp::variant(class_slot(&sem, "Sequence"), InstanceOp::New),
+                ),
+            )
+        };
+
+        let a1 = a.send(create()).unwrap();
+        let b1 = b.send(create()).unwrap();
+        a.receive(b1);
+        b.receive(a1);
+
+        // One object, on both, which is the part that is not in question.
+        for (who, replica) in [("a", &a), ("b", &b)] {
+            let held = objects(field(&sem, object(&replica.state().root), "main").unwrap());
+            assert_eq!(held.len(), 1, "{who} kept one object");
+        }
+
+        let (root_at_a, main_at_a) = births(&sem, &a);
+        let (root_at_b, main_at_b) = births(&sem, &b);
+        assert_eq!(root_at_a.origin_id(), "a");
+        assert_eq!(root_at_b.origin_id(), "b");
+        assert_ne!(root_at_a, root_at_b, "the root object's birth diverges");
+        assert_ne!(main_at_a, main_at_b, "and so does the contained object's");
     }
 
     // ------------------------------------------------------------------ ip8

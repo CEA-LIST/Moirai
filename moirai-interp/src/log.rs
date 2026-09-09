@@ -651,6 +651,62 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------ birth identity
+
+    #[test]
+    fn an_object_is_born_of_one_event_and_two_replicas_agree_on_which() {
+        // The point of `ObjectNode::born`, and the only thing that makes it
+        // an identity rather than a local note. The two replicas index their
+        // members in opposite orders, so the id `a` stores for the operation
+        // it wrote and the id `b` stores for the same operation carry
+        // different `ReplicaIdx`es. `EventId` compares by origin *name* and
+        // sequence number (`event/id.rs:100-103`), which is what makes one
+        // birth identity mean one object on both.
+        let log_id = LogId::generate();
+        let mut a: Replica<ModelLog, Tcsb<ModelOp>> =
+            Replica::bootstrap_with_log_id("a".to_string(), &["a", "b"], log_id.clone());
+        let mut b: Replica<ModelLog, Tcsb<ModelOp>> =
+            Replica::bootstrap_with_log_id("b".to_string(), &["b", "a"], log_id);
+
+        let event = a.send(install("m1", &bt_descriptor())).unwrap();
+        b.receive(event);
+
+        let created = a.send(ModelOp::Instance(add_tree('t'))).unwrap();
+        let written = created.event().id().clone();
+        assert_eq!(written.origin_id(), "a");
+        b.receive(created);
+
+        let sem = bt();
+        let born_here = |replica: &Replica<ModelLog, Tcsb<ModelOp>>| {
+            let root = object(replica.state().root());
+            let trees = sequence(field(&sem, root, "behaviortrees").expect("minted by the insert"));
+            (
+                root.born().clone(),
+                object(ordered(trees)[0]).born().clone(),
+            )
+        };
+        let (root_at_a, tree_at_a) = born_here(&a);
+        let (root_at_b, tree_at_b) = born_here(&b);
+
+        assert_eq!(
+            tree_at_a, written,
+            "`a` gave the object the id of the operation that created it"
+        );
+        assert_eq!(
+            tree_at_b, tree_at_a,
+            "and `b` names the same birth for the same object"
+        );
+        assert_eq!(root_at_b, root_at_a, "and so does the root object");
+
+        // Two index spaces, one identity: without this the equality above
+        // could be comparing two copies of one number.
+        assert_ne!(
+            tree_at_a.idx(),
+            tree_at_b.idx(),
+            "the two replicas were supposed to disagree about indices"
+        );
+    }
+
     // ------------------------------------------- the real behaviour tree
 
     #[test]
