@@ -1,0 +1,96 @@
+# One replica, and only one: this file is started once per replica, each time
+# as a Compose project of its own, which is what makes a replica stoppable and
+# startable on its own while the session it belongs to keeps running.
+#
+#     ./stack.sh up alice --port 8081
+#     ./stack.sh up bob   --port 8082 --bin network_node
+#     ./stack.sh down bob
+#
+# Everything that differs between replicas is an environment variable rather
+# than a service of its own, so adding the fourth replica changes nothing here
+# and there is no per-replica block to drift out of step with the others.
+#
+# # No relay knob, on purpose
+#
+# There is none because the binaries read none. A replica registers with the
+# bootnode and reads the roster back, and the roster is where the relay address
+# comes from — `infra.yml` configures it once, on the bootnode. A per-replica
+# relay setting could only ever disagree with the session.
+#
+# # Identity, and the trap it comes from
+#
+# `REPLICA_ID` and `ADVERTISE_ADDR` are both derived from `REPLICA_NAME`, and
+# `REPLICA_NAME` has no default: `stack.sh` requires it and refuses a name that
+# is already up. The rig next door blanks both variables and falls back to the
+# container hostname because its `node` service is scaled to N identical
+# containers; inheriting one fixed id there gave five replicas the id `a`, the
+# directory upserted them onto a single entry and the roster never held more
+# than one peer. Here the containers are not identical — each is its own
+# project, started by name — so the name is the id, and distinctness is
+# enforced where the name is chosen instead of being papered over at run time.
+#
+# `ADVERTISE_ADDR` is `<name>:9001`, which resolves because the service
+# declares `<name>` as an alias on the shared bridge. That is what lets a
+# replica in one project be dialled by a replica in another.
+#
+# # The network
+#
+# External, created by `stack.sh`. Separate projects get separate networks by
+# default, and separate networks is precisely what must not happen here — see
+# the header of `infra.yml`.
+
+name: ${REPLICA_PROJECT:-moirai-replica-${REPLICA_NAME:?set REPLICA_NAME, or use stack.sh}}
+
+services:
+  replica:
+    image: ${MOIRAI_IMAGE:-moirai-json-crdt:test}
+    container_name: ${REPLICA_NAME:?set REPLICA_NAME, or use stack.sh}
+    hostname: ${REPLICA_NAME}
+    environment:
+      # Which path this replica runs. `model_node` is the interpreted one: one
+      # binary, and the metamodel arrives at run time. `network_node` is the
+      # generated one, built from a single metamodel. The interpreted binary is
+      # the default because it is the path the current work is on, and because
+      # it is the one that can join a model whose descriptor it does not hold.
+      REPLICA_BIN: "${REPLICA_BIN:-model_node}"
+      REPLICA_ID: "${REPLICA_NAME}"
+      ADVERTISE_ADDR: "${REPLICA_NAME}:9001"
+      LISTEN_PORT: "9001"
+      HTTP_PORT: "8081"
+      BOOTNODE_URL: "${BOOTNODE_URL:-http://bootnode:7000}"
+      SESSION_ID: "${SESSION_ID:-stack}"
+      RECONCILE_SECS: "${RECONCILE_SECS:-5}"
+      # `-` rather than `:-`, so an explicitly empty `DASHBOARD_URL=` gives a
+      # replica that reports nowhere. Pointing at a dashboard that is not
+      # running costs one failed outbound POST every few seconds, which is what
+      # makes attaching one later a second command rather than a restart.
+      DASHBOARD_URL: "${DASHBOARD_URL-http://dashboard:8090}"
+      PEERS: ""
+      # One shared log id across the session: replicas that each minted their
+      # own would host different logs and refuse each other's events. This is
+      # the replica's *default* log; the models registered through
+      # `POST /api/models` are hosted beside it.
+      LOG_ID: "${LOG_ID:-1a7e9be511a7e9be511a7e9be511a7e9}"
+      # Every descriptor the image ships. Set it empty (`stack.sh up --bare`)
+      # for a replica that holds no metamodel at all, which is the interesting
+      # case: it can still join a model by id and take the descriptor out of
+      # the log the creator installed it in.
+      METAMODEL_DIR: "${METAMODEL_DIR-/metamodels}"
+    ports:
+      - "${REPLICA_HTTP_PORT:?set REPLICA_HTTP_PORT, or use stack.sh --port}:8081"
+    # `$$` is Compose's escape for a literal `$`, so this expands inside the
+    # container. The image's CMD is `network_node`; naming the binary in an
+    # environment variable is what lets one service definition be either path.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - exec "$$REPLICA_BIN"
+    networks:
+      session:
+        aliases:
+          - ${REPLICA_NAME}
+
+networks:
+  session:
+    external: true
+    name: ${MOIRAI_STACK_NETWORK:-moirai_stack}

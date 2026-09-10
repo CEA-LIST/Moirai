@@ -1,0 +1,128 @@
+# The session infrastructure, on its own lifecycle: a directory, a relay, and
+# optionally a dashboard to watch what the replicas do.
+#
+# This file exists because `docker-compose.yml` next door starts a whole
+# measurement rig as one Compose project, and a project is the unit Compose
+# stops and starts. A replica that has to come and go against a session that
+# stays up therefore cannot be a service in it — it has to be a project of its
+# own. So the rig is split in two here: this file is the part that outlives
+# every replica, and `replica.yml` is one replica, started once per replica by
+# `stack.sh`.
+#
+#     ./stack.sh infra up --dashboard
+#     ./stack.sh up alice --port 8081
+#     ./stack.sh down alice
+#
+# Nothing here replaces the measurement rig. `docker-compose.yml` is still what
+# `rig.sh`, the e2e harness and `experiments/` drive, and it is unchanged.
+#
+# # Why the network is external
+#
+# Separate projects do not share a network: each gets one of its own, and two
+# containers on different bridges cannot resolve each other's names, let alone
+# route to them. The session bridge is therefore created outside Compose — by
+# `stack.sh`, which creates it if it is absent — and declared `external` in
+# this file and in `replica.yml`, so every project attaches to the same
+# existing bridge rather than each making its own. The name defaults to
+# `moirai_stack`, deliberately not the rig's `moirai_session`: the two can then
+# run side by side, and `docker compose down` on the old rig still owns and
+# removes its own network.
+#
+# # Where the relay is configured
+#
+# Here, and nowhere else. `model_node` and `network_node` read no relay
+# variable at all: the bootnode publishes `RELAY_ADDR` in the roster it hands
+# out, and a replica learns from that roster where it can meet a peer it has no
+# route to. That is what makes `RELAY_ADDR=` a session with no relay and
+# nothing else to change, and it is why `replica.yml` has no relay knob to
+# forget to set.
+
+name: ${MOIRAI_INFRA_PROJECT:-moirai-infra}
+
+x-image: &image ${MOIRAI_IMAGE:-moirai-json-crdt:test}
+
+services:
+  # Directory only. It never sees an operation and holds no model state, so it
+  # can be restarted under a running session without any replica noticing
+  # beyond a failed poll.
+  bootnode:
+    image: *image
+    command: ["moirai-bootnode"]
+    container_name: ${MOIRAI_BOOTNODE_NAME:-bootnode}
+    environment:
+      BOOTNODE_PORT: "7000"
+      # Comfortably above a replica's RECONCILE_SECS, so a live replica is
+      # never dropped for being slow. It is also the window in which a replica
+      # that was stopped rather than asked to leave still appears in the
+      # roster: `stack.sh down` posts /api/leave first for that reason.
+      BOOTNODE_TTL_SECS: "${BOOTNODE_TTL_SECS:-30}"
+      # The only place a relay is configured; see the header.
+      RELAY_ADDR: "${RELAY_ADDR-relay:7100}"
+    ports:
+      # Published so that `stack.sh ls` can read the roster from the host
+      # without exec'ing into a container. The replicas reach it by name.
+      - "${BOOTNODE_HTTP_PORT:-7000}:7000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7000/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    networks:
+      session:
+        aliases: [bootnode]
+
+  # Forwards frames between replicas that cannot open a direct connection.
+  #
+  # A separate service from the bootnode, not a convenience: the bootnode is
+  # blob-blind — it sees routing and never model content — and that is what
+  # makes hosting one acceptable. A relay is by definition a data path, so
+  # merging them would end the ability to state it (C-D3). Same image, two
+  # processes.
+  relay:
+    image: *image
+    command: ["moirai-relay"]
+    container_name: ${MOIRAI_RELAY_NAME:-relay}
+    environment:
+      RELAY_PORT: "7100"
+      RELAY_HTTP_PORT: "7101"
+      # `frames_in` vs `frames_out` is where fan-out is visible: one broadcast
+      # to N relayed peers must read as one in and N out.
+      RELAY_VERBOSE: "${RELAY_VERBOSE-}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7101/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    networks:
+      session:
+        aliases: [relay]
+
+  # The live view, behind a profile as it is in the rig. "Optionally connected"
+  # is the requirement, and a session that needs its monitoring to run is not
+  # optional.
+  #
+  # It binds a port and the replicas do not: they dial *out* to it, which is
+  # the deployment this system targets — replicas are peers on laptops behind
+  # NAT, the same reason there is a bootnode with a relay fallback at all.
+  dashboard:
+    image: *image
+    profiles: [dashboard]
+    command: ["moirai-dashboard", "--port", "8090"]
+    container_name: ${MOIRAI_DASHBOARD_NAME:-dashboard}
+    ports:
+      - "${DASHBOARD_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/api/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    networks:
+      session:
+        aliases: [dashboard]
+
+networks:
+  # Created by `stack.sh`, not by Compose: it has to outlive this project and
+  # be joinable by every replica project. See the header.
+  session:
+    external: true
+    name: ${MOIRAI_STACK_NETWORK:-moirai_stack}
