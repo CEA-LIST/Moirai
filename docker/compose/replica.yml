@@ -2,9 +2,9 @@
 # as a Compose project of its own, which is what makes a replica stoppable and
 # startable on its own while the session it belongs to keeps running.
 #
-#     ./stack.sh up alice --port 8081
-#     ./stack.sh up bob   --port 8082 --bin network_node
-#     ./stack.sh down bob
+#     ./stack_interpreter.sh up alice --port 8081
+#     ./stack_interpreter.sh up bob   --port 8082 --bin network_node
+#     ./stack_interpreter.sh down bob
 #
 # Everything that differs between replicas is an environment variable rather
 # than a service of its own, so adding the fourth replica changes nothing here
@@ -20,7 +20,7 @@
 # # Identity, and the trap it comes from
 #
 # `REPLICA_ID` and `ADVERTISE_ADDR` are both derived from `REPLICA_NAME`, and
-# `REPLICA_NAME` has no default: `stack.sh` requires it and refuses a name that
+# `REPLICA_NAME` has no default: `stack_interpreter.sh` requires it and refuses a name that
 # is already up. The rig next door blanks both variables and falls back to the
 # container hostname because its `node` service is scaled to N identical
 # containers; inheriting one fixed id there gave five replicas the id `a`, the
@@ -35,16 +35,16 @@
 #
 # # The network
 #
-# External, created by `stack.sh`. Separate projects get separate networks by
+# External, created by `stack_interpreter.sh`. Separate projects get separate networks by
 # default, and separate networks is precisely what must not happen here — see
 # the header of `infra.yml`.
 
-name: ${REPLICA_PROJECT:-moirai-replica-${REPLICA_NAME:?set REPLICA_NAME, or use stack.sh}}
+name: ${REPLICA_PROJECT:-moirai-replica-${REPLICA_NAME:?set REPLICA_NAME, or use stack_interpreter.sh}}
 
 services:
   replica:
     image: ${MOIRAI_IMAGE:-moirai-json-crdt:test}
-    container_name: ${REPLICA_NAME:?set REPLICA_NAME, or use stack.sh}
+    container_name: ${REPLICA_NAME:?set REPLICA_NAME, or use stack_interpreter.sh}
     hostname: ${REPLICA_NAME}
     environment:
       # Which path this replica runs. `model_node` is the interpreted one: one
@@ -71,13 +71,13 @@ services:
       # the replica's *default* log; the models registered through
       # `POST /api/models` are hosted beside it.
       LOG_ID: "${LOG_ID:-1a7e9be511a7e9be511a7e9be511a7e9}"
-      # Every descriptor the image ships. Set it empty (`stack.sh up --bare`)
+      # Every descriptor the image ships. Set it empty (`stack_interpreter.sh up --bare`)
       # for a replica that holds no metamodel at all, which is the interesting
       # case: it can still join a model by id and take the descriptor out of
       # the log the creator installed it in.
       METAMODEL_DIR: "${METAMODEL_DIR-/metamodels}"
     ports:
-      - "${REPLICA_HTTP_PORT:?set REPLICA_HTTP_PORT, or use stack.sh --port}:8081"
+      - "${REPLICA_HTTP_PORT:?set REPLICA_HTTP_PORT, or use stack_interpreter.sh --port}:8081"
     # `$$` is Compose's escape for a literal `$`, so this expands inside the
     # container. The image's CMD is `network_node`; naming the binary in an
     # environment variable is what lets one service definition be either path.

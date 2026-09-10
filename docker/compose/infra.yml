@@ -7,11 +7,11 @@
 # stays up therefore cannot be a service in it — it has to be a project of its
 # own. So the rig is split in two here: this file is the part that outlives
 # every replica, and `replica.yml` is one replica, started once per replica by
-# `stack.sh`.
+# `stack_interpreter.sh`.
 #
-#     ./stack.sh infra up --dashboard
-#     ./stack.sh up alice --port 8081
-#     ./stack.sh down alice
+#     ./stack_interpreter.sh infra up --dashboard
+#     ./stack_interpreter.sh up alice --port 8081
+#     ./stack_interpreter.sh down alice
 #
 # Nothing here replaces the measurement rig. `docker-compose.yml` is still what
 # `rig.sh`, the e2e harness and `experiments/` drive, and it is unchanged.
@@ -21,7 +21,7 @@
 # Separate projects do not share a network: each gets one of its own, and two
 # containers on different bridges cannot resolve each other's names, let alone
 # route to them. The session bridge is therefore created outside Compose — by
-# `stack.sh`, which creates it if it is absent — and declared `external` in
+# `stack_interpreter.sh`, which creates it if it is absent — and declared `external` in
 # this file and in `replica.yml`, so every project attaches to the same
 # existing bridge rather than each making its own. The name defaults to
 # `moirai_stack`, deliberately not the rig's `moirai_session`: the two can then
@@ -54,12 +54,12 @@ services:
       # Comfortably above a replica's RECONCILE_SECS, so a live replica is
       # never dropped for being slow. It is also the window in which a replica
       # that was stopped rather than asked to leave still appears in the
-      # roster: `stack.sh down` posts /api/leave first for that reason.
+      # roster: `stack_interpreter.sh down` posts /api/leave first for that reason.
       BOOTNODE_TTL_SECS: "${BOOTNODE_TTL_SECS:-30}"
       # The only place a relay is configured; see the header.
       RELAY_ADDR: "${RELAY_ADDR-relay:7100}"
     ports:
-      # Published so that `stack.sh ls` can read the roster from the host
+      # Published so that `stack_interpreter.sh ls` can read the roster from the host
       # without exec'ing into a container. The replicas reach it by name.
       - "${BOOTNODE_HTTP_PORT:-7000}:7000"
     healthcheck:
@@ -121,7 +121,7 @@ services:
         aliases: [dashboard]
 
 networks:
-  # Created by `stack.sh`, not by Compose: it has to outlive this project and
+  # Created by `stack_interpreter.sh`, not by Compose: it has to outlive this project and
   # be joinable by every replica project. See the header.
   session:
     external: true

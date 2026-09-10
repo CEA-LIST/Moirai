@@ -42,20 +42,23 @@ say() { printf 'stack: %s\n' "$1"; }
 
 usage() {
     cat <<'EOF'
-stack.sh — the Moirai session as an infrastructure stack plus independently
-           started and stopped replica stacks.
+stack_interpreter.sh — the Moirai session as an infrastructure stack plus
+                       independently started and stopped replica stacks.
 
-  stack.sh infra up [options]     bootnode and relay (and optionally a dashboard)
-  stack.sh infra down [--keep-network]
-                                  stop them; remove the bridge if nothing is on it
-  stack.sh up NAME --port N [options]
-                                  start one replica, published on host port N
-  stack.sh down NAME              stop and remove that replica, nothing else
-  stack.sh restart NAME --port N  down then up, which is the leave/rejoin story
-  stack.sh ls                     what is up, and what the directory sees
-  stack.sh logs NAME|infra [-f]   logs of one replica, or of the infrastructure
-  stack.sh urls                   the reachable URLs
-  stack.sh down-all               every replica, then the infrastructure
+The name is the script's own binary default: a replica it starts is the
+interpreted `model_node` unless `--bin network_node` says otherwise.
+
+Usage:  ./stack_interpreter.sh COMMAND [options]
+
+  infra up [options]          bootnode and relay (and optionally a dashboard)
+  infra down [--keep-network] stop them; remove the bridge if nothing is on it
+  up NAME --port N [options]  start one replica, published on host port N
+  down NAME                   stop and remove that replica, nothing else
+  restart NAME --port N       down then up, which is the leave/rejoin story
+  ls                          what is up, and what the directory sees
+  logs NAME|infra [-f]        logs of one replica, or of the infrastructure
+  urls                        the reachable URLs
+  down-all                    every replica, then the infrastructure
 
 Options for `infra up`:
       --dashboard        also start the dashboard (host port 8090)
@@ -75,7 +78,7 @@ Options for `up`:
       --image NAME       replica image tag
 
 Everything takes SESSION_ID from the environment (default: stack), so a second
-session is `SESSION_ID=other stack.sh ...` throughout.
+session is `SESSION_ID=other stack_interpreter.sh ...` throughout.
 
 Which file to use for what:
   docker-compose.yml   the measurement rig, one project, driven by rig.sh and
@@ -85,13 +88,13 @@ Which file to use for what:
   replica.yml          exactly one replica, instantiated once per replica.
 
 Examples:
-  ./stack.sh infra up --dashboard
-  ./stack.sh up alice --port 8081
-  ./stack.sh up bob   --port 8082
-  ./stack.sh ls
-  ./stack.sh down bob          # alice keeps serving
-  ./stack.sh up bob --port 8082  # rejoins and converges
-  ./stack.sh down-all
+  ./stack_interpreter.sh infra up --dashboard
+  ./stack_interpreter.sh up alice --port 8081
+  ./stack_interpreter.sh up bob   --port 8082
+  ./stack_interpreter.sh ls
+  ./stack_interpreter.sh down bob          # alice keeps serving
+  ./stack_interpreter.sh up bob --port 8082  # rejoins and converges
+  ./stack_interpreter.sh down-all
 EOF
 }
 
