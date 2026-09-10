@@ -26,6 +26,23 @@ REPLICA_FILE="$HERE/replica.yml"
 _suffix="${MOIRAI_ROOT##*/moirai}"
 IMAGE="${MOIRAI_IMAGE:-moirai-json-crdt${_suffix:-}:test}"
 
+# What `build` needs, and only `build`. The image copies `moirai/` and
+# `arachne/generated/json_crdt/`, so the context is the directory holding both
+# checkouts rather than either one of them, and the two directory names are
+# passed in as build args because a worktree carries its branch in its name.
+# `rig.sh` reaches the same conclusion by the same route; this arrives there on
+# its own, so that a stack can be built without the measurement rig's script
+# being present or correct.
+BUILD_CONTEXT="$(cd "$MOIRAI_ROOT/.." && pwd)"
+if [ -z "${ARACHNE_ROOT:-}" ] && [ -d "$BUILD_CONTEXT/arachne$_suffix" ]; then
+    ARACHNE_ROOT="$BUILD_CONTEXT/arachne$_suffix"
+fi
+ARACHNE_ROOT="${ARACHNE_ROOT:-$BUILD_CONTEXT/arachne}"
+DOCKERFILE="$MOIRAI_ROOT/docker/e2e/Dockerfile"
+GENERATED_CRATE="$ARACHNE_ROOT/generated/json_crdt"
+ECORE="$ARACHNE_ROOT/examples/json.ecore"
+FORCE_REBUILD=0
+
 NETWORK="${MOIRAI_STACK_NETWORK:-moirai_stack}"
 INFRA_PROJECT="${MOIRAI_INFRA_PROJECT:-moirai-infra}"
 SESSION_ID="${SESSION_ID:-stack}"
@@ -52,6 +69,7 @@ Usage:  ./stack_interpreter.sh COMMAND [options]
 
   infra up [options]          bootnode and relay (and optionally a dashboard)
   infra down [--keep-network] stop them; remove the bridge if nothing is on it
+  build [--rebuild]           build the replica image the rest of this runs on
   up NAME --port N [options]  start one replica, published on host port N
   down NAME                   stop and remove that replica, nothing else
   restart NAME --port N       down then up, which is the leave/rejoin story
@@ -59,6 +77,21 @@ Usage:  ./stack_interpreter.sh COMMAND [options]
   logs NAME|infra [-f]        logs of one replica, or of the infrastructure
   urls                        the reachable URLs
   down-all                    every replica, then the infrastructure
+
+Options for `build`:
+      --rebuild          rebuild even if the image already exists
+      --image NAME       tag to build (default: $MOIRAI_IMAGE, else
+                         moirai-json-crdt<worktree suffix>:test)
+
+  The image is the same one `rig.sh build` produces — same Dockerfile, same
+  context, same build args, same default tag — so the measurement rig runs on
+  an image built here and this stack runs on one built there. Nothing is
+  delegated to `rig.sh`, so neither script needs the other to be present.
+
+  The generated crate at arachne/generated/json_crdt/ is tracked in git and is
+  normally already there. This builds from whatever is on disk, and generates
+  it only when it is genuinely absent; it never overwrites a crate that exists.
+  To regenerate one deliberately, that is `rig.sh generate --force`.
 
 Options for `infra up`:
       --dashboard        also start the dashboard (host port 8090)
@@ -102,23 +135,28 @@ EOF
 # Preflight and the shared bridge.
 # --------------------------------------------------------------------------
 
-preflight() {
+preflight_docker() {
     command -v docker >/dev/null 2>&1 || die "docker is not on PATH."
     docker info >/dev/null 2>&1 || die \
         "the Docker daemon is not reachable." \
         "If you were added to the 'docker' group in this session, try: sg docker -c \"$0 ...\""
     docker compose version >/dev/null 2>&1 \
         || die "the 'docker compose' plugin is not available (v2 or newer is required)."
+}
+
+preflight() {
+    preflight_docker
     [ -f "$INFRA_FILE" ] || die "infra.yml not found at $INFRA_FILE"
     [ -f "$REPLICA_FILE" ] || die "replica.yml not found at $REPLICA_FILE"
 }
 
 require_image() {
-    docker image inspect "$IMAGE" >/dev/null 2>&1 || die \
+    image_exists || die \
         "the replica image '$IMAGE' does not exist." \
-        "Build it with the entry point that already knows how:" \
-        "    $MOIRAI_ROOT/docker/rig.sh build" \
+        "Build it here:" \
+        "    $HERE/$(basename "$0") build" \
         "or pass --image / set MOIRAI_IMAGE to one you have."
+    say_image
 }
 
 # The one thing separate projects cannot arrange between themselves. Created
@@ -150,6 +188,128 @@ remove_network_if_empty() {
         return 0
     fi
     docker network rm "$NETWORK" >/dev/null && say "removed the session bridge '$NETWORK'"
+}
+
+# --------------------------------------------------------------------------
+# The image.
+#
+# Cam ran a rig one commit stale without being told, so every path that starts
+# a container says which image it is and how old it is, in one line.
+# --------------------------------------------------------------------------
+
+image_exists() { docker image inspect "$IMAGE" >/dev/null 2>&1; }
+
+human_age() {
+    local secs=$1
+    if   [ "$secs" -lt 90 ];     then printf '%ds' "$secs"
+    elif [ "$secs" -lt 5400 ];   then printf '%dmin' "$((secs / 60))"
+    elif [ "$secs" -lt 172800 ]; then printf '%dh' "$((secs / 3600))"
+    else                              printf '%dd' "$((secs / 86400))"
+    fi
+}
+
+say_image() {
+    local created epoch id
+    created="$(docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null)" || {
+        say "image $IMAGE (age unknown)"
+        return
+    }
+    id="$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null | cut -c8-19)"
+    if epoch="$(date -d "$created" +%s 2>/dev/null)" && [ -n "$epoch" ]; then
+        say "image $IMAGE ($id) built $(human_age "$(( $(date +%s) - epoch ))") ago"
+    else
+        say "image $IMAGE ($id) built $created"
+    fi
+}
+
+preflight_context() {
+    [ -f "$DOCKERFILE" ] || die \
+        "the replica Dockerfile was not found at $DOCKERFILE" \
+        "This script builds from the moirai checkout it lives in; if that path" \
+        "is wrong, the checkout is not laid out the way the image expects."
+
+    [ -d "$ARACHNE_ROOT" ] || die \
+        "the arachne checkout was not found at $ARACHNE_ROOT" \
+        "The image copies from both checkouts, so they must sit side by side" \
+        "under one directory, which is then the build context:" \
+        "    $BUILD_CONTEXT/$(basename "$MOIRAI_ROOT")/" \
+        "    $BUILD_CONTEXT/arachne$_suffix/   (or .../arachne/)" \
+        "Set ARACHNE_ROOT to point somewhere else."
+
+    [ -d "$ARACHNE_ROOT/examples" ] || die \
+        "$ARACHNE_ROOT has no examples/ directory." \
+        "The image copies it in as the metamodel descriptors a replica serves," \
+        "so this is either not an arachne checkout or not a complete one."
+}
+
+# The generated crate is tracked in git, which makes writing over it a
+# destructive act rather than a cache refresh. So this generates it only when
+# it is genuinely absent, and has no flag that would overwrite one that is
+# there — deliberately narrower than `rig.sh`, which has --regenerate and
+# guards it with --allow-dirty. A stack has no reason to want that, and the
+# safety is then structural rather than a matter of not typing the flag.
+crate_is_present() {
+    [ -f "$GENERATED_CRATE/Cargo.toml" ] && [ -f "$GENERATED_CRATE/src/lib.rs" ]
+}
+
+ensure_crate() {
+    if crate_is_present; then
+        if git -C "$ARACHNE_ROOT" rev-parse --git-dir >/dev/null 2>&1 \
+            && [ -n "$(git -C "$ARACHNE_ROOT" status --porcelain -- generated/json_crdt 2>/dev/null)" ]; then
+            say "generated crate at $GENERATED_CRATE has uncommitted changes; building from them as they are"
+        fi
+        return
+    fi
+
+    command -v cargo >/dev/null 2>&1 || die \
+        "the generated CRDT crate is missing and cargo is not on PATH." \
+        "Expected it at $GENERATED_CRATE — it is tracked in git, so a checkout" \
+        "normally has it. Either restore it, or install cargo so it can be" \
+        "generated from $ECORE."
+    [ -f "$ECORE" ] || die \
+        "the generated CRDT crate is missing and so is the metamodel it comes from." \
+        "Looked for the crate at $GENERATED_CRATE and the source at $ECORE."
+
+    say "generated crate is absent; generating it into $GENERATED_CRATE"
+    ( cd "$ARACHNE_ROOT" \
+        && cargo run -q -p arachne-cli -- generate examples/json.ecore \
+            -o generated/json_crdt -p json-crdt ) \
+        || die "generating the CRDT crate failed; see the cargo output above."
+    crate_is_present || die \
+        "the generator reported success but $GENERATED_CRATE still looks incomplete."
+}
+
+build_image() {
+    say "building $IMAGE from $BUILD_CONTEXT (the context holds both checkouts)"
+    docker build \
+        -f "$DOCKERFILE" \
+        -t "$IMAGE" \
+        --build-arg MOIRAI_DIR="$(basename "$MOIRAI_ROOT")" \
+        --build-arg ARACHNE_DIR="$(basename "$ARACHNE_ROOT")" \
+        "$BUILD_CONTEXT" \
+        || die "the image build failed; see the docker output above."
+}
+
+cmd_build() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --rebuild) FORCE_REBUILD=1 ;;
+            --image) IMAGE="$2"; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) die "unknown option for 'build': $1" ;;
+        esac
+        shift
+    done
+    preflight_docker
+    preflight_context
+    if [ "$FORCE_REBUILD" -eq 0 ] && image_exists; then
+        say_image
+        say "already built (pass --rebuild to build it again)"
+        return
+    fi
+    ensure_crate
+    build_image
+    say_image
 }
 
 # --------------------------------------------------------------------------
@@ -403,6 +563,7 @@ case "$command" in
             *) die "unknown 'infra' subcommand: $sub" ;;
         esac
         ;;
+    build) cmd_build "$@" ;;
     up) cmd_up "$@" ;;
     down) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;

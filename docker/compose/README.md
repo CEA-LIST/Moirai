@@ -6,6 +6,7 @@ There are now two, and the difference is the lifecycle, not the topology.
 
 `infra.yml` + `replica.yml`, driven by `stack_interpreter.sh`, is **the session**: the bootnode and relay as one project, and each replica as a project of its own. That buys the one thing the rig cannot do — a replica that comes and goes while the session it belongs to keeps running:
 
+    ./stack_interpreter.sh build
     ./stack_interpreter.sh infra up --dashboard
     ./stack_interpreter.sh up alice --port 8081
     ./stack_interpreter.sh up bob   --port 8082
@@ -14,6 +15,10 @@ There are now two, and the difference is the lifecycle, not the topology.
     ./stack_interpreter.sh down-all
 
 Use the rig to measure. Use the stack to demonstrate, or to keep a session up across a working session of your own. `stack_interpreter.sh --help` is the full argument list.
+
+Both entry points build their own image, and it is the same image: same `docker/e2e/Dockerfile`, same context two levels up, same build args, same default tag `moirai-json-crdt<worktree suffix>:test`. `stack_interpreter.sh build` does not call `rig.sh`, and `rig.sh build` does not call it, so either script works with the other absent — but a rig measured on an image the stack built is measuring the same binaries, which is the point of keeping the tag shared. The one place they differ on purpose is the generated crate: `rig.sh` can regenerate it over what is on disk (`generate --force`, guarded by `--allow-dirty`), and `stack_interpreter.sh` only ever generates one that is genuinely absent.
+
+Every command that starts a container first says which image it is using and how old it is, because a rig running one commit behind looks exactly like a rig running the current one.
 
 ## They coexist
 
