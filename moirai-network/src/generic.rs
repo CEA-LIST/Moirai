@@ -7,7 +7,7 @@
 //! `Serialize + DeserializeOwned + Clone + Debug + Send + InternalizeOp + 'static`
 //!
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Display};
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(feature = "test_utils")]
@@ -158,6 +158,15 @@ impl<T> NetworkOp for T where
 {
 }
 
+/// How many ids of not-hosted logs one node remembers at once.
+///
+/// A session holds a handful of models, so sixty-four is far past what any
+/// real session reaches; it is a ceiling on a long-lived process, not a
+/// working limit. When the set is full a further new id is simply not
+/// recorded — the ids already there keep being offered, and the frame is
+/// counted in `frames_not_hosted` as it always was.
+const SEEN_NOT_HOSTED_CAP: usize = 64;
+
 // =============================================================================
 // GenericNode — one peer, its hosted logs, one transport, external adapters
 // =============================================================================
@@ -207,6 +216,26 @@ where
     /// does not own it, which is a dispatch defect and stays at zero once
     /// frames route by id.
     frames_not_hosted: u64,
+    /// The ids of logs this node does not host, seen on a frame that was
+    /// dropped. The counter above says how many frames went by; this says
+    /// which models they belonged to, so a second editor can be offered a
+    /// list to click rather than an id to retype.
+    ///
+    /// Ids only, and nothing more is knowable here: which metamodel a log is
+    /// bound to lives in that log's first operation, which this node does not
+    /// hold, and `L::Op` is opaque to this type anyway.
+    ///
+    /// An id leaves the set when [`host_log`] starts hosting it, so a model
+    /// this node has joined stops being offered as one it could join.
+    ///
+    /// Bounded at [`SEEN_NOT_HOSTED_CAP`]: once full, a further *new* id is
+    /// dropped and only the ids already in the set are ever reported. A
+    /// session carries a handful of models, so the cap is never reached in
+    /// practice; what it rules out is a long-lived replica in a churning
+    /// session growing this set for the life of the process.
+    ///
+    /// [`host_log`]: GenericNode::host_log
+    seen_not_hosted: BTreeSet<LogId>,
     transport: T,
     adapter_op_rx: Receiver<OpEnvelope<L::Op>>,
     adapter_op_tx: Sender<OpEnvelope<L::Op>>,
@@ -900,6 +929,7 @@ where
             default_log: log_id,
             interner,
             frames_not_hosted: 0,
+            seen_not_hosted: BTreeSet::new(),
             transport,
             adapter_op_rx,
             adapter_op_tx,
@@ -939,8 +969,21 @@ where
             log_id.clone(),
             self.interner.clone(),
         );
+        self.seen_not_hosted.remove(&log_id);
         self.logs.insert(log_id, HostedLog::new(replica));
         Ok(())
+    }
+
+    /// Note that an id was seen on a frame for a log this node does not host.
+    /// Called beside every `frames_not_hosted` increment. See the field.
+    fn note_not_hosted(&mut self, log_id: &LogId) {
+        if self.seen_not_hosted.contains(log_id) {
+            return;
+        }
+        if self.seen_not_hosted.len() >= SEEN_NOT_HOSTED_CAP {
+            return;
+        }
+        self.seen_not_hosted.insert(log_id.clone());
     }
 
     /// `true` when this node hosts the log named `log_id`.
@@ -961,6 +1004,12 @@ where
     /// Frames dropped because no hosted log carried their id. See the field.
     pub fn frames_not_hosted(&self) -> u64 {
         self.frames_not_hosted
+    }
+
+    /// The ids of logs this node does not host but has seen traffic for, in
+    /// id order. See the `seen_not_hosted` field for what bounds it.
+    pub fn seen_not_hosted(&self) -> impl Iterator<Item = &LogId> {
+        self.seen_not_hosted.iter()
     }
 
     /// Start reporting to a dashboard.
@@ -1270,6 +1319,13 @@ where
 
     /// The hosted models as `GET /api/models` lists them: every log, with the
     /// `metamodel_id` it was registered under or `null` for the default log.
+    ///
+    /// Beside them, under `seen`, the ids of logs this node does *not* host
+    /// but has seen traffic for — an added key on an object that was already
+    /// an object, so every parser reading `models` keeps working. Ids only,
+    /// with no binding: see the `seen_not_hosted` field for why none is
+    /// knowable here. The two lists are disjoint by construction, because
+    /// hosting an id removes it from the set.
     fn models(&self) -> serde_json::Value {
         let models: Vec<serde_json::Value> = self
             .logs
@@ -1285,7 +1341,8 @@ where
                 })
             })
             .collect();
-        json!({ "models": models })
+        let seen: Vec<&str> = self.seen_not_hosted.iter().map(LogId::as_str).collect();
+        json!({ "models": models, "seen": seen })
     }
 
     /// Start discovering peers through a bootnode.
@@ -1711,7 +1768,11 @@ where
                     log.operation_log.push(event.event().op().clone());
                     log.replica.receive(event);
                 }
-                None => self.frames_not_hosted += 1,
+                None => {
+                    self.frames_not_hosted += 1;
+                    let log_id = event.log_id().clone();
+                    self.note_not_hosted(&log_id);
+                }
             },
             TransportMessage::Batch { batch } => match self.logs.get_mut(batch.log_id()) {
                 Some(log) => {
@@ -1720,11 +1781,17 @@ where
                     }
                     log.replica.receive_batch(batch);
                 }
-                None => self.frames_not_hosted += 1,
+                None => {
+                    self.frames_not_hosted += 1;
+                    let log_id = batch.log_id().clone();
+                    self.note_not_hosted(&log_id);
+                }
             },
             TransportMessage::SyncRequest { since } => {
                 let Some(log) = self.logs.get_mut(since.log_id()) else {
                     self.frames_not_hosted += 1;
+                    let log_id = since.log_id().clone();
+                    self.note_not_hosted(&log_id);
                     return;
                 };
                 let batch = log.replica.pull(since);
@@ -1739,6 +1806,7 @@ where
             TransportMessage::StateRequest { id, log_id } => {
                 if !self.logs.contains_key(&log_id) {
                     self.frames_not_hosted += 1;
+                    self.note_not_hosted(&log_id);
                 }
                 let response = self.state_response_for(&id, &log_id);
                 if let Err(e) = self.transport.send(&from, response) {
@@ -1761,6 +1829,7 @@ where
                     self.adopt_state(&log_id, &from, snapshot, log);
                 } else {
                     self.frames_not_hosted += 1;
+                    self.note_not_hosted(&log_id);
                 }
             }
             TransportMessage::StateUnavailable { reason, log_id } => {
@@ -2853,6 +2922,79 @@ mod tests {
             "the filter did not count once per frame"
         );
         assert_eq!(node.hosted(&bt()).unwrap().foreign_log_refusals(), 0);
+    }
+
+    /// The filter counts and now also remembers. The id is in hand when the
+    /// frame is dropped, and a second editor wanting to join that model would
+    /// otherwise have to be told it by hand.
+    #[test]
+    fn a_frame_for_an_unhosted_log_leaves_its_id_behind_and_hosting_takes_it_back() {
+        let mut node = node("n", &[bt()]);
+        assert_eq!(
+            node.seen_not_hosted().count(),
+            0,
+            "a node that has seen nothing listed something"
+        );
+        assert_eq!(
+            node.models()["seen"],
+            json!([]),
+            "the empty case is not an empty list"
+        );
+
+        for frame in frames_for_an_unhosted_log() {
+            node.handle_transport_message("writer".to_string(), frame);
+        }
+
+        assert_eq!(
+            node.seen_not_hosted().cloned().collect::<Vec<_>>(),
+            vec![uml()],
+            "the filter dropped the id with the frame"
+        );
+        assert_eq!(node.models()["seen"], json!([uml().as_str()]));
+        assert!(!node.hosts(&uml()), "a frame made the node host a log");
+
+        node.host_log(uml()).expect("the node did not host it yet");
+
+        assert_eq!(
+            node.seen_not_hosted().count(),
+            0,
+            "a model the node now hosts is still offered as one it could join"
+        );
+        assert_eq!(node.models()["seen"], json!([]));
+        let hosted: Vec<String> = node
+            .hosted_logs()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        assert!(
+            hosted.contains(&uml().as_str().to_string()),
+            "the id left the seen list without joining the hosted one"
+        );
+    }
+
+    /// The cap is a ceiling on a long-lived process, not a working limit: a
+    /// session has a handful of models. Once full, a further new id is
+    /// dropped and the frame is still counted.
+    #[test]
+    fn the_seen_list_stops_growing_at_the_cap_and_the_counter_does_not() {
+        let mut node = node("n", &[bt()]);
+        let wanted = SEEN_NOT_HOSTED_CAP + 8;
+        for i in 0..wanted {
+            let id = LogId::parse(&format!("{:032x}", i + 1)).expect("32 hex characters");
+            let mut writer = peer("writer", id);
+            let event = writer.send(add("Class")).expect("an enabled operation");
+            node.handle_transport_message("writer".to_string(), TransportMessage::Event { event });
+        }
+
+        assert_eq!(
+            node.seen_not_hosted().count(),
+            SEEN_NOT_HOSTED_CAP,
+            "the seen list grew past its cap"
+        );
+        assert_eq!(
+            node.frames_not_hosted(),
+            wanted as u64,
+            "the counter stopped counting when the seen list filled"
+        );
     }
 
     #[test]

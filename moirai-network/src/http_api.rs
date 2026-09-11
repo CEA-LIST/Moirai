@@ -30,6 +30,8 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// characters, answered 400 with the parse error otherwise, and 404 when the
 /// node hosts no log by that id:
 /// - `GET  /api/models`               the hosted models as `{model_id, metamodel_id}`
+///   under `models`, and beside them under `seen` the bare ids of logs this
+///   node does not host but has seen traffic for since it connected
 /// - `POST /api/models`               register a model: `{metamodel_id}` creates
 ///   one and the node mints its id; `{model_id, metamodel_id}` joins one by
 ///   id and writes nothing. 409 for an id already hosted, 422 for a
