@@ -23,6 +23,8 @@ pub mod eval;
 pub mod fuzz;
 pub mod leaf;
 pub mod log;
+#[cfg(feature = "test_utils")]
+pub mod matrix;
 #[cfg(feature = "network")]
 pub mod network;
 pub mod node;

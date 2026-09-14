@@ -314,6 +314,13 @@ fn set_fixture(sem: &Arc<MetamodelSemantics>, root: &str) {
     FIXTURE.with_borrow_mut(|slot| *slot = Some((Arc::clone(sem), root_class)));
 }
 
+/// Make every [`Harness`] this thread builds from now on start under `sem`,
+/// rooted at `root`: what a runner that bootstraps its own replicas, such as
+/// [`crate::matrix`], calls before it does.
+pub fn install_fixture(sem: &Arc<MetamodelSemantics>, root: &str) {
+    set_fixture(sem, root);
+}
+
 /// [`moirai_crdt::utils::membership::twins_log`] over a fixture.
 pub fn twins(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTwins {
     set_fixture(sem, root);
