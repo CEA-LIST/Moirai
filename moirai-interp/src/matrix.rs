@@ -330,6 +330,9 @@ pub mod pattern {
     pub const REMOVE_REMOVE_KEY: &str = "remove ∥ remove of one key";
     pub const UPDATE_CLEAR: &str = "update ∥ clear";
     pub const TWO_KEYS: &str = "put ∥ put at two keys";
+    /// Added 2026-09-14 after the audit, which had no three-writer column for
+    /// the keyed map; `02 Validation Plan` §9 says so.
+    pub const THREE_WAY_KEY: &str = "update ∥ update ∥ remove of one key";
 }
 
 /// Where a row is driven.
@@ -421,6 +424,7 @@ const KEYED: &[&str] = &[
     REMOVE_REMOVE_KEY,
     UPDATE_CLEAR,
     TWO_KEYS,
+    THREE_WAY_KEY,
 ];
 
 /// The generated crates that drive the matrix.
@@ -1534,7 +1538,10 @@ mod tests {
             }
         }
         assert_eq!(rows.len(), 34, "thirty-four rows");
-        assert_eq!(reachable_cells, 108, "the audit's hundred and eight cells");
+        assert_eq!(
+            reachable_cells, 109,
+            "the audit's hundred and eight cells and the keyed map's three-writer column"
+        );
         assert_eq!(
             unreachable.len(),
             6 + 4 + 1,
