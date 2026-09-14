@@ -61,6 +61,7 @@ where
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Replica<L, T> {
     /// Replica ID (must be unique across all replicas in the system)
     id: ReplicaIdOwned,

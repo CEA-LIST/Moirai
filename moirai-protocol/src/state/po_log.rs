@@ -1,5 +1,3 @@
-// #[cfg(feature = "test_utils")]
-// use deepsize::DeepSizeOf;
 use std::fmt::Debug;
 
 use crate::{
@@ -24,13 +22,24 @@ pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
 
 #[derive(Debug, Clone)]
-// #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct POLog<O, U>
 where
     O: ReplicatedDataType,
 {
     pub(crate) stable: O::StableState,
     pub(crate) unstable: U,
+}
+
+#[cfg(feature = "test_utils")]
+impl<O, U> deepsize::DeepSizeOf for POLog<O, U>
+where
+    O: ReplicatedDataType,
+    O::StableState: deepsize::DeepSizeOf,
+    U: deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)
+    }
 }
 
 impl<O, U> IsLog for POLog<O, U>

@@ -627,7 +627,6 @@ dependencies = [
  "petgraph 0.6.5",
  "rand",
  "rustc-hash 1.1.0",
- "serde",
  "serde_json",
  "vf2",
 ]

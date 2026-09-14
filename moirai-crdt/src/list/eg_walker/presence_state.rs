@@ -45,16 +45,13 @@ impl PreparePresence {
                 .any(|dot| self.delete_counts.get(dot).copied().unwrap_or(0) == 0)
     }
 
-    #[allow(clippy::mutable_key_type)]
-    pub fn visible_life_dots(&self) -> BTreeSet<LifeDot> {
+    pub fn visible_life_dots(&self) -> impl Iterator<Item = &LifeDot> {
         // Update-wins semantics is expressed here: a delete can only remove dots
         // visible in its own parent context. A concurrent update dot is not visible
         // to that delete, so it survives in the effect state.
         self.life_dots
             .iter()
             .filter(|dot| self.delete_counts.get(*dot).copied().unwrap_or(0) == 0)
-            .cloned()
-            .collect()
     }
 
     pub fn add_life_dot(&mut self, dot: LifeDot) {

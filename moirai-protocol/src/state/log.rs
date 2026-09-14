@@ -106,6 +106,7 @@ impl<L: IsLog> IsLog for Box<L> {
 /// `Box<L>` is a transparent log wrapper. Use `BoxedLog<L>` when recursive
 /// generated log types need `Read<V>` to produce `Box<V>`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct BoxedLog<L: IsLog>(Box<L>);
 
 impl<L: IsLog> BoxedLog<L> {

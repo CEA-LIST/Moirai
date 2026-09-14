@@ -31,6 +31,7 @@ pub enum UWMap<K, O> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,

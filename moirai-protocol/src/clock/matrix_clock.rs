@@ -2,10 +2,6 @@ use std::fmt::{Debug, Display, Formatter};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
 use crate::{
     broadcast::internalizer::Resolver,
@@ -31,11 +27,6 @@ impl ReplicaMap {
 /// Each row represents the last vector clock known by the local replica from each member of the view.
 /// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
 #[derive(Debug, PartialEq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize, Tsify),
-    tsify(into_wasm_abi, from_wasm_abi)
-)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct MatrixClock {
     entries: ReplicaMap,

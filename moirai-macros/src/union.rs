@@ -41,6 +41,15 @@ macro_rules! union {
                 )*
             }
 
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$union Child>] {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    match self {
+                        $(Self::$variant(log) => ::deepsize::DeepSizeOf::deep_size_of_children(log, context),)*
+                    }
+                }
+            }
+
             impl [<$union Child>] {
                 /// Returns the variant name that this child log corresponds to.
                 fn variant(&self) -> [<$union Variant>] {
@@ -60,8 +69,18 @@ macro_rules! union {
                 )*
             }
 
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$union ChildValue>] {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    match self {
+                        $(Self::$variant(value) => ::deepsize::DeepSizeOf::deep_size_of_children(value, context),)*
+                    }
+                }
+            }
+
             /// Value returned by the union log, which may be a single value, a conflict of values, or unset.
             #[derive(Clone, Debug, Default, PartialEq)]
+            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Value>] {
                 #[default]
                 Unset,
@@ -71,6 +90,7 @@ macro_rules! union {
 
             /// Internal Union log state
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Container>] {
                 #[default]
                 Unset,
@@ -80,6 +100,7 @@ macro_rules! union {
 
             /// Union log
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub struct [<$union Log>] {
                 pub child: [<$union Container>],
             }

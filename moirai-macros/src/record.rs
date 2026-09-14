@@ -47,6 +47,22 @@ macro_rules! record {
                 )*
             }
 
+            #[cfg(feature = "test_utils")]
+            impl<$([<$field:camel Value>]: ::deepsize::DeepSizeOf),+> ::deepsize::DeepSizeOf
+                for [<$name Value>]<$([<$field:camel Value>]),+>
+            {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    0 $(+ ::deepsize::DeepSizeOf::deep_size_of_children(&self.$field, context))*
+                }
+            }
+
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$name Log>] {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    0 $(+ ::deepsize::DeepSizeOf::deep_size_of_children(&self.$field, context))*
+                }
+            }
+
             /// Accessor methods for each field log.
             impl [<$name Log>] {
                 $(

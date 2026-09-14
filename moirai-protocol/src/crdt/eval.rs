@@ -34,10 +34,6 @@ where
     fn execute_query(&self, q: &Q) -> Q::Response;
 }
 
-pub trait BorrowedRead<V>: IsLog {
-    fn read_ref(&self) -> &V;
-}
-
 impl<L, Q> EvalNested<Q> for Box<L>
 where
     Q: QueryOperation,
@@ -45,14 +41,5 @@ where
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         (**self).execute_query(q)
-    }
-}
-
-impl<L, V> BorrowedRead<V> for Box<L>
-where
-    L: IsLog + BorrowedRead<V>,
-{
-    fn read_ref(&self) -> &V {
-        (**self).read_ref()
     }
 }

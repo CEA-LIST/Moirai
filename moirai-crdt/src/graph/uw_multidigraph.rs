@@ -23,6 +23,7 @@ use crate::HashMap;
 type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, E), El>>;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum UWGraph<V, E, No, Lo> {
     UpdateVertex {
         id: V,
@@ -45,6 +46,7 @@ pub enum UWGraph<V, E, No, Lo> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,

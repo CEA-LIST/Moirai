@@ -31,6 +31,7 @@ pub enum RWMap<K, O> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct RWMapLog<K, L>
 where
     K: Clone + Debug + Eq + Hash,

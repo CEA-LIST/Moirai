@@ -16,13 +16,8 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum DWFlag {
     Enable,

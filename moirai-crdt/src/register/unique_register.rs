@@ -19,15 +19,22 @@ pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
 
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
-)]
 pub enum Register<V, P> {
     Write(V),
     Clear,
     // TODO: find a better design pattern
     __Marker(std::convert::Infallible, PhantomData<P>),
+}
+
+#[cfg(feature = "test_utils")]
+impl<V: deepsize::DeepSizeOf, P> deepsize::DeepSizeOf for Register<V, P> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        match self {
+            Self::Write(value) => value.deep_size_of_children(context),
+            Self::Clear => 0,
+            Self::__Marker(never, _) => match *never {},
+        }
+    }
 }
 
 impl<V, P> ReplicatedDataType for Register<V, P>

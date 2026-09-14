@@ -19,15 +19,11 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
 use crate::counter::stable::CounterStable;
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Inc(V),

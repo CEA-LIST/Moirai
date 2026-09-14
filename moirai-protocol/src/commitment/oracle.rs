@@ -10,6 +10,7 @@ pub trait IsOracle: Debug + Clone + Default {
 
 /// Eventual leader oracle
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct Omega {
     leader: Option<ReplicaIdOwned>,
 }

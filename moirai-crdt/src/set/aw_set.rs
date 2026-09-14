@@ -421,7 +421,7 @@ mod tests {
             config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-        let run = RunConfig::new(0.4, 8, 10_000, None, None, false, false);
+        let run = RunConfig::new(0.4, 8, 10_000, None, None, false, true).with_memory_sampling(1);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>::new(

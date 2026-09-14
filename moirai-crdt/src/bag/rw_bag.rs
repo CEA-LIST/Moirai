@@ -21,6 +21,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum RWBag<V> {
     Add(V),
     Remove(V),
@@ -28,6 +29,7 @@ pub enum RWBag<V> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct RWBagLog<V: Clone + Hash + Debug + Eq>(RWMapLog<V, VecLog<Counter<usize>>>);
 
 impl<V> Default for RWBagLog<V>

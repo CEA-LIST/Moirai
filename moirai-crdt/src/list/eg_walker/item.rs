@@ -125,6 +125,23 @@ pub struct Item<V> {
 }
 
 impl<V> Item<V> {
+    fn new(
+        id: ItemId,
+        origin_left: Option<ItemId>,
+        origin_right: Option<ItemId>,
+        content: V,
+        dot: LifeDot,
+    ) -> Self {
+        Self {
+            id,
+            origin_left,
+            origin_right,
+            content,
+            effect: EffectPresence::new(dot.clone()),
+            prepare: PreparePresence::new(dot),
+        }
+    }
+
     /// Create an item introduced by an insert event in the unstable log.
     pub fn new_event(
         id: EventId,
@@ -134,14 +151,7 @@ impl<V> Item<V> {
     ) -> Self {
         let item_id = ItemId::event(id.clone());
         let dot = LifeDot::event(id);
-        Self {
-            id: item_id,
-            origin_left,
-            origin_right,
-            content,
-            effect: EffectPresence::new(dot.clone()),
-            prepare: PreparePresence::new(dot),
-        }
+        Self::new(item_id, origin_left, origin_right, content, dot)
     }
 
     /// Materialize one element of the stable baseline as a normal item record.
@@ -152,13 +162,58 @@ impl<V> Item<V> {
     pub fn new_stable(index: usize, content: V) -> Self {
         let item_id = ItemId::stable(index);
         let dot = LifeDot::stable(index);
-        Self {
-            id: item_id,
-            origin_left: (index > 0).then_some(ItemId::stable(index - 1)),
-            origin_right: None,
+        Self::new(
+            item_id,
+            (index > 0).then_some(ItemId::stable(index - 1)),
+            None,
             content,
-            effect: EffectPresence::new(dot.clone()),
-            prepare: PreparePresence::new(dot),
+            dot,
+        )
+    }
+
+    pub fn retreat_insert(&mut self, dot: &LifeDot) {
+        self.prepare.remove_life_dot(dot);
+        self.prepare.inserted = false;
+    }
+
+    pub fn advance_insert(&mut self, dot: LifeDot) {
+        self.prepare.inserted = true;
+        self.prepare.add_life_dot(dot);
+    }
+
+    pub fn retreat_update(&mut self, dot: &LifeDot) {
+        self.prepare.remove_life_dot(dot);
+    }
+
+    pub fn advance_update(&mut self, dot: LifeDot) {
+        self.prepare.add_life_dot(dot);
+    }
+
+    /// Apply an update to both the prepared parent view and the final result.
+    pub fn apply_update(&mut self, dot: LifeDot) {
+        self.effect.add_life_dot(dot.clone());
+        self.prepare.add_life_dot(dot);
+    }
+
+    /// Remove the dots observed in the current prepared parent context.
+    pub fn apply_delete(&mut self) -> Vec<LifeDot> {
+        let removed: Vec<_> = self.prepare.visible_life_dots().cloned().collect();
+        for dot in &removed {
+            self.effect.remove_life_dot(dot);
+            self.prepare.record_delete(dot);
+        }
+        removed
+    }
+
+    pub fn retreat_delete(&mut self, removed: &[LifeDot]) {
+        for dot in removed {
+            self.prepare.undo_delete(dot);
+        }
+    }
+
+    pub fn advance_delete(&mut self, removed: &[LifeDot]) {
+        for dot in removed {
+            self.prepare.record_delete(dot);
         }
     }
 }

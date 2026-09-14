@@ -38,6 +38,17 @@ where
     }
 }
 
+#[cfg(feature = "test_utils")]
+impl<O> deepsize::DeepSizeOf for GraphLog<O>
+where
+    O: ReplicatedDataType + deepsize::DeepSizeOf,
+    O::StableState: deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)
+    }
+}
+
 impl<O> IsLog for GraphLog<O>
 where
     O: ReplicatedDataType + Clone + UsesUnstableService<EventGraph<O>>,

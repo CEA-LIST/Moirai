@@ -1,11 +1,11 @@
-use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 use moirai_protocol::event::id::EventId;
 
 use crate::{
     HashMap,
     list::eg_walker::{
-        DeleteTarget,
+        DeleteEffect,
         item::{Item, ItemId},
     },
 };
@@ -62,12 +62,12 @@ pub struct Document<'a, V> {
     pub stable: &'a [V],
     /// Replay sequence mixing compressed stable ranges and concrete item records.
     pub records: Vec<Record<V>>,
-    /// Last processed event in the topological replay.
-    pub current_version: Option<EventId>,
+    /// Event whose causal state is currently represented by `prepare`.
+    pub prepared_head: Option<EventId>,
     /// Key = update op id, value = item updated by that op.
     pub update_targets: HashMap<EventId, ItemId>,
     /// Key = delete op id, value = item/dots removed by that op.
-    pub delete_targets: HashMap<EventId, DeleteTarget>,
+    pub delete_targets: HashMap<EventId, Arc<[DeleteEffect]>>,
     /// Concrete item identity to record index.
     ///
     /// Stable items that are still inside a `StableRange` are located by scanning
@@ -84,7 +84,7 @@ impl<'a, V> Document<'a, V> {
         let mut document = Self {
             stable,
             records: Vec::new(),
-            current_version: None,
+            prepared_head: None,
             update_targets: HashMap::default(),
             delete_targets: HashMap::default(),
             items_by_idx: HashMap::default(),
@@ -178,12 +178,158 @@ impl<'a, V> Document<'a, V> {
         self.rebuild_index();
         idx + 1
     }
+
+    /// Find the record boundary for a visible insertion position.
+    pub fn insertion_point(&mut self, target_pos: usize) -> usize {
+        let mut visible_pos = 0usize;
+        let mut record_idx = 0usize;
+
+        while record_idx < self.records.len() {
+            if visible_pos == target_pos {
+                return record_idx;
+            }
+
+            match &self.records[record_idx] {
+                Record::StableRange { start, end } => {
+                    let len = end - start;
+                    if visible_pos + len >= target_pos {
+                        return self
+                            .split_stable_range_at_boundary(record_idx, target_pos - visible_pos);
+                    }
+                    visible_pos += len;
+                }
+                Record::Item(item) if item.prepare.is_visible() => visible_pos += 1,
+                Record::Item(_) => {}
+            }
+            record_idx += 1;
+        }
+
+        record_idx
+    }
+
+    fn previous_integrated_id(&self, idx: usize) -> Option<ItemId> {
+        self.records[..idx]
+            .iter()
+            .rev()
+            .find(|record| record.is_integrated())
+            .and_then(Record::last_id)
+    }
+
+    fn next_integrated_id(&self, idx: usize) -> Option<ItemId> {
+        self.records[idx..]
+            .iter()
+            .find(|record| record.is_integrated())
+            .and_then(Record::first_id)
+    }
+
+    /// Integrate an item into its deterministic Eg-Walker insertion window.
+    fn integrate(&mut self, new_item: Item<V>, mut idx: usize) {
+        let mut scan_idx = idx;
+        let left = new_item
+            .origin_left
+            .as_ref()
+            .and_then(|id| self.position_of(id))
+            .map(|idx| idx as isize)
+            .unwrap_or(-1);
+        let right = new_item
+            .origin_right
+            .as_ref()
+            .map_or(self.records.len(), |id| {
+                self.position_of(id).expect("could not find right origin")
+            });
+        let mut scanning = false;
+
+        while scan_idx < right {
+            let other = match &self.records[scan_idx] {
+                Record::Item(item) => item,
+                Record::StableRange { .. } => break,
+            };
+
+            if other.prepare.is_integrated() {
+                break;
+            }
+
+            let other_left = other.origin_left.as_ref().map_or(-1, |id| {
+                self.position_of(id).expect("could not find left origin") as isize
+            });
+            let other_right = other
+                .origin_right
+                .as_ref()
+                .map_or(self.records.len(), |id| {
+                    self.position_of(id).expect("could not find right origin")
+                });
+
+            if other_left < left
+                || (other_left == left && other_right == right && new_item.id < other.id)
+            {
+                break;
+            }
+            if other_left == left {
+                scanning = other_right < right;
+            }
+            scan_idx += 1;
+            if !scanning {
+                idx = scan_idx;
+            }
+        }
+
+        self.records.insert(idx, Record::Item(new_item));
+        self.rebuild_index();
+    }
 }
 
 impl<'a, V> Document<'a, V>
 where
     V: Clone,
 {
+    /// Find and materialize the visible item at `target_pos`.
+    pub fn visible_item_at(&mut self, target_pos: usize) -> Option<usize> {
+        let mut visible_pos = 0usize;
+        let mut record_idx = 0usize;
+
+        while record_idx < self.records.len() {
+            match &self.records[record_idx] {
+                Record::StableRange { start, end } => {
+                    let len = end - start;
+                    if target_pos < visible_pos + len {
+                        return Some(
+                            self.isolate_stable_item(record_idx, target_pos - visible_pos),
+                        );
+                    }
+                    visible_pos += len;
+                }
+                Record::Item(item) if item.prepare.is_visible() => {
+                    if visible_pos == target_pos {
+                        return Some(record_idx);
+                    }
+                    visible_pos += 1;
+                }
+                Record::Item(_) => {}
+            }
+            record_idx += 1;
+        }
+
+        None
+    }
+
+    /// Insert an event-backed item at a visible position.
+    pub fn insert_event(&mut self, event_id: EventId, content: V, target_pos: usize) {
+        let idx = self.insertion_point(target_pos);
+
+        debug_assert!(
+            idx == 0 || self.records[idx - 1].is_integrated(),
+            "item to the left is not integrated"
+        );
+
+        let item = Item::new_event(
+            event_id,
+            self.previous_integrated_id(idx),
+            self.next_integrated_id(idx),
+            content,
+        );
+        self.integrate(item, idx);
+    }
+
     /// Replace one stable element inside a range by a concrete `Item`.
     ///
     /// Deletes and updates need item-level prepare/effect state, so a stable
@@ -232,77 +378,23 @@ where
                 Record::StableRange { start, end } => {
                     value.extend_from_slice(&self.stable[*start..*end]);
                 }
-                Record::Item(item) if item.effect.is_visible() => {
-                    value.push(item.content.clone());
+                Record::Item(item) => {
+                    if item.effect.is_visible() {
+                        value.push(item.content.clone());
+                    }
                 }
-                Record::Item(_) => {}
             }
         }
         value
     }
-}
 
-impl<V> Display for Document<'_, V> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        writeln!(
-            f,
-            "items by idx: {}",
-            self.items_by_idx
-                .iter()
-                .map(|(k, v)| format!("{:?}: {}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )?;
-        writeln!(f, "records:")?;
-        for record in &self.records {
-            match record {
-                Record::StableRange { start, end } => {
-                    writeln!(f, "    - StableRange [{start}, {end})")?;
-                }
-                Record::Item(item) => {
-                    write!(f, "    - {:?}", item.id)?;
-                    write!(f, " [")?;
-                    if let Some(ol) = &item.origin_left {
-                        write!(f, " L:{:?}", ol)?;
-                    } else {
-                        write!(f, " L:None")?;
-                    }
-                    if let Some(or) = &item.origin_right {
-                        write!(f, " R:{:?}", or)?;
-                    } else {
-                        write!(f, " R:None")?;
-                    }
-                    write!(f, " | EffectLiveDots: {:?}", item.effect.live_dots)?;
-                    write!(f, " | PrepareInserted: {}", item.prepare.inserted)?;
-                    write!(f, " | PrepareLifeDots: {:?}", item.prepare.life_dots)?;
-                    write!(
-                        f,
-                        " | PrepareDeleteCounts: {:?}",
-                        item.prepare.delete_counts
-                    )?;
-                    writeln!(f, " ]")?;
-                }
-            }
-        }
-        writeln!(
-            f,
-            "update targets: {}",
-            self.update_targets
-                .iter()
-                .map(|(k, v)| format!("{}: {:?}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )?;
-        // delete targets
-        writeln!(
-            f,
-            "delete targets: {}",
-            self.delete_targets
-                .iter()
-                .map(|(k, v)| format!("{}: {:?}", k, v))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )?;
-        Ok(())
+    pub fn visible_len(&self) -> usize {
+        self.records
+            .iter()
+            .map(|record| match record {
+                Record::StableRange { start, end } => end - start,
+                Record::Item(item) => usize::from(item.effect.is_visible()),
+            })
+            .sum()
     }
 }

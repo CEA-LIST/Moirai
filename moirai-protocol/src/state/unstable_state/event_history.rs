@@ -8,6 +8,7 @@ use crate::{
 use std::{fmt::Debug, range::Range};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct EventHistory<O> {
     /// Note: we assume events are inserted in order without gaps.
     /// The store should not be pruned as the index of the vec is used to determine the sequence number of an event.

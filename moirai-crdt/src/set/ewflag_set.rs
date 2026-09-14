@@ -21,6 +21,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
@@ -28,6 +29,7 @@ pub enum EWFlagSet<V> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
     inner: UWMapLog<V, VecLog<EWFlag>>,
 }

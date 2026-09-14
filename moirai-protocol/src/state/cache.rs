@@ -9,7 +9,7 @@ use castaway::cast;
 use crate::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{QueryOperation, Read},
     },
     event::Event,
@@ -23,6 +23,57 @@ pub trait IncrementalCache<O> {
 #[derive(Default)]
 pub struct CacheCell<V> {
     value: OnceCell<V>,
+}
+
+#[cfg(feature = "test_utils")]
+impl<V: deepsize::DeepSizeOf> deepsize::DeepSizeOf for CacheCell<V> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        // OnceCell stores V inline. Measure only its children and never populate
+        // an empty cache as a side effect of measuring it.
+        self.get()
+            .map_or(0, |value| value.deep_size_of_children(context))
+    }
+}
+
+#[cfg(all(test, feature = "test_utils"))]
+mod memory_tests {
+    use super::CacheCell;
+    use deepsize::DeepSizeOf;
+
+    #[test]
+    fn memory_tracks_cached_allocations_without_populating_cache() {
+        let mut cache = CacheCell::<Vec<u8>>::new();
+        let inline = std::mem::size_of_val(&cache);
+        assert_eq!(cache.deep_size_of(), inline);
+        assert!(cache.get().is_none());
+
+        let value = Vec::with_capacity(128);
+        let capacity = value.capacity();
+        cache.replace(value);
+        assert_eq!(cache.deep_size_of(), inline + capacity);
+
+        cache.invalidate();
+        assert_eq!(cache.deep_size_of(), inline);
+    }
+
+    #[test]
+    fn cached_inline_value_is_not_counted_twice() {
+        let mut cache = CacheCell::<u64>::new();
+        cache.replace(42);
+        assert_eq!(cache.deep_size_of(), std::mem::size_of_val(&cache));
+    }
+
+    #[test]
+    fn cached_shared_allocations_use_one_traversal_context() {
+        use std::rc::Rc;
+
+        let value = Rc::new(vec![0u8; 128]);
+        let mut shared = CacheCell::new();
+        shared.replace((value.clone(), value));
+        let mut distinct = CacheCell::new();
+        distinct.replace((Rc::new(vec![0u8; 128]), Rc::new(vec![0u8; 128])));
+        assert!(shared.deep_size_of() < distinct.deep_size_of());
+    }
 }
 
 impl<V> CacheCell<V> {
@@ -72,6 +123,7 @@ impl<V> Clone for CacheCell<V> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CachedLog<L, V> {
     inner: L,
     version: Option<Version>,
@@ -187,12 +239,11 @@ where
     }
 }
 
-impl<L, V> BorrowedRead<V> for CachedLog<L, V>
+impl<L, V> CachedLog<L, V>
 where
     L: IsLog + EvalNested<Read<V>>,
-    V: Debug + IncrementalCache<L::Op>,
 {
-    fn read_ref(&self) -> &V {
+    pub fn read_ref(&self) -> &V {
         self.read_cache
             .get_or_compute(|| self.inner.execute_query(&Read::new()))
     }

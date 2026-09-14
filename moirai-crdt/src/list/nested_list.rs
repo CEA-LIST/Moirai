@@ -7,7 +7,7 @@ use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
-        eval::{BorrowedRead, EvalNested},
+        eval::EvalNested,
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
@@ -38,6 +38,7 @@ pub enum NestedList<O> {
 /// Maintains both the logical ordering of children (via EgWalker) and the
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct NestedListLog<L>
 where
     L: IsLog,

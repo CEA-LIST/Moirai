@@ -16,6 +16,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum LeaderVote {
     Vote(ReplicaIdOwned),
 }

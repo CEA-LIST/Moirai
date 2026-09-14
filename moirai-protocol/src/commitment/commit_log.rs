@@ -23,6 +23,7 @@ use crate::{
 /// It maintains a separate log of leader votes, and uses a commitment protocol
 /// to determine the new version boundary for which the child log can be stabilized.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CommitmentLog<L> {
     /// Child log. It can contain any CRDT log, including composite ones.
     child: L,

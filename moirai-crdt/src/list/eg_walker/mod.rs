@@ -1,11 +1,11 @@
+mod causal_cursor;
 mod document;
 mod item;
 mod presence_state;
 
 use std::{
-    cmp::Ordering,
-    collections::{BTreeSet, BinaryHeap},
     fmt::{Debug, Display},
+    sync::Arc,
 };
 
 #[cfg(feature = "test_utils")]
@@ -30,12 +30,10 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use crate::{
-    HashMap,
-    list::eg_walker::{
-        document::{Document, Record},
-        item::{Item, ItemId, LifeDot},
-    },
+use crate::list::eg_walker::{
+    causal_cursor::transition,
+    document::Document,
+    item::{ItemId, LifeDot},
 };
 
 // Single-character, position-based, pure op-based CRDT operations
@@ -61,15 +59,7 @@ struct DeleteEffect {
     item_id: ItemId,
     // A delete removes exactly the dots that were visible in its parent context.
     // Capturing them once avoids any reachability query during advance/retreat.
-    removed_dots: BTreeSet<LifeDot>,
-}
-
-#[derive(Clone, Debug)]
-enum DeleteTarget {
-    /// A single-position delete and the dots it removed.
-    Single(DeleteEffect),
-    /// A range delete represented as one delete effect per touched item.
-    Range(Vec<DeleteEffect>),
+    removed_dots: Vec<LifeDot>,
 }
 
 impl<V> List<V>
@@ -92,154 +82,6 @@ where
         Self::Update { pos }
     }
 
-    /// Find where to insert a new item in the current prepared document.
-    ///
-    /// `target_pos` is expressed in visible prepare-state positions. Stable ranges
-    /// count as visible content, so inserting inside one only splits the range at
-    /// the insertion boundary.
-    /// Stable ranges are split at the insertion boundary, but their elements remain placeholders.
-    fn find_insert_position(doc: &mut Document<V>, target_pos: usize) -> usize {
-        let mut cur_pos = 0usize;
-        let mut idx = 0usize;
-
-        while idx < doc.records.len() {
-            if cur_pos == target_pos {
-                return idx;
-            }
-
-            match &doc.records[idx] {
-                Record::StableRange { start, end } => {
-                    let len = end - start;
-                    if cur_pos + len >= target_pos {
-                        return doc.split_stable_range_at_boundary(idx, target_pos - cur_pos);
-                    }
-                    cur_pos += len;
-                }
-                Record::Item(item) if item.prepare.is_visible() => {
-                    cur_pos += 1;
-                }
-                Record::Item(_) => {}
-            }
-            idx += 1;
-        }
-
-        idx
-    }
-
-    /// Find the concrete record for the visible item at `target_pos`.
-    ///
-    /// Deletes and updates need item-level dot state. If the target lies inside a
-    /// stable range, this materializes exactly that stable element and leaves the
-    /// rest of the range compressed.
-    fn find_visible_item(doc: &mut Document<V>, target_pos: usize) -> Option<usize> {
-        let mut cur_pos = 0usize;
-        let mut idx = 0usize;
-
-        while idx < doc.records.len() {
-            match &doc.records[idx] {
-                Record::StableRange { start, end } => {
-                    let len = end - start;
-                    if target_pos < cur_pos + len {
-                        return Some(doc.isolate_stable_item(idx, target_pos - cur_pos));
-                    }
-                    cur_pos += len;
-                }
-                Record::Item(item) if item.prepare.is_visible() => {
-                    if cur_pos == target_pos {
-                        return Some(idx);
-                    }
-                    cur_pos += 1;
-                }
-                Record::Item(_) => {}
-            }
-            idx += 1;
-        }
-
-        None
-    }
-
-    /// Nearest integrated item before `idx`, used as the left insertion origin.
-    fn previous_integrated_id(doc: &Document<V>, idx: usize) -> Option<ItemId> {
-        doc.records[..idx]
-            .iter()
-            .rev()
-            .find(|record| record.is_integrated())
-            .and_then(Record::last_id)
-    }
-
-    /// Nearest integrated item at or after `idx`, used as the right insertion origin.
-    fn next_integrated_id(doc: &Document<V>, idx: usize) -> Option<ItemId> {
-        doc.records[idx..]
-            .iter()
-            .find(|record| record.is_integrated())
-            .and_then(Record::first_id)
-    }
-
-    /// Insert a new item into the CRDT sequence.
-    ///
-    /// The visible position gives an initial location, but concurrent insertions
-    /// at the same position must be ordered deterministically. The origin-left and
-    /// origin-right anchors restrict the scan to the insertion window; the local
-    /// item id tie-breaker is the current deterministic ordering rule.
-    fn integrate(doc: &mut Document<V>, new_item: Item<V>, mut idx: usize) {
-        let mut scan_idx = idx;
-
-        // If origin_left is None, we'll pretend there's an item at position -1 which we were inserted to the right of.
-        let left = new_item
-            .origin_left
-            .as_ref()
-            .and_then(|id| doc.position_of(id))
-            .map(|idx| idx as isize)
-            .unwrap_or(-1);
-        let right = if let Some(e) = &new_item.origin_right {
-            doc.position_of(e).expect("Could not find item by id")
-        } else {
-            doc.records.len()
-        };
-
-        let mut scanning = false;
-
-        while scan_idx < right {
-            let other = match &doc.records[scan_idx] {
-                Record::Item(item) => item,
-                Record::StableRange { .. } => break,
-            };
-
-            // Only not-yet-integrated items participate in the Eg-Walker insertion walk.
-            if other.prepare.is_integrated() {
-                break;
-            }
-
-            let oleft = if let Some(ol) = &other.origin_left {
-                doc.position_of(ol).expect("Could not find item by id") as isize
-            } else {
-                -1
-            };
-
-            let oright = if let Some(or) = &other.origin_right {
-                doc.position_of(or).expect("Could not find item by id")
-            } else {
-                doc.records.len()
-            };
-
-            // TODO: use Fair Tag
-            if oleft < left || (oleft == left && oright == right && new_item.id < other.id) {
-                break;
-            }
-            if oleft == left {
-                scanning = oright < right;
-            }
-            scan_idx += 1;
-
-            if !scanning {
-                idx = scan_idx;
-            }
-        }
-
-        doc.records.insert(idx, Record::Item(new_item));
-        doc.rebuild_index();
-    }
-
     /// Move the prepare view backwards across `event_id`.
     ///
     /// During replay, consecutive events can have different parent versions. To
@@ -256,34 +98,23 @@ where
                 let life_dot = LifeDot::event(event_id.clone());
                 if let Some(item_idx) = doc.position_of(&item_id) {
                     let item = doc.item_mut(item_idx).unwrap();
-                    item.prepare.remove_life_dot(&life_dot);
-                    item.prepare.inserted = false;
+                    item.retreat_insert(&life_dot);
                 }
             }
             List::Update { .. } => {
                 let target = doc.update_targets.get(event_id).unwrap();
                 if let Some(item_idx) = doc.position_of(target) {
                     let item = doc.item_mut(item_idx).unwrap();
-                    item.prepare
-                        .remove_life_dot(&LifeDot::event(event_id.clone()));
+                    item.retreat_update(&LifeDot::event(event_id.clone()));
                 }
             }
             List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets: Vec<DeleteEffect> = doc
-                    .delete_targets
-                    .get(event_id)
-                    .map(|t| match t {
-                        DeleteTarget::Single(effect) => vec![effect.clone()],
-                        DeleteTarget::Range(effects) => effects.clone(),
-                    })
-                    .unwrap();
+                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
 
-                for effect in &targets {
+                for effect in targets.iter() {
                     if let Some(item_idx) = doc.position_of(&effect.item_id) {
                         let item = doc.item_mut(item_idx).unwrap();
-                        for dot in &effect.removed_dots {
-                            item.prepare.undo_delete(dot);
-                        }
+                        item.retreat_delete(&effect.removed_dots);
                     }
                 }
             }
@@ -305,37 +136,37 @@ where
                 let life_dot = LifeDot::event(event_id.clone());
                 if let Some(item_idx) = doc.position_of(&item_id) {
                     let item = doc.item_mut(item_idx).unwrap();
-                    item.prepare.inserted = true;
-                    item.prepare.add_life_dot(life_dot);
+                    item.advance_insert(life_dot);
                 }
             }
             List::Update { .. } => {
                 let target = doc.update_targets.get(event_id).unwrap();
                 if let Some(item_idx) = doc.position_of(target) {
                     let item = doc.item_mut(item_idx).unwrap();
-                    item.prepare.add_life_dot(LifeDot::event(event_id.clone()));
+                    item.advance_update(LifeDot::event(event_id.clone()));
                 }
             }
             List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets: Vec<DeleteEffect> = doc
-                    .delete_targets
-                    .get(event_id)
-                    .map(|t| match t {
-                        DeleteTarget::Single(effect) => vec![effect.clone()],
-                        DeleteTarget::Range(effects) => effects.clone(),
-                    })
-                    .unwrap();
+                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
 
-                for effect in &targets {
+                for effect in targets.iter() {
                     if let Some(item_idx) = doc.position_of(&effect.item_id) {
                         let item = doc.item_mut(item_idx).unwrap();
-                        for dot in &effect.removed_dots {
-                            item.prepare.record_delete(dot);
-                        }
+                        item.advance_delete(&effect.removed_dots);
                     }
                 }
             }
         }
+    }
+
+    fn delete_visible_item(doc: &mut Document<V>, pos: usize) -> Option<DeleteEffect> {
+        let idx = doc.visible_item_at(pos)?;
+        let item = doc.item_mut(idx).unwrap();
+        let removed_dots = item.apply_delete();
+        Some(DeleteEffect {
+            item_id: item.id.clone(),
+            removed_dots,
+        })
     }
 
     /// Apply one event after the prepare view has been moved to its parent version.
@@ -345,64 +176,28 @@ where
     fn apply(doc: &mut Document<V>, tagged_op: &TaggedOp<List<V>>) {
         match tagged_op.op() {
             List::Delete { pos } => {
-                let Some(idx) = Self::find_visible_item(doc, *pos) else {
+                let Some(effect) = Self::delete_visible_item(doc, *pos) else {
                     debug_assert!(false, "No visible item found at position {pos}");
                     return;
                 };
-
-                let (item_id, removed_dots) = {
-                    let item = doc.item_mut(idx).unwrap();
-                    // The delete only removes dots that are visible in its prepared parent context.
-                    #[allow(clippy::mutable_key_type)]
-                    let removed_dots = item.prepare.visible_life_dots();
-                    for dot in &removed_dots {
-                        item.effect.remove_life_dot(dot);
-                    }
-                    for dot in &removed_dots {
-                        item.prepare.record_delete(dot);
-                    }
-                    (item.id.clone(), removed_dots)
-                };
-                doc.delete_targets.insert(
-                    tagged_op.id().clone(),
-                    DeleteTarget::Single(DeleteEffect {
-                        item_id,
-                        removed_dots,
-                    }),
-                );
+                doc.delete_targets
+                    .insert(tagged_op.id().clone(), Arc::from([effect]));
             }
             List::DeleteRange { start, len } => {
-                let mut pos = 0usize;
                 let mut effects = Vec::new();
 
-                while pos < *len {
-                    let Some(idx) = Self::find_visible_item(doc, *start) else {
+                for _ in 0..*len {
+                    let Some(effect) = Self::delete_visible_item(doc, *start) else {
                         return;
                     };
-
-                    effects.push({
-                        let item = doc.item_mut(idx).unwrap();
-                        #[allow(clippy::mutable_key_type)]
-                        let removed_dots = item.prepare.visible_life_dots();
-                        for dot in &removed_dots {
-                            item.effect.remove_life_dot(dot);
-                        }
-                        for dot in &removed_dots {
-                            item.prepare.record_delete(dot);
-                        }
-                        DeleteEffect {
-                            item_id: item.id.clone(),
-                            removed_dots,
-                        }
-                    });
-                    pos += 1;
+                    effects.push(effect);
                 }
 
                 doc.delete_targets
-                    .insert(tagged_op.id().clone(), DeleteTarget::Range(effects));
+                    .insert(tagged_op.id().clone(), effects.into());
             }
             List::Update { pos } => {
-                let Some(idx) = Self::find_visible_item(doc, *pos) else {
+                let Some(idx) = doc.visible_item_at(*pos) else {
                     debug_assert!(false, "No visible item found at position {pos}");
                     return;
                 };
@@ -412,176 +207,18 @@ where
                     // Updating an existing element adds a fresh life dot for the same identity.
                     // If concurrent with a delete, that dot is not part of the delete effect.
                     let update_dot = LifeDot::event(tagged_op.id().clone());
-                    item.effect.add_life_dot(update_dot.clone());
-                    item.prepare.add_life_dot(update_dot);
+                    item.apply_update(update_dot);
                     item.id.clone()
                 };
                 doc.update_targets.insert(tagged_op.id().clone(), item_id);
             }
             List::Insert { content, pos } => {
-                let idx = Self::find_insert_position(doc, *pos);
-
-                debug_assert!(
-                    idx == 0 || doc.records[idx - 1].is_integrated(),
-                    "Item to the left is not integrated"
-                );
-
-                let origin_left = Self::previous_integrated_id(doc, idx);
-                let origin_right = Self::next_integrated_id(doc, idx);
-
-                let item = Item::new_event(
-                    tagged_op.id().clone(),
-                    origin_left,
-                    origin_right,
-                    content.clone(),
-                );
-                Self::integrate(doc, item, idx)
+                doc.insert_event(tagged_op.id().clone(), content.clone(), *pos);
             }
         }
     }
 
-    /// Compute how to move the prepare view from `current_version` to `parents`.
-    ///
-    /// The returned `a_only` events must be retreated, and `b_only` events must be
-    /// advanced. The search walks ancestors from both frontiers until all remaining
-    /// queued events are shared ancestors.
-    fn diff<U>(
-        state: &U,
-        current_version: &Option<EventId>,
-        parents: &[EventId],
-    ) -> (Vec<EventId>, Vec<EventId>)
-    where
-        U: CausalReplay<List<V>>,
-    {
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum DiffFlag {
-            A,
-            B,
-            Shared,
-        }
-
-        #[derive(Clone, Eq, PartialEq)]
-        struct DiffQueueEntry {
-            event_idx: usize,
-            event_id: EventId,
-        }
-
-        impl Ord for DiffQueueEntry {
-            fn cmp(&self, other: &Self) -> Ordering {
-                self.event_idx
-                    .cmp(&other.event_idx)
-                    .then_with(|| self.event_id.origin_id().cmp(other.event_id.origin_id()))
-                    .then_with(|| self.event_id.seq().cmp(&other.event_id.seq()))
-                    .then_with(|| {
-                        self.event_id
-                            .disambiguator()
-                            .cmp(&other.event_id.disambiguator())
-                    })
-            }
-        }
-
-        impl PartialOrd for DiffQueueEntry {
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                Some(Ord::cmp(self, other))
-            }
-        }
-
-        #[allow(clippy::mutable_key_type)]
-        let mut flags: HashMap<EventId, DiffFlag> = HashMap::default();
-        // Process newer events first so frontiers converge toward their nearest
-        // common ancestors.
-        let mut queue: BinaryHeap<DiffQueueEntry> = BinaryHeap::new();
-        let mut num_shared = 0usize;
-
-        #[allow(clippy::mutable_key_type)]
-        fn enq(
-            flags: &mut HashMap<EventId, DiffFlag>,
-            queue: &mut BinaryHeap<DiffQueueEntry>,
-            num_shared: &mut usize,
-            event_id: EventId,
-            event_idx: usize,
-            flag: DiffFlag,
-        ) {
-            let prev = flags.get(&event_id).copied();
-            match prev {
-                None => {
-                    queue.push(DiffQueueEntry {
-                        event_idx,
-                        event_id: event_id.clone(),
-                    });
-                    if flag == DiffFlag::Shared {
-                        *num_shared += 1;
-                    }
-                    flags.insert(event_id, flag);
-                }
-                Some(old_flag) => {
-                    if flag != old_flag && old_flag != DiffFlag::Shared {
-                        flags.insert(event_id, DiffFlag::Shared);
-                        *num_shared += 1;
-                    }
-                }
-            }
-        }
-
-        if let Some(id) = current_version {
-            let event_idx = state.delivery_order(id).unwrap();
-            enq(
-                &mut flags,
-                &mut queue,
-                &mut num_shared,
-                id.clone(),
-                event_idx,
-                DiffFlag::A,
-            );
-        }
-        for p in parents.iter() {
-            let event_idx = state.delivery_order(p).unwrap();
-            enq(
-                &mut flags,
-                &mut queue,
-                &mut num_shared,
-                p.clone(),
-                event_idx,
-                DiffFlag::B,
-            );
-        }
-
-        let mut a_only = Vec::new();
-        let mut b_only = Vec::new();
-
-        while queue.len() > num_shared {
-            let id = queue.pop().unwrap().event_id;
-            let flag = flags.get(&id).copied().unwrap();
-            match flag {
-                DiffFlag::Shared => {
-                    num_shared -= 1;
-                }
-                DiffFlag::A => a_only.push(id.clone()),
-                DiffFlag::B => b_only.push(id.clone()),
-            }
-
-            for parent in state.direct_predecessors(&id).iter() {
-                let event_idx = state.delivery_order(parent).unwrap();
-                enq(
-                    &mut flags,
-                    &mut queue,
-                    &mut num_shared,
-                    parent.clone(),
-                    event_idx,
-                    flag,
-                );
-            }
-        }
-
-        (a_only, b_only)
-    }
-
-    /// Replay a topologically ordered event stream over an optional stable baseline.
-    ///
-    /// `events` can be the whole unstable log for `Read`, or a predecessor stream
-    /// for `ReadAt`. The document keeps its prepare view at the parent version of
-    /// each event, applies the event, and finally materializes the effect view.
-    fn replay<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Vec<V>
+    fn replay_document<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Document<'a, V>
     where
         U: CausalReplay<List<V>> + 'a,
         I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
@@ -591,21 +228,38 @@ where
 
         for tagged_op in events {
             let parents = unstable.direct_predecessors(tagged_op.id());
-            let (a_only, b_only) = Self::diff(unstable, &document.current_version, &parents);
+            let transition = transition(unstable, document.prepared_head.as_ref(), &parents);
 
-            for event_id in a_only {
+            for event_id in transition.retreat {
                 Self::retreat(&mut document, unstable, &event_id);
             }
 
-            for event_id in b_only {
+            for event_id in transition.advance {
                 Self::advance(&mut document, unstable, &event_id);
             }
 
             Self::apply(&mut document, tagged_op);
-            document.current_version = Some(tagged_op.id().clone());
+            document.prepared_head = Some(tagged_op.id().clone());
         }
 
-        document.materialize()
+        document
+    }
+
+    /// Replay an event stream and materialize its final effect view.
+    fn replay<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Vec<V>
+    where
+        U: CausalReplay<List<V>> + 'a,
+        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
+        V: 'a,
+    {
+        Self::replay_document(stable, unstable, events).materialize()
+    }
+
+    fn visible_len<U>(stable: &[V], unstable: &U) -> usize
+    where
+        U: CausalReplay<List<V>>,
+    {
+        Self::replay_document(stable, unstable, unstable.iter()).visible_len()
     }
 }
 
@@ -655,27 +309,31 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> Result<(), Self::Rejection> {
-        let state = Self::execute_query(&Read::new(), stable, unstable);
+        let state_len = Self::visible_len(stable, unstable);
         match op {
             List::Insert { pos, .. } => {
-                (*pos <= state.len())
+                (*pos <= state_len)
                     .then_some(())
                     .ok_or(ListRejection::OutOfBounds {
                         pos: *pos,
-                        len: state.len(),
+                        len: state_len,
                     })
             }
-            List::Update { pos } | List::Delete { pos } => (*pos < state.len())
-                .then_some(())
+            List::Update { pos } | List::Delete { pos } => {
+                (*pos < state_len)
+                    .then_some(())
+                    .ok_or(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: state_len,
+                    })
+            }
+            List::DeleteRange { start, len } => start
+                .checked_add(*len)
+                .filter(|end| *end <= state_len)
+                .map(|_| ())
                 .ok_or(ListRejection::OutOfBounds {
-                    pos: *pos,
-                    len: state.len(),
-                }),
-            List::DeleteRange { start, len } => ((*start + *len) <= state.len())
-                .then_some(())
-                .ok_or(ListRejection::OutOfBounds {
-                    pos: *start + *len,
-                    len: state.len(),
+                    pos: start.saturating_add(*len),
+                    len: state_len,
                 }),
         }
     }
@@ -689,11 +347,9 @@ where
         if !conservative {
             return CausalReset::Prune;
         }
-        let state = Self::execute_query(&ReadAt::new(version), stable, unstable);
-        CausalReset::Inject(vec![List::DeleteRange {
-            start: 0,
-            len: state.len(),
-        }])
+        let predecessors = unstable.predecessors(version);
+        let len = Self::replay_document(stable, unstable, predecessors).visible_len();
+        CausalReset::Inject(vec![List::DeleteRange { start: 0, len }])
     }
 }
 
@@ -874,546 +530,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use moirai_protocol::{
-        broadcast::tcsb::Tcsb,
-        crdt::eval::BorrowedRead,
-        replica::{IsReplica, Replica},
-        state::{cache::CachedLog, graph_log::GraphLog},
-    };
-
-    use super::*;
-    use crate::utils::membership::{triplet_log, twins_log};
-
-    type ListReplica = Replica<GraphLog<List<char>>, Tcsb<List<char>>>;
-
-    fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
-        let replica_a = Replica::bootstrap_with_state(
-            "a".to_string(),
-            &["a", "b"],
-            GraphLog::<List<char>>::from_stable(stable.clone()),
-        );
-        let replica_b = Replica::bootstrap_with_state(
-            "b".to_string(),
-            &["a", "b"],
-            GraphLog::<List<char>>::from_stable(stable),
-        );
-        (replica_a, replica_b)
-    }
-
-    #[test]
-    fn simple_insertion_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-        replica_b.receive(e1);
-
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "A");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn starts_from_stable_document() {
-        let (replica_a, replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "abc");
-    }
-
-    #[test]
-    fn inserts_into_stable_document() {
-        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-        let event = replica_a.send(List::insert('X', 1)).unwrap();
-        replica_b.receive(event);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "aXbc");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "aXbc");
-    }
-
-    #[test]
-    fn deletes_from_stable_document() {
-        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-        let event = replica_a.send(List::delete(1)).unwrap();
-        replica_b.receive(event);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "ac");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "ac");
-    }
-
-    #[test]
-    fn delete_range_from_stable_document() {
-        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c', 'd']);
-
-        let event = replica_a.send(List::delete_range(1, 2)).unwrap();
-        replica_b.receive(event);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "ad");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "ad");
-    }
-
-    #[test]
-    fn read_at_uses_stable_document() {
-        let (mut replica_a, _) = stable_twins(vec!['a', 'b', 'c']);
-
-        let insert = replica_a.send(List::insert('X', 1)).unwrap();
-        let insert_version = insert.event().version().clone();
-        replica_a.send(List::delete(1)).unwrap();
-
-        assert_eq!(
-            replica_a.query(&ReadAt::<Vec<char>>::new(&insert_version)),
-            vec!['a', 'X', 'b', 'c']
-        );
-        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
-    }
-
-    #[test]
-    fn concurrent_insertions_into_stable_document_converge() {
-        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-        let event_a = replica_a.send(List::insert('X', 1)).unwrap();
-        let event_b = replica_b.send(List::insert('Y', 1)).unwrap();
-        replica_a.receive(event_b);
-        replica_b.receive(event_a);
-
-        let a = replica_a.query(&Read::<String>::new());
-        let b = replica_b.query(&Read::<String>::new());
-        assert_eq!(a, b);
-        assert!(a == "aXYbc" || a == "aYXbc", "unexpected result: {a}");
-    }
-
-    #[test]
-    fn stable_update_wins_over_concurrent_delete() {
-        let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-        let event_a = replica_a.send(List::delete(1)).unwrap();
-        let event_b = replica_b.send(List::update(1)).unwrap();
-        replica_a.receive(event_b);
-        replica_b.receive(event_a);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "abc");
-    }
-
-    #[test]
-    fn concurrent_insertions_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
-        replica_b.receive(e1);
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
-
-        let e2a = replica_a.send(List::insert('e', 1)).unwrap();
-        let e2b = replica_b.send(List::insert('i', 1)).unwrap();
-        replica_b.receive(e2a);
-        replica_a.receive(e2b);
-
-        let res_b = replica_b.query(&Read::<String>::new());
-        assert!(
-            res_b == "Hei" || res_b == "Hie",
-            "Unexpected order: {}",
-            res_b
-        );
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn concurrent_insert() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
-        let e2 = replica_b.send(List::insert('i', 0)).unwrap();
-        replica_a.receive(e2);
-        replica_b.receive(e1);
-
-        let res_a = replica_a.query(&Read::<String>::new());
-        assert!(
-            res_a == "Hi" || res_a == "iH",
-            "Unexpected order: {}",
-            res_a
-        );
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn delete_operation_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-        replica_b.receive(e1);
-
-        let e2 = replica_a.send(List::delete(0)).unwrap();
-        replica_b.receive(e2);
-
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn conc_delete_ins_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-        replica_b.receive(e1);
-
-        let edel = replica_a.send(List::delete(0)).unwrap();
-        let eins = replica_b.send(List::insert('B', 1)).unwrap(); // Insert to the right of 'A' in B's view
-        replica_a.receive(eins);
-        replica_b.receive(edel);
-
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "B");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn sequential_conc_operations_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('H', 0)).unwrap();
-        replica_b.receive(e1);
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
-
-        let e2a = replica_a.send(List::insert('e', 1)).unwrap();
-        let e2b = replica_b.send(List::insert('i', 1)).unwrap();
-        replica_b.receive(e2a);
-        replica_a.receive(e2b);
-        assert!(
-            replica_b.query(&Read::<String>::new()) == "Hei"
-                || replica_b.query(&Read::<String>::new()) == "Hie"
-        );
-
-        // Insert a space between e and i from A's perspective (which will be position 2 if e<i)
-        let e3 = replica_a.send(List::insert(' ', 2)).unwrap();
-        replica_b.receive(e3);
-        let res = replica_a.query(&Read::<String>::new());
-        // Depending on tie-breaker, expected is either "He i" or "Hi e". We accept either space between letters.
-        assert!(res == "He i" || res == "Hi e", "Unexpected result: {}", res);
-    }
-
-    #[test]
-    fn in_paper() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        // e1: Insert(0, 'h')
-        let e1 = replica_a.send(List::insert('h', 0)).unwrap();
-        replica_b.receive(e1.clone());
-
-        // e2: Insert(1, 'i')
-        let e2 = replica_a.send(List::insert('i', 1)).unwrap();
-        replica_b.receive(e2.clone());
-
-        // Branch: Replica A will capitalize 'H', Replica B will change to 'hey'
-        // e3: Insert(0, 'H') depends on e1,e2
-        let e3 = replica_a.send(List::insert('H', 0)).unwrap();
-
-        // e4: Delete(1) (remove lowercase 'h') depends on e3
-        let e4 = replica_a.send(List::delete(1)).unwrap();
-
-        let e4_version = e4.event().version();
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "Hi");
-
-        // e5: Delete(1) (remove 'i') on other branch
-        let e5 = replica_b.send(List::delete(1)).unwrap();
-
-        // e6: Insert(1, 'e')
-        let e6 = replica_b.send(List::insert('e', 1)).unwrap();
-
-        // e7: Insert(2, 'y')
-        let e7 = replica_b.send(List::insert('y', 2)).unwrap();
-
-        replica_b.receive(e3.clone());
-        replica_b.receive(e4.clone());
-        replica_a.receive(e5.clone());
-        replica_a.receive(e6.clone());
-        replica_a.receive(e7.clone());
-        // Merge both replicas so they see all events before e8
-        // At this point both should be "Hey"
-
-        // e8: Insert(3, '!')
-        let e8 = replica_b.send(List::insert('!', 3)).unwrap();
-        replica_a.receive(e8.clone());
-
-        // Final result should be "Hey!"
-        assert_eq!(replica_a.query(&ReadAt::new(e4_version)), vec!['H', 'i']);
-        assert_eq!(&replica_a.query(&Read::<String>::new()), "Hey!");
-        assert_eq!(
-            &replica_a.query(&Read::<String>::new()),
-            &replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn delete_range_egwalker() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-        let e2 = replica_a.send(List::insert('B', 1)).unwrap();
-        let e3 = replica_a.send(List::insert('C', 2)).unwrap();
-        replica_b.receive(e1);
-        replica_b.receive(e2);
-        replica_b.receive(e3);
-        assert_eq!(replica_a.query(&Read::<String>::new()), "ABC");
-
-        let e4 = replica_a.send(List::delete_range(0, 2)).unwrap();
-        replica_b.receive(e4);
-        assert_eq!(replica_a.query(&Read::<String>::new()), "C");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn delete_range_egwalker_2() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let event_a = replica_a.send(List::insert('A', 0)).unwrap();
-        replica_b.receive(event_a);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "A");
-        assert_eq!(replica_b.query(&Read::<String>::new()), "A");
-
-        let event_b = replica_b.send(List::insert('B', 0)).unwrap();
-        assert_eq!(replica_b.query(&Read::<String>::new()), "BA");
-        let event_b_2 = replica_b.send(List::delete_range(0, 2)).unwrap();
-
-        assert_eq!(replica_b.query(&Read::<String>::new()), "");
-
-        let event_a_2 = replica_a.send(List::delete_range(0, 1)).unwrap();
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "");
-
-        replica_a.receive(event_b);
-        replica_a.receive(event_b_2);
-        replica_b.receive(event_a_2);
-        assert_eq!(replica_a.query(&Read::<String>::new()), "");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn delete_range_egwalker_3() {
-        let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<GraphLog<List<char>>>();
-
-        let event_a = replica_a.send(List::insert('4', 0)).unwrap();
-        replica_c.receive(event_a.clone());
-
-        let event_c = replica_c.send(List::insert('U', 0)).unwrap();
-        let event_c_1 = replica_c.send(List::delete_range(0, 2)).unwrap();
-
-        replica_b.receive(event_c.clone());
-        replica_b.receive(event_a.clone());
-        let event_b = replica_b.send(List::insert('y', 1)).unwrap();
-
-        replica_a.receive(event_c);
-        replica_a.receive(event_b.clone());
-        replica_c.receive(event_b);
-        replica_b.receive(event_c_1.clone());
-        replica_a.receive(event_c_1);
-
-        assert_eq!(replica_a.query(&Read::<String>::new()), "y");
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_c.query(&Read::<String>::new())
-        );
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    #[test]
-    fn update_delete() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-        replica_b.receive(e1);
-
-        let e2 = replica_b.send(List::update(0)).unwrap();
-
-        let e3 = replica_a.send(List::delete(0)).unwrap();
-        replica_b.receive(e3);
-        replica_a.receive(e2);
-
-        assert_eq!(
-            replica_a.query(&Read::<String>::new()),
-            replica_b.query(&Read::<String>::new())
-        );
-    }
-
-    /// digraph {
-    ///     0 [ label="[Insert { content: 'a', pos: 0 }@(0:1)]"]
-    ///     1 [ label="[Delete { pos: 0 }@(0:2)]"]
-    ///     2 [ label="[Insert { content: '6', pos: 0 }@(1:1)]"]
-    ///     3 [ label="[Delete { pos: 0 }@(0:3)]"]
-    ///     0 -> 1 [ ]  1 -> 3 [ ]  2 -> 3 [ ]
-    /// }
-    #[test]
-    fn regression_1() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-        let a1 = replica_a.send(List::insert('a', 0)).unwrap();
-        let a2 = replica_a.send(List::delete(0)).unwrap();
-        let b1 = replica_b.send(List::insert('6', 0)).unwrap();
-        replica_a.receive(b1);
-        replica_b.receive(a1);
-        replica_b.receive(a2);
-
-        let a3 = replica_a.send(List::delete(0)).unwrap();
-        replica_b.receive(a3);
-
-        let state_a = replica_a.query(&Read::<String>::new());
-        let state_b = replica_b.query(&Read::<String>::new());
-        let result = String::new();
-
-        assert_eq!(state_a, result);
-        assert_eq!(state_b, result);
-    }
-
-    /// digraph {
-    ///     0 [ label="[Insert { content: 'N', pos: 0 }@(1:1)]"]
-    ///     1 [ label="[Insert { content: 'r', pos: 1 }@(1:2)]"]
-    ///     2 [ label="[Delete { pos: 0 }@(0:1)]"]
-    ///     3 [ label="[Delete { pos: 0 }@(1:3)]"]
-    ///     4 [ label="[Insert { content: 'Y', pos: 0 }@(0:2)]"]
-    ///     5 [ label="[Insert { content: 'x', pos: 1 }@(1:4)]"]
-    ///     0 -> 1 [ ]  1 -> 2 [ ]  1 -> 3 [ ]  2 -> 4 [ ]  3 -> 4 [ ]  3 -> 5 [ ]
-    /// }
-    #[test]
-    fn regression_2() {
-        let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-
-        let b1 = replica_b.send(List::insert('N', 0)).unwrap();
-        let b2 = replica_b.send(List::insert('r', 1)).unwrap();
-
-        replica_a.receive(b1);
-        replica_a.receive(b2);
-
-        let a1 = replica_a.send(List::delete(0)).unwrap();
-        let b3 = replica_b.send(List::delete(0)).unwrap();
-
-        replica_a.receive(b3);
-        let a2 = replica_a.send(List::insert('Y', 0)).unwrap();
-        let b4 = replica_b.send(List::insert('x', 1)).unwrap();
-
-        replica_a.receive(b4);
-        replica_b.receive(a1);
-        replica_b.receive(a2);
-
-        let state_a = replica_a.query(&Read::<String>::new());
-        let state_b = replica_b.query(&Read::<String>::new());
-        let result = String::from("Yrx");
-
-        assert_eq!(state_a, result);
-        assert_eq!(state_b, result);
-    }
-
-    /// Simulate a long sequence of operations to test caching and performance.
-    #[test]
-    fn caching() {
-        let (mut replica_a, mut replica_b) =
-            twins_log::<CachedLog<GraphLog<List<char>>, Vec<char>>>();
-
-        let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
-
-        for i in 0..100 {
-            if i % 3 == 0 {
-                let e1 = replica_a
-                    .send(List::insert(alphabet[i % alphabet.len()], 0))
-                    .unwrap();
-                let e2 = replica_b
-                    .send(List::insert(alphabet[(i + 1) % alphabet.len()], 0))
-                    .unwrap();
-                replica_a.receive(e2);
-                replica_b.receive(e1);
-            } else if i % 3 == 1 {
-                let e1 = replica_a.send(List::delete(0)).unwrap();
-                let e2 = replica_b.send(List::delete(0)).unwrap();
-                replica_a.receive(e2);
-                replica_b.receive(e1);
-            } else {
-                let e1 = replica_a.send(List::update(0)).unwrap();
-                let e2 = replica_b.send(List::update(0)).unwrap();
-                replica_a.receive(e2);
-                replica_b.receive(e1);
-            }
-        }
-
-        let time = std::time::Instant::now();
-        let _ = replica_a
-            .state()
-            .read_ref()
-            .iter()
-            .cloned()
-            .collect::<String>();
-        let elapsed_no_caching = time.elapsed();
-
-        let time = std::time::Instant::now();
-        let _ = replica_a
-            .state()
-            .read_ref()
-            .iter()
-            .cloned()
-            .collect::<String>();
-        let elapsed_with_caching_1 = time.elapsed();
-
-        let _ = replica_a.send(List::insert('A', 0)).unwrap();
-
-        let time = std::time::Instant::now();
-        let _ = replica_a
-            .state()
-            .read_ref()
-            .iter()
-            .cloned()
-            .collect::<String>();
-        let elapsed_with_caching_2 = time.elapsed();
-
-        println!(
-            "Elapsed without caching: {:?}, with caching 1: {:?}, with caching 2: {:?}",
-            elapsed_no_caching, elapsed_with_caching_1, elapsed_with_caching_2
-        );
-
-        assert!(elapsed_with_caching_1 * 100 < elapsed_no_caching);
-        assert!(elapsed_with_caching_2 * 100 < elapsed_no_caching);
-    }
-
-    #[cfg(feature = "fuzz")]
-    #[test]
-    #[ignore]
-    fn fuzz_list() {
-        use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
-            fuzzer::fuzzer,
-        };
-
-        let run = RunConfig::new(0.5, 8, 1_000, None, None, true, false);
-        let runs = vec![run; 1];
-
-        let config = FuzzerConfig::<GraphLog<List<char>>, Read<String>>::new(
-            "list",
-            runs,
-            true,
-            Predicate::new(Read::new(), |a, b| a == b),
-            false,
-        );
-
-        fuzzer::<GraphLog<List<char>>, Read<String>>(config);
-    }
-}
+mod tests;

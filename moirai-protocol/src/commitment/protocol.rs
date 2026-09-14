@@ -13,6 +13,7 @@ use crate::{
 /// Commitment protocol, which is responsible for
 /// determining the current leader based on the votes of the replicas.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CommitmentProtocol<Oracle>
 where
     Oracle: IsOracle,

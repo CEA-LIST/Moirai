@@ -3,7 +3,6 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-#[cfg(feature = "test_utils")]
 use crate::replica::ReplicaIdOwned;
 use crate::{
     broadcast::{
