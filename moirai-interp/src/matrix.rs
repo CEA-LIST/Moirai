@@ -488,12 +488,23 @@ pub fn row(construction: Construction) -> Row {
         }
         Construction::EnumRegister(TieBreak::LastWriterWins | TieBreak::Fair) => (
             POLICY_REGISTER,
-            Reach::Unreachable("no checked-in metamodel annotates an enum-typed attribute"),
+            Reach::Unreachable(
+                "no checked-in metamodel annotates an enum-typed attribute as a last-writer-wins \
+                 or fair register: the only two annotated ones, `class_diagram.ecore`'s \
+                 `Feature.visibility` and `Relation.typ`, are total-order registers",
+            ),
         ),
-        Construction::EnumRegister(TieBreak::PartialOrder | TieBreak::TotalOrder) => (
+        Construction::EnumRegister(TieBreak::PartialOrder) => (
             CLEARABLE_REGISTER,
-            Reach::Unreachable("no checked-in metamodel annotates an enum-typed attribute"),
+            Reach::Unreachable(
+                "no checked-in metamodel annotates an enum-typed attribute as a partial-order \
+                 register: the only two annotated ones, `class_diagram.ecore`'s \
+                 `Feature.visibility` and `Relation.typ`, are total-order registers",
+            ),
         ),
+        Construction::EnumRegister(TieBreak::TotalOrder) => {
+            (CLEARABLE_REGISTER, at(CLASSDIAGRAM, "Relation.typ"))
+        }
         Construction::AddWinsSet => (SET, at(CLASSDIAGRAM, "Class.tags")),
         Construction::RemoveWinsSet => (SET, at(CLASSDIAGRAM, "Class.invariants")),
         Construction::Bag => (BAG, at(KITCHEN, "Foo.bag")),
@@ -1397,6 +1408,76 @@ where
     G::Op: Clone + Debug + InternalizeOp,
 {
     let assigned = check_coverage(krate, sem, cells)?;
+    run_cells(krate, cells, interp, generated).finish(krate, assigned)
+}
+
+/// What a run of some cells amounted to, before it is reported: the counts and
+/// the reason of every cell that failed.
+#[derive(Clone, Debug, Default)]
+pub struct CellsRun {
+    /// Cells run.
+    pub cells: usize,
+    /// Their counts, summed.
+    pub total: Stats,
+    /// One reason per failing cell.
+    pub failures: Vec<String>,
+}
+
+impl CellsRun {
+    /// Another run's cells, counts and failures added to this one's.
+    pub fn merge(&mut self, other: CellsRun) {
+        self.cells += other.cells;
+        self.total.add(other.total);
+        self.failures.extend(other.failures);
+    }
+
+    /// The crate's summary line, and `Err` when any cell failed. `assigned` is
+    /// what [`check_coverage`] returned over every cell of the crate.
+    pub fn finish(self, krate: &str, assigned: usize) -> Result<Stats, String> {
+        let CellsRun {
+            cells,
+            total,
+            failures,
+        } = self;
+        eprintln!(
+            "matrix {krate}: {cells} cells of {assigned} assigned, {} schedules, {} twin and {} \
+             replica comparisons, {} events per path, {} failing",
+            total.schedules,
+            total.twin_comparisons,
+            total.replica_comparisons,
+            total.events,
+            failures.len()
+        );
+        if failures.is_empty() {
+            Ok(total)
+        } else {
+            Err(format!(
+                "{} of {cells} cells failed:\n\n{}",
+                failures.len(),
+                failures.join("\n\n")
+            ))
+        }
+    }
+}
+
+/// Every cell under one pair of arms, each cell's line printed, with no
+/// coverage check and no summary line: for a crate whose cells need more than
+/// one pair of arms, as `classdiagram_crdt`'s do because its interpreted
+/// harness is rooted at one class, and which checks coverage over all of its
+/// cells itself and then calls [`CellsRun::finish`].
+pub fn run_cells<E, I, G>(
+    krate: &str,
+    cells: &[Cell<E>],
+    interp: &Arm<'_, E, I>,
+    generated: &Arm<'_, E, G>,
+) -> CellsRun
+where
+    E: Debug,
+    I: IsLog,
+    G: IsLog,
+    I::Op: Clone + Debug + InternalizeOp,
+    G::Op: Clone + Debug + InternalizeOp,
+{
     let mut total = Stats::default();
     let mut failures = Vec::new();
     for cell in cells {
@@ -1423,25 +1504,10 @@ where
             Err(reason) => failures.push(reason),
         }
     }
-    eprintln!(
-        "matrix {krate}: {} cells of {assigned} assigned, {} schedules, {} twin and {} replica \
-         comparisons, {} events per path, {} failing",
-        cells.len(),
-        total.schedules,
-        total.twin_comparisons,
-        total.replica_comparisons,
-        total.events,
-        failures.len()
-    );
-    if failures.is_empty() {
-        Ok(total)
-    } else {
-        Err(format!(
-            "{} of {} cells failed:\n\n{}",
-            failures.len(),
-            cells.len(),
-            failures.join("\n\n")
-        ))
+    CellsRun {
+        cells: cells.len(),
+        total,
+        failures,
     }
 }
 
@@ -1540,17 +1606,21 @@ mod tests {
         }
         assert_eq!(rows.len(), 34, "thirty-four rows");
         assert_eq!(
-            reachable_cells, 109,
-            "the audit's hundred and eight cells and the keyed map's three-writer column"
+            reachable_cells,
+            109 + 4,
+            "the audit's hundred and eight cells, the keyed map's three-writer column, and \
+             the total-order enum register's four through `Relation.typ`"
         );
         assert_eq!(
             unreachable.len(),
-            6 + 4 + 1,
-            "six simple counters, four non-mv enum registers, the optional containment: \
-             {unreachable:?}"
+            6 + 3 + 1,
+            "six simple counters, three enum registers that are neither multi-value nor \
+             total-order, the optional containment: {unreachable:?}"
         );
         assert!(unreachable.contains(&Construction::SimpleCounter(NumKind::U8)));
         assert!(unreachable.contains(&Construction::EnumRegister(TieBreak::Fair)));
+        assert!(unreachable.contains(&Construction::EnumRegister(TieBreak::PartialOrder)));
+        assert!(!unreachable.contains(&Construction::EnumRegister(TieBreak::TotalOrder)));
         assert!(unreachable.contains(&Construction::OptionalContainment));
     }
 
