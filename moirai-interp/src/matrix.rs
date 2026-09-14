@@ -1482,6 +1482,7 @@ mod tests {
     use moirai_semantics::{FlagWins, LeafRule, NumKind, SetTie, TieBreak};
 
     use super::{Construction, Reach, assignments, interleavings, leaf_construction, matrix, row};
+
     use crate::leaf::LeafLog;
 
     /// Every one of the twenty-three leaf arms, minted the only way a leaf is
@@ -1551,6 +1552,162 @@ mod tests {
         assert!(unreachable.contains(&Construction::SimpleCounter(NumKind::U8)));
         assert!(unreachable.contains(&Construction::EnumRegister(TieBreak::Fair)));
         assert!(unreachable.contains(&Construction::OptionalContainment));
+    }
+
+    // ------------------------------------------------------------------
+    // The runner's own controls: the replica-against-replica check and the
+    // after-stabilization check can fail, shown on two deliberately broken
+    // logs that live here and nowhere else. The same log runs as both arms,
+    // so every twin comparison passes by construction and only those two
+    // checks are left to notice anything.
+    // ------------------------------------------------------------------
+
+    use moirai_protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
+    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use serde_json::{Value, json};
+
+    use super::{Arm, Cell, Rep, pattern, run_cell};
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum ToyOp {
+        Write(u64),
+        Beat,
+    }
+
+    impl InternalizeOp for ToyOp {
+        fn internalize(self, _interner: &Interner) -> Self {
+            self
+        }
+    }
+
+    /// Keeps whichever write it was handed last: two replicas that deliver two
+    /// concurrent writes in opposite orders disagree, on both "paths" alike.
+    #[derive(Clone, Debug, Default)]
+    struct LastDelivered(Option<u64>);
+
+    impl IsLog for LastDelivered {
+        type Value = ();
+        type Op = ToyOp;
+
+        fn is_enabled(&self, _op: &ToyOp) -> bool {
+            true
+        }
+
+        fn effect(
+            &mut self,
+            event: Event<ToyOp>,
+            #[cfg(feature = "sink")] _path: moirai_protocol::state::object_path::ObjectPath,
+            #[cfg(feature = "sink")] _sink: &mut moirai_protocol::state::sink::SinkCollector,
+            #[cfg(feature = "sink")] _ownership: moirai_protocol::state::sink::SinkOwnership,
+        ) {
+            if let ToyOp::Write(value) = event.op() {
+                self.0 = Some(*value);
+            }
+        }
+
+        fn stabilize(&mut self, _version: &Version) {}
+
+        fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {}
+
+        fn is_default(&self) -> bool {
+            self.0.is_none()
+        }
+    }
+
+    /// Reads the greatest write it holds, which converges, until the writes
+    /// of two different origins are stable; then keeps whichever write it was
+    /// handed last, which does not. Equal at every point before both
+    /// conflicting writes stabilize and split after they do, which is the
+    /// shape of both defects of code note 34.
+    #[derive(Clone, Debug, Default)]
+    struct SplitsAtStability {
+        delivered: Vec<u64>,
+        stable: Option<u64>,
+    }
+
+    impl IsLog for SplitsAtStability {
+        type Value = ();
+        type Op = ToyOp;
+
+        fn is_enabled(&self, _op: &ToyOp) -> bool {
+            true
+        }
+
+        fn effect(
+            &mut self,
+            event: Event<ToyOp>,
+            #[cfg(feature = "sink")] _path: moirai_protocol::state::object_path::ObjectPath,
+            #[cfg(feature = "sink")] _sink: &mut moirai_protocol::state::sink::SinkCollector,
+            #[cfg(feature = "sink")] _ownership: moirai_protocol::state::sink::SinkOwnership,
+        ) {
+            if let ToyOp::Write(value) = event.op() {
+                self.delivered.push(*value);
+            }
+        }
+
+        fn stabilize(&mut self, version: &Version) {
+            let origins = version.iter().filter(|(_, seq)| *seq >= 1).count();
+            if origins >= 2
+                && let Some(last) = self.delivered.last()
+            {
+                self.stable = Some(*last);
+            }
+        }
+
+        fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {}
+
+        fn is_default(&self) -> bool {
+            self.delivered.is_empty()
+        }
+    }
+
+    fn toy_cell() -> Cell<ToyOp> {
+        Cell::new(
+            Construction::Register(TieBreak::MultiValue),
+            pattern::WRITE_WRITE_DIFFERENT,
+            vec![],
+            vec![vec![ToyOp::Write(1)], vec![ToyOp::Write(2)]],
+            ToyOp::Beat,
+        )
+    }
+
+    /// Every schedule of `toy_cell` run on `L` as both arms, and the first
+    /// failure of each schedule kind the runner reports.
+    fn verdict<L: IsLog<Op = ToyOp>>(read: &dyn Fn(&Rep<L>) -> Value) -> String {
+        let encode = |op: &ToyOp, _: &Value| op.clone();
+        let one = Arm {
+            name: "interpreted",
+            encode: &encode,
+            read,
+        };
+        let other = Arm {
+            name: "generated",
+            encode: &encode,
+            read,
+        };
+        run_cell(&toy_cell(), &one, &other).expect_err("a log that does not converge has to fail")
+    }
+
+    #[test]
+    fn the_runner_catches_two_replicas_of_one_path_that_disagree_where_twins_cannot() {
+        let reason = verdict::<LastDelivered>(&|replica| json!(replica.log().0));
+        assert!(reason.contains("replicas a and b of the interpreted path"), "{reason}");
+        assert!(reason.contains("once the conflict has been delivered everywhere"), "{reason}");
+        eprintln!("{reason}");
+    }
+
+    #[test]
+    fn the_runner_catches_a_split_that_only_stabilization_makes() {
+        let reason = verdict::<SplitsAtStability>(&|replica| {
+            let log = replica.log();
+            json!(log.stable.or_else(|| log.delivered.iter().copied().max()))
+        });
+        assert!(reason.contains("replicas a and b of the interpreted path"), "{reason}");
+        assert!(
+            reason.contains("stabilizing the conflict") || reason.contains("acknowledgement"),
+            "the split appears only once something stabilizes: {reason}"
+        );
+        eprintln!("{reason}");
     }
 
     #[test]
