@@ -75,12 +75,13 @@ pub type OpGuardFn<O> = fn(&LogId, &ServedDescriptor, &O) -> Result<(), String>;
 /// identity.
 pub type DescribeFn = fn(&str) -> Result<ServedDescriptor, String>;
 
-/// The application's look inside a log it joined under a metamodel this node
-/// holds no descriptor for: the descriptor's text, once the log carries one,
-/// or `None` while it does not.
+/// The application's look inside a bound log: the descriptor's text, once
+/// the log carries one, or `None` while it does not.
 ///
-/// The node calls this on every pass for each log whose binding is still
-/// pending, and hands whatever comes back to [`GenericNode::add_metamodel`],
+/// The node calls this on every pass for each bound log it has not yet
+/// compared with the model's own history — every join under a metamodel it
+/// holds no descriptor for, and every other binding exactly once — and hands
+/// whatever comes back to [`GenericNode::add_metamodel`],
 /// which describes it through the application's own [`DescribeFn`] and so
 /// re-derives the key from the bytes. As with [`DescribeFn`], the node reads
 /// nothing inside the text: where a log keeps a descriptor, and whether it
@@ -342,6 +343,20 @@ struct Binding {
     metamodel_id: serde_json::Value,
     /// Whether this node holds the descriptor `key` names.
     state: BindingState,
+    /// Whether the model's own history has been read against `key` yet.
+    ///
+    /// The key is the model's identity, and a binding is only a *claim* about
+    /// it until the model itself is heard from: the log carries the
+    /// descriptor it was opened with, and until that descriptor has been
+    /// described and its key compared with this one, nothing here knows
+    /// whether the claim is true. `false` at registration for a create and a
+    /// join alike, and set once the comparison has been made — after which
+    /// there is nothing left to compare, because one log holds one metamodel
+    /// for its whole life.
+    ///
+    /// It is what keeps [`GenericNode::resolve_bindings`] from describing
+    /// every hosted model's descriptor on every pass of the event loop.
+    confirmed: bool,
 }
 
 /// Whether a bound log's metamodel is one this node can serve.
@@ -352,6 +367,12 @@ struct Binding {
 enum BindingState {
     /// The descriptor was in the served set when the log was bound, or has
     /// been adopted into it since. Everything answers as it always has.
+    ///
+    /// Held is not the same as *checked*: the log was bound to a key this
+    /// node happens to hold, which says nothing about the language the model
+    /// is actually written in. `Binding::confirmed` is what carries that,
+    /// and a held binding the model's own history contradicts becomes
+    /// `Foreign` rather than staying here.
     Held,
     /// It is not, and the model's own history has not brought it yet.
     ///
@@ -370,6 +391,20 @@ enum BindingState {
     Pending,
     /// The model brought a descriptor and it is not the one the log was
     /// joined under, or it is one the application will not serve.
+    ///
+    /// Reached from `Pending` — the log was joined under a metamodel this
+    /// node holds no descriptor for and the model carries a different one —
+    /// and from `Held` alike: a join names a digest this node happens to
+    /// hold, which the node has no way to check at join time, and the
+    /// model's own history is what checks it. Both are the same
+    /// disagreement, and the second is the dangerous one, because everything
+    /// answers normally until the history arrives.
+    ///
+    /// `GET /api/model/{id}/metamodel` answers 404 for a foreign binding,
+    /// and does so for the reason rather than by accident: the key the log
+    /// was bound under may well name a descriptor this node serves, and
+    /// serving it would tell an editor the model is written in a language it
+    /// is not. See [`BoundDescriptor::Disputed`].
     ///
     /// Terminal, and it exists so that a disagreement is reported once
     /// instead of on every pass of the event loop: one log holds one
@@ -844,11 +879,11 @@ pub(crate) enum ControlCmd {
         log_id: LogId,
         reply: Sender<Option<serde_json::Value>>,
     },
-    /// The key one model was registered under: `None` when the node does not
-    /// host it, `Some(None)` for a hosted log with no binding.
+    /// What to serve on one model's metamodel route: `None` when the node
+    /// does not host it, and otherwise a [`BoundDescriptor`].
     Binding {
         log_id: LogId,
-        reply: Sender<Option<Option<String>>>,
+        reply: Sender<Option<BoundDescriptor>>,
     },
     /// `POST /api/metamodels`. See [`GenericNode::add_metamodel`].
     ///
@@ -863,6 +898,30 @@ pub(crate) enum ControlCmd {
         log_id: LogId,
         reply: Sender<bool>,
     },
+}
+
+/// What `GET /api/model/{id}/metamodel` is to answer for one hosted log.
+///
+/// Three answers rather than the key alone, because "no key to serve" and
+/// "no binding at all" are different questions with different answers, and
+/// the first one is not always a key this node fails to find.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoundDescriptor {
+    /// Serve the descriptor this key names, and answer 404 when this node
+    /// holds none: a binding nothing has contradicted.
+    Key(String),
+    /// A log hosted with no binding — the default log — which is answered
+    /// the node's first descriptor, as `GET /api/metamodel` is.
+    Unbound,
+    /// The log was bound to one metamodel and the model is written in
+    /// another, so this node serves no descriptor for it and says so with a
+    /// 404.
+    ///
+    /// Its own answer rather than a missing key, because the key a wrong
+    /// binding carries is very often one this node *does* hold — that is how
+    /// the binding came to be held in the first place — and looking it up
+    /// would answer a descriptor for a language the model is not written in.
+    Disputed,
 }
 
 /// Result sent back to HTTP callers.
@@ -1081,7 +1140,7 @@ where
     /// Install the application's hook for a descriptor that arrives inside a
     /// log, which is what makes a metamodel obtained by joining a model
     /// visible at this node's API; see [`AdoptFn`] and
-    /// [`resolve_pending_bindings`].
+    /// [`resolve_bindings`].
     ///
     /// Purely additive: without it a log joined under an unheld metamodel
     /// still merges and still reads out, and its binding simply stays pending
@@ -1091,44 +1150,73 @@ where
     /// own [`DescribeFn`], which is what re-derives the key from the bytes: a
     /// peer cannot install a descriptor under a key it does not hash to.
     ///
-    /// [`resolve_pending_bindings`]: GenericNode::resolve_pending_bindings
+    /// [`resolve_bindings`]: GenericNode::resolve_bindings
     /// [`enable_metamodel_upload`]: GenericNode::enable_metamodel_upload
     /// [`add_metamodel`]: GenericNode::add_metamodel
     pub fn enable_descriptor_adoption(&mut self, adopt: AdoptFn<L>) {
         self.adopt_fn = Some(adopt);
     }
 
-    /// For every log joined under a metamodel this node holds no descriptor
-    /// for, ask the application whether the log carries one yet, and serve it
-    /// if it does.
+    /// Check every bound log against the descriptor the model itself
+    /// carries, once the model carries one: serve it when this node did not
+    /// have it, and mark the binding foreign when it is not the one the log
+    /// was bound under.
     ///
-    /// One pass of the event loop, and one comparison per hosted log while
-    /// nothing is pending, which is the usual case: a binding is pending only
-    /// between a join and the arrival of the model's own history.
+    /// # Why a held binding is checked too
     ///
-    /// The key is checked rather than trusted. `add_metamodel` describes the
-    /// text through the application's [`DescribeFn`], which computes the key
-    /// from the bytes, and the binding is resolved only when that key is the
-    /// one the join asked for. A log that installed some other metamodel is
-    /// left pending and said so once, because the descriptor this node would
-    /// then serve for the model is not the one the model was joined under.
-    fn resolve_pending_bindings(&mut self) {
+    /// A registration names a metamodel by key and the node has no way to
+    /// check it at that moment: a join writes nothing and the log is empty,
+    /// so there is nothing to check the key against. Whether this node
+    /// happens to hold a descriptor under that key is a fact about *this
+    /// node*, not about the model, and the two cases differ only in how long
+    /// the mistake stays invisible. A key this node does not hold leaves the
+    /// binding `Pending`, and every route says so: the model reads out empty,
+    /// a local write is refused, `GET /api/model/{id}/metamodel` is 404. A
+    /// key this node *does* hold binds straight to `Held`, and every route
+    /// answers as though the binding were known to be right — including the
+    /// metamodel route, which then serves a descriptor for a language the
+    /// model is not written in, and an editor that types the model against
+    /// it reports the model's own classes as unknown.
+    ///
+    /// So both are checked, against the same thing and by the same rule: the
+    /// descriptor inside the model's own history, described through the
+    /// application's [`DescribeFn`], which re-derives the key from the bytes.
+    /// The key is compared and nothing inside either descriptor is read. A
+    /// mismatch is `Foreign` in both directions, and `Foreign` is terminal.
+    ///
+    /// # What it costs per pass
+    ///
+    /// One `Option` clone per unconfirmed binding, and a description only
+    /// when the model has brought a descriptor — after which the binding is
+    /// confirmed and never looked at again. A model created here confirms on
+    /// the pass after its opening operation; a model joined here confirms
+    /// when its history lands. So the steady state is what it was: nothing
+    /// but the filter, once per hosted log.
+    fn resolve_bindings(&mut self) {
         let Some(adopt) = self.adopt_fn else {
             return;
         };
-        let arrived: Vec<(LogId, String, String)> = self
+        let arrived: Vec<(LogId, String, BindingState, String)> = self
             .logs
             .iter()
             .filter_map(|(log_id, log)| {
-                let binding = log
-                    .binding
-                    .as_ref()
-                    .filter(|binding| binding.state == BindingState::Pending)?;
+                let binding = log.binding.as_ref().filter(|binding| match binding.state {
+                    BindingState::Pending => true,
+                    // Held is a claim until the model is heard from, and
+                    // this is the hearing. Once.
+                    BindingState::Held => !binding.confirmed,
+                    BindingState::Foreign => false,
+                })?;
                 let text = adopt(&log.replica)?;
-                Some((log_id.clone(), binding.key.clone(), text))
+                Some((
+                    log_id.clone(),
+                    binding.key.clone(),
+                    binding.state,
+                    text,
+                ))
             })
             .collect();
-        for (log_id, key, text) in arrived {
+        for (log_id, key, was, text) in arrived {
             let outcome = self.add_metamodel(text);
             let state = match &outcome {
                 Ok(served) if served.key == key => BindingState::Held,
@@ -1140,11 +1228,22 @@ where
                 .and_then(|log| log.binding.as_mut())
             {
                 binding.state = state;
+                binding.confirmed = true;
             }
             match outcome {
+                // The model agrees with the key it was bound under. Said
+                // out loud only when this node did not hold the descriptor
+                // before, because that is the event: the language arrived.
+                Ok(_) if state == BindingState::Held && was == BindingState::Held => {}
                 Ok(served) if state == BindingState::Held => eprintln!(
                     "[{}] model {} brought its own metamodel {}: now served here",
                     self.replica_id, log_id, served.key
+                ),
+                Ok(served) if was == BindingState::Held => eprintln!(
+                    "[{}] model {} was joined under metamodel {}, which this node holds, but \
+                     the model is written in {}: the binding is wrong and this node serves no \
+                     descriptor for the model",
+                    self.replica_id, log_id, key, served.key
                 ),
                 Ok(served) => eprintln!(
                     "[{}] model {} was joined under metamodel {} and carries {} instead; \
@@ -1157,6 +1256,19 @@ where
                 ),
             }
         }
+    }
+
+    /// What `GET /api/model/{id}/metamodel` is to answer for one log:
+    /// `None` when this node does not host it.
+    fn bound_descriptor(&self, log_id: &LogId) -> Option<BoundDescriptor> {
+        self.logs.get(log_id).map(|log| match &log.binding {
+            None => BoundDescriptor::Unbound,
+            // A foreign binding names a key this node may well hold — that
+            // is how it came to be held — and serving it is the whole of
+            // what this state exists to prevent.
+            Some(binding) if binding.state == BindingState::Foreign => BoundDescriptor::Disputed,
+            Some(binding) => BoundDescriptor::Key(binding.key.clone()),
+        })
     }
 
     /// Serve one more descriptor, now: the primitive behind
@@ -1249,6 +1361,16 @@ where
     ///
     /// A `metamodel_id` `descriptor_key_fn` cannot read a key out of at all
     /// is refused either way: there would be nothing to bind to.
+    ///
+    /// # Neither answer is a check
+    ///
+    /// A join names a key, and this node cannot tell whether the model is
+    /// written in it: the log is empty at that moment and there is nothing
+    /// to compare. That is true of the key this node holds exactly as it is
+    /// of the one it does not — the two differ in what the node can serve,
+    /// not in what it knows. The check is
+    /// [`resolve_bindings`](GenericNode::resolve_bindings), which runs when
+    /// the model's own history brings the descriptor it was opened with.
     pub fn register(
         &mut self,
         model_id: Option<LogId>,
@@ -1284,6 +1406,13 @@ where
             } else {
                 BindingState::Pending
             },
+            // Neither answer is checked yet, and holding the descriptor is
+            // not a check: it says this node could serve that key, not that
+            // the model is written in it. `resolve_bindings` does the
+            // checking, once the model's own history is here to check
+            // against — for a create too, whose opening operation carries
+            // the descriptor it was written from.
+            confirmed: false,
         };
         if let Some(log) = self.logs.get_mut(&log_id) {
             log.binding = Some(binding);
@@ -2018,9 +2147,10 @@ where
             // --- Still nothing? Ask again. ---
             self.retry_state_transfer();
 
-            // --- A model joined under an unheld metamodel may have brought
-            //     its own by now. ---
-            self.resolve_pending_bindings();
+            // --- A model may have brought its own metamodel by now, and
+            //     either it is the one the log was bound under or the
+            //     binding is wrong. ---
+            self.resolve_bindings();
 
             // --- Accept new inbound TCP connections ---
             self.transport.accept_connections().ok();
@@ -2304,11 +2434,7 @@ where
                 let _ = reply.send(metrics);
             }
             ControlCmd::Binding { log_id, reply } => {
-                let key = self
-                    .logs
-                    .get(&log_id)
-                    .map(|log| log.binding.as_ref().map(|binding| binding.key.clone()));
-                let _ = reply.send(key);
+                let _ = reply.send(self.bound_descriptor(&log_id));
             }
             ControlCmd::AddMetamodel { text, reply } => {
                 let _ = reply.send(self.add_metamodel(text));
@@ -2689,10 +2815,43 @@ mod tests {
         node.serve_metamodels(vec![ServedDescriptor {
             key: BT_KEY.to_string(),
             listing: json!({ "nsURI": "http://www.example.org/behaviortree", "digest": BT_KEY }),
-            text: "{}".to_string(),
+            text: bt_descriptor_text(),
         }]);
         node.enable_registration(key_of, header);
         node
+    }
+
+    /// The `bt` descriptor's text, in the shape [`describe`] reads: the
+    /// served text has to describe back to the key it is served under, or
+    /// the node's own round trip through the application could not be
+    /// exercised at all.
+    fn bt_descriptor_text() -> String {
+        json!({ "digest": BT_KEY, "nsURI": "http://www.example.org/behaviortree" }).to_string()
+    }
+
+    /// Where a log keeps the descriptor it was opened with, in this toy
+    /// log: one set member with the text behind a prefix. The interpreted
+    /// node keeps it in `ModelLog::descriptor`, written by the opening
+    /// `Install`; what matters to the node below is only that the
+    /// application can hand it back.
+    const DESCRIPTOR_PREFIX: &str = "__descriptor:";
+
+    /// An [`AdoptFn`] in miniature: the descriptor this log carries, if it
+    /// carries one.
+    fn carried(replica: &LogReplica<Log>) -> Option<String> {
+        replica
+            .query(Read::<<Log as IsLog>::Value>::new())
+            .into_iter()
+            .find_map(|member| {
+                member
+                    .strip_prefix(DESCRIPTOR_PREFIX)
+                    .map(str::to_string)
+            })
+    }
+
+    /// The operation that puts a descriptor into a model's own history.
+    fn opened_with(text: &str) -> Op {
+        add(&format!("{DESCRIPTOR_PREFIX}{text}"))
     }
 
     fn bt_id() -> serde_json::Value {
@@ -3485,6 +3644,107 @@ mod tests {
             "the held frame and its predecessor did not both deliver"
         );
         assert_eq!(n.hosted(&uml()).unwrap().stability().delivered, 2);
+    }
+
+    /// **IP33** — a binding a node happens to hold is a claim about the
+    /// model, and the model's own history is what checks it.
+    ///
+    /// Found in the browser, rehearsing the demo. `a` holds two languages
+    /// and creates a model in `uml`. `b` holds only `bt`, and joins that
+    /// model naming `bt`, because `bt` is what `b`'s dropdown could offer.
+    /// Nothing refuses it and nothing can: the log is empty at that moment,
+    /// so there is nothing to check the key against. The binding went
+    /// straight to `Held` — no pending state, no adoption, no comparison —
+    /// and `GET /api/model/{id}/metamodel` then answered `bt` for a `uml`
+    /// model, which is what an editor types the document against, and it
+    /// reports the model's own classes as unknown.
+    ///
+    /// So: once `a`'s history lands, `b` must stop answering for that model.
+    /// The control is the model beside it, joined under the same key and
+    /// genuinely written in it, whose route must go on answering exactly as
+    /// it did — the fix is a check, not a refusal to serve.
+    ///
+    /// Both assertions are made through the real event loop and the real
+    /// route, because the route's answer is the defect.
+    #[test]
+    fn ip33_a_held_binding_the_model_contradicts_stops_serving_its_descriptor() {
+        use crate::http_api::testing::{free_port, request};
+
+        let mut a = registering("a");
+        a.enable_metamodel_upload(describe);
+        a.add_metamodel(uml_descriptor_text()).expect("uml is read");
+
+        let mut b = registering("b");
+        b.enable_metamodel_upload(describe);
+        b.enable_descriptor_adoption(carried);
+
+        // `a` opens one model in each language, each carrying the
+        // descriptor it was opened with, as an `Install` does.
+        let Registered { model_id: wrong, .. } = a
+            .register(None, json!({ "digest": UML_KEY }))
+            .expect("a holds uml");
+        assert!(a.apply_op_to(&wrong, opened_with(&uml_descriptor_text())).success);
+        let Registered { model_id: right, .. } = a.register(None, bt_id()).expect("a holds bt");
+        assert!(a.apply_op_to(&right, opened_with(&bt_descriptor_text())).success);
+
+        // `b` joins both naming `bt`, the one language it holds. The second
+        // is true, the first is not, and nothing here can tell them apart.
+        b.register(Some(wrong.clone()), bt_id()).expect("joined");
+        b.register(Some(right.clone()), bt_id()).expect("joined");
+        for log_id in [&wrong, &right] {
+            assert_eq!(
+                b.bound_descriptor(log_id),
+                Some(BoundDescriptor::Key(BT_KEY.to_string())),
+                "a join under a key this node holds binds straight to it, unchecked"
+            );
+        }
+
+        for frame in take_broadcast(&mut a) {
+            b.handle_transport_message("a".to_string(), frame);
+        }
+
+        let port = free_port();
+        b.start_http(port);
+        std::thread::spawn(move || b.run());
+
+        // The loop resolves on its first pass; poll so the test does not
+        // race the thread that owns the node now.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let (mut status, mut body) = (0u16, String::new());
+        while std::time::Instant::now() < deadline {
+            (status, body) = request(port, &format!("GET /api/model/{wrong}/metamodel"), None);
+            if status == 404 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            status, 404,
+            "the node went on serving a descriptor for a model it cannot say the language of: \
+             {body}"
+        );
+
+        let (status, body) = request(port, &format!("GET /api/model/{right}/metamodel"), None);
+        assert_eq!(status, 200, "the model that really is a bt model: {body}");
+        assert_eq!(
+            body, bt_descriptor_text(),
+            "the control model stopped being served, so this is a refusal and not a check"
+        );
+
+        // The language `b` could not read is served by `b` now, listed
+        // beside the one it started with: a wrong binding is a fact about
+        // one model, not about the descriptor it turned out to carry.
+        let (status, body) = request(port, "GET /api/metamodels", None);
+        assert_eq!(status, 200);
+        assert!(
+            body.contains(UML_KEY) && body.contains(BT_KEY),
+            "b should serve both descriptors by now: {body}"
+        );
+
+        // And the model is still hosted and still converging: the binding is
+        // wrong, the log is not.
+        let (status, _) = request(port, &format!("GET /api/model/{wrong}/state"), None);
+        assert_eq!(status, 200, "the mis-bound model stopped reading out");
     }
 
     /// mp2's setup, read back through the real HTTP adapter and the real

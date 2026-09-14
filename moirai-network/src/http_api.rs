@@ -17,7 +17,8 @@ use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
-    ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused, ServedDescriptor,
+    BoundDescriptor, ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
+    ServedDescriptor,
 };
 
 /// How long a request waits for the node's event loop to answer before it
@@ -44,7 +45,10 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   describe it, 501 when the node was started without the hook
 /// - `GET  /api/model/{id}/state`     that model's state as JSON
 /// - `POST /api/model/{id}/op`        submit an operation to that model
-/// - `GET  /api/model/{id}/metamodel` the descriptor that model was registered under
+/// - `GET  /api/model/{id}/metamodel` the descriptor that model was registered
+///   under; 404 while the model's own history has not brought it, and 404
+///   again when that history brought a different one, because a node that
+///   cannot say what a model is written in must not guess
 /// - `GET  /api/model/{id}/metrics`   that model's counters, `foreign_log_refusals` included
 ///
 /// Unscoped endpoints, which answer for the node's default log:
@@ -375,9 +379,9 @@ impl<O: NetworkOp> Api<O> {
         }
     }
 
-    /// `GET /api/model/{id}/metamodel`: the descriptor under the key the model
-    /// was registered with. A hosted model with no binding — the default log
-    /// — is served the first descriptor, as `/api/metamodel` is.
+    /// The descriptor served under one key, or 404. A `None` key is a hosted
+    /// model with no binding — the default log — which is served the first
+    /// descriptor, as `/api/metamodel` is.
     fn descriptor_for(&self, key: Option<&str>) -> Reply {
         match key {
             Some(key) => match self.metamodels().iter().find(|d| d.key == key) {
@@ -475,8 +479,13 @@ impl<O: NetworkOp> Api<O> {
                 }
             }
             ModelLeaf::Metamodel => match self.ask(|reply| ControlCmd::Binding { log_id, reply }) {
-                Some(Some(key)) => self.descriptor_for(key.as_deref()),
-                Some(None) => not_found(),
+                Some(Some(BoundDescriptor::Key(key))) => self.descriptor_for(Some(&key)),
+                Some(Some(BoundDescriptor::Unbound)) => self.descriptor_for(None),
+                // The node hosts the model and will not say what it is
+                // written in, which is the honest answer when the binding
+                // and the model disagree: the key would resolve, and to the
+                // wrong descriptor.
+                Some(Some(BoundDescriptor::Disputed)) | Some(None) => not_found(),
                 None => timeout(),
             },
             ModelLeaf::Op => match self.ask(|reply| ControlCmd::Hosts {
