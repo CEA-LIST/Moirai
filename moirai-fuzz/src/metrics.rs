@@ -31,7 +31,7 @@ fn get_disable_stability() -> bool {
     DISABLE_STABILITY.with(|flag| *flag.borrow())
 }
 
-#[derive(Debug)]
+#[derive(Debug, deepsize::DeepSizeOf)]
 pub struct MetricsLog<L: IsLog> {
     pub inner: L,
     pub total_effect_time: Duration,

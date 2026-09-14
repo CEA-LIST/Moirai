@@ -114,6 +114,8 @@ pub struct RunConfig {
     pub generate_execution_graph: bool,
     /// Whether to disable stability (stabilize() will never be called)
     pub disable_stability: bool,
+    /// Sample retained replica memory every N issued operations; disabled by default.
+    pub memory_sample_interval: Option<usize>,
 }
 
 impl RunConfig {
@@ -165,6 +167,17 @@ impl RunConfig {
             seed,
             generate_execution_graph,
             disable_stability,
+            memory_sample_interval: None,
         }
+    }
+
+    /// Also samples the initial state, end of operations, each final merge, and final queries.
+    pub fn with_memory_sampling(mut self, interval: usize) -> Self {
+        assert!(
+            interval > 0,
+            "Memory sample interval must be greater than 0"
+        );
+        self.memory_sample_interval = Some(interval);
+        self
     }
 }

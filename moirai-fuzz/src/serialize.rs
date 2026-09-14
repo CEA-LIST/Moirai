@@ -47,6 +47,8 @@ pub struct RunParameters {
     pub churn_rate: f64,
     pub disable_stability: bool,
     pub reachability: Option<Vec<Vec<bool>>>,
+    #[serde(default)]
+    pub memory_sample_interval: Option<usize>,
 }
 
 /// Save execution record with multiple runs to JSON file in bench-results/ directory
@@ -99,18 +101,9 @@ pub fn save_execution_record(
                 churn_rate: data.1.churn_rate,
                 disable_stability: data.1.disable_stability,
                 reachability: data.1.reachability.clone(),
+                memory_sample_interval: data.1.memory_sample_interval,
             },
-            results: RunResults {
-                final_state: data.0.final_state,
-                avg_time_per_op_ms: data.0.avg_time_per_op_ms,
-                avg_throughput_ops_per_sec: data.0.avg_throughput_ops_per_sec,
-                total_deliver_ms_per_replica: data.0.total_deliver_ms_per_replica,
-                total_effect_ms_per_replica: data.0.total_effect_ms_per_replica,
-                avg_effect_ms: data.0.avg_effect_ms,
-                execution_graph_dot: data.0.execution_graph_dot,
-                inter_replica_concurrency_ratio: data.0.inter_replica_concurrency_ratio,
-                used_seed: data.0.used_seed,
-            },
+            results: data.0,
         })
         .collect();
 

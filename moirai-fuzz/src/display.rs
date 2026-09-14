@@ -1,7 +1,7 @@
 use comfy_table::{
     Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::UTF8_FULL,
 };
-use readable::num::Int;
+use readable::{byte::Byte, num::Int};
 
 use crate::{
     config::RunConfig,
@@ -41,6 +41,13 @@ pub fn display_config_table(run_config: &RunConfig, final_merge: bool) -> Table 
     ]);
 
     config_table.add_row(vec!["Final merge", if final_merge { "Yes" } else { "No" }]);
+    config_table.add_row(vec![
+        "Memory sampling",
+        &run_config.memory_sample_interval.map_or_else(
+            || "Disabled".to_string(),
+            |n| format!("Every {n} operations"),
+        ),
+    ]);
 
     if let Some(seed) = run_config.seed {
         config_table.add_row(vec![
@@ -93,6 +100,16 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
     ]);
 
     results_table.add_row(vec!["Final state", &results.final_state]);
+    if let Some(memory) = &results.memory_usage {
+        results_table.add_row(vec![
+            "Final retained bytes per replica",
+            &format_bytes_per_replica(&memory.final_bytes_per_replica),
+        ]);
+        results_table.add_row(vec![
+            "Sampled peak bytes per replica",
+            &format_bytes_per_replica(&memory.sampled_peak_bytes_per_replica),
+        ]);
+    }
 
     results_table.add_row(vec![
         "Avg time per op (ms)",
@@ -146,4 +163,28 @@ pub fn display_run_results(run_number: usize, results: &RunResults) -> Table {
     ]);
 
     results_table
+}
+
+fn format_bytes_per_replica(bytes: &[usize]) -> String {
+    format!(
+        "[{}]",
+        bytes
+            .iter()
+            .map(|&bytes| Byte::from(bytes).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_bytes_per_replica;
+
+    #[test]
+    fn formats_replica_memory_with_readable_units() {
+        assert_eq!(
+            format_bytes_per_replica(&[999, 1_000, 2_101_123]),
+            "[999 B, 1.000 KB, 2.101 MB]"
+        );
+    }
 }

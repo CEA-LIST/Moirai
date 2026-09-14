@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use crate::{
     config::{OracleDriver, Predicate, RunConfig},
     execution_graph::ExecutionGraph,
+    memory::{MemoryPhase, MemoryUsage},
     metrics::{MetricsLog, set_disable_stability},
     op_generator::CommandGenerator,
     utils::{
@@ -42,6 +43,7 @@ pub struct RunData {
     pub execution_graph_dot: Option<String>,
     /// Inter-replica concurrency ratio (if execution graph was generated)
     pub inter_replica_concurrency_ratio: Option<f64>,
+    pub memory_usage: Option<MemoryUsage>,
 }
 
 pub fn runner<L, Q>(
@@ -53,8 +55,13 @@ pub fn runner<L, Q>(
 where
     Q: QueryOperation,
     <Q as QueryOperation>::Response: Debug,
-    L: IsLog + CommandGenerator + EvalNested<Q>,
+    L: IsLog + CommandGenerator + EvalNested<Q> + deepsize::DeepSizeOf,
+    L::Op: deepsize::DeepSizeOf,
 {
+    assert!(
+        config.memory_sample_interval != Some(0),
+        "Memory sample interval must be greater than 0"
+    );
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
         let rng: ChaCha8Rng = rand::make_rng();
@@ -69,6 +76,12 @@ where
     let mut rng = ChaCha8Rng::from_seed(used_seed);
 
     let mut replicas = bootstrap_n::<MetricsLog<L>, Tcsb<L::Op>>(config.num_replicas);
+    let mut memory_usage = config
+        .memory_sample_interval
+        .map(|_| MemoryUsage::default());
+    if let Some(memory) = &mut memory_usage {
+        memory.sample(0, MemoryPhase::Initial, &replicas);
+    }
     let reachability = config.reachability.clone().unwrap_or_else(|| {
         vec![vec![true; config.num_replicas.into()]; config.num_replicas.into()]
     });
@@ -178,6 +191,12 @@ where
                 }
             }
         }
+        if let Some(interval) = config.memory_sample_interval
+            && (count_ops % interval == 0 || count_ops == config.num_operations)
+            && let Some(memory) = &mut memory_usage
+        {
+            memory.sample(count_ops, MemoryPhase::Operations, &replicas);
+        }
     }
 
     pb.finish_with_message("All operations completed ✓");
@@ -209,6 +228,9 @@ where
                     );
 
                     merge_pb.inc(1);
+                    if let Some(memory) = &mut memory_usage {
+                        memory.sample(count_ops, MemoryPhase::FinalMerge, &replicas);
+                    }
                 }
             }
         }
@@ -273,6 +295,9 @@ where
     }
 
     check_pb.finish_with_message("Convergence verified ✓");
+    if let Some(memory) = &mut memory_usage {
+        memory.sample(count_ops, MemoryPhase::FinalQueries, &replicas);
+    }
     debug!("Run completed");
 
     let total_time_in_effect_per_replica: HashMap<ReplicaIdx, Duration> = replicas
@@ -310,6 +335,7 @@ where
         total_time_in_effect_per_replica,
         execution_graph_dot,
         inter_replica_concurrency_ratio,
+        memory_usage,
     }
 }
 
