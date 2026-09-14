@@ -631,6 +631,10 @@ pub struct Cell<E> {
     /// everything is stable; `null` stands for a key the projection dropped as
     /// default.
     pub expect: Vec<(&'static str, Value)>,
+    /// The JSON pointer whose settled value [`Report::settled`] records; the
+    /// first expected pointer when none is given, the whole document when
+    /// there is neither.
+    pub watch: Option<&'static str>,
 }
 
 impl<E> Cell<E> {
@@ -654,6 +658,7 @@ impl<E> Cell<E> {
             pads: vec![0],
             tie: false,
             expect: Vec::new(),
+            watch: None,
         }
     }
 
@@ -673,6 +678,13 @@ impl<E> Cell<E> {
     /// both paths.
     pub fn expect(mut self, pointer: &'static str, value: Value) -> Self {
         self.expect.push((pointer, value));
+        self.watch.get_or_insert(pointer);
+        self
+    }
+
+    /// Record what `pointer` settles on, without asserting it.
+    pub fn watch(mut self, pointer: &'static str) -> Self {
+        self.watch = Some(pointer);
         self
     }
 }
@@ -1141,7 +1153,7 @@ fn run_schedule<E, I, G>(
     schedule: &Schedule,
     interp: &Arm<'_, E, I>,
     generated: &Arm<'_, E, G>,
-) -> Result<Stats, String>
+) -> Result<(Stats, Value), String>
 where
     E: Debug,
     I: IsLog,
@@ -1298,7 +1310,24 @@ where
             }
         }
     }
-    Ok(run.stats)
+    let document = (interp.read)(&run.ir[0]);
+    let settled = match cell.watch {
+        Some(pointer) => document.pointer(pointer).cloned().unwrap_or(Value::Null),
+        None => document,
+    };
+    Ok((run.stats, settled))
+}
+
+/// What one cell came to under all its schedules.
+#[derive(Clone, Debug, Default)]
+pub struct Report {
+    /// The counts.
+    pub stats: Stats,
+    /// Every distinct value the cell's watched pointer settled on once
+    /// everything was stable, across the schedules: one when nothing about the
+    /// schedule can decide the outcome, more when the seat assignment decides
+    /// a tie.
+    pub settled: BTreeSet<String>,
 }
 
 /// One cell under every schedule. `Err` names the construction, the pattern
@@ -1307,7 +1336,7 @@ pub fn run_cell<E, I, G>(
     cell: &Cell<E>,
     interp: &Arm<'_, E, I>,
     generated: &Arm<'_, E, G>,
-) -> Result<Stats, String>
+) -> Result<Report, String>
 where
     E: Debug,
     I: IsLog,
@@ -1316,14 +1345,17 @@ where
     G::Op: Clone + Debug + InternalizeOp,
 {
     let mut total = Stats::default();
+    let mut settled = BTreeSet::new();
     for schedule in schedules(cell) {
-        let stats = run_schedule(cell, &schedule, interp, generated).map_err(|reason| {
-            format!(
-                "{} / {}\n  schedule: {schedule}\n  {reason}",
-                cell.construction, cell.pattern
-            )
-        })?;
+        let (stats, document) =
+            run_schedule(cell, &schedule, interp, generated).map_err(|reason| {
+                format!(
+                    "{} / {}\n  schedule: {schedule}\n  {reason}",
+                    cell.construction, cell.pattern
+                )
+            })?;
         total.add(stats);
+        settled.insert(serde_json::to_string(&document).unwrap_or_default());
     }
     if total.partially_stable == 0 || total.fully_stable == 0 {
         return Err(format!(
@@ -1338,7 +1370,10 @@ where
             total.schedules
         ));
     }
-    Ok(total)
+    Ok(Report {
+        stats: total,
+        settled,
+    })
 }
 
 /// Every cell of one crate: coverage first, then every cell, collecting every
@@ -1362,7 +1397,7 @@ where
     let mut failures = Vec::new();
     for cell in cells {
         match run_cell(cell, interp, generated) {
-            Ok(stats) => {
+            Ok(Report { stats, settled }) => {
                 eprintln!(
                     "matrix {krate}: {} / {}: {} schedules, {} twin and {} replica comparisons, \
                      {} events, stability unstable/partial/full {}/{}/{}",
@@ -1376,6 +1411,9 @@ where
                     stats.partially_stable,
                     stats.fully_stable
                 );
+                for document in &settled {
+                    eprintln!("    settled on {document}");
+                }
                 total.add(stats);
             }
             Err(reason) => failures.push(reason),
