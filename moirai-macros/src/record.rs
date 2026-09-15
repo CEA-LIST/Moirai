@@ -1,9 +1,30 @@
-// A macro to define a record type with multiple fields, each field being a different log type.
-// It generates the necessary structures and implements the Log trait for the record.
+/// Defines a record CRDT whose fields are nested logs.
+///
+/// The generic form lets callers choose the value projection for each field when querying the
+/// record. The explicit form uses `Log => Value` fields and generates a concrete, nominal value
+/// type, which also supports recursive records through [`BoxedLog`](crate::moirai_protocol::state::log::BoxedLog).
 
 #[macro_export]
 macro_rules! record {
-    ($name:ident { $($field:ident : $T:ty),+ $(,)? }) => {
+    // Explicit field values produce a concrete record value type.
+    ($name:ident { $($field:ident : $T:ty => $V:ty),+ $(,)? }) => {
+        $crate::record!(@impl [] $name { $($field: $T => $V),+ });
+        $crate::record!(@explicit_eval $name { $($field: $T => $V),+ });
+    };
+    // Without explicit values, preserve the generic value projection.
+    ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
+        $crate::paste::paste! {
+            $crate::record!(@impl [$([<$field:camel Value>]),*] $name {
+                $($field: $T => [<$field:camel Value>]),*
+            });
+            $crate::record!(@generic_eval [$([<$field:camel Value>]),*] $name {
+                $($field: $T => [<$field:camel Value>]),*
+            });
+        }
+    };
+    (@impl [$($value_param:ident),*] $name:ident {
+        $($field:ident : $T:ty => $V:ty),* $(,)?
+    }) => {
         $crate::paste::paste! {
             /// Set of operations that can be applied to the record.
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
@@ -33,9 +54,9 @@ macro_rules! record {
 
             /// Returned value when reading the record, containing the values of all fields.
             #[derive(Debug, Clone, Default, PartialEq)]
-            pub struct [<$name Value>]<$([<$field:camel Value>]),+> {
+            pub struct [<$name Value>]<$($value_param),*> {
                 $(
-                    pub $field: [<$field:camel Value>],
+                    pub $field: $V,
                 )*
             }
 
@@ -48,8 +69,8 @@ macro_rules! record {
             }
 
             #[cfg(feature = "test_utils")]
-            impl<$([<$field:camel Value>]: ::deepsize::DeepSizeOf),+> ::deepsize::DeepSizeOf
-                for [<$name Value>]<$([<$field:camel Value>]),+>
+            impl<$($value_param: ::deepsize::DeepSizeOf),*> ::deepsize::DeepSizeOf
+                for [<$name Value>]<$($value_param),*>
             {
                 fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
                     0 $(+ ::deepsize::DeepSizeOf::deep_size_of_children(&self.$field, context))*
@@ -198,38 +219,6 @@ macro_rules! record {
 
             }
 
-            impl<$([<$field:camel Value>]),+>
-                $crate::moirai_protocol::crdt::eval::EvalNested<
-                    $crate::moirai_protocol::crdt::query::Read<
-                        [<$name Value>]<$([<$field:camel Value>]),+>
-                    >
-                > for [<$name Log>]
-            where
-                $(
-                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
-                        $crate::moirai_protocol::crdt::query::Read<[<$field:camel Value>]>
-                    >,
-                )+
-            {
-                fn execute_query(
-                    &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<
-                        [<$name Value>]<$([<$field:camel Value>]),+>
-                    >,
-                ) -> [<$name Value>]<$([<$field:camel Value>]),+> {
-                    [<$name Value>] {
-                        $(
-                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
-                                $crate::moirai_protocol::crdt::query::Read<[<$field:camel Value>]>
-                            >>::execute_query(
-                                &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<[<$field:camel Value>]>::new(),
-                            ),
-                        )*
-                    }
-                }
-            }
-
             /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
             /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.
             #[derive(Debug)]
@@ -252,6 +241,68 @@ macro_rules! record {
                             ),
                         )*
                         Self::AlreadyInitialized => ::std::write!(f, "Already initialized"),
+                    }
+                }
+            }
+        }
+    };
+    (@explicit_eval $name:ident {
+        $($field:ident : $T:ty => $V:ty),+ $(,)?
+    }) => {
+        $crate::paste::paste! {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<
+                $crate::moirai_protocol::crdt::query::Read<[<$name Value>]>
+            > for [<$name Log>] {
+                fn execute_query(
+                    &self,
+                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
+                ) -> [<$name Value>] {
+                    [<$name Value>] {
+                        $(
+                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
+                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            >>::execute_query(
+                                &self.$field,
+                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                            ),
+                        )+
+                    }
+                }
+            }
+        }
+    };
+    (@generic_eval [$($value_param:ident),*] $name:ident {
+        $($field:ident : $T:ty => $V:ty),* $(,)?
+    }) => {
+        $crate::paste::paste! {
+            impl<$($value_param),*>
+                $crate::moirai_protocol::crdt::eval::EvalNested<
+                    $crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$($value_param),*>
+                    >
+                > for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
+                        $crate::moirai_protocol::crdt::query::Read<$V>
+                    >,
+                )*
+            {
+                fn execute_query(
+                    &self,
+                    _q: &$crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$($value_param),*>
+                    >,
+                ) -> [<$name Value>]<$($value_param),*> {
+                    [<$name Value>] {
+                        $(
+                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
+                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            >>::execute_query(
+                                &self.$field,
+                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                            ),
+                        )*
                     }
                 }
             }
