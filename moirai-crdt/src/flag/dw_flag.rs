@@ -32,7 +32,15 @@ impl IsStableState<DWFlag> for Option<bool> {
 
     fn apply(&mut self, value: DWFlag) {
         match value {
-            DWFlag::Enable => *self = Some(true),
+            // Replicas may stabilize a concurrent Enable and Disable in different orders, so the
+            // stable value must not depend on that order. A stable Disable is only overwritten by
+            // a causally later op, which clears it in `prune_redundant_ops` first; one still here
+            // is concurrent with this Enable and wins.
+            DWFlag::Enable => {
+                if *self != Some(false) {
+                    *self = Some(true)
+                }
+            }
             DWFlag::Disable => *self = Some(false),
             DWFlag::Clear => *self = None,
         }
@@ -198,7 +206,6 @@ mod tests {
     /// `apply` overwrites, so the stable value is whichever stabilized last.
     /// Disable wins over an operation it is concurrent with, on both replicas.
     #[test]
-    #[ignore = "reproduces dw_flag stable fold depending on order; fix pending"]
     fn dw_flag_converges_when_replicas_stabilize_in_different_orders() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<DWFlag>>>();
 

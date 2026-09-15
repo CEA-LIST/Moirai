@@ -132,21 +132,28 @@ where
     ) {
         // Two cases:
         // 1. The tagged_op is a 'add'
-        // ...in this case: remove this 'add' if there exists another op with the same arg in unstable
-        // ...and remove any stable 'remove' with the same argument.
+        // ...in this case: remove this 'add' if there exists another op with the same arg in unstable,
+        // ...or a stable 'remove' with the same arg.
         // 2. The tagged_op is a 'remove'
         // ...in this case: remove this 'remove' unless there exists a 'add' with the same arg in unstable
         match tagged_op.op() {
             RWSet::Add(v) => {
-                if unstable.iter().any(|t| {
-                    matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
-                        && t.id() != tagged_op.id()
-                }) {
+                // Replicas may stabilize the same concurrent ops in different orders, so the result
+                // must not depend on that order. A stable 'remove' still present here was not
+                // retired by this 'add' when it was delivered, so the two are concurrent and the
+                // 'remove' wins: keep it, and drop the 'add'.
+                let removed_while_stable = stable
+                    .1
+                    .iter()
+                    .any(|o| matches!(o, RWSet::Remove(v2) if v == v2));
+                if removed_while_stable
+                    || unstable.iter().any(|t| {
+                        matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
+                            && t.id() != tagged_op.id()
+                    })
+                {
                     unstable.remove(tagged_op.id());
                 }
-                stable
-                    .1
-                    .retain(|o| !matches!(o, RWSet::Remove(v2) if v == v2));
             }
             RWSet::Remove(v) => {
                 if unstable.iter().all(|t| {
@@ -458,7 +465,6 @@ mod tests {
     /// arm of `RWSet::stabilize` drops the stable `Remove` unconditionally,
     /// although the two are concurrent, and the `Add` comes back.
     #[test]
-    #[ignore = "reproduces rw_set stable fold depending on delivery order; fix pending"]
     fn rw_set_concurrent_add_and_remove_converge_after_stabilization() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
 
@@ -500,7 +506,6 @@ mod tests {
     /// replicas stabilize the same operations, each in its own delivery order.
     /// The replicas must read the same set on every pair.
     #[test]
-    #[ignore = "reproduces rw_set stabilization depending on fold order; fix pending"]
     fn rw_set_converges_when_replicas_stabilize_in_different_orders() {
         let mut split = Vec::new();
         for (left, right) in concurrent_pairs() {
