@@ -132,21 +132,28 @@ where
     ) {
         // Two cases:
         // 1. The tagged_op is a 'add'
-        // ...in this case: remove this 'add' if there exists another op with the same arg in unstable
-        // ...and remove any stable 'remove' with the same argument.
+        // ...in this case: remove this 'add' if there exists another op with the same arg in unstable,
+        // ...or a stable 'remove' with the same arg.
         // 2. The tagged_op is a 'remove'
         // ...in this case: remove this 'remove' unless there exists a 'add' with the same arg in unstable
         match tagged_op.op() {
             RWSet::Add(v) => {
-                if unstable.iter().any(|t| {
-                    matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
-                        && t.id() != tagged_op.id()
-                }) {
+                // Replicas may stabilize the same concurrent ops in different orders, so the result
+                // must not depend on that order. A stable 'remove' still present here was not
+                // retired by this 'add' when it was delivered, so the two are concurrent and the
+                // 'remove' wins: keep it, and drop the 'add'.
+                let removed_while_stable = stable
+                    .1
+                    .iter()
+                    .any(|o| matches!(o, RWSet::Remove(v2) if v == v2));
+                if removed_while_stable
+                    || unstable.iter().any(|t| {
+                        matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
+                            && t.id() != tagged_op.id()
+                    })
+                {
                     unstable.remove(tagged_op.id());
                 }
-                stable
-                    .1
-                    .retain(|o| !matches!(o, RWSet::Remove(v2) if v == v2));
             }
             RWSet::Remove(v) => {
                 if unstable.iter().all(|t| {
@@ -275,14 +282,19 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Read},
+        crdt::query::{Contains, Get, Read},
         replica::IsReplica,
+        state::po_log::VecLog,
     };
 
     use crate::{
         HashSet,
+        map::uw_map::{UWMap, UWMapLog},
         set::rw_set::RWSet,
-        utils::{membership::twins, set_from_slice},
+        utils::{
+            membership::{twins, twins_log},
+            set_from_slice,
+        },
     };
 
     #[test]
@@ -443,6 +455,125 @@ mod tests {
 
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[]));
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[]));
+    }
+
+    /// `a` adds `alpha` while `b` concurrently removes it, under a map key; a
+    /// second round of writes on another key makes both operations causally
+    /// stable on both replicas, each replica stabilizing them in its own
+    /// delivery order. Remove wins over a concurrent add, so both read `{}`.
+    /// On the replica that stabilizes the `Add` after the `Remove`, the `Add`
+    /// arm of `RWSet::stabilize` drops the stable `Remove` unconditionally,
+    /// although the two are concurrent, and the `Add` comes back.
+    #[test]
+    fn rw_set_concurrent_add_and_remove_converge_after_stabilization() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
+
+        let add = replica_a
+            .send(UWMap::Update("k", RWSet::Add("alpha")))
+            .unwrap();
+        let remove = replica_b
+            .send(UWMap::Update("k", RWSet::Remove("alpha")))
+            .unwrap();
+        replica_a.receive(remove);
+        replica_b.receive(add);
+
+        let spacer_a = replica_a
+            .send(UWMap::Update("spacer", RWSet::Add("s")))
+            .unwrap();
+        let spacer_b = replica_b
+            .send(UWMap::Update("spacer", RWSet::Add("s")))
+            .unwrap();
+        replica_a.receive(spacer_b);
+        replica_b.receive(spacer_a);
+
+        let read_a: HashSet<&str> = replica_a
+            .query(&Get::new(&"k", Read::new()))
+            .unwrap_or_default();
+        let read_b: HashSet<&str> = replica_b
+            .query(&Get::new(&"k", Read::new()))
+            .unwrap_or_default();
+        let result = set_from_slice(&[]);
+        assert_eq!(
+            (read_a, read_b),
+            (result.clone(), result),
+            "(replica a, replica b)"
+        );
+    }
+
+    /// Every ordered pair of concurrent operation lists of length at most two
+    /// over `{Add, Remove}` on two values plus `Clear` (961 pairs), placed under
+    /// a map key, with a second round of writes on another key so that both
+    /// replicas stabilize the same operations, each in its own delivery order.
+    /// The replicas must read the same set on every pair.
+    #[test]
+    fn rw_set_converges_when_replicas_stabilize_in_different_orders() {
+        let mut split = Vec::new();
+        for (left, right) in concurrent_pairs() {
+            let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
+            let from_a: Vec<_> = left
+                .iter()
+                .filter_map(|op| replica_a.send(UWMap::Update("k", op.clone())).ok())
+                .collect();
+            let from_b: Vec<_> = right
+                .iter()
+                .filter_map(|op| replica_b.send(UWMap::Update("k", op.clone())).ok())
+                .collect();
+            for event in from_b {
+                replica_a.receive(event);
+            }
+            for event in from_a {
+                replica_b.receive(event);
+            }
+            let spacer_a = replica_a
+                .send(UWMap::Update("spacer", RWSet::Add("s")))
+                .unwrap();
+            let spacer_b = replica_b
+                .send(UWMap::Update("spacer", RWSet::Add("s")))
+                .unwrap();
+            replica_a.receive(spacer_b);
+            replica_b.receive(spacer_a);
+            let read_a: HashSet<&str> = replica_a
+                .query(&Get::new(&"k", Read::new()))
+                .unwrap_or_default();
+            let read_b: HashSet<&str> = replica_b
+                .query(&Get::new(&"k", Read::new()))
+                .unwrap_or_default();
+            if read_a != read_b {
+                split.push(format!(
+                    "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
+                ));
+            }
+        }
+        assert!(
+            split.is_empty(),
+            "{} of 961 concurrent pairs do not converge once both replicas stabilize them, first: {}",
+            split.len(),
+            split.first().map(String::as_str).unwrap_or("")
+        );
+    }
+
+    fn concurrent_pairs() -> Vec<(Vec<RWSet<&'static str>>, Vec<RWSet<&'static str>>)> {
+        let alphabet = [
+            RWSet::Add("alpha"),
+            RWSet::Remove("alpha"),
+            RWSet::Add("beta"),
+            RWSet::Remove("beta"),
+            RWSet::Clear,
+        ];
+        let mut lists: Vec<Vec<RWSet<&str>>> = vec![Vec::new()];
+        for one in &alphabet {
+            lists.push(vec![one.clone()]);
+            for two in &alphabet {
+                lists.push(vec![one.clone(), two.clone()]);
+            }
+        }
+        let mut out = Vec::with_capacity(lists.len() * lists.len());
+        for left in &lists {
+            for right in &lists {
+                out.push((left.clone(), right.clone()));
+            }
+        }
+        out
     }
 
     #[cfg(feature = "fuzz")]

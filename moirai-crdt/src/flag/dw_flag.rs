@@ -32,7 +32,15 @@ impl IsStableState<DWFlag> for Option<bool> {
 
     fn apply(&mut self, value: DWFlag) {
         match value {
-            DWFlag::Enable => *self = Some(true),
+            // Replicas may stabilize a concurrent Enable and Disable in different orders, so the
+            // stable value must not depend on that order. A stable Disable is only overwritten by
+            // a causally later op, which clears it in `prune_redundant_ops` first; one still here
+            // is concurrent with this Enable and wins.
+            DWFlag::Enable => {
+                if *self != Some(false) {
+                    *self = Some(true)
+                }
+            }
             DWFlag::Disable => *self = Some(false),
             DWFlag::Clear => *self = None,
         }
@@ -138,9 +146,17 @@ impl OpGenerator for DWFlag {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{
+        crdt::query::{Get, Read},
+        replica::IsReplica,
+        state::po_log::VecLog,
+    };
 
-    use crate::{flag::dw_flag::DWFlag, utils::membership::twins};
+    use crate::{
+        flag::dw_flag::DWFlag,
+        map::uw_map::{UWMap, UWMapLog},
+        utils::membership::{twins, twins_log},
+    };
 
     // Test the Disable-Wins Flag CRDT using two replicas (twins)
     #[test]
@@ -182,6 +198,39 @@ mod tests {
 
         assert_eq!(replica_a.query(&Read::new()), false);
         assert_eq!(replica_b.query(&Read::new()), false);
+    }
+
+    /// A concurrent `Enable` and `Disable` under a map key, made causally stable
+    /// on both replicas by a second round of writes on another key. Each replica
+    /// folds the two into its stable state in its own delivery order, and
+    /// `apply` overwrites, so the stable value is whichever stabilized last.
+    /// Disable wins over an operation it is concurrent with, on both replicas.
+    #[test]
+    fn dw_flag_converges_when_replicas_stabilize_in_different_orders() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<DWFlag>>>();
+
+        let enable = replica_a
+            .send(UWMap::Update("flag", DWFlag::Enable))
+            .unwrap();
+        let disable = replica_b
+            .send(UWMap::Update("flag", DWFlag::Disable))
+            .unwrap();
+        replica_a.receive(disable);
+        replica_b.receive(enable);
+
+        let spacer_a = replica_a
+            .send(UWMap::Update("spacer", DWFlag::Enable))
+            .unwrap();
+        let spacer_b = replica_b
+            .send(UWMap::Update("spacer", DWFlag::Enable))
+            .unwrap();
+        replica_a.receive(spacer_b);
+        replica_b.receive(spacer_a);
+
+        let read_a = replica_a.query(&Get::new(&"flag", Read::<bool>::new()));
+        let read_b = replica_b.query(&Get::new(&"flag", Read::<bool>::new()));
+        assert_eq!(read_a, Some(false), "the concurrent disable wins on a");
+        assert_eq!(read_b, Some(false), "the concurrent disable wins on b");
     }
 
     #[cfg(feature = "fuzz")]
