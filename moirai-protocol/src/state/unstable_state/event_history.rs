@@ -1,3 +1,5 @@
+use std::{fmt::Debug, range::Range};
+
 use crate::{
     clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
@@ -5,7 +7,6 @@ use crate::{
     state::unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
     utils::hashmap::HashMap,
 };
-use std::{fmt::Debug, range::Range};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]

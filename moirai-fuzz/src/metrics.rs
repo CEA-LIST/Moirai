@@ -12,7 +12,7 @@ use moirai_protocol::{
 };
 use rand::Rng;
 
-use crate::op_generator::CommandGenerator;
+use crate::command_generator::CommandGenerator;
 
 // Thread-local flag to control stability behavior during fuzzing
 thread_local! {
@@ -102,7 +102,6 @@ impl<L: IsLog> IsLog for MetricsLog<L> {
     }
 }
 
-// Déléguer EvalNested à l'inner log
 impl<L, Q> EvalNested<Q> for MetricsLog<L>
 where
     L: IsLog + EvalNested<Q>,

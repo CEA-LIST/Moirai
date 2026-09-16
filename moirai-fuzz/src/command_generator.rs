@@ -54,9 +54,6 @@ where
 }
 
 /// Generates client commands from the current state of a log.
-///
-/// Commands are deliberately kept distinct from replicated operations: log adapters such as
-/// `CommitmentLog` use `prepare` to attach protocol metadata to a client command.
 pub trait CommandGenerator: IsLog {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
 }

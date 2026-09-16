@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,

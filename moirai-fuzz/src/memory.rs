@@ -1,9 +1,3 @@
-//! Retained Rust data estimates, not process RSS or transient allocation peaks.
-//!
-//! Each replica is measured independently, including its log, populated caches, broadcast
-//! buffers and test instrumentation. Shared allocations are deduplicated within a replica,
-//! not across replicas. The execution graph, query results and sampler storage are excluded.
-
 use deepsize::DeepSizeOf;
 use serde::{Deserialize, Serialize};
 

@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::CommandGenerator;
+use moirai_fuzz::command_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -295,8 +295,12 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_macros::record;
+    #[cfg(feature = "test_utils")]
+    use moirai_protocol::{crdt::eval::EvalNested, state::graph_log::GraphLog};
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
+    #[cfg(feature = "test_utils")]
+    use crate::list::eg_walker::List;
     use crate::{
         HashMap,
         counter::resettable_counter::Counter,
@@ -304,6 +308,39 @@ mod tests {
         map::uw_map::{UWMap, UWMapLog},
         utils::membership::{triplet_log, twins_log},
     };
+
+    #[cfg(feature = "test_utils")]
+    #[test]
+    fn concurrent_parent_delete_and_nested_insert_after_cache_read() {
+        type Inner = NestedListLog<GraphLog<List<char>>>;
+        let (mut a, mut b) = twins_log::<NestedListLog<Inner>>();
+        let initial = a
+            .send(NestedList::insert(
+                0,
+                NestedList::insert(0, List::insert('w', 0)),
+            ))
+            .unwrap();
+        b.receive(initial);
+
+        let delete = a.send(NestedList::delete(0)).unwrap();
+        for child in a.state().children().children().values() {
+            let value: Vec<Vec<char>> = child.execute_query(&Read::new());
+            assert!(value.is_empty());
+        }
+
+        let update = b
+            .send(NestedList::update(
+                0,
+                NestedList::insert(1, List::insert('x', 0)),
+            ))
+            .unwrap();
+        a.receive(update);
+        b.receive(delete);
+        assert_eq!(
+            a.query(&Read::<Vec<Vec<Vec<char>>>>::new()),
+            b.query(&Read::<Vec<Vec<Vec<char>>>>::new())
+        );
+    }
 
     #[test]
     fn simple_nested_list() {

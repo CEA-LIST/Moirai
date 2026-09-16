@@ -1,5 +1,5 @@
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::CommandGenerator;
+use moirai_fuzz::command_generator::CommandGenerator;
 use moirai_macros::union;
 use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
 #[cfg(feature = "fuzz")]
@@ -202,7 +202,7 @@ mod tests {
     use crate::{
         counter::resettable_counter::Counter,
         flag::ew_flag::EWFlag,
-        json::{Json, JsonLog, JsonValue, JsonVariant},
+        json::{Json, JsonLog, JsonVariant},
         list::{eg_walker::List, nested_list::NestedList},
         map::uw_map::UWMap,
         query::read_as_json::ReadAsJson,
@@ -517,6 +517,7 @@ mod tests {
     #[test]
     #[ignore]
     fn fuzz_json() {
+        use crate::json::JsonValue;
         use moirai_fuzz::{
             config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,

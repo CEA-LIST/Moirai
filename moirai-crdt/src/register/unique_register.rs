@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, convert::Infallible, fmt::Debug, marker::PhantomData};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,

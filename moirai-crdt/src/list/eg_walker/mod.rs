@@ -11,7 +11,7 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CausalOpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::CausalOpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{

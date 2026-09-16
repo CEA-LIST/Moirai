@@ -11,9 +11,9 @@ use moirai_protocol::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    command_generator::CommandGenerator,
     config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
-    op_generator::CommandGenerator,
     runner::{RunData, runner},
     serialize::save_execution_record,
     utils::format::seed_to_hex,

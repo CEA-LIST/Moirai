@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -501,7 +501,7 @@ mod tests {
     }
 
     /// Every ordered pair of concurrent operation lists of length at most two
-    /// over `{Add, Remove}` on two values plus `Clear` (961 pairs), placed under
+    /// over `{Add, Remove}` on two values plus `Clear`, placed under
     /// a map key, with a second round of writes on another key so that both
     /// replicas stabilize the same operations, each in its own delivery order.
     /// The replicas must read the same set on every pair.

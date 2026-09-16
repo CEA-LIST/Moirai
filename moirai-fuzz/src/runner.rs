@@ -1,6 +1,11 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use std::{
+    fmt::Debug,
+    time::{Duration, Instant},
+};
+
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
@@ -11,15 +16,13 @@ use moirai_protocol::{
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
-use std::fmt::Debug;
-use std::time::{Duration, Instant};
 
 use crate::{
+    command_generator::CommandGenerator,
     config::{OracleDriver, Predicate, RunConfig},
     execution_graph::ExecutionGraph,
     memory::{MemoryPhase, MemoryUsage},
     metrics::{MetricsLog, set_disable_stability},
-    op_generator::CommandGenerator,
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, format_string_ellipsis, seed_to_hex},

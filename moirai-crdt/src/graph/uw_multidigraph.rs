@@ -4,7 +4,7 @@ use std::{
 };
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -441,6 +441,8 @@ where
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "fuzz")]
+    use crate::graph::uw_multidigraph::LabeledMultidigraph;
+    #[cfg(feature = "fuzz")]
     use moirai_fuzz::config::Predicate;
     use moirai_protocol::{
         crdt::{policy::LwwPolicy, query::Read},
@@ -449,10 +451,9 @@ mod tests {
     };
     use petgraph::graph::DiGraph;
 
-    #[cfg(feature = "fuzz")]
     use crate::{
         counter::resettable_counter::Counter,
-        graph::uw_multidigraph::{LabeledMultidigraph, UWGraph, UWGraphLog},
+        graph::uw_multidigraph::{UWGraph, UWGraphLog},
         register::unique_register::Register,
         utils::membership::{triplet_log, twins_log},
     };

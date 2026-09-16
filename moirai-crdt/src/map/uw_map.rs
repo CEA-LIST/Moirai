@@ -6,7 +6,7 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -725,7 +725,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     #[ignore]
-    fn fuzz_uw_map() {
+    fn fuzz_uw_map_list() {
         use moirai_fuzz::{
             config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
@@ -745,6 +745,34 @@ mod tests {
         );
 
         fuzzer::<UWMapNested, Read<HashMap<String, String>>>(config);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_uw_map_rw_set() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, Predicate, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        use crate::{HashSet, set::rw_set::RWSet};
+
+        type UWMapNested = UWMapLog<String, VecLog<RWSet<i32>>>;
+        type Value = Read<HashMap<String, HashSet<i32>>>;
+
+        let run = RunConfig::new(0.4, 8, 50, None, None, false, false);
+        let runs = vec![run.clone(); 1_000];
+
+        let config = FuzzerConfig::<UWMapNested, Value>::new(
+            "uw_map_rw_set",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+
+        fuzzer::<UWMapNested, Value>(config);
     }
 }
 

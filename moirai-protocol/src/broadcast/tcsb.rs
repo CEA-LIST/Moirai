@@ -3,7 +3,6 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-use crate::replica::ReplicaIdOwned;
 use crate::{
     broadcast::{
         batch::Batch,
@@ -13,7 +12,7 @@ use crate::{
     },
     clock::{matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
-    replica::{ReplicaId, ReplicaIdx},
+    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
     utils::hashmap::{HashMap, HashSet},
 };
 

@@ -7,7 +7,7 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::command_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{

@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[cfg(feature = "fuzz")]
-    impl<P> moirai_fuzz::op_generator::OpGenerator for MyTypedGraph<P>
+    impl<P> moirai_fuzz::command_generator::OpGenerator for MyTypedGraph<P>
     where
         P: Policy,
     {

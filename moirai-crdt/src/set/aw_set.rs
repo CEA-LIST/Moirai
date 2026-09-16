@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -182,18 +182,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{
-        broadcast::tcsb::Tcsb,
-        commitment::{commit_log::CommitmentLog, commit_op::CommitOp},
-        crdt::query::{Contains, Read},
-        replica::{IsReplica, Replica},
-        state::po_log::VecLog,
-    };
-
     use crate::{
         HashSet,
         set::aw_set::AWSet,
         utils::{membership::twins_log, set_from_slice},
+    };
+    use moirai_protocol::commitment::{commit_log::CommitmentLog, commit_op::CommitOp};
+    use moirai_protocol::{
+        crdt::query::{Contains, Read},
+        replica::IsReplica,
+        state::po_log::VecLog,
     };
 
     #[test]
@@ -374,8 +372,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "test_utils")]
     pub fn commitment() {
         use moirai_protocol::broadcast::tcsb::IsTcsbTest;
+        use moirai_protocol::{broadcast::tcsb::Tcsb, replica::Replica};
 
         type Log<'a> = CommitmentLog<VecLog<AWSet<&'a str>>>;
         type Tcb<'a> = Tcsb<CommitOp<AWSet<&'a str>>>;
