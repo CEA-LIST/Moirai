@@ -165,8 +165,8 @@ mod wire_overhead {
 
     use super::*;
     use crate::{
-        broadcast::tcsb::{IsTcsb, Tcsb},
         broadcast::internalizer::Interner,
+        broadcast::tcsb::{IsTcsb, Tcsb},
         log_id::LOG_ID_LEN,
     };
 

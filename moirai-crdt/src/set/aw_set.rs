@@ -189,6 +189,7 @@ mod tests {
         broadcast::tcsb::Tcsb,
         commitment::{commit_log::CommitmentLog, commit_op::CommitOp},
         crdt::query::{Contains, Read},
+        log_id::LogId,
         replica::{IsReplica, Replica},
         state::po_log::VecLog,
     };
@@ -385,10 +386,16 @@ mod tests {
 
         let members = ["a", "b", "c"];
 
-        let mut replica_a = Replica::<Log, Tcb>::bootstrap("a".to_string(), &members);
-        let mut replica_b = Replica::<Log, Tcb>::bootstrap("b".to_string(), &members);
+        // One id for the three: a replica refuses events from a log it does not
+        // host, so replicas that each minted their own would exchange nothing.
+        let log_id = LogId::generate();
+        let mut replica_a =
+            Replica::<Log, Tcb>::bootstrap_with_log_id("a".to_string(), &members, log_id.clone());
+        let mut replica_b =
+            Replica::<Log, Tcb>::bootstrap_with_log_id("b".to_string(), &members, log_id.clone());
         // Let replica c be faulty
-        let mut _replica_c = Replica::<Log, Tcb>::bootstrap("c".to_string(), &members);
+        let mut _replica_c =
+            Replica::<Log, Tcb>::bootstrap_with_log_id("c".to_string(), &members, log_id);
 
         // Replica a and b are well-connected
         replica_a.state_mut().oracle_mut().set_leader("a");

@@ -11,10 +11,10 @@ use moirai_protocol::{
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "fuzz")]
 use rand::Rng;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::{
     HashMap,

@@ -15,9 +15,30 @@ use crate::{
     utils::hashmap::HashMap,
 };
 
+/// The interned names behind a [`Resolver`], as a type of their own so that
+/// `Arc<Names>` picks up deepsize's `Arc` de-duplication.
+///
+/// Every event id in a log holds a handle on the same table. Measured through
+/// a hand-written `DeepSizeOf` on `Resolver` the table is counted once per id,
+/// which makes a log's measured size a multiple of the memory it occupies;
+/// counted through the `Arc` it is charged to the first holder and to nobody
+/// else, which is what the size accounting in `event::id` asserts.
+struct Names(FrozenVec<ReplicaIdOwned>);
+
+#[cfg(feature = "test_utils")]
+impl DeepSizeOf for Names {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.0
+            .iter()
+            .map(|name| name.deep_size_of_children(context))
+            .sum::<usize>()
+            + self.0.len() * std::mem::size_of::<ReplicaIdOwned>()
+    }
+}
+
 #[derive(Clone)]
 pub struct Resolver {
-    inner: Arc<FrozenVec<ReplicaIdOwned>>,
+    inner: Arc<Names>,
 }
 
 #[cfg(feature = "serde")]
@@ -43,7 +64,7 @@ impl<'de> Deserialize<'de> for Resolver {
             frozen.push(item);
         }
         Ok(Resolver {
-            inner: Arc::new(frozen),
+            inner: Arc::new(Names(frozen)),
         })
     }
 }
@@ -51,16 +72,15 @@ impl<'de> Deserialize<'de> for Resolver {
 #[cfg(feature = "test_utils")]
 impl DeepSizeOf for Resolver {
     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        // FrozenVec doesn't implement DeepSizeOf, so we approximate by getting the vector
-        let vec = self.into_vec();
-        vec.deep_size_of_children(context)
+        // Through the `Arc`, so that the shared table is charged once. See [`Names`].
+        self.inner.deep_size_of_children(context)
     }
 }
 
 impl Default for Resolver {
     fn default() -> Self {
         Self {
-            inner: Arc::new(FrozenVec::new()),
+            inner: Arc::new(Names(FrozenVec::new())),
         }
     }
 }
@@ -69,27 +89,27 @@ impl Resolver {
     /// # Complexity
     /// `O(1)`
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {
-        self.inner.get(idx.0)
+        self.inner.0.get(idx.0)
     }
 
     /// # Complexity
     /// `O(n)`
     pub fn get(&self, id: &ReplicaId) -> Option<ReplicaIdx> {
-        (0..self.inner.len())
-            .find(|i| self.inner.get(*i) == Some(id))
+        (0..self.inner.0.len())
+            .find(|i| self.inner.0.get(*i) == Some(id))
             .map(ReplicaIdx)
     }
 
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.inner.0.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.0.is_empty()
     }
 
     pub fn into_vec(&self) -> Vec<ReplicaIdOwned> {
-        (*self.inner).clone().into_vec()
+        (*self.inner).0.clone().into_vec()
     }
 
     /// `true` when both resolvers name the same replica at every index they
@@ -100,15 +120,15 @@ impl Resolver {
     /// whatever either side knows beyond the other's length.
     pub fn agrees_with(&self, other: &Resolver) -> bool {
         let shared = self.len().min(other.len());
-        (0..shared).all(|i| self.inner.get(i) == other.inner.get(i))
+        (0..shared).all(|i| self.inner.0.get(i) == other.inner.0.get(i))
     }
 }
 
 impl Debug for Resolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, s) in self.inner.iter().enumerate() {
+        for (i, s) in self.inner.0.iter().enumerate() {
             write!(f, "{i} => {s}")?;
-            if i < self.inner.len() - 1 {
+            if i < self.inner.0.len() - 1 {
                 write!(f, ", ")?;
             }
         }
@@ -177,9 +197,7 @@ impl Interner {
     pub fn new() -> Self {
         Self {
             str_to_int: HashMap::default(),
-            int_to_str: Resolver {
-                inner: Arc::new(FrozenVec::new()),
-            },
+            int_to_str: Resolver::default(),
             translator: Translator { inner: Vec::new() },
         }
     }
@@ -259,13 +277,13 @@ impl Interner {
         if let Some(&idx) = self.str_to_int.get(id) {
             return (idx, false);
         }
-        let idx = self.int_to_str.inner.len();
-        self.int_to_str.inner.push(id.to_string());
+        let idx = self.int_to_str.inner.0.len();
+        self.int_to_str.inner.0.push(id.to_string());
         self.str_to_int.insert(id.to_string(), ReplicaIdx(idx));
         self.translator.inner.push(vec![]);
 
-        assert_eq!(self.int_to_str.inner.len(), self.str_to_int.len());
-        assert_eq!(self.int_to_str.inner.len(), self.translator.inner.len());
+        assert_eq!(self.int_to_str.inner.0.len(), self.str_to_int.len());
+        assert_eq!(self.int_to_str.inner.0.len(), self.translator.inner.len());
 
         (ReplicaIdx(idx), true)
     }

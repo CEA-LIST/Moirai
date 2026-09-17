@@ -544,7 +544,6 @@ mod tests {
                 a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
             }),
             false,
-            None,
         );
 
         fuzzer::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>(config);

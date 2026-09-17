@@ -15,10 +15,10 @@ use moirai_protocol::{
     state::{effect_context::EffectContext, log::IsLog},
 };
 use petgraph::graph::DiGraph;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "fuzz")]
 use rand::{Rng, seq::IteratorRandom};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashMap;
 

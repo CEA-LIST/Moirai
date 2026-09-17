@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     fmt::{Debug, Display},
     ops::{Add, AddAssign, SubAssign},
 };
@@ -6,15 +7,14 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
-    state::unstable_state::IsUnstableState,
-    broadcast::internalizer::{InternalizeOp, Interner},
+    state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -33,26 +33,34 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
     Dec(V),
 }
 
-impl<V> PureCRDT for Counter<V>
+impl<V> ReplicatedDataType for Counter<V>
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
 {
-    type Value = V;
     type StableState = CounterStable<V>;
+    type Rejection = Infallible;
 
     const DISABLE_R_WHEN_R: bool = true;
     const DISABLE_R_WHEN_NOT_R: bool = true;
 }
 
-impl<V> Eval<Read<<Self as PureCRDT>::Value>> for Counter<V>
+impl<V, U> UsesUnstableService<U> for Counter<V>
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    U: IsUnstableCore<Self>,
+{
+}
+
+impl<V, U> Eval<Read<V>, U> for Counter<V>
+where
+    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: &Read<V>,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+        unstable: &U,
+    ) -> <Read<V> as QueryOperation>::Response {
         let mut counter = *stable;
         for op in unstable.iter().map(|t| t.op()) {
             match op {
@@ -77,30 +85,36 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for Counter<i32> {
+impl<V> OpGenerator for Counter<V>
+where
+    V: Add<Output = V>
+        + AddAssign
+        + SubAssign
+        + Default
+        + Copy
+        + Debug
+        + PartialEq
+        + ValueGenerator,
+{
     type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _stable: &<Self as ReplicatedDataType>::StableState,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
-        let choice = ["Inc", "Dec"][rng.next_u32() as usize % 2];
-        match choice {
-            "Inc" => Counter::Inc(rng.next_u32() as i32),
-            "Dec" => Counter::Dec(rng.next_u32() as i32),
-            _ => unreachable!(),
+        enum Choice {
+            Inc,
+            Dec,
         }
-    }
-}
-
-impl<V> InternalizeOp for Counter<V>
-where
-    V: Add + AddAssign + SubAssign + Default + Copy,
-{
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
+        let choice =
+            rand::seq::IteratorRandom::choose([Choice::Inc, Choice::Dec].iter(), rng).unwrap();
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Inc => Counter::Inc(value),
+            Choice::Dec => Counter::Dec(value),
+        }
     }
 }
 
@@ -121,8 +135,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 0;
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -139,8 +153,8 @@ mod tests {
         replica_b.receive(event);
 
         let result = 5;
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -148,7 +162,7 @@ mod tests {
     #[ignore]
     fn fuzz_resettable_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -156,15 +170,14 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<Counter<i32>>>::new(
+        let config = FuzzerConfig::<VecLog<Counter<i32>>, Read<i32>>::new(
             "counter",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
-            None,
         );
 
-        fuzzer::<VecLog<Counter<i32>>>(config);
+        fuzzer::<VecLog<Counter<i32>>, Read<i32>>(config);
     }
 }

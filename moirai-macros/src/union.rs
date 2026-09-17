@@ -6,6 +6,7 @@ macro_rules! union {
         $crate::paste::paste! {
             /// List of variant names, used in the `Choose` operation to select a variant
             #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Variant>] {
                 $(
                     $variant,

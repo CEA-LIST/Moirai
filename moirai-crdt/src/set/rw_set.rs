@@ -74,9 +74,13 @@ where
                 self.0.remove(v);
                 self.1.retain(|o| matches!(o, RWSet::Remove(v2) if v != v2));
             }
+            // Upstream v0.6 pairs this with `(Remove(_), Clear) => false` in
+            // `redundant_by_when_redundant`: a `clear` retires the stable adds and
+            // leaves the stable removes standing, so a remove still masks an add it
+            // is concurrent with. Clearing `self.1` here as well would contradict
+            // that rule and split two replicas that fold the same operations.
             RWSet::Clear => {
                 self.0.clear();
-                self.1.clear();
             }
         }
     }
@@ -472,15 +476,19 @@ mod tests {
     /// The shortest pair of concurrent edit lists on which two replicas used to
     /// hold different sets for good.
     ///
-    /// `a` adds `alpha`; concurrently `b` removes `alpha` and then clears. On
-    /// `b` the `Clear` retires the `Remove` that precedes it and the `Add`
-    /// arrives afterwards, so `b` reads `["alpha"]`. On `a` the `Add` arrives
-    /// first, the `Remove` stabilizes while that `Add` is still unstable and so
-    /// is kept in the stable state, and the `Clear` that follows used to clear
-    /// only the stable adds: the kept `Remove` went on masking the `Add` and
-    /// `a` read `[]`. A `Clear` makes every operation causally below it
-    /// redundant, and every stable operation is causally below any operation
-    /// that arrives after it, so the stable removes go with the stable adds.
+    /// `a` adds `alpha`; concurrently `b` removes `alpha` and then clears. The
+    /// split was between the two halves of what a `Clear` retires: the stable
+    /// state dropped only the stable adds, while `redundant_by_when_redundant`
+    /// dropped every prior operation including the removes, so `b` read
+    /// `["alpha"]` and `a`, whose `Remove` had stabilized under a still
+    /// unstable `Add`, read `[]`.
+    ///
+    /// Upstream v0.6 closes it by keeping removes on *both* halves — a `Clear`
+    /// retires prior adds and leaves prior removes standing — so a `Remove`
+    /// that precedes a `Clear` goes on masking an `Add` it is concurrent with
+    /// and both replicas read the empty set. This branch previously closed the
+    /// same split the other way, by retiring removes on both halves, which read
+    /// `["alpha"]`; both converge, and the value below is upstream's.
     #[test]
     fn an_add_concurrent_with_a_remove_and_a_clear() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
@@ -493,9 +501,9 @@ mod tests {
         replica_a.receive(clear);
         replica_b.receive(event_a);
 
-        let result = set_from_slice(&["alpha"]);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Read::new()), result);
+        let result = set_from_slice(&[]);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
     }
 
     /// The shortest pair of concurrent edits on which two replicas that read
@@ -520,10 +528,10 @@ mod tests {
         replica_b.receive(add);
 
         let result = set_from_slice(&[]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
-        assert_eq!(replica_a.query(Contains("alpha")), false);
-        assert_eq!(replica_b.query(Contains("alpha")), false);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+        assert_eq!(replica_a.query(&Contains("alpha")), false);
+        assert_eq!(replica_b.query(&Contains("alpha")), false);
     }
 
     /// Every ordered pair of concurrent operation lists of length at most two
@@ -539,11 +547,11 @@ mod tests {
             let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
             let from_a: Vec<_> = left
                 .iter()
-                .filter_map(|op| replica_a.send(op.clone()))
+                .filter_map(|op| replica_a.send(op.clone()).ok())
                 .collect();
             let from_b: Vec<_> = right
                 .iter()
-                .filter_map(|op| replica_b.send(op.clone()))
+                .filter_map(|op| replica_b.send(op.clone()).ok())
                 .collect();
             for event in from_b {
                 replica_a.receive(event);
@@ -551,16 +559,16 @@ mod tests {
             for event in from_a {
                 replica_b.receive(event);
             }
-            let read_a: HashSet<&str> = replica_a.query(Read::new());
-            let read_b: HashSet<&str> = replica_b.query(Read::new());
+            let read_a: HashSet<&str> = replica_a.query(&Read::new());
+            let read_b: HashSet<&str> = replica_b.query(&Read::new());
             if read_a != read_b {
                 split.push(format!(
                     "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
                 ));
             }
             for v in ["alpha", "beta"] {
-                let contains_a: bool = replica_a.query(Contains(v));
-                let contains_b: bool = replica_b.query(Contains(v));
+                let contains_a: bool = replica_a.query(&Contains(v));
+                let contains_b: bool = replica_b.query(&Contains(v));
                 if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
                     disagree.push(format!(
                         "{left:?} against {right:?}: Contains({v:?}) is {contains_a} on `a` and {contains_b} on `b`, reads are {read_a:?} and {read_b:?}"
@@ -601,11 +609,11 @@ mod tests {
             let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
             let from_a: Vec<_> = left
                 .iter()
-                .filter_map(|op| replica_a.send(UWMap::Update("k", op.clone())))
+                .filter_map(|op| replica_a.send(UWMap::Update("k", op.clone())).ok())
                 .collect();
             let from_b: Vec<_> = right
                 .iter()
-                .filter_map(|op| replica_b.send(UWMap::Update("k", op.clone())))
+                .filter_map(|op| replica_b.send(UWMap::Update("k", op.clone())).ok())
                 .collect();
             for event in from_b {
                 replica_a.receive(event);
@@ -622,10 +630,10 @@ mod tests {
             replica_a.receive(spacer_b);
             replica_b.receive(spacer_a);
             let read_a: HashSet<&str> = replica_a
-                .query(Get::new(&"k", Read::new()))
+                .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
             let read_b: HashSet<&str> = replica_b
-                .query(Get::new(&"k", Read::new()))
+                .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
             if read_a != read_b {
                 split.push(format!(
@@ -634,10 +642,10 @@ mod tests {
             }
             for v in ["alpha", "beta"] {
                 let contains_a = replica_a
-                    .query(Get::new(&"k", Contains(v)))
+                    .query(&Get::new(&"k", Contains(v)))
                     .unwrap_or_default();
                 let contains_b = replica_b
-                    .query(Get::new(&"k", Contains(v)))
+                    .query(&Get::new(&"k", Contains(v)))
                     .unwrap_or_default();
                 if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
                     disagree.push(format!(

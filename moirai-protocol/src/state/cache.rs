@@ -124,9 +124,21 @@ impl<V> Clone for CacheCell<V> {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(
+        serialize = "L: serde::Serialize",
+        deserialize = "L: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct CachedLog<L, V> {
     inner: L,
+    /// Not carried across the wire: a cache is derived from the log, so a
+    /// deserialized log starts with an empty one and recomputes on first read.
+    #[cfg_attr(feature = "serde", serde(skip))]
     version: Option<Version>,
+    #[cfg_attr(feature = "serde", serde(skip, default = "CacheCell::new"))]
     read_cache: CacheCell<V>,
 }
 

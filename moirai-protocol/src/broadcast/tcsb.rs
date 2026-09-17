@@ -1085,7 +1085,6 @@ mod state_transfer {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
 
-
     /// A replica that interns itself first, then everybody else — the ordering
     /// `Replica::bootstrap` produces.
     fn tcsb(id: &str, members: &[&str]) -> Tcsb<Op> {
@@ -1290,7 +1289,6 @@ mod log_isolation {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
 
-
     fn tcsb(id: &str, members: &[&str], log_id: LogId) -> Tcsb<Op> {
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(id);
@@ -1409,7 +1407,6 @@ mod shared_interner {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
-
 
     fn log_a() -> LogId {
         LogId::from_bytes([0xa1; 16])

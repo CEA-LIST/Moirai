@@ -627,7 +627,6 @@ mod tests {
             true,
             Predicate::new(Read::new(), |a, b| a == b),
             false,
-            None,
         );
 
         fuzzer::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>(config);
@@ -654,7 +653,6 @@ mod tests {
             true,
             Predicate::new(Read::new(), |a, b| a == b),
             false,
-            None,
         );
 
         fuzzer::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>(config);

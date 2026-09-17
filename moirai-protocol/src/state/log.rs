@@ -107,6 +107,14 @@ impl<L: IsLog> IsLog for Box<L> {
 /// generated log types need `Read<V>` to produce `Box<V>`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(bound(
+        serialize = "L: serde::Serialize",
+        deserialize = "L: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct BoxedLog<L: IsLog>(Box<L>);
 
 impl<L: IsLog> BoxedLog<L> {

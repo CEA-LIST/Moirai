@@ -27,7 +27,6 @@ use tsify::Tsify;
 use crate::counter::stable::CounterStable;
 
 #[derive(Clone, Debug)]
-
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
@@ -242,7 +241,6 @@ mod tests {
             true,
             Predicate::new(Read::new(), |a, b| a == b),
             false,
-            None,
         );
 
         fuzzer::<VecLog<Counter<i32>>, Read<i32>>(config);

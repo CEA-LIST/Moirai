@@ -267,7 +267,24 @@ where
     }
 
     /// Bootstrap a replica whose log already carries `state`.
+    ///
+    /// Mints a log id, so every replica meant to share the state must be built
+    /// with [`bootstrap_with_state_and_log_id`] instead.
+    ///
+    /// [`bootstrap_with_state_and_log_id`]: Replica::bootstrap_with_state_and_log_id
     pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
+        Self::bootstrap_with_state_and_log_id(id, members, state, LogId::generate())
+    }
+
+    /// [`bootstrap_with_state`], hosting the log named by `log_id`.
+    ///
+    /// [`bootstrap_with_state`]: Replica::bootstrap_with_state
+    pub fn bootstrap_with_state_and_log_id(
+        id: ReplicaIdOwned,
+        members: &[&ReplicaId],
+        state: L,
+        log_id: LogId,
+    ) -> Self {
         assert!(
             members.contains(&&(*id)),
             "Bootstrap replica ID {} must be included in members list {:?}",
@@ -285,7 +302,7 @@ where
         };
         Self {
             id,
-            tcsb: T::new(idx, interner, LogId::generate()),
+            tcsb: T::new(idx, interner, log_id),
             state,
         }
     }

@@ -30,7 +30,6 @@ macro_rules! record {
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
             #[derive(Clone, Debug)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-            #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum $name {
                 $(
                     [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),

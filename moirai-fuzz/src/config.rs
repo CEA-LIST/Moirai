@@ -68,7 +68,6 @@ where
         final_merge: bool,
         predicate: Predicate<Q>,
         save_execution: bool,
-        query: Option<QueryFn<L>>,
     ) -> Self {
         assert!(
             !runs.is_empty(),

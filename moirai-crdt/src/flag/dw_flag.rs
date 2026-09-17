@@ -243,8 +243,8 @@ mod tests {
         replica_a.receive(spacer_b);
         replica_b.receive(spacer_a);
 
-        let read_a = replica_a.query(Get::new(&"flag", Read::<bool>::new()));
-        let read_b = replica_b.query(Get::new(&"flag", Read::<bool>::new()));
+        let read_a = replica_a.query(&Get::new(&"flag", Read::<bool>::new()));
+        let read_b = replica_b.query(&Get::new(&"flag", Read::<bool>::new()));
         assert_eq!(read_a, Some(false), "the concurrent disable wins on `a`");
         assert_eq!(read_b, Some(false), "the concurrent disable wins on `b`");
     }

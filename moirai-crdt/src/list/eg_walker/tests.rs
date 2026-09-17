@@ -1,5 +1,6 @@
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
+    log_id::LogId,
     replica::{IsReplica, Replica},
     state::{cache::CachedLog, graph_log::GraphLog},
 };
@@ -10,15 +11,20 @@ use crate::utils::membership::{triplet_log, twins_log};
 type ListReplica = Replica<GraphLog<List<char>>, Tcsb<List<char>>>;
 
 fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
-    let replica_a = Replica::bootstrap_with_state(
+    // One id for both: replicas that each minted their own would host two
+    // different logs and refuse every event the other sends.
+    let log_id = LogId::generate();
+    let replica_a = Replica::bootstrap_with_state_and_log_id(
         "a".to_string(),
         &["a", "b"],
         GraphLog::<List<char>>::from_stable(stable.clone()),
+        log_id.clone(),
     );
-    let replica_b = Replica::bootstrap_with_state(
+    let replica_b = Replica::bootstrap_with_state_and_log_id(
         "b".to_string(),
         &["a", "b"],
         GraphLog::<List<char>>::from_stable(stable),
+        log_id,
     );
     (replica_a, replica_b)
 }

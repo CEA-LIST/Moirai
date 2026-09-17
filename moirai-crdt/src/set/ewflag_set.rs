@@ -139,47 +139,6 @@ impl CommandGenerator for EWFlagSetLog<usize> {
     }
 }
 
-#[cfg(feature = "fuzz")]
-impl<V> OpGeneratorNested for EWFlagSetLog<V>
-where
-    V: ValueGenerator + Clone + Hash + Debug + Eq,
-{
-    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
-        use rand::distr::Distribution;
-
-        #[derive(Debug)]
-        enum Choice {
-            Add,
-            Remove,
-            Clear,
-        }
-
-        let dist = WeightedIndex::new([1, 0, 0]).unwrap();
-
-        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
-        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
-        match choice {
-            Choice::Add => EWFlagSet::Add(value),
-            Choice::Remove => EWFlagSet::Remove(value),
-            Choice::Clear => EWFlagSet::Clear,
-        }
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<V> FuzzMetrics for EWFlagSetLog<V>
-where
-    V: Clone + Hash + Debug + Eq,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        if self.is_default() {
-            StructureMetrics::empty()
-        } else {
-            StructureMetrics::scalar()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use moirai_protocol::replica::IsReplica;
