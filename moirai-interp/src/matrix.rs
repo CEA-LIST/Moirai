@@ -72,7 +72,6 @@ use moirai_protocol::{
     log_id::LogId,
     replica::{IsReplica, Replica},
     state::log::IsLog,
-    broadcast::internalizer::InternalizeOp,
 };
 use moirai_semantics::{
     FlagWins, LeafRule, MergeRule, MetamodelSemantics, NumKind, SetTie, Shape, TieBreak,
@@ -91,7 +90,7 @@ pub type Rep<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
 /// One merge construction the interpreted path can merge by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Construction {
-    /// `EventGraph<List<char>>`.
+    /// `GraphLog<List<char>>`.
     Text,
     /// `Counter<T>` at one width.
     Counter(NumKind),
@@ -866,7 +865,9 @@ pub fn schedules<E>(cell: &Cell<E>) -> Vec<Schedule> {
                         .iter()
                         .enumerate()
                         .filter(|(sender, _)| *sender != receiver)
-                        .filter_map(|(sender, list)| list.map(|list| (sender, cell.lists[list].len())))
+                        .filter_map(|(sender, list)| {
+                            list.map(|list| (sender, cell.lists[list].len()))
+                        })
                         .collect();
                     interleavings(&counts)
                 })
@@ -983,16 +984,22 @@ struct Run<'r, 'a, E, I: IsLog, G: IsLog> {
 impl<E, I, G> Run<'_, '_, E, I, G>
 where
     E: Debug,
-    I: IsLog,
-    G: IsLog,
-    I::Op: Clone + Debug + InternalizeOp,
-    G::Op: Clone + Debug + InternalizeOp,
+    // A log whose client command is its stored operation. Every log the matrix
+    // runs is one — the interpreted log and every crate Arachne generates —
+    // and saying so is what lets one encoder feed `send`.
+    I: IsLog<Command = <I as IsLog>::Op>,
+    G: IsLog<Command = <G as IsLog>::Op>,
+    I::Op: Clone + Debug,
+    G::Op: Clone + Debug,
 {
     fn send(&mut self, seat: usize, edit: &E, what: &str) -> Result<(Pair<I, G>, Stamp), String> {
         let view = (self.interp.read)(&self.ir[seat]);
         let interp_op = (self.interp.encode)(edit, &view);
         let gen_op = (self.generated.encode)(edit, &view);
-        let pair = match (self.ir[seat].send(interp_op), self.gr[seat].send(gen_op)) {
+        let pair = match (
+            self.ir[seat].send(interp_op).ok(),
+            self.gr[seat].send(gen_op).ok(),
+        ) {
             (Some(interp), Some(generated)) => (interp, generated),
             (None, None) => {
                 return Err(format!(
@@ -1104,8 +1111,16 @@ where
         for seat in 1..self.ir.len() {
             self.stats.replica_comparisons += 2;
             for (path, first, held) in [
-                (self.interp.name, &first_interp, (self.interp.read)(&self.ir[seat])),
-                (self.generated.name, &first_gen, (self.generated.read)(&self.gr[seat])),
+                (
+                    self.interp.name,
+                    &first_interp,
+                    (self.interp.read)(&self.ir[seat]),
+                ),
+                (
+                    self.generated.name,
+                    &first_gen,
+                    (self.generated.read)(&self.gr[seat]),
+                ),
             ] {
                 if *first != held {
                     return Err(format!(
@@ -1171,10 +1186,13 @@ fn run_schedule<E, I, G>(
 ) -> Result<(Stats, Value), String>
 where
     E: Debug,
-    I: IsLog,
-    G: IsLog,
-    I::Op: Clone + Debug + InternalizeOp,
-    G::Op: Clone + Debug + InternalizeOp,
+    // A log whose client command is its stored operation. Every log the matrix
+    // runs is one — the interpreted log and every crate Arachne generates —
+    // and saying so is what lets one encoder feed `send`.
+    I: IsLog<Command = <I as IsLog>::Op>,
+    G: IsLog<Command = <G as IsLog>::Op>,
+    I::Op: Clone + Debug,
+    G::Op: Clone + Debug,
 {
     let names: Vec<&str> = SEATS[..schedule.members].to_vec();
     let interp_log = LogId::generate();
@@ -1276,9 +1294,7 @@ where
                 taken[receiver][sender] += 1;
                 let what = format!(
                     "eager delivery {} of {}'s operation to {}",
-                    position[receiver],
-                    SEATS[sender],
-                    SEATS[receiver]
+                    position[receiver], SEATS[sender], SEATS[receiver]
                 );
                 run.receive(receiver, pair, &what)?;
                 let what = format!("{}'s acknowledgement of {}", SEATS[receiver], SEATS[sender]);
@@ -1354,10 +1370,13 @@ pub fn run_cell<E, I, G>(
 ) -> Result<Report, String>
 where
     E: Debug,
-    I: IsLog,
-    G: IsLog,
-    I::Op: Clone + Debug + InternalizeOp,
-    G::Op: Clone + Debug + InternalizeOp,
+    // A log whose client command is its stored operation. Every log the matrix
+    // runs is one — the interpreted log and every crate Arachne generates —
+    // and saying so is what lets one encoder feed `send`.
+    I: IsLog<Command = <I as IsLog>::Op>,
+    G: IsLog<Command = <G as IsLog>::Op>,
+    I::Op: Clone + Debug,
+    G::Op: Clone + Debug,
 {
     let mut total = Stats::default();
     let mut settled = BTreeSet::new();
@@ -1402,10 +1421,13 @@ pub fn run_matrix<E, I, G>(
 ) -> Result<Stats, String>
 where
     E: Debug,
-    I: IsLog,
-    G: IsLog,
-    I::Op: Clone + Debug + InternalizeOp,
-    G::Op: Clone + Debug + InternalizeOp,
+    // A log whose client command is its stored operation. Every log the matrix
+    // runs is one — the interpreted log and every crate Arachne generates —
+    // and saying so is what lets one encoder feed `send`.
+    I: IsLog<Command = <I as IsLog>::Op>,
+    G: IsLog<Command = <G as IsLog>::Op>,
+    I::Op: Clone + Debug,
+    G::Op: Clone + Debug,
 {
     let assigned = check_coverage(krate, sem, cells)?;
     run_cells(krate, cells, interp, generated).finish(krate, assigned)
@@ -1473,10 +1495,13 @@ pub fn run_cells<E, I, G>(
 ) -> CellsRun
 where
     E: Debug,
-    I: IsLog,
-    G: IsLog,
-    I::Op: Clone + Debug + InternalizeOp,
-    G::Op: Clone + Debug + InternalizeOp,
+    // A log whose client command is its stored operation. Every log the matrix
+    // runs is one — the interpreted log and every crate Arachne generates —
+    // and saying so is what lets one encoder feed `send`.
+    I: IsLog<Command = <I as IsLog>::Op>,
+    G: IsLog<Command = <G as IsLog>::Op>,
+    I::Op: Clone + Debug,
+    G::Op: Clone + Debug,
 {
     let mut total = Stats::default();
     let mut failures = Vec::new();
@@ -1537,7 +1562,10 @@ pub fn first_difference(left: &Value, right: &Value, at: &str) -> Option<String>
             .enumerate()
             .find_map(|(index, (l, r))| first_difference(l, r, &format!("{at}/{index}"))),
         (l, r) if l == r => None,
-        (l, r) => Some(format!("{} ({l} against {r})", if at.is_empty() { "/" } else { at })),
+        (l, r) => Some(format!(
+            "{} ({l} against {r})",
+            if at.is_empty() { "/" } else { at }
+        )),
     }
 }
 
@@ -1574,7 +1602,11 @@ mod tests {
         let kinds: BTreeSet<&str> = arms.iter().map(LeafLog::kind).collect();
         assert_eq!(arms.len(), 23, "the twenty-three arms");
         let rows: BTreeSet<Construction> = arms.iter().map(leaf_construction).collect();
-        assert_eq!(rows.len(), 23, "twenty-three arms, twenty-three rows: {kinds:?}");
+        assert_eq!(
+            rows.len(),
+            23,
+            "twenty-three arms, twenty-three rows: {kinds:?}"
+        );
         for construction in rows {
             assert!(!row(construction).patterns.is_empty(), "{construction}");
         }
@@ -1632,8 +1664,11 @@ mod tests {
     // checks are left to notice anything.
     // ------------------------------------------------------------------
 
-    use moirai_protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
-    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
+    use moirai_protocol::{
+        clock::version_vector::Version,
+        event::Event,
+        state::{effect_context::EffectContext, log::IsLog},
+    };
     use serde_json::{Value, json};
 
     use super::{Arm, Cell, Rep, pattern, run_cell};
@@ -1644,32 +1679,21 @@ mod tests {
         Beat,
     }
 
-    impl InternalizeOp for ToyOp {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
-
     /// Keeps whichever write it was handed last: two replicas that deliver two
     /// concurrent writes in opposite orders disagree, on both "paths" alike.
     #[derive(Clone, Debug, Default)]
     struct LastDelivered(Option<u64>);
 
     impl IsLog for LastDelivered {
-        type Value = ();
+        type Command = ToyOp;
         type Op = ToyOp;
+        type Rejection = std::convert::Infallible;
 
-        fn is_enabled(&self, _op: &ToyOp) -> bool {
-            true
+        fn prepare(&self, command: Self::Command) -> Self::Op {
+            command
         }
 
-        fn effect(
-            &mut self,
-            event: Event<ToyOp>,
-            #[cfg(feature = "sink")] _path: moirai_protocol::state::object_path::ObjectPath,
-            #[cfg(feature = "sink")] _sink: &mut moirai_protocol::state::sink::SinkCollector,
-            #[cfg(feature = "sink")] _ownership: moirai_protocol::state::sink::SinkOwnership,
-        ) {
+        fn effect(&mut self, event: Event<ToyOp>, _ctx: &mut EffectContext<'_>) {
             if let ToyOp::Write(value) = event.op() {
                 self.0 = Some(*value);
             }
@@ -1696,20 +1720,15 @@ mod tests {
     }
 
     impl IsLog for SplitsAtStability {
-        type Value = ();
+        type Command = ToyOp;
         type Op = ToyOp;
+        type Rejection = std::convert::Infallible;
 
-        fn is_enabled(&self, _op: &ToyOp) -> bool {
-            true
+        fn prepare(&self, command: Self::Command) -> Self::Op {
+            command
         }
 
-        fn effect(
-            &mut self,
-            event: Event<ToyOp>,
-            #[cfg(feature = "sink")] _path: moirai_protocol::state::object_path::ObjectPath,
-            #[cfg(feature = "sink")] _sink: &mut moirai_protocol::state::sink::SinkCollector,
-            #[cfg(feature = "sink")] _ownership: moirai_protocol::state::sink::SinkOwnership,
-        ) {
+        fn effect(&mut self, event: Event<ToyOp>, _ctx: &mut EffectContext<'_>) {
             if let ToyOp::Write(value) = event.op() {
                 self.delivered.push(*value);
             }
@@ -1743,7 +1762,7 @@ mod tests {
 
     /// Every schedule of `toy_cell` run on `L` as both arms, and the first
     /// failure of each schedule kind the runner reports.
-    fn verdict<L: IsLog<Op = ToyOp>>(read: &dyn Fn(&Rep<L>) -> Value) -> String {
+    fn verdict<L: IsLog<Op = ToyOp, Command = ToyOp>>(read: &dyn Fn(&Rep<L>) -> Value) -> String {
         let encode = |op: &ToyOp, _: &Value| op.clone();
         let one = Arm {
             name: "interpreted",
@@ -1761,8 +1780,14 @@ mod tests {
     #[test]
     fn the_runner_catches_two_replicas_of_one_path_that_disagree_where_twins_cannot() {
         let reason = verdict::<LastDelivered>(&|replica| json!(replica.log().0));
-        assert!(reason.contains("replicas a and b of the interpreted path"), "{reason}");
-        assert!(reason.contains("once the conflict has been delivered everywhere"), "{reason}");
+        assert!(
+            reason.contains("replicas a and b of the interpreted path"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("once the conflict has been delivered everywhere"),
+            "{reason}"
+        );
         eprintln!("{reason}");
     }
 
@@ -1772,7 +1797,10 @@ mod tests {
             let log = replica.log();
             json!(log.stable.or_else(|| log.delivered.iter().copied().max()))
         });
-        assert!(reason.contains("replicas a and b of the interpreted path"), "{reason}");
+        assert!(
+            reason.contains("replicas a and b of the interpreted path"),
+            "{reason}"
+        );
         assert!(
             reason.contains("stabilizing the conflict") || reason.contains("acknowledgement"),
             "the split appears only once something stabilizes: {reason}"

@@ -47,6 +47,22 @@ impl<'a> EffectContext<'a> {
         Self::root("silent", None)
     }
 
+    /// The path this context is currently at.
+    ///
+    /// For a log that walks its own tree rather than through `with_field` and
+    /// friends: it opens its walker at this path and collects into
+    /// [`sink_mut`](EffectContext::sink_mut).
+    #[cfg(feature = "sink")]
+    pub fn path(&self) -> &ObjectPath {
+        &self.path
+    }
+
+    /// The collector this context writes to, when there is one.
+    #[cfg(feature = "sink")]
+    pub fn sink_mut(&mut self) -> Option<&mut SinkCollector> {
+        self.sink.as_deref_mut()
+    }
+
     pub fn is_owned(&self) -> bool {
         #[cfg(feature = "sink")]
         {

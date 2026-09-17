@@ -12,7 +12,7 @@
 //! through [`Node::for_rule`].
 //!
 //! What it does *not* own is the ordering half. [`SeqNode`] holds
-//! `EventGraph<List<EventId>>` verbatim, the same field `NestedListLog`
+//! `GraphLog<List<EventId>>` verbatim, the same field `NestedListLog`
 //! holds, and resolves a position exactly as `nested_list.rs:138-139` and
 //! `:166-167` do: `ReadAt(event.version())`, the state the writer saw, and
 //! never the current state. Resolving against the current state is the
@@ -44,7 +44,7 @@
 // (`nested_list.rs:74`, `uw_map.rs:236`).
 #![allow(clippy::mutable_key_type)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
@@ -53,7 +53,7 @@ use moirai_protocol::{
     clock::version_vector::Version,
     crdt::query::Read,
     event::{Event, id::EventId, lamport::Lamport},
-    state::{event_graph::EventGraph, log::IsLog},
+    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
 };
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, SetTie, Shape, TieBreak,
@@ -599,32 +599,45 @@ pub enum SlotNode {
     serde(bound(serialize = "", deserialize = ""))
 )]
 pub struct SeqNode {
-    pub(crate) positions: EventGraph<List<EventId>>,
+    pub(crate) positions: GraphLog<List<EventId>>,
+    /// Keyed by the id of the operation that inserted the child, as
+    /// `NestedListLog` keys its own children. A hash map and not a sorted one
+    /// because Moirai v0.4 dropped `Ord` from [`EventId`]: an id orders by a
+    /// *local* replica index, which is not the same order on two replicas.
+    /// Read order comes from `positions`, never from this map; the one place
+    /// that needs a fixed order is serialization, which sorts by the resolved
+    /// id. See [`children_serde`].
     #[cfg_attr(feature = "serde", serde(with = "children_serde"))]
-    pub(crate) children: BTreeMap<EventId, Node>,
+    pub(crate) children: HashMap<EventId, Node>,
 }
 
 /// A sequence's children as a list of pairs rather than as a JSON object.
 ///
 /// The key is an [`EventId`], which is a struct and not a string, and a JSON
 /// object's keys are strings. The state transfer this log has to survive is
-/// JSON (`state_transfer.rs`), so the map travels as the pairs it is —
-/// ordered by key, which keeps two replicas' bytes identical for one state.
+/// JSON (`state_transfer.rs`), so the map travels as the pairs it is — sorted
+/// by the *resolved* id, which names the replica by its string id and so
+/// orders the same on both sides, keeping two replicas' bytes identical for
+/// one state.
 #[cfg(feature = "serde")]
 mod children_serde {
-    use super::{BTreeMap, EventId, Node};
+    use moirai_protocol::event::id::ResolvedEventId;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+    use super::{EventId, HashMap, Node};
+
     pub(super) fn serialize<S: Serializer>(
-        children: &BTreeMap<EventId, Node>,
+        children: &HashMap<EventId, Node>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        children.iter().collect::<Vec<_>>().serialize(serializer)
+        let mut pairs: Vec<(&EventId, &Node)> = children.iter().collect();
+        pairs.sort_by_key(|(id, _)| ResolvedEventId::from(*id));
+        pairs.serialize(serializer)
     }
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<BTreeMap<EventId, Node>, D::Error> {
+    ) -> Result<HashMap<EventId, Node>, D::Error> {
         Ok(Vec::<(EventId, Node)>::deserialize(deserializer)?
             .into_iter()
             .collect())
@@ -771,7 +784,7 @@ impl SeqNode {
     }
 
     /// The children, by the id of the operation that inserted them.
-    pub fn children(&self) -> &BTreeMap<EventId, Node> {
+    pub fn children(&self) -> &HashMap<EventId, Node> {
         &self.children
     }
 }
@@ -783,21 +796,21 @@ impl OptNode {
     }
 }
 
-/// `positions.eval(Read::new())` without importing `EvalNested` everywhere.
+/// `positions.eval(&Read::new())` without importing `EvalNested` everywhere.
 trait ReadPositions {
     fn execute_query_read(&self) -> Vec<EventId>;
     fn execute_query_read_at(&self, version: &Version) -> Vec<EventId>;
 }
 
-impl ReadPositions for EventGraph<List<EventId>> {
+impl ReadPositions for GraphLog<List<EventId>> {
     fn execute_query_read(&self) -> Vec<EventId> {
-        self.eval(Read::new())
+        self.eval(&Read::new())
     }
 
     /// The order the writer of an operation saw, which is the only reading of
     /// a position two replicas can agree on (`nested_list.rs:138`).
     fn execute_query_read_at(&self, version: &Version) -> Vec<EventId> {
-        self.eval(ReadAt::new(version))
+        self.eval(&ReadAt::new(version))
     }
 }
 
@@ -1090,19 +1103,11 @@ impl<'a> Emit<'a> {
 
 /// The ordering half of a sequence takes its own event.
 ///
-/// `EventGraph::effect` ignores the path, the collector and the ownership
-/// outright (`event_graph.rs:66-77`), so they are filled in here rather than
-/// threaded down a recursion that would carry them for nobody.
-fn positions_effect(positions: &mut EventGraph<List<EventId>>, event: Event<List<EventId>>) {
-    positions.effect(
-        event,
-        #[cfg(feature = "sink")]
-        ObjectPath::new("positions"),
-        #[cfg(feature = "sink")]
-        &mut SinkCollector::new(),
-        #[cfg(feature = "sink")]
-        moirai_protocol::state::sink::SinkOwnership::Delegated,
-    );
+/// `GraphLog::effect` ignores its effect context outright
+/// (`graph_log.rs`), so a silent one is passed here rather than threaded down
+/// a recursion that would carry it for nobody.
+fn positions_effect(positions: &mut GraphLog<List<EventId>>, event: Event<List<EventId>>) {
+    positions.effect(event, &mut EffectContext::silent());
 }
 
 /// Would this operation route, and what would stop it?
@@ -2044,7 +2049,7 @@ mod tests {
 
         // Locally, a second class on a slot this replica has already set is
         // refused: `union.rs:130-145`, and the reason names the feature.
-        assert!(a.send(put("Fallback", 'x')).is_none());
+        assert!(a.send(put("Fallback", 'x')).is_err());
 
         a.receive(b1);
         b.receive(a1);
@@ -2203,7 +2208,7 @@ mod tests {
         for op in ops {
             events.push(
                 a.send(at_root(&sem, "Bench", op))
-                    .unwrap_or_else(|| panic!("`{feature}`'s workload is enabled")),
+                    .unwrap_or_else(|why| panic!("`{feature}`'s workload is enabled: {why:?}")),
             );
         }
         let before = feature_len(&sem, &a, feature);

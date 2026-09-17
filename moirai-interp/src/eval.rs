@@ -238,7 +238,7 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Option<Value> {
 }
 
 impl EvalNested<Read<Value>> for ModelLog {
-    fn execute_query(&self, _q: Read<Value>) -> Value {
+    fn execute_query(&self, _q: &Read<Value>) -> Value {
         match self.semantics() {
             Some(sem) => read(sem, self.root()),
             None => Value::Null,
@@ -248,7 +248,7 @@ impl EvalNested<Read<Value>> for ModelLog {
 
 #[cfg(feature = "test_utils")]
 impl EvalNested<Read<Value>> for crate::testing::Harness {
-    fn execute_query(&self, _q: Read<Value>) -> Value {
+    fn execute_query(&self, _q: &Read<Value>) -> Value {
         read_node(&self.sem, &self.root, self.site()).unwrap_or(Value::Null)
     }
 }
@@ -275,7 +275,7 @@ mod tests {
     }
 
     fn read_of(log: &ModelLog) -> Value {
-        moirai_protocol::state::log::IsLog::eval(log, Read::<Value>::new())
+        moirai_protocol::state::log::IsLog::eval(log, &Read::<Value>::new())
     }
 
     #[test]
@@ -439,11 +439,11 @@ mod tests {
                 Scalar::Int(3),
             )))))
             .unwrap();
-        assert_eq!(a.query::<Read<Value>>(Read::new())["optCounter"], json!(3));
+        assert_eq!(a.query::<Read<Value>>(&Read::new())["optCounter"], json!(3));
 
         let _ = a.send(opt(InstanceOp::unset())).unwrap();
         assert_eq!(
-            a.query::<Read<Value>>(Read::new()).get("optCounter"),
+            a.query::<Read<Value>>(&Read::new()).get("optCounter"),
             None,
             "a counter that has been reset reads as default, so the optional              drops it and the key goes with it"
         );
@@ -502,7 +502,7 @@ mod tests {
             let _ = a.send(op).unwrap();
         }
 
-        let read: Value = a.query(Read::<Value>::new());
+        let read: Value = a.query(&Read::<Value>::new());
         assert_eq!(read["counter"], json!(7));
         assert_eq!(read["flagEw"], json!(true));
         assert_eq!(read["regLww"], json!("v"));
@@ -542,9 +542,9 @@ mod tests {
         a.receive(from_b);
         b.receive(from_a);
 
-        let read: Value = a.query(Read::<Value>::new());
+        let read: Value = a.query(&Read::<Value>::new());
         assert_eq!(read["regMv"], json!({"__conflict": ["left", "right"]}));
-        assert_eq!(read, b.query(Read::<Value>::new()));
+        assert_eq!(read, b.query(&Read::<Value>::new()));
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
         let event = a.send(name_child).unwrap();
         b.receive(event);
 
-        let read: Value = a.query(Read::<Value>::new());
+        let read: Value = a.query(&Read::<Value>::new());
         assert_eq!(read["eClass"], json!("Root"));
         let tree_value = &read["behaviortrees"][0];
         assert_eq!(tree_value["eClass"], json!("BehaviorTree"));
@@ -614,7 +614,7 @@ mod tests {
             }),
             "`ID` is `TreeNode`'s and `children` is `ControlNode`'s, and both              sit flat on the instance with no `_super` hop between them"
         );
-        assert_eq!(read, b.query(Read::<Value>::new()));
+        assert_eq!(read, b.query(&Read::<Value>::new()));
     }
 
     // ------------------------------------------------------------- json.ecore

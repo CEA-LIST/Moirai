@@ -35,17 +35,13 @@ use std::sync::Arc;
 use moirai_protocol::{
     clock::version_vector::Version,
     event::Event,
-    state::log::IsLog,
-    broadcast::internalizer::{InternalizeOp, Interner},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 use moirai_semantics::{MetamodelSemantics, from_descriptor};
 use serde_json::Value;
 
 #[cfg(feature = "sink")]
-use moirai_protocol::state::{
-    object_path::ObjectPath,
-    sink::{SinkCollector, SinkOwnership},
-};
+use moirai_protocol::state::sink::SinkCollector;
 
 use crate::node::{At, Ctx, Emit, Mode, Node, Refusal, Shaped, Site, Target, apply, check};
 use crate::op::ModelOp;
@@ -161,22 +157,34 @@ fn parse(descriptor: &str) -> Result<MetamodelSemantics, Refusal> {
 }
 
 impl IsLog for ModelLog {
-    /// The canonical form of `02 Validation Plan` §2, built by
-    /// [`crate::eval`].
-    type Value = Value;
+    type Command = ModelOp;
     type Op = ModelOp;
+    /// The sentence [`ModelLog::refusal`] already produced. Moirai v0.6 gives
+    /// `IsLog` a rejection type, and this log had one before the trait did:
+    /// the structural check of criterion I-A9 names the class or the feature
+    /// it stopped at, and `send` now hands that to the caller instead of a
+    /// bare `None`.
+    type Rejection = Refusal;
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        self.refusal(op).is_ok()
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        command
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+        self.refusal(op)
+    }
+
+    #[allow(unused_variables)]
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+        #[cfg(feature = "sink")]
+        let path = ctx.path().clone();
+        #[cfg(feature = "sink")]
+        let mut discarded = SinkCollector::new();
+        #[cfg(feature = "sink")]
+        let sink = match ctx.sink_mut() {
+            Some(sink) => sink,
+            None => &mut discarded,
+        };
         match event.op() {
             ModelOp::Install {
                 model_id,
@@ -268,14 +276,6 @@ impl IsLog for ModelLog {
     }
 }
 
-/// A log's operation crosses replicas, so it internalises; the table it
-/// carries is text and does not.
-impl InternalizeOp for ModelLog {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! `ip16` and `ip17`, the two halves of criterion I-A9, plus the rules
@@ -355,7 +355,7 @@ mod tests {
         );
         assert!(a.state().semantics().is_some());
 
-        assert!(a.send(install("m2", &descriptor)).is_none());
+        assert!(a.send(install("m2", &descriptor)).is_err());
         assert_eq!(
             a.state().refusal(&install("m2", &descriptor)),
             Err(Refusal::AlreadyInstalled)
@@ -367,7 +367,7 @@ mod tests {
         let log = ModelLog::default();
         let op = ModelOp::Instance(InstanceOp::variant(ClassSlot(0), InstanceOp::New));
         assert_eq!(log.refusal(&op), Err(Refusal::NoTable));
-        assert!(!log.is_enabled(&op));
+        assert!(log.is_enabled(&op).is_err());
         assert!(log.is_default());
 
         // And the sentence says what to do about it.
@@ -392,7 +392,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(!log.is_enabled(&op));
+        assert!(log.is_enabled(&op).is_err());
     }
 
     #[test]
@@ -490,7 +490,7 @@ mod tests {
 
         for (what, op, sentence) in malformed() {
             let op = ModelOp::Instance(op);
-            assert!(a.send(op.clone()).is_none(), "{what} was accepted");
+            assert!(a.send(op.clone()).is_err(), "{what} was accepted");
 
             let from_a = a.state().refusal(&op).unwrap_err();
             let from_b = b.state().refusal(&op).unwrap_err();
@@ -621,8 +621,7 @@ mod tests {
     #[test]
     fn ip7_a_deep_operation_crosses_two_interners_that_disagree_about_their_members() {
         // The two replicas index their members in opposite orders, so every
-        // event id that crosses between them is re-indexed on arrival. This is
-        // the situation `InternalizeOp` exists for, and the one where a
+        // event id that crosses between them is re-indexed on arrival, and a
         // recursion that skipped a level would land a list child on the wrong
         // object.
         let log_id = LogId::generate();

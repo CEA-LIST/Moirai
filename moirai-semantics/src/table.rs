@@ -104,7 +104,7 @@ pub enum SetTie {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LeafRule {
-    /// `EventGraph<List<char>>`: every string, `iD="true"` included.
+    /// `GraphLog<List<char>>`: every string, `iD="true"` included.
     Text,
     /// `Counter<T>` when resettable, `SimpleCounter<T>` when not.
     Counter {

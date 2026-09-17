@@ -57,16 +57,10 @@ use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::Read},
     event::Event,
-    state::{event_graph::EventGraph, log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::VecLog},
 };
 use moirai_semantics::{FlagWins, LeafRule, MetamodelSemantics, NumKind, SetTie, TieBreak};
 use serde_json::{Map, Value};
-
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{
-    object_path::ObjectPath,
-    sink::{SinkCollector, SinkOwnership},
-};
 
 /// Every value a leaf can hold, across every metamodel the table can express.
 ///
@@ -342,8 +336,8 @@ type BagLog = UWMapLog<Scalar, VecLog<Counter<usize>>>;
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LeafLog {
-    /// `EventGraph<List<char>>`: every string, `iD="true"` included.
-    Text(EventGraph<List<char>>),
+    /// `GraphLog<List<char>>`: every string, `iD="true"` included.
+    Text(GraphLog<List<char>>),
     /// `EByte`, resettable.
     CounterU8(VecLog<Counter<u8>>),
     /// `EShort`, resettable.
@@ -433,7 +427,7 @@ impl LeafLog {
     /// would decide it by accident.
     pub fn for_rule(rule: LeafRule) -> Self {
         match rule {
-            LeafRule::Text => LeafLog::Text(EventGraph::default()),
+            LeafRule::Text => LeafLog::Text(GraphLog::default()),
             LeafRule::Counter {
                 num,
                 resettable: true,
@@ -518,7 +512,7 @@ impl LeafLog {
     /// Two refusals in one: the kind check, which is the table's business,
     /// and the inner log's own `is_enabled`, which is the state's — a text
     /// insert past the end of the string is refused here exactly as
-    /// `EventGraph<List<char>>` refuses it on its own.
+    /// `GraphLog<List<char>>` refuses it on its own.
     pub fn is_enabled(&self, op: &LeafOp) -> Result<(), LeafMismatch> {
         self.probe(op, true)
     }
@@ -682,30 +676,39 @@ impl LeafLog {
     /// The canonical JSON form of this leaf's value.
     pub fn read_json(&self, sem: Option<&MetamodelSemantics>) -> Value {
         match self {
-            LeafLog::Text(log) => Value::String(log.execute_query(Read::<String>::new())),
-            LeafLog::CounterU8(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::CounterI16(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::CounterI32(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::CounterI64(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::CounterF32(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::CounterF64(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterU8(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterI16(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterI32(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterI64(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterF32(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::SimpleCounterF64(log) => log.execute_query(Read::new()).to_json(),
-            LeafLog::FlagEw(log) => Value::Bool(log.execute_query(Read::new())),
-            LeafLog::FlagDw(log) => Value::Bool(log.execute_query(Read::new())),
-            LeafLog::RegisterMv(log) => many_valued(log.execute_query(Read::new()), sem),
-            LeafLog::RegisterLww(log) => log.execute_query(Read::<Scalar>::new()).to_json(sem),
-            LeafLog::RegisterFair(log) => log.execute_query(Read::<Scalar>::new()).to_json(sem),
-            LeafLog::RegisterPo(log) => many_valued(log.execute_query(Read::new()), sem),
-            LeafLog::RegisterTo(log) => log.execute_query(Read::<Scalar>::new()).to_json(sem),
-            LeafLog::SetAw(log) => sorted_array(log.execute_query(Read::new()), sem),
-            LeafLog::SetRw(log) => sorted_array(log.execute_query(Read::new()), sem),
+            LeafLog::Text(log) => Value::String(log.execute_query(&Read::<String>::new())),
+            LeafLog::CounterU8(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::CounterI16(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::CounterI32(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::CounterI64(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::CounterF32(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::CounterF64(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterU8(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterI16(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterI32(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterI64(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterF32(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterF64(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::FlagEw(log) => Value::Bool(log.execute_query(&Read::new())),
+            LeafLog::FlagDw(log) => Value::Bool(log.execute_query(&Read::new())),
+            LeafLog::RegisterMv(log) => many_valued(log.execute_query(&Read::new()), sem),
+            LeafLog::RegisterLww(log) => log
+                .execute_query(&Read::<Option<Scalar>>::new())
+                .unwrap_or_default()
+                .to_json(sem),
+            LeafLog::RegisterFair(log) => log
+                .execute_query(&Read::<Option<Scalar>>::new())
+                .unwrap_or_default()
+                .to_json(sem),
+            LeafLog::RegisterPo(log) => many_valued(log.execute_query(&Read::new()), sem),
+            LeafLog::RegisterTo(log) => log
+                .execute_query(&Read::<Option<Scalar>>::new())
+                .unwrap_or_default()
+                .to_json(sem),
+            LeafLog::SetAw(log) => sorted_array(log.execute_query(&Read::new()), sem),
+            LeafLog::SetRw(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::Bag(log) => {
-                let counts = log.execute_query(Read::new());
+                let counts = log.execute_query(&Read::new());
                 let mut values: Vec<Scalar> = Vec::new();
                 for (value, count) in counts {
                     for _ in 0..count {
@@ -724,7 +727,7 @@ impl LeafLog {
     /// fall for every arm whose generated twin's would.
     #[cfg(feature = "test_utils")]
     pub fn polog_len(&self) -> usize {
-        use moirai_protocol::state::{log::IsLogTest, unstable_state::IsUnstableState};
+        use moirai_protocol::state::unstable_state::IsUnstableCore;
 
         match self {
             // An `EventGraph` is its own unstable state and its `stabilize`
@@ -732,7 +735,7 @@ impl LeafLog {
             // this number does not fall for text — on either path, which is
             // why `ip11` excludes text by naming the exclusion rather than by
             // forgetting it.
-            LeafLog::Text(log) => IsUnstableState::len(log),
+            LeafLog::Text(log) => IsUnstableCore::len(log.unstable()),
             LeafLog::CounterU8(log) => log.unstable().len(),
             LeafLog::CounterI16(log) => log.unstable().len(),
             LeafLog::CounterI32(log) => log.unstable().len(),
@@ -803,7 +806,7 @@ fn enabled<L: IsLog>(
     leaf: &'static str,
     strict: bool,
 ) -> Result<(), LeafMismatch> {
-    if !strict || log.is_enabled(inner) {
+    if !strict || log.is_enabled(inner).is_ok() {
         Ok(())
     } else {
         mismatch(op, leaf)
@@ -811,17 +814,13 @@ fn enabled<L: IsLog>(
 }
 
 /// Deliver one translated operation.
+///
+/// A leaf's own effects never reach a collector: the interpreted tree reports
+/// through [`crate::node::Emit`], at the path it walked, so the context here
+/// is a silent one.
 fn apply<L: IsLog>(log: &mut L, event: Event<LeafOp>, inner: L::Op) {
     let event = event.unfold(inner);
-    log.effect(
-        event,
-        #[cfg(feature = "sink")]
-        ObjectPath::new("leaf"),
-        #[cfg(feature = "sink")]
-        &mut SinkCollector::new(),
-        #[cfg(feature = "sink")]
-        SinkOwnership::Delegated,
-    );
+    log.effect(event, &mut EffectContext::silent());
 }
 
 fn text_op(op: &LeafOp) -> Result<List<char>, LeafMismatch> {
@@ -992,17 +991,6 @@ fn bag_op(op: &LeafOp) -> Result<UWMap<Scalar, Counter<usize>>, LeafMismatch> {
     }
 }
 
-impl moirai_protocol::broadcast::internalizer::InternalizeOp for LeafOp {
-    /// Identity: a leaf operation carries scalars and positions, never an
-    /// [`moirai_protocol::event::id::EventId`], so there is nothing here for
-    /// an interner to re-index. The impl lives beside the type all the same,
-    /// so that [`crate::op::ModelOp`]'s recursion has one exhaustive place to
-    /// bottom out and cannot silently skip a leaf.
-    fn internalize(self, _interner: &moirai_protocol::broadcast::internalizer::Interner) -> Self {
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! `ip6`: each of the twenty-three `LeafLog` arms, driven through the
@@ -1024,12 +1012,12 @@ mod tests {
         crdt::{eval::EvalNested, query::Read},
         event::Event,
         replica::IsReplica,
-        state::log::IsLog,
+        state::{effect_context::EffectContext, log::IsLog},
     };
     use moirai_semantics::{ClassSlot, FlagWins, LeafRule, NumKind, SetTie, TieBreak};
     use serde_json::{Value, json};
 
-    use super::{LeafLog, LeafOp, Scalar};
+    use super::{LeafLog, LeafMismatch, LeafOp, Scalar};
 
     /// What [`LeafCell::default`] mints. Set by the test before it asks for
     /// its twins; thread-local, and every `#[test]` is its own thread.
@@ -1065,20 +1053,19 @@ mod tests {
     }
 
     impl IsLog for LeafCell {
-        type Value = Value;
+        type Command = LeafOp;
         type Op = LeafOp;
+        type Rejection = LeafMismatch;
 
-        fn is_enabled(&self, op: &Self::Op) -> bool {
-            self.0.is_enabled(op).is_ok()
+        fn prepare(&self, command: Self::Command) -> Self::Op {
+            command
         }
 
-        fn effect(
-            &mut self,
-            event: Event<Self::Op>,
-            #[cfg(feature = "sink")] _path: moirai_protocol::state::object_path::ObjectPath,
-            #[cfg(feature = "sink")] _sink: &mut moirai_protocol::state::sink::SinkCollector,
-            #[cfg(feature = "sink")] _ownership: moirai_protocol::state::sink::SinkOwnership,
-        ) {
+        fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+            self.0.is_enabled(op)
+        }
+
+        fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
             self.0.effect(event).expect("the arm takes the operation");
         }
 
@@ -1096,7 +1083,7 @@ mod tests {
     }
 
     impl EvalNested<Read<Value>> for LeafCell {
-        fn execute_query(&self, _q: Read<Value>) -> Value {
+        fn execute_query(&self, _q: &Read<Value>) -> Value {
             self.0.read_json(None)
         }
     }
@@ -1123,15 +1110,15 @@ mod tests {
         b.receive(event);
         let event = a.send(LeafOp::InsertChar { pos: 1, ch: 'i' }).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("Hi"));
-        assert_eq!(b.query(Read::<Value>::new()), json!("Hi"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("Hi"));
+        assert_eq!(b.query(&Read::<Value>::new()), json!("Hi"));
 
         let event_a = a.send(LeafOp::InsertChar { pos: 2, ch: '!' }).unwrap();
         let event_b = b.send(LeafOp::InsertChar { pos: 2, ch: '?' }).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        let read = a.query(Read::<Value>::new());
-        assert_eq!(read, b.query(Read::<Value>::new()));
+        let read = a.query(&Read::<Value>::new());
+        assert_eq!(read, b.query(&Read::<Value>::new()));
         assert!(
             read == json!("Hi!?") || read == json!("Hi?!"),
             "both characters survive in one order: {read}"
@@ -1139,9 +1126,12 @@ mod tests {
 
         let event = a.send(LeafOp::DeleteChar { pos: 0 }).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), b.query(Read::<Value>::new()));
         assert_eq!(
-            a.query(Read::<Value>::new()).as_str().unwrap().len(),
+            a.query(&Read::<Value>::new()),
+            b.query(&Read::<Value>::new())
+        );
+        assert_eq!(
+            a.query(&Read::<Value>::new()).as_str().unwrap().len(),
             3,
             "one character out of four"
         );
@@ -1168,16 +1158,16 @@ mod tests {
         b.receive(event);
         let event = a.send(LeafOp::Dec(Scalar::Int(5))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), zero);
-        assert_eq!(b.query(Read::<Value>::new()), zero);
+        assert_eq!(a.query(&Read::<Value>::new()), zero);
+        assert_eq!(b.query(&Read::<Value>::new()), zero);
 
         let event_a = a.send(LeafOp::Reset).unwrap();
         let event_b = b.send(LeafOp::Inc(Scalar::Int(18))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
 
-        assert_eq!(a.query(Read::<Value>::new()), expected);
-        assert_eq!(b.query(Read::<Value>::new()), expected);
+        assert_eq!(a.query(&Read::<Value>::new()), expected);
+        assert_eq!(b.query(&Read::<Value>::new()), expected);
     }
 
     #[test]
@@ -1223,18 +1213,18 @@ mod tests {
         b.receive(event);
         let event = a.send(LeafOp::Dec(Scalar::Int(5))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), zero);
-        assert_eq!(b.query(Read::<Value>::new()), zero);
+        assert_eq!(a.query(&Read::<Value>::new()), zero);
+        assert_eq!(b.query(&Read::<Value>::new()), zero);
 
         let event_a = a.send(LeafOp::Inc(Scalar::Int(3))).unwrap();
         let event_b = b.send(LeafOp::Inc(Scalar::Int(4))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), seven);
-        assert_eq!(b.query(Read::<Value>::new()), seven);
+        assert_eq!(a.query(&Read::<Value>::new()), seven);
+        assert_eq!(b.query(&Read::<Value>::new()), seven);
 
         assert!(
-            a.send(LeafOp::Reset).is_none(),
+            a.send(LeafOp::Reset).is_err(),
             "a counter that is not resettable has no `Reset`"
         );
     }
@@ -1281,22 +1271,22 @@ mod tests {
 
         let event = a.send(LeafOp::Enable).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(true));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(true));
 
         let event = b.send(LeafOp::Disable).unwrap();
         a.receive(event);
-        assert_eq!(b.query(Read::<Value>::new()), json!(false));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(false));
 
         let event = a.send(LeafOp::Enable).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(true));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(true));
 
         let event_a = a.send(LeafOp::Enable).unwrap();
         let event_b = b.send(LeafOp::Disable).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), json!(true));
-        assert_eq!(b.query(Read::<Value>::new()), json!(true));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(true));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(true));
     }
 
     #[test]
@@ -1308,14 +1298,14 @@ mod tests {
         }));
 
         let event_a = a.send(LeafOp::Enable).unwrap();
-        assert_eq!(a.query(Read::<Value>::new()), json!(true));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(true));
         let event_b = b.send(LeafOp::Disable).unwrap();
-        assert_eq!(b.query(Read::<Value>::new()), json!(false));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(false));
 
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), json!(false));
-        assert_eq!(b.query(Read::<Value>::new()), json!(false));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(false));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(false));
     }
 
     // ----------------------------------------------------------- registers
@@ -1331,11 +1321,11 @@ mod tests {
 
         let event = a.send(LeafOp::Write(Scalar::text("c"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("c"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("c"));
 
         let event = b.send(LeafOp::Write(Scalar::text("d"))).unwrap();
         a.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("d"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("d"));
 
         let event_a = a.send(LeafOp::Write(Scalar::text("a"))).unwrap();
         let event_b = b.send(LeafOp::Write(Scalar::text("b"))).unwrap();
@@ -1343,8 +1333,8 @@ mod tests {
         a.receive(event_b);
 
         let conflict = json!({"__conflict": ["a", "b"]});
-        assert_eq!(a.query(Read::<Value>::new()), conflict);
-        assert_eq!(b.query(Read::<Value>::new()), conflict);
+        assert_eq!(a.query(&Read::<Value>::new()), conflict);
+        assert_eq!(b.query(&Read::<Value>::new()), conflict);
     }
 
     #[test]
@@ -1359,15 +1349,15 @@ mod tests {
         b.receive(event);
         let event = a.send(LeafOp::Write(Scalar::text("World"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("World"));
-        assert_eq!(b.query(Read::<Value>::new()), json!("World"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("World"));
+        assert_eq!(b.query(&Read::<Value>::new()), json!("World"));
 
         let event_a = a.send(LeafOp::Write(Scalar::text("x"))).unwrap();
         let event_b = b.send(LeafOp::Write(Scalar::text("y"))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        let read = a.query(Read::<Value>::new());
-        assert_eq!(read, b.query(Read::<Value>::new()));
+        let read = a.query(&Read::<Value>::new());
+        assert_eq!(read, b.query(&Read::<Value>::new()));
         assert!(read == json!("x") || read == json!("y"), "one of the two");
     }
 
@@ -1381,14 +1371,17 @@ mod tests {
         b.receive(event);
         let event = a.send(LeafOp::Write(Scalar::text("World"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("World"));
-        assert_eq!(b.query(Read::<Value>::new()), json!("World"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("World"));
+        assert_eq!(b.query(&Read::<Value>::new()), json!("World"));
 
         let event_a = a.send(LeafOp::Write(Scalar::text("x"))).unwrap();
         let event_b = b.send(LeafOp::Write(Scalar::text("y"))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), b.query(Read::<Value>::new()));
+        assert_eq!(
+            a.query(&Read::<Value>::new()),
+            b.query(&Read::<Value>::new())
+        );
     }
 
     #[test]
@@ -1404,14 +1397,14 @@ mod tests {
 
         let event = a.send(LeafOp::Write(Scalar::Int(1))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(1));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(1));
 
         let event_a = a.send(LeafOp::Write(Scalar::Int(2))).unwrap();
         let event_b = b.send(LeafOp::Write(Scalar::Int(3))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), json!(3));
-        assert_eq!(b.query(Read::<Value>::new()), json!(3));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(3));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(3));
     }
 
     #[test]
@@ -1424,15 +1417,15 @@ mod tests {
 
         let event = a.send(LeafOp::Write(Scalar::text("a"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!("a"));
-        assert_eq!(b.query(Read::<Value>::new()), json!("a"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("a"));
+        assert_eq!(b.query(&Read::<Value>::new()), json!("a"));
 
         let event_a = a.send(LeafOp::Write(Scalar::text("b"))).unwrap();
         let event_b = b.send(LeafOp::Write(Scalar::text("c"))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), json!("c"));
-        assert_eq!(b.query(Read::<Value>::new()), json!("c"));
+        assert_eq!(a.query(&Read::<Value>::new()), json!("c"));
+        assert_eq!(b.query(&Read::<Value>::new()), json!("c"));
     }
 
     #[test]
@@ -1447,8 +1440,8 @@ mod tests {
 
         let event = a.send(LeafOp::Write(Scalar::Enum(0, 2))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(2));
-        assert_eq!(b.query(Read::<Value>::new()), json!(2));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(2));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(2));
     }
 
     // ---------------------------------------------------------- sets, bags
@@ -1469,8 +1462,8 @@ mod tests {
         a.receive(event_b);
         b.receive(event_a);
 
-        assert_eq!(a.query(Read::<Value>::new()), json!(["b", "c"]));
-        assert_eq!(b.query(Read::<Value>::new()), json!(["b", "c"]));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(["b", "c"]));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(["b", "c"]));
     }
 
     #[test]
@@ -1481,15 +1474,18 @@ mod tests {
 
         let event = a.send(LeafOp::Add(Scalar::text("a"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(["a"]));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(["a"]));
 
         let event_a = a.send(LeafOp::Remove(Scalar::text("a"))).unwrap();
         let event_b = b.send(LeafOp::Add(Scalar::text("a"))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
 
-        assert_eq!(a.query(Read::<Value>::new()), b.query(Read::<Value>::new()));
-        assert_eq!(a.query(Read::<Value>::new()), json!([]));
+        assert_eq!(
+            a.query(&Read::<Value>::new()),
+            b.query(&Read::<Value>::new())
+        );
+        assert_eq!(a.query(&Read::<Value>::new()), json!([]));
     }
 
     #[test]
@@ -1503,15 +1499,15 @@ mod tests {
         let event_b = b.send(LeafOp::Add(Scalar::text("a"))).unwrap();
         a.receive(event_b);
         b.receive(event_a);
-        assert_eq!(a.query(Read::<Value>::new()), json!(["a", "a"]));
-        assert_eq!(b.query(Read::<Value>::new()), json!(["a", "a"]));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(["a", "a"]));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(["a", "a"]));
 
         let event = a.send(LeafOp::Add(Scalar::text("b"))).unwrap();
         b.receive(event);
         let event = a.send(LeafOp::Remove(Scalar::text("a"))).unwrap();
         b.receive(event);
-        assert_eq!(a.query(Read::<Value>::new()), json!(["a", "b"]));
-        assert_eq!(b.query(Read::<Value>::new()), json!(["a", "b"]));
+        assert_eq!(a.query(&Read::<Value>::new()), json!(["a", "b"]));
+        assert_eq!(b.query(&Read::<Value>::new()), json!(["a", "b"]));
     }
 
     // ------------------------------------------------------- the refusals
@@ -1552,9 +1548,9 @@ mod tests {
         // The inner log's own `is_enabled`, not the kind check: the operation
         // is of the right family and still out of bounds.
         let (mut a, _b) = twins_for(Recipe::Scalar(LeafRule::Text));
-        assert!(a.send(LeafOp::InsertChar { pos: 3, ch: 'x' }).is_none());
-        assert!(a.send(LeafOp::InsertChar { pos: 0, ch: 'x' }).is_some());
-        assert!(a.send(LeafOp::DeleteChar { pos: 1 }).is_none());
+        assert!(a.send(LeafOp::InsertChar { pos: 3, ch: 'x' }).is_err());
+        assert!(a.send(LeafOp::InsertChar { pos: 0, ch: 'x' }).is_ok());
+        assert!(a.send(LeafOp::DeleteChar { pos: 1 }).is_err());
     }
 
     #[test]

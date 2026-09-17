@@ -16,21 +16,17 @@ use moirai_protocol::{
     event::Event,
     log_id::LogId,
     replica::{IsReplica, Replica},
-    state::log::IsLog,
+    state::{effect_context::EffectContext, log::IsLog},
 };
 use moirai_semantics::{ClassSlot, FeatureSlot, MetamodelSemantics, from_descriptor};
 use serde_json::{Value, json};
 
 use crate::leaf::LeafLog;
 use crate::node::{
-    At, Ctx, Emit, Mode, Node, ObjectNode, SeqNode, Shaped, Site, Target, apply, check,
+    At, Ctx, Emit, Mode, Node, ObjectNode, Refusal, SeqNode, Shaped, Site, Target, apply, check,
 };
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{
-    object_path::ObjectPath,
-    sink::{SinkCollector, SinkOwnership},
-};
+use moirai_protocol::state::sink::SinkCollector;
 
 /// A `provenance` object; the parser requires all four sources and this
 /// crate reads none of them, so one honest filler serves every fixture.
@@ -238,10 +234,15 @@ impl Default for Harness {
 }
 
 impl IsLog for Harness {
-    type Value = Value;
+    type Command = crate::op::InstanceOp;
     type Op = crate::op::InstanceOp;
+    type Rejection = Refusal;
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        command
+    }
+
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         check(
             &self.sem,
             Some(&self.root),
@@ -250,16 +251,19 @@ impl IsLog for Harness {
             &At::root(),
             Mode::Local,
         )
-        .is_ok()
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    #[allow(unused_variables)]
+    fn effect(&mut self, event: Event<Self::Op>, effect_ctx: &mut EffectContext<'_>) {
+        #[cfg(feature = "sink")]
+        let path = effect_ctx.path().clone();
+        #[cfg(feature = "sink")]
+        let mut discarded = SinkCollector::new();
+        #[cfg(feature = "sink")]
+        let sink = match effect_ctx.sink_mut() {
+            Some(sink) => sink,
+            None => &mut discarded,
+        };
         let ctx = Ctx {
             id: event.id(),
             lamport: event.lamport(),
@@ -571,13 +575,6 @@ pub fn opened(model_id: &str, descriptor: &Value) -> ModelTwins {
 /// Deliver one event to a log that is not hosted by a replica, which is what
 /// a peer's operation looks like from the log's own side.
 pub fn deliver(log: &mut crate::log::ModelLog, event: Event<crate::op::ModelOp>) {
-    log.effect(
-        event,
-        #[cfg(feature = "sink")]
-        ObjectPath::new("root"),
-        #[cfg(feature = "sink")]
-        &mut SinkCollector::new(),
-        #[cfg(feature = "sink")]
-        SinkOwnership::Owned,
-    );
+    let mut sink = SinkCollector::new();
+    log.effect(event, &mut EffectContext::root("root", Some(&mut sink)));
 }

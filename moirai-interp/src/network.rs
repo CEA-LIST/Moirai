@@ -32,6 +32,6 @@ use crate::op::ModelOp;
 
 impl QueryableLog for ModelLog {
     fn query_state_json(replica: &Replica<Self, Tcsb<ModelOp>>) -> Value {
-        replica.query(Read::new())
+        replica.query(&Read::new())
     }
 }

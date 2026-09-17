@@ -24,18 +24,18 @@
 //! `(declaring class, declared slot)` in one index —
 //! [`crate::node::visible`] is that step.
 //!
-//! # Why `InternalizeOp` is written out
+//! # Why nothing here is re-indexed on arrival
 //!
 //! An operation crosses a replica boundary, and the receiving replica indexes
-//! its members in an order of its own (`internalizer.rs:148-202`). Anything in
-//! an operation that names a replica has to be re-indexed on arrival. Nothing
-//! in this tree does — a sequence position is an index resolved against the
-//! event's own version, exactly as `NestedList` resolves it — so every arm
-//! here rebuilds itself unchanged. Written out rather than left to a blanket
-//! identity so that the day a variant *does* carry an
-//! [`moirai_protocol::event::id::EventId`], the compiler asks about it.
+//! its members in an order of its own (`internalizer.rs`). Anything in an
+//! operation that named a replica by *index* would have to be re-indexed on
+//! arrival. Nothing in this tree does — a sequence position is an index
+//! resolved against the event's own version, exactly as `NestedList` resolves
+//! it. Moirai v0.4 retired the `InternalizeOp` trait this module used to
+//! implement arm by arm; an operation that has to carry an event id carries a
+//! [`moirai_protocol::event::id::ResolvedEventId`], which names the replica by
+//! its string id and so means the same thing on every replica.
 
-use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
 use moirai_semantics::{ClassSlot, FeatureSlot};
 
 use crate::leaf::{LeafOp, Scalar};
@@ -231,114 +231,33 @@ impl<O> SeqOp<O> {
     }
 }
 
-impl InternalizeOp for ModelOp {
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            ModelOp::Install {
-                model_id,
-                metamodel_id,
-                descriptor,
-            } => ModelOp::Install {
-                model_id,
-                metamodel_id,
-                descriptor,
-            },
-            ModelOp::Instance(op) => ModelOp::Instance(op.internalize(interner)),
-        }
-    }
-}
-
-impl InternalizeOp for InstanceOp {
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            InstanceOp::Field(slot, inner) => InstanceOp::Field(slot, inner.internalize(interner)),
-            InstanceOp::Variant(class, inner) => {
-                InstanceOp::Variant(class, inner.internalize(interner))
-            }
-            InstanceOp::Seq(op) => InstanceOp::Seq(op.internalize(interner)),
-            InstanceOp::Opt(op) => InstanceOp::Opt(op.internalize(interner)),
-            InstanceOp::Map(op) => InstanceOp::Map(op.internalize(interner)),
-            InstanceOp::New => InstanceOp::New,
-            InstanceOp::Leaf(op) => InstanceOp::Leaf(op.internalize(interner)),
-        }
-    }
-}
-
-impl<O> InternalizeOp for SeqOp<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            SeqOp::Insert { pos, op } => SeqOp::Insert {
-                pos,
-                op: op.internalize(interner),
-            },
-            SeqOp::Update { pos, op } => SeqOp::Update {
-                pos,
-                op: op.internalize(interner),
-            },
-            SeqOp::Delete { pos } => SeqOp::Delete { pos },
-        }
-    }
-}
-
-impl<O> InternalizeOp for MapOp<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            MapOp::Update { key, op } => MapOp::Update {
-                key,
-                op: op.internalize(interner),
-            },
-            MapOp::Remove { key } => MapOp::Remove { key },
-            MapOp::Clear => MapOp::Clear,
-        }
-    }
-}
-
-impl<O> InternalizeOp for OptOp<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            OptOp::Set(op) => OptOp::Set(op.internalize(interner)),
-            OptOp::Unset => OptOp::Unset,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    //! `ip7`, first half: the recursion is exhaustive and survives two
-    //! interners that index their members in opposite orders.
+    //! `ip7`, first half: the recursion is exhaustive, and an operation
+    //! survives the crossing between two replicas whole.
     //!
     //! The second half is in [`crate::log`], where the same op tree crosses a
     //! real replica boundary and the state it builds is compared. Here the
     //! claim is narrower and worth stating plainly, because the
     //! implementation plan expected a different answer: **no operation in
-    //! this tree carries an `EventId`.** A sequence is addressed by position
-    //! and the position is resolved against the event's own version, so what
-    //! `internalize` has to do at every arm is rebuild, and what this test
-    //! has to check is that every arm *is* rebuilt and nothing is dropped on
-    //! the way down.
+    //! this tree carries a replica-local index.** A sequence is addressed by
+    //! position and the position is resolved against the event's own version,
+    //! so an operation means the same thing on both sides of the wire and the
+    //! only thing the crossing can do to it is drop a level. The crossing an
+    //! operation really makes is the wire's, so that is what is driven here.
 
-    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
     use moirai_semantics::{ClassSlot, FeatureSlot};
 
     use super::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
     use crate::leaf::{LeafOp, Scalar};
 
-    /// An interner that has seen these replicas, in this order.
-    fn interner(members: &[&str]) -> Interner {
-        let mut interner = Interner::new();
-        for member in members {
-            interner.intern(member);
-        }
-        interner
+    /// One operation across the wire and back.
+    fn round_trip<T>(op: &T) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        serde_json::from_str(&serde_json::to_string(op).expect("an operation serializes"))
+            .expect("and deserializes")
     }
 
     /// One op tree holding every variant of every enum in this module,
@@ -375,15 +294,12 @@ mod tests {
 
     #[test]
     fn ip7_the_recursion_reaches_every_nested_operation() {
-        let one = interner(&["a", "b", "c"]);
-        let other = interner(&["c", "b", "a"]);
-
         let op = every_variant();
-        let there = op.clone().internalize(&one);
-        let back = there.clone().internalize(&other);
+        let there = round_trip(&op);
+        let back = round_trip(&there);
 
-        assert_eq!(there, op, "one interner leaves the tree as it was");
-        assert_eq!(back, op, "and so does the other, whatever its ordering");
+        assert_eq!(there, op, "one crossing leaves the tree as it was");
+        assert_eq!(back, op, "and so does the next");
     }
 
     #[test]
@@ -392,8 +308,6 @@ mod tests {
         // equal tree, so equality alone proves nothing. This drives each arm
         // on its own with a marker the rebuild has to carry through, and
         // checks the depth the rebuilt tree came back at.
-        let interner = interner(&["a", "b"]);
-
         fn depth(op: &InstanceOp) -> usize {
             match op {
                 InstanceOp::Field(_, inner) | InstanceOp::Variant(_, inner) => 1 + depth(inner),
@@ -426,7 +340,7 @@ mod tests {
 
         for arm in arms {
             let before = depth(&arm);
-            let after = arm.clone().internalize(&interner);
+            let after = round_trip(&arm);
             assert_eq!(depth(&after), before, "{arm:?} lost a level");
             assert_eq!(after, arm, "{arm:?} came back changed");
         }
@@ -445,14 +359,13 @@ mod tests {
     }
 
     #[test]
-    fn ip7_install_crosses_an_interner_unchanged() {
-        let interner = interner(&["a"]);
+    fn ip7_install_crosses_the_wire_unchanged() {
         let install = ModelOp::Install {
             model_id: "m1".to_string(),
             metamodel_id: "sha256:beef".to_string(),
             descriptor: "{\"formatVersion\":2}".to_string(),
         };
-        assert_eq!(install.clone().internalize(&interner), install);
+        assert_eq!(round_trip(&install), install);
     }
 
     #[test]
