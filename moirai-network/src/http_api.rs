@@ -562,7 +562,6 @@ mod tests {
     use std::sync::{Arc, RwLock};
 
     use moirai_protocol::log_id::LogId;
-    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
@@ -581,12 +580,6 @@ mod tests {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestOp {
         value: i64,
-    }
-
-    impl InternalizeOp for TestOp {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
     }
 
     /// The channels a spawned API is wired to, kept alive for the test's

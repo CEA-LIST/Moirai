@@ -75,6 +75,7 @@ use moirai_protocol::clock::version_vector::Version;
 use moirai_protocol::crdt::query::Read;
 use moirai_protocol::event::Event;
 use moirai_protocol::replica::{IsReplica, Replica};
+use moirai_protocol::state::effect_context::EffectContext;
 use moirai_protocol::state::log::IsLog;
 use moirai_protocol::state::po_log::VecLog;
 
@@ -84,15 +85,20 @@ struct AWSetLog(VecLog<AWSet<String>>);
 
 // Delegate all IsLog methods to the inner VecLog
 impl IsLog for AWSetLog {
-    type Value = <VecLog<AWSet<String>> as IsLog>::Value;
+    type Command = <VecLog<AWSet<String>> as IsLog>::Command;
     type Op = <VecLog<AWSet<String>> as IsLog>::Op;
+    type Rejection = <VecLog<AWSet<String>> as IsLog>::Rejection;
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        self.0.prepare(command)
+    }
+
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         self.0.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>) {
-        self.0.effect(event)
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+        self.0.effect(event, ctx)
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -114,7 +120,7 @@ where
     VecLog<AWSet<String>>: moirai_protocol::crdt::eval::EvalNested<Q>,
     Q: moirai_protocol::crdt::query::QueryOperation,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         self.0.execute_query(q)
     }
 }
@@ -122,7 +128,7 @@ where
 // Implement QueryableLog to enable GET /api/state endpoint
 impl moirai_network::query::QueryableLog for AWSetLog {
     fn query_state_json(replica: &Replica<Self, Tcsb<Self::Op>>) -> serde_json::Value {
-        let value = replica.query(Read::new());
+        let value = replica.query(&Read::new());
         serde_json::to_value(&value).unwrap_or_else(
             |e| serde_json::json!({ "error": format!("Failed to serialize state: {}", e) }),
         )

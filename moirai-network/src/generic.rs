@@ -4,7 +4,7 @@
 //! log type `L` that implements [`IsLog`].
 //!
 //! The operation type `L::Op` must satisfy the transport bounds:
-//! `Serialize + DeserializeOwned + Clone + Debug + Send + InternalizeOp + 'static`
+//! `Serialize + DeserializeOwned + Clone + Debug + Send + 'static`
 //!
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,11 +20,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
 
+use moirai_protocol::broadcast::internalizer::{lock_interner, Interner, SharedInterner};
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
-use moirai_protocol::broadcast::internalizer::{lock_interner, InternalizeOp, Interner, SharedInterner};
 
 use crate::composite::CompositeTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
@@ -149,15 +149,9 @@ const STATE_TRANSFER_RETRY: Duration = Duration::from_secs(2);
 const MAX_STATE_TRANSFER_BYTES: usize = 768 * 1024;
 
 // Alias for these bounds, needed to transport operations over the network (e.g. via HTTP API).
-pub trait NetworkOp:
-    Serialize + DeserializeOwned + Clone + Debug + Send + InternalizeOp + 'static
-{
-}
+pub trait NetworkOp: Serialize + DeserializeOwned + Clone + Debug + Send + 'static {}
 
-impl<T> NetworkOp for T where
-    T: Serialize + DeserializeOwned + Clone + Debug + Send + InternalizeOp + 'static
-{
-}
+impl<T> NetworkOp for T where T: Serialize + DeserializeOwned + Clone + Debug + Send + 'static {}
 
 /// How many ids of not-hosted logs one node remembers at once.
 ///
@@ -565,7 +559,7 @@ mod cost {
         }
     }
 
-    impl<L: IsLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+    impl<L: IsLog<Command = <L as IsLog>::Op>, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
     where
         L::Op: NetworkOp + DeepSizeOf,
     {
@@ -931,7 +925,7 @@ pub struct OpResult {
     pub message: String,
 }
 
-impl<L: IsLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+impl<L: IsLog<Command = <L as IsLog>::Op>, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
 where
     L::Op: NetworkOp,
 {
@@ -1208,12 +1202,7 @@ where
                     BindingState::Foreign => false,
                 })?;
                 let text = adopt(&log.replica)?;
-                Some((
-                    log_id.clone(),
-                    binding.key.clone(),
-                    binding.state,
-                    text,
-                ))
+                Some((log_id.clone(), binding.key.clone(), binding.state, text))
             })
             .collect();
         for (log_id, key, was, text) in arrived {
@@ -1846,27 +1835,32 @@ where
                 message: format!("log {log_id} is not hosted here"),
             };
         };
-        let Some(event_msg) = log.replica.send(op.clone()) else {
-            // A pending binding is the one refusal whose reason this node
-            // knows without reading the log: it joined the model under a
-            // metamodel it holds no descriptor for, and nothing can be
-            // written into a log whose semantics have not arrived.
-            let pending = log
-                .binding
-                .as_ref()
-                .filter(|binding| binding.state != BindingState::Held)
-                .map(|binding| binding.key.clone());
-            return OpResult {
-                success: false,
-                message: match pending {
-                    Some(key) => format!(
-                        "model {log_id} was joined under metamodel {key}, which this node holds \
-                         no descriptor for: the model's metamodel has not arrived yet, and a \
-                         local write waits for it"
-                    ),
-                    None => "Operation not enabled".to_string(),
-                },
-            };
+        let event_msg = match log.replica.send(op.clone()) {
+            Ok(event_msg) => event_msg,
+            Err(rejection) => {
+                // A pending binding is the one refusal whose reason this node
+                // knows without reading the log: it joined the model under a
+                // metamodel it holds no descriptor for, and nothing can be
+                // written into a log whose semantics have not arrived.
+                let pending = log
+                    .binding
+                    .as_ref()
+                    .filter(|binding| binding.state != BindingState::Held)
+                    .map(|binding| binding.key.clone());
+                return OpResult {
+                    success: false,
+                    message: match pending {
+                        Some(key) => format!(
+                            "model {log_id} was joined under metamodel {key}, which this node \
+                             holds no descriptor for: the model's metamodel has not arrived yet, \
+                             and a local write waits for it"
+                        ),
+                        // Moirai v0.6 gives `IsLog` a rejection type, so the
+                        // log now says why rather than only that it refused.
+                        None => format!("Operation not enabled: {rejection}"),
+                    },
+                };
+            }
         };
         // Record the operation
         log.operation_log.push(op);
@@ -2555,7 +2549,7 @@ where
 // Convenience constructor
 // =============================================================================
 
-impl<L: IsLog> GenericNode<L, CompositeTransport<L::Op>>
+impl<L: IsLog<Command = <L as IsLog>::Op>> GenericNode<L, CompositeTransport<L::Op>>
 where
     L::Op: NetworkOp,
 {
@@ -2748,7 +2742,7 @@ mod tests {
     fn members(node: &TestNode, log_id: &LogId) -> BTreeSet<String> {
         node.hosted(log_id)
             .unwrap_or_else(|| panic!("{} is hosted", log_id))
-            .query(Read::<<Log as IsLog>::Value>::new())
+            .query(&Read::new())
             .into_iter()
             .collect()
     }
@@ -2840,13 +2834,9 @@ mod tests {
     /// carries one.
     fn carried(replica: &LogReplica<Log>) -> Option<String> {
         replica
-            .query(Read::<<Log as IsLog>::Value>::new())
+            .query(&Read::new())
             .into_iter()
-            .find_map(|member| {
-                member
-                    .strip_prefix(DESCRIPTOR_PREFIX)
-                    .map(str::to_string)
-            })
+            .find_map(|member| member.strip_prefix(DESCRIPTOR_PREFIX).map(str::to_string))
     }
 
     /// The operation that puts a descriptor into a model's own history.
@@ -3312,7 +3302,7 @@ mod tests {
             let on_a = members(&nodes[0], log);
             let on_b = members(&nodes[1], log);
             let expected: BTreeSet<String> = references[model][0]
-                .query(Read::<<Log as IsLog>::Value>::new())
+                .query(&Read::new())
                 .into_iter()
                 .collect();
             assert_eq!(
@@ -3680,12 +3670,22 @@ mod tests {
 
         // `a` opens one model in each language, each carrying the
         // descriptor it was opened with, as an `Install` does.
-        let Registered { model_id: wrong, .. } = a
+        let Registered {
+            model_id: wrong, ..
+        } = a
             .register(None, json!({ "digest": UML_KEY }))
             .expect("a holds uml");
-        assert!(a.apply_op_to(&wrong, opened_with(&uml_descriptor_text())).success);
-        let Registered { model_id: right, .. } = a.register(None, bt_id()).expect("a holds bt");
-        assert!(a.apply_op_to(&right, opened_with(&bt_descriptor_text())).success);
+        assert!(
+            a.apply_op_to(&wrong, opened_with(&uml_descriptor_text()))
+                .success
+        );
+        let Registered {
+            model_id: right, ..
+        } = a.register(None, bt_id()).expect("a holds bt");
+        assert!(
+            a.apply_op_to(&right, opened_with(&bt_descriptor_text()))
+                .success
+        );
 
         // `b` joins both naming `bt`, the one language it holds. The second
         // is true, the first is not, and nothing here can tell them apart.
@@ -3727,7 +3727,8 @@ mod tests {
         let (status, body) = request(port, &format!("GET /api/model/{right}/metamodel"), None);
         assert_eq!(status, 200, "the model that really is a bt model: {body}");
         assert_eq!(
-            body, bt_descriptor_text(),
+            body,
+            bt_descriptor_text(),
             "the control model stopped being served, so this is a refusal and not a check"
         );
 
