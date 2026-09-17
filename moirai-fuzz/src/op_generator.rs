@@ -1,53 +1,119 @@
 use std::fmt::Debug;
 
-use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    crdt::pure_crdt::PureCRDT,
+    commitment::commit_log::CommitmentLog,
+    crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     state::{
-        event_graph::EventGraph,
-        log::{IsLog, IsLogTest},
+        cache::{CachedLog, IncrementalCache},
+        graph_log::GraphLog,
+        log::{BoxedLog, IsLog},
         po_log::POLog,
-        unstable_state::IsUnstableState,
+        unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune, event_graph::EventGraph},
     },
 };
 use rand::Rng;
 
-pub trait OpGenerator: PureCRDT {
+pub trait OpGenerator: ReplicatedDataType {
     type Config: Default;
 
     fn generate(
         rng: &mut impl Rng,
         config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl IsUnstableCore<Self>,
     ) -> Self;
 }
 
-pub trait OpGeneratorNested: IsLog {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op;
+// TODO: Find a way to get rid of this trait and just use OpGenerator instead
+
+pub trait CausalOpGenerator: ReplicatedDataType {
+    type Config: Default;
+
+    fn generate_causal(
+        rng: &mut impl Rng,
+        config: &Self::Config,
+        stable: &Self::StableState,
+        unstable: &impl CausalReplay<Self>,
+    ) -> Self;
 }
 
-impl<O> OpGeneratorNested for EventGraph<O>
+impl<O> CausalOpGenerator for O
 where
-    O: PureCRDT + Clone + OpGenerator,
-    EventGraph<O>: IsLog<Op = O>,
+    O: OpGenerator,
 {
-    fn generate(&self, rng: &mut impl Rng) -> <EventGraph<O> as IsLog>::Op {
-        O::generate(rng, &O::Config::default(), &O::StableState::default(), self)
+    type Config = <O as OpGenerator>::Config;
+
+    fn generate_causal(
+        rng: &mut impl Rng,
+        config: &Self::Config,
+        stable: &Self::StableState,
+        unstable: &impl CausalReplay<Self>,
+    ) -> Self {
+        O::generate(rng, config, stable, unstable)
     }
 }
 
-impl<O, U> OpGeneratorNested for POLog<O, U>
+/// Generates client commands from the current state of a log.
+///
+/// Commands are deliberately kept distinct from replicated operations: log adapters such as
+/// `CommitmentLog` use `prepare` to attach protocol metadata to a client command.
+pub trait CommandGenerator: IsLog {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
+}
+
+impl<O> CommandGenerator for GraphLog<O>
 where
-    O: PureCRDT + Clone + OpGenerator + DeepSizeOf,
-    U: IsUnstableState<O> + Default + Debug + DeepSizeOf,
+    O: ReplicatedDataType + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        O::generate_causal(
+            rng,
+            &<O as CausalOpGenerator>::Config::default(),
+            self.stable(),
+            self.unstable(),
+        )
+    }
+}
+
+impl<O, U> CommandGenerator for POLog<O, U>
+where
+    O: ReplicatedDataType + Clone + OpGenerator + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         O::generate(
             rng,
             &<O as OpGenerator>::Config::default(),
             self.stable(),
             self.unstable(),
         )
+    }
+}
+
+impl<L, V> CommandGenerator for CachedLog<L, V>
+where
+    L: IsLog + CommandGenerator,
+    V: IncrementalCache<L::Op> + Debug,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.inner().generate_command(rng)
+    }
+}
+
+impl<L> CommandGenerator for BoxedLog<L>
+where
+    L: CommandGenerator,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        Box::new(self.inner().generate_command(rng))
+    }
+}
+
+impl<L> CommandGenerator for CommitmentLog<L>
+where
+    L: IsLog + CommandGenerator,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.child().generate_command(rng)
     }
 }

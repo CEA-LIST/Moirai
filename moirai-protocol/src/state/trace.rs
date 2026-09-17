@@ -177,7 +177,7 @@ pub(crate) fn note_superseded(id: &EventId, concurrent: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::intern_str::Interner;
+    use crate::broadcast::internalizer::Interner;
 
     fn an_event_id(id: &str, seq: usize) -> EventId {
         let mut interner = Interner::new();

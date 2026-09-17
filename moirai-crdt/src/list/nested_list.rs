@@ -1,15 +1,9 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::{Sink, SinkCollector};
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -17,11 +11,8 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{event_graph::EventGraph, log::IsLog},
-    utils::{
-        boxer::Boxer,
-        intern_str::{InternalizeOp, Interner},
-    },
+    state::{cache::CachedLog, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -58,20 +49,27 @@ pub enum NestedList<O> {
         deserialize = "L: serde::de::DeserializeOwned"
     ))
 )]
-pub struct NestedListLog<L> {
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+pub struct NestedListLog<L>
+where
+    L: IsLog,
+{
     /// EgWalker list tracking the logical positions of children
-    positions: EventGraph<SimpleList<EventId>>,
+    positions: CachedLog<GraphLog<SimpleList<EventId>>, Vec<EventId>>,
     /// Map from EventId to child CRDT instance
     children: UWMapLog<EventId, L>,
 }
 
-impl<L> NestedListLog<L> {
+impl<L> NestedListLog<L>
+where
+    L: IsLog,
+{
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn positions(&self) -> &EventGraph<SimpleList<EventId>> {
-        &self.positions
+    pub fn positions(&self) -> &GraphLog<SimpleList<EventId>> {
+        self.positions.inner()
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -80,30 +78,49 @@ impl<L> NestedListLog<L> {
     }
 }
 
+#[derive(Debug)]
+pub enum NestedListRejection<E> {
+    /// Rejection from the child CRDT
+    ChildError { pos: usize, error: E },
+    /// The position specified is out of bounds
+    InvalidPosition { pos: usize, len: usize },
+}
+
+impl<E> Display for NestedListRejection<E>
+where
+    E: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NestedListRejection::ChildError { pos, error } => {
+                write!(f, "Child error at position {}: {}", pos, error)
+            }
+            NestedListRejection::InvalidPosition { pos, len } => {
+                write!(f, "Invalid position {}: list length is {}", pos, len)
+            }
+        }
+    }
+}
+
 impl<L> IsLog for NestedListLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
+    L: IsLog,
 {
+    type Command = NestedList<L::Op>;
     type Op = NestedList<L::Op>;
-    type Value = Vec<L::Value>;
+    type Rejection = NestedListRejection<Box<L::Rejection>>;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             NestedList::Insert { pos, op } => {
-                #[cfg(feature = "sink")]
-                let path = path.list_element(event.id().clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::create(path.clone()));
                 let list_event = Event::new(
                     event.id().clone(),
                     *event.lamport(),
@@ -113,81 +130,43 @@ where
                     },
                     event.version().clone(),
                 );
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
                 let child_event =
                     Event::unfold(event.clone(), UWMap::Update(event.id().clone(), op));
-                self.children.effect(
-                    child_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                ctx.with_list_element(
+                    || event.id().clone(),
+                    |ctx| {
+                        ctx.create();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(child_event, ctx));
+                    },
                 );
             }
             NestedList::Delete { pos } => {
-                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
-                #[cfg(feature = "sink")]
-                let path = path.list_element(target.clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::delete(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
-                let map_event = Event::unfold(event.clone(), UWMap::Remove(target));
-                self.children.effect(
-                    map_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
+                ctx.with_list_element(
+                    || target.clone(),
+                    |ctx| {
+                        ctx.delete();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(map_event, ctx));
+                    },
                 );
             }
             NestedList::Update { pos, op } => {
-                let positions_at_version = self.positions.eval(ReadAt::new(event.version()));
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
-                #[cfg(feature = "sink")]
-                let path = path.list_element(target.clone());
-                #[cfg(feature = "sink")]
-                sink.collect(Sink::update(path.clone()));
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
-                self.positions.effect(
-                    list_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
-                self.children.effect(
-                    map_event,
-                    #[cfg(feature = "sink")]
-                    path.clone(),
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
+                ctx.with_list_element(
+                    || target.clone(),
+                    |ctx| {
+                        ctx.update();
+                        ctx.with_delegated(|ctx| self.positions.effect(list_event, ctx));
+                        ctx.with_delegated(|ctx| self.children.effect(map_event, ctx));
+                    },
                 );
             }
         }
@@ -207,61 +186,66 @@ where
         self.positions.is_default() && self.children.is_default()
     }
 
-    fn prepare(op: Self::Op) -> Self::Op {
-        op
-    }
-
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        let positions = self.positions.eval(Read::new());
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+        let positions = self.positions.read_ref();
         match op {
             NestedList::Insert { pos, op } => {
-                *pos <= positions.len() && L::default().is_enabled(op)
+                if *pos > positions.len() {
+                    return Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    });
+                }
+                L::default()
+                    .is_enabled(op)
+                    .map_err(|error| NestedListRejection::ChildError {
+                        pos: *pos,
+                        error: Box::new(error),
+                    })
             }
             NestedList::Update { pos, op } => {
-                let out_of_bound = *pos >= positions.len();
-                if out_of_bound {
-                    return false;
+                if *pos >= positions.len() {
+                    return Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    });
                 }
                 let target = positions[*pos].clone();
                 let map_op = UWMap::Update(target, op.clone());
-                self.children.is_enabled(&map_op)
+                self.children
+                    .is_enabled(&map_op)
+                    .map_err(|error| NestedListRejection::ChildError {
+                        pos: *pos,
+                        error: Box::new(error),
+                    })
             }
-            NestedList::Delete { pos } => *pos < positions.len(),
+            NestedList::Delete { pos } => {
+                if *pos < positions.len() {
+                    Ok(())
+                } else {
+                    Err(NestedListRejection::InvalidPosition {
+                        pos: *pos,
+                        len: positions.len(),
+                    })
+                }
+            }
         }
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for NestedListLog<L>
+impl<L, V> EvalNested<Read<Vec<V>>> for NestedListLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: PartialEq,
+    L: IsLog + EvalNested<Read<V>>,
+    V: Clone + Default + PartialEq,
 {
-    fn execute_query(
-        &self,
-        _q: Read<<Self as IsLog>::Value>,
-    ) -> <Read<<Self as IsLog>::Value> as QueryOperation>::Response {
+    fn execute_query(&self, _q: &Read<Vec<V>>) -> <Read<Vec<V>> as QueryOperation>::Response {
         let mut list = Vec::new();
-        let positions = self.positions.execute_query(Read::new());
-        // println!(
-        //     "Positions: {}",
-        //     positions
-        //         .iter()
-        //         .map(|id| format!("{}", id))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
+        let positions = self.positions.read_ref();
         #[allow(clippy::mutable_key_type)]
-        let mut map = self.children.execute_query(Read::new());
-        // println!(
-        //     "Children: {}",
-        //     map.iter()
-        //         .map(|(id, child)| format!("{}: {:?}", id, child))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
+        let map = self.children.execute_query(&Read::new());
         for eid in positions {
-            if let Some(child) = map.remove(&eid) {
-                list.push(child);
+            if let Some(child) = map.get(eid) {
+                list.push(child.clone());
             }
         }
         list
@@ -269,28 +253,11 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> FuzzMetrics for NestedListLog<L>
+impl<L> CommandGenerator for NestedListLog<L>
 where
-    L: IsLog + FuzzMetrics + EvalNested<Read<<L as IsLog>::Value>>,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
 {
-    fn structure_metrics(&self) -> StructureMetrics {
-        // StructureMetrics::nested_collection(
-        //     self.resolved_positions()
-        //         .into_iter()
-        //         .filter_map(|id| self.children.get(&id))
-        //         .map(FuzzMetrics::structure_metrics),
-        // )
-        // TODO
-        StructureMetrics::empty()
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<L> OpGeneratorNested for NestedListLog<L>
-where
-    L: OpGeneratorNested + IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-{
-    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -300,7 +267,7 @@ where
         }
         let dist = WeightedIndex::new([2, 2, 1]).unwrap();
 
-        let positions = self.positions.eval(Read::new());
+        let positions = self.positions.read_ref();
         let choice = if positions.is_empty() {
             &Choice::Insert
         } else {
@@ -311,7 +278,7 @@ where
             Choice::Insert => {
                 let pos = rng.random_range(0..=positions.len());
                 let default_child = L::new();
-                let op = <L as OpGeneratorNested>::generate(&default_child, rng);
+                let op = <L as CommandGenerator>::generate_command(&default_child, rng);
                 NestedList::Insert { pos, op }
             }
             Choice::Update => {
@@ -319,10 +286,10 @@ where
                 let target_id = &positions[pos];
                 let child = self.children.get_child(target_id);
                 let op = if let Some(c) = child {
-                    <L as OpGeneratorNested>::generate(c, rng)
+                    <L as CommandGenerator>::generate_command(c, rng)
                 } else {
                     let default_child = L::new();
-                    <L as OpGeneratorNested>::generate(&default_child, rng)
+                    <L as CommandGenerator>::generate_command(&default_child, rng)
                 };
                 NestedList::Update { pos, op }
             }
@@ -331,27 +298,8 @@ where
                 NestedList::Delete { pos }
             }
         };
-        assert!(self.is_enabled(&op));
+        assert!(self.is_enabled(&op).is_ok());
         op
-    }
-}
-
-impl<O> InternalizeOp for NestedList<O>
-where
-    O: InternalizeOp,
-{
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            NestedList::Insert { pos, op } => NestedList::Insert {
-                pos,
-                op: op.internalize(interner),
-            },
-            NestedList::Update { pos, op } => NestedList::Update {
-                pos,
-                op: op.internalize(interner),
-            },
-            NestedList::Delete { pos } => NestedList::Delete { pos },
-        }
     }
 }
 
@@ -377,38 +325,38 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10]);
-        assert_eq!(replica_b.query(Read::new()), vec![10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10]);
 
         let event = replica_b
             .send(NestedList::update(0, Counter::Dec(5)))
             .unwrap();
         replica_a.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![5]);
-        assert_eq!(replica_b.query(Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5]);
+        assert_eq!(replica_b.query(&Read::new()), vec![5]);
 
         let event = replica_a
             .send(NestedList::insert(1, Counter::Inc(10)))
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![5, 10]);
-        assert_eq!(replica_b.query(Read::new()), vec![5, 10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5, 10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![5, 10]);
 
         let event = replica_a
             .send(NestedList::update(0, Counter::Inc(1)))
             .unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![6, 10]);
-        assert_eq!(replica_b.query(Read::new()), vec![6, 10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![6, 10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![6, 10]);
 
         let event = replica_a.send(NestedList::delete(0)).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10]);
-        assert_eq!(replica_b.query(Read::new()), vec![10]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10]);
 
         let event_a = replica_a
             .send(NestedList::insert(1, Counter::Inc(21)))
@@ -418,8 +366,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), vec![21]);
-        assert_eq!(replica_a.query(Read::new()), vec![21]);
+        assert_eq!(replica_b.query(&Read::new()), vec![21]);
+        assert_eq!(replica_a.query(&Read::new()), vec![21]);
     }
 
     #[test]
@@ -435,8 +383,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), vec![10, 20]);
-        assert_eq!(replica_b.query(Read::new()), vec![10, 20]);
+        assert_eq!(replica_a.query(&Read::new()), vec![10, 20]);
+        assert_eq!(replica_b.query(&Read::new()), vec![10, 20]);
     }
 
     #[test]
@@ -453,8 +401,8 @@ mod tests {
             .unwrap();
         let _ = replica_a.send(NestedList::delete(0)).unwrap();
 
-        let list = replica_a.query(Read::new());
-        assert_eq!(list, Vec::<DuetValue>::new());
+        let list = replica_a.query(&Read::new());
+        assert_eq!(list, Vec::<DuetValue<i32, i32>>::new());
     }
 
     #[test]
@@ -474,9 +422,9 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_b.query(Read::new()), vec![5]);
-        assert_eq!(replica_a.query(Read::new()), vec![5]);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_b.query(&Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -505,9 +453,9 @@ mod tests {
         replica_c.receive(event_a);
         replica_c.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), vec![15, 5]);
-        assert_eq!(replica_b.query(Read::new()), vec![15, 5]);
-        assert_eq!(replica_c.query(Read::new()), vec![15, 5]);
+        assert_eq!(replica_a.query(&Read::new()), vec![15, 5]);
+        assert_eq!(replica_b.query(&Read::new()), vec![15, 5]);
+        assert_eq!(replica_c.query(&Read::new()), vec![15, 5]);
     }
 
     #[test]
@@ -544,9 +492,9 @@ mod tests {
         replica_c.receive(event_a_1);
         replica_c.receive(event_b_2);
 
-        assert_eq!(replica_a.query(Read::new()), vec![1]);
-        assert_eq!(replica_b.query(Read::new()), vec![1]);
-        assert_eq!(replica_c.query(Read::new()), vec![1]);
+        assert_eq!(replica_a.query(&Read::new()), vec![1]);
+        assert_eq!(replica_b.query(&Read::new()), vec![1]);
+        assert_eq!(replica_c.query(&Read::new()), vec![1]);
     }
 
     #[test]
@@ -570,7 +518,7 @@ mod tests {
         let event_b = replica_b.send(NestedList::delete(1)).unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -597,7 +545,7 @@ mod tests {
             .unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -620,7 +568,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -640,13 +588,13 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", vec![11, 5]);
-        assert_eq!(replica_a.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
 
         replica_b.receive(event_a);
         replica_b.receive(event_a_2);
         replica_b.receive(event_a_3);
 
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
 
         let event_b = replica_b.send(UWMap::Remove("a")).unwrap();
         let event_a = replica_a
@@ -657,8 +605,8 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", vec![100]);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[cfg(feature = "fuzz")]
@@ -666,23 +614,23 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
         let runs = vec![run.clone(); 10];
 
-        let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>::new(
             "nested_list_counter",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
             None,
         );
 
-        fuzzer::<NestedListLog<VecLog<Counter<i32>>>>(config);
+        fuzzer::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -690,26 +638,26 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_string() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-        use moirai_protocol::state::event_graph::EventGraph;
+        use moirai_protocol::state::graph_log::GraphLog;
 
         use crate::list::eg_walker::List;
 
         let run = RunConfig::new(0.6, 4, 25, None, None, true, false);
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<NestedListLog<EventGraph<List<char>>>>::new(
+        let config = FuzzerConfig::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>::new(
             "nested_list_string",
             runs,
             true,
-            |a, b| a == b,
+            Predicate::new(Read::new(), |a, b| a == b),
             false,
             None,
         );
 
-        fuzzer::<NestedListLog<EventGraph<List<char>>>>(config);
+        fuzzer::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>(config);
     }
 }
 
@@ -739,10 +687,13 @@ impl<O> Boxer<NestedList<Box<O>>> for NestedList<O> {
     }
 }
 
-impl<L> Default for NestedListLog<L> {
+impl<L> Default for NestedListLog<L>
+where
+    L: IsLog,
+{
     fn default() -> Self {
         Self {
-            positions: EventGraph::default(),
+            positions: CachedLog::from_inner(GraphLog::default()),
             children: Default::default(),
         }
     }

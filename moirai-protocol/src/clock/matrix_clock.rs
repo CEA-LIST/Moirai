@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::{
+    broadcast::internalizer::Resolver,
     clock::version_vector::{Seq, Version},
     replica::ReplicaIdx,
-    utils::intern_str::Resolver,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -270,9 +270,9 @@ impl Display for MatrixClock {
 #[cfg(test)]
 mod tests {
     use crate::{
+        broadcast::internalizer::Interner,
         clock::{matrix_clock::MatrixClock, version_vector::Version},
         replica::ReplicaIdx,
-        utils::intern_str::Interner,
     };
 
     #[test]

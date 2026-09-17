@@ -43,8 +43,8 @@ updates in the set.
 
 Both data types were evaluated under identical conditions:
 
-- **Number of replicas:** 16  
-- **Network:** fully connected, asynchronous, bidirectional, reliable channels  
+- **Number of replicas:** 16
+- **Network:** fully connected, asynchronous, bidirectional, reliable channels
 - **Replica churn:** 0.7 (each time a replica is selected, it has a 70% chance
   of switching between online and offline states)
 - **Causal stability:** disabled, in order to observe the impact of an

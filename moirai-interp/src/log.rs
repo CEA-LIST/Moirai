@@ -36,7 +36,7 @@ use moirai_protocol::{
     clock::version_vector::Version,
     event::Event,
     state::log::IsLog,
-    utils::intern_str::{InternalizeOp, Interner},
+    broadcast::internalizer::{InternalizeOp, Interner},
 };
 use moirai_semantics::{MetamodelSemantics, from_descriptor};
 use serde_json::Value;

@@ -8,6 +8,8 @@ This crate implements the replication protocol of the Pure Op CRDT framework, in
 
 ## Crate organization
 
+_Note: We update the crate organization diagram from time to time, so it may not always reflect the current state of the code._
+
 ```sh
 .
 └── moirai-protocol/
@@ -23,7 +25,7 @@ This crate implements the replication protocol of the Pure Op CRDT framework, in
         ├── crdt/
         │   ├── eval.rs # Pure CRDT evaluation semantics
         │   ├── policy.rs # Abstract total order policy
-        │   ├── pure_crdt.rs # General trait for defining Pure CRDT semantics
+        │   ├── replicated_data_type.rs # General trait for defining Pure CRDT semantics
         │   ├── query.rs # Set of common query operations
         │   └── redundancy.rs # Causal redundancy rules
         ├── event/
@@ -35,7 +37,7 @@ This crate implements the replication protocol of the Pure Op CRDT framework, in
         │   ├── event_graph.rs # Unstable log implementation in the form of a DAG
         │   ├── log.rs # Abstract operation storage
         │   ├── object_path.rs # Unique path identifying an object in a replicated hierarchy
-        │   ├── po_log.rs # Log implementation in the form 
+        │   ├── po_log.rs # Log implementation in the form
         │   ├── sink.rs # Lifecycle signal for creation/update/deletion of a replicated object
         │   ├── stable_state.rs # Compact state for stable operations
         │   └── unstable_state.rs # Partially-ordered state for unstable operations

@@ -18,14 +18,14 @@ use petgraph::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HashMap,
+    HashMap, HashSet,
     flag::ew_flag::EWFlag,
     graph::uw_multidigraph::{Content, UWGraphLog},
     map::uw_map::UWMapLog,
     register::{mv_register::MVRegister, to_register::TORegister},
 };
 
-#[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum RelationType {
@@ -33,7 +33,6 @@ pub enum RelationType {
     Implements,
     Composes,
     Aggregates,
-    #[default]
     Associates,
 }
 
@@ -61,14 +60,13 @@ impl Ord for RelationType {
     }
 }
 
-#[derive(Debug, Clone, Eq, Default, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum PrimitiveType {
     String,
     Number,
     Boolean,
-    #[default]
     Void,
 }
 
@@ -86,11 +84,10 @@ impl Default for TypeRef {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Visibility {
-    #[default]
     Public,
     Private,
     Protected,
@@ -121,11 +118,10 @@ impl Ord for Visibility {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub enum Multiplicity {
-    #[default]
     Unspecified,
     One,
     ZeroOrOne,
@@ -213,9 +209,23 @@ record!(Relation {
     typ: VecLog::<TORegister::<RelationType>>,
 });
 
+pub type FeatureSnapshot = FeatureValue<HashSet<PrimitiveType>, Option<Visibility>>;
+pub type OperationSnapshot =
+    OperationValue<bool, Option<Visibility>, HashMap<String, HashSet<TypeRef>>, HashSet<TypeRef>>;
+pub type ClassSnapshot = ClassValue<
+    bool,
+    HashSet<String>,
+    HashMap<String, FeatureSnapshot>,
+    HashMap<String, OperationSnapshot>,
+>;
+pub type EndsSnapshot = EndsValue<Option<Multiplicity>, Option<Multiplicity>>;
+pub type RelationSnapshot = RelationValue<EndsSnapshot, HashSet<String>, Option<RelationType>>;
+
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
-pub type ClassDiagram<'a> =
-    DiGraph<Content<&'a str, ClassValue>, Content<(&'a str, &'a str, &'a str), RelationValue>>;
+pub type ClassDiagram<'a> = DiGraph<
+    Content<&'a str, ClassSnapshot>,
+    Content<(&'a str, &'a str, &'a str), RelationSnapshot>,
+>;
 
 pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
     let fancy_dot = Dot::with_attr_getters(
@@ -234,7 +244,7 @@ pub fn export_fancy_class_diagram(graph: &ClassDiagram) -> String {
 
 fn edge_attr(
     _g: &ClassDiagram,
-    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationValue>>,
+    edge: petgraph::graph::EdgeReference<Content<(&str, &str, &str), RelationSnapshot>>,
 ) -> String {
     let label = &edge
         .weight()
@@ -246,15 +256,27 @@ fn edge_attr(
         .join("/");
     let rtype = &edge.weight().val.typ;
 
-    let multiplicity_from = format_mult(&edge.weight().val.ends.source);
-    let multiplicity_to = format_mult(&edge.weight().val.ends.target);
+    let source = &edge.weight().val.ends.source;
+    let multiplicity_from = if let Some(s) = source {
+        format_mult(s)
+    } else {
+        "".to_string()
+    };
+    let target = &edge.weight().val.ends.target;
+
+    let multiplicity_to = if let Some(t) = target {
+        format_mult(t)
+    } else {
+        "".to_string()
+    };
 
     let (head, style) = match rtype {
-        RelationType::Extends => ("empty", "normal"),
-        RelationType::Implements => ("empty", "dashed"),
-        RelationType::Aggregates => ("odiamond", "normal"),
-        RelationType::Composes => ("diamond", "normal"),
-        RelationType::Associates => ("normal", "normal"),
+        Some(RelationType::Extends) => ("empty", "normal"),
+        Some(RelationType::Implements) => ("empty", "dashed"),
+        Some(RelationType::Aggregates) => ("odiamond", "normal"),
+        Some(RelationType::Composes) => ("diamond", "normal"),
+        Some(RelationType::Associates) => ("normal", "normal"),
+        _ => ("none", "normal"),
     };
     format!(
         "label=\"{label}\", arrowhead=\"{head}\", style=\"{style}\", taillabel=\"{multiplicity_from}\", headlabel=\"{multiplicity_to}\", labeldistance=1.25, labelangle=45, fontcolor=brown"
@@ -275,7 +297,7 @@ fn format_mult(m: &Multiplicity) -> String {
     }
 }
 
-fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue>)) -> String {
+fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassSnapshot>)) -> String {
     let name_vec: Vec<String> = class.val.name.iter().cloned().collect();
     let name = format_node_name(&class.val, &name_vec);
     let features = format_features(&class.val.features);
@@ -288,7 +310,7 @@ fn node_attr(g: &ClassDiagram, (_, class): (NodeIndex, &Content<&str, ClassValue
     format!("label=\"{{{name}|{features}\\l|{operations}\\l}}\",{is_abstract}")
 }
 
-fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
+fn format_node_name(class: &ClassSnapshot, name_vec: &[String]) -> String {
     let prefix = if class.is_abstract { "Ⓐ " } else { "Ⓒ " };
     let name_str = if name_vec.is_empty() {
         "Unnamed".to_string()
@@ -298,7 +320,7 @@ fn format_node_name(class: &ClassValue, name_vec: &[String]) -> String {
     format!("{prefix}{name_str}")
 }
 
-fn format_features(features: &HashMap<String, FeatureValue>) -> String {
+fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
     features
         .iter()
         .map(|(k, v)| {
@@ -310,10 +332,11 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
                 types.join("/")
             };
             let feature_vis = match v.visibility {
-                Visibility::Public => "+",
-                Visibility::Private => "-",
-                Visibility::Protected => "#",
-                Visibility::Package => "~",
+                Some(Visibility::Public) => "+",
+                Some(Visibility::Private) => "-",
+                Some(Visibility::Protected) => "#",
+                Some(Visibility::Package) => "~",
+                None => "",
             };
             format!("{feature_vis}{feature_name}: {feature_type}")
         })
@@ -321,16 +344,17 @@ fn format_features(features: &HashMap<String, FeatureValue>) -> String {
         .join("\\l")
 }
 
-fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationValue>) -> String {
+fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationSnapshot>) -> String {
     operations
         .iter()
         .map(|(k, v)| {
             let op_name = k.clone();
             let op_vis = match v.visibility {
-                Visibility::Public => "+",
-                Visibility::Private => "-",
-                Visibility::Protected => "#",
-                Visibility::Package => "~",
+                Some(Visibility::Public) => "+",
+                Some(Visibility::Private) => "-",
+                Some(Visibility::Protected) => "#",
+                Some(Visibility::Package) => "~",
+                None => "",
             };
             let params: Vec<String> = v
                 .parameters
@@ -776,9 +800,12 @@ mod tests {
         replica_b.receive_batch(batch);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
         (replica_a, replica_b)
@@ -807,8 +834,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
 
         println!("Class Diagram A: {}", export_fancy_class_diagram(&eval_a));
         println!("Class Diagram B: {}", export_fancy_class_diagram(&eval_b));
@@ -824,7 +851,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the class name
@@ -837,15 +864,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
@@ -868,7 +895,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the class name
@@ -883,15 +910,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
 
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
@@ -945,12 +972,12 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
@@ -960,8 +987,8 @@ mod tests {
         replica_a.receive(event_b_4);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 
@@ -1019,7 +1046,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the feature visibility and type
@@ -1058,7 +1085,7 @@ mod tests {
             .unwrap();
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
@@ -1071,8 +1098,8 @@ mod tests {
         replica_b.receive(event_a_3);
         replica_b.receive(event_a_4);
         replica_b.receive(event_a_5);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
         println!("Merge result: {}", export_fancy_class_diagram(&eval_a));
     }
@@ -1098,7 +1125,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the return type to Number
@@ -1116,15 +1143,15 @@ mod tests {
 
         println!(
             "Class Diagram B: {}",
-            export_fancy_class_diagram(&replica_b.query(Read::new()))
+            export_fancy_class_diagram(&replica_b.query(&Read::new()))
         );
 
         // Deliver events
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 
@@ -1172,7 +1199,7 @@ mod tests {
 
         println!(
             "Class Diagram A: {}",
-            export_fancy_class_diagram(&replica_a.query(Read::new()))
+            export_fancy_class_diagram(&replica_a.query(&Read::new()))
         );
 
         // B updates the relation
@@ -1218,8 +1245,8 @@ mod tests {
         replica_b.receive(event_a_2);
         replica_b.receive(event_a_3);
         replica_b.receive(event_a_4);
-        let eval_a = replica_a.query(Read::new());
-        let eval_b = replica_b.query(Read::new());
+        let eval_a = replica_a.query(&Read::new());
+        let eval_b = replica_b.query(&Read::new());
         assert!(vf2::isomorphisms(&eval_a, &eval_b).first().is_some());
     }
 }

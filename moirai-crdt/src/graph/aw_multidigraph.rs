@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, fmt::Debug, hash::Hash};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -9,12 +13,11 @@ use moirai_fuzz::value_generator::ValueGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
-        pure_crdt::PureCRDT,
         query::{QueryOperation, Read},
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::unstable_state::IsUnstableState,
-    utils::intern_str::{InternalizeOp, Interner},
+    state::unstable_state::IsUnstableCore,
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -40,13 +43,38 @@ pub enum Graph<V, E> {
     RemoveArc(V, V, E),
 }
 
-impl<V, E> PureCRDT for Graph<V, E>
+#[derive(Clone, Debug)]
+pub enum GraphRejection<V, E> {
+    ArcDoesNotExist(V, V, E),
+    VertexDoesNotExist(V),
+}
+
+impl<V, E> Display for GraphRejection<V, E>
+where
+    V: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GraphRejection::ArcDoesNotExist(v1, v2, e) => write!(
+                f,
+                "Arc from {:?} to {:?} with edge {:?} does not exist",
+                v1, v2, e
+            ),
+            GraphRejection::VertexDoesNotExist(v) => write!(f, "Vertex {:?} does not exist", v),
+        }
+    }
+}
+
+impl<V, E> ReplicatedDataType for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
 {
-    type Value = DiGraph<V, E>;
+    // TODO: We can use a more efficient representation of the stable state
+    // TODO: garbage collect dangling arcs
     type StableState = Vec<Self>;
+    type Rejection = GraphRejection<V, E>;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -90,51 +118,81 @@ where
     ) -> bool {
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
+}
 
+impl<V, E, U> UsesUnstableService<U> for Graph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<Self>,
+{
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> bool {
-        let state = Self::execute_query(Read::new(), stable, unstable);
-        match op {
-            Graph::AddVertex(_) => true,
-            // The vertex must exist to be removed.
-            Graph::RemoveVertex(v) => state.node_weights().any(|node| node == v),
-            // Both vertices must exist to add an arc.
-            Graph::AddArc(v1, v2, _) => {
-                state.node_weights().any(|node| node == v1)
-                    && state.node_weights().any(|node| node == v2)
-            }
-            Graph::RemoveArc(v1, v2, e) => {
-                let idx_1 = state
-                    .node_indices()
-                    .find(|&idx| state.node_weight(idx) == Some(v1));
-                let idx_2 = state
-                    .node_indices()
-                    .find(|&idx| state.node_weight(idx) == Some(v2));
-                if let (Some(i1), Some(i2)) = (idx_1, idx_2) {
+        unstable: &U,
+    ) -> Result<(), Self::Rejection> {
+        let state = Self::execute_query(&Read::new(), stable, unstable);
+
+        let vertex_exists = |v| state.node_weights().any(|node| node == v);
+        let vertex_index = |v| {
+            state
+                .node_indices()
+                .find(|&idx| state.node_weight(idx) == Some(v))
+        };
+        let arc_exists = |v1, v2, e| {
+            vertex_index(v1)
+                .zip(vertex_index(v2))
+                .is_some_and(|(i1, i2)| {
                     state
                         .edges_connecting(i1, i2)
                         .any(|edge| edge.weight() == e)
+                })
+        };
+
+        match op {
+            Graph::AddVertex(_) => Ok(()),
+            Graph::RemoveVertex(v) => {
+                if vertex_exists(v) {
+                    Ok(())
                 } else {
-                    false
+                    Err(GraphRejection::VertexDoesNotExist(v.clone()))
+                }
+            }
+            Graph::AddArc(v1, v2, _) => {
+                if !vertex_exists(v1) {
+                    Err(GraphRejection::VertexDoesNotExist(v1.clone()))
+                } else if !vertex_exists(v2) {
+                    Err(GraphRejection::VertexDoesNotExist(v2.clone()))
+                } else {
+                    Ok(())
+                }
+            }
+            Graph::RemoveArc(v1, v2, e) => {
+                if arc_exists(v1, v2, e) {
+                    Ok(())
+                } else {
+                    Err(GraphRejection::ArcDoesNotExist(
+                        v1.clone(),
+                        v2.clone(),
+                        e.clone(),
+                    ))
                 }
             }
         }
     }
 }
 
-impl<V, E> Eval<Read<<Self as PureCRDT>::Value>> for Graph<V, E>
+impl<V, E, U> Eval<Read<DiGraph<V, E>>, U> for Graph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
+        _q: &Read<DiGraph<V, E>>,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> <Read<<Self as PureCRDT>::Value> as QueryOperation>::Response {
+        unstable: &U,
+    ) -> <Read<DiGraph<V, E>> as QueryOperation>::Response {
         let mut ops: Vec<&Self> = stable
             .iter()
             .chain(unstable.iter().map(|t| t.op()))
@@ -173,17 +231,6 @@ where
     }
 }
 
-impl<V, E> InternalizeOp for Graph<V, E>
-where
-    V: Debug + Clone + PartialEq + Eq + Hash,
-    E: Debug + Clone + PartialEq + Eq + Hash,
-{
-    // TODO: we assume that V and E are already interned
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
-}
-
 #[cfg(feature = "fuzz")]
 impl<V, E> OpGenerator for Graph<V, E>
 where
@@ -196,7 +243,7 @@ where
         rng: &mut impl rand::Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
+        unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -207,7 +254,7 @@ where
             RemoveArc,
         }
 
-        let graph = Self::execute_query(Read::new(), stable, unstable);
+        let graph = Self::execute_query(&Read::new(), stable, unstable);
 
         let choice = if graph.node_count() < 2 {
             &Choice::AddVertex
@@ -259,7 +306,10 @@ where
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
-    use crate::{graph::aw_multidigraph::Graph, utils::membership::twins};
+    use crate::{
+        graph::aw_multidigraph::Graph,
+        utils::membership::{triplet, twins},
+    };
 
     #[test]
     fn simple_graph() {
@@ -278,9 +328,12 @@ mod tests {
         replica_a.receive(event);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -298,11 +351,14 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
     }
 
     #[test]
@@ -321,9 +377,12 @@ mod tests {
         replica_a.receive(event_b);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -336,11 +395,14 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -355,7 +417,39 @@ mod tests {
         let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+    }
+
+    #[test]
+    fn concurrent_revive_arc() {
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Graph<&str, u8>>();
+
+        let event_a_1 = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a_2 = replica_a.send(Graph::AddVertex("B")).unwrap();
+
+        replica_b.receive(event_a_1.clone());
+        replica_b.receive(event_a_2.clone());
+        replica_c.receive(event_a_1);
+        replica_c.receive(event_a_2);
+
+        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        replica_c.receive(event_b.clone());
+        let event_c = replica_c.send(Graph::AddVertex("B")).unwrap();
+
+        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
+
+        replica_a.receive(event_b);
+        replica_a.receive(event_c.clone());
+        replica_b.receive(event_a.clone());
+        replica_b.receive(event_c);
+        replica_c.receive(event_a);
+
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_b.query(&Read::new()).edge_count(), 1);
+        assert_eq!(replica_c.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_c.query(&Read::new()).edge_count(), 1);
     }
 
     #[test]
@@ -373,24 +467,30 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a.send(Graph::AddVertex("B")).unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -409,12 +509,15 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -423,24 +526,27 @@ mod tests {
     #[ignore]
     fn fuzz_aw_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
+        use petgraph::graph::DiGraph;
 
         let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<VecLog<Graph<String, u8>>>::new(
+        let config = FuzzerConfig::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>::new(
             "aw_graph",
             runs,
             true,
             // |a, b| vf2::isomorphisms(a, b).first().is_some(),
-            |a, b| a.node_count() == b.node_count() && a.edge_count() == b.edge_count(),
+            Predicate::new(Read::new(), |a, b| {
+                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
+            }),
             false,
             None,
         );
 
-        fuzzer::<VecLog<Graph<String, u8>>>(config);
+        fuzzer::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>(config);
     }
 }

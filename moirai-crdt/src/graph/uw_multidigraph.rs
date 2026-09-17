@@ -3,8 +3,8 @@ use std::{
     hash::Hash,
 };
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -12,17 +12,21 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
-    utils::intern_str::{InternalizeOp, Interner},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "fuzz")]
+use rand::{Rng, seq::IteratorRandom};
 
 use crate::HashMap;
 
+type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, E), El>>;
+
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum UWGraph<V, E, No, Lo> {
     UpdateVertex {
         id: V,
@@ -45,64 +49,95 @@ pub enum UWGraph<V, E, No, Lo> {
 }
 
 #[derive(Clone, Debug)]
-pub struct UWGraphLog<V, E, Nl, El>
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+pub struct UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
     E: Clone + Debug + Eq + PartialEq + Hash,
+    Vl: IsLog,
+    El: IsLog,
 {
-    arc_content: HashMap<(V, V, E), El>,
-    vertex_content: HashMap<V, Nl>,
+    vertices: HashMap<V, Vl>,
+    arcs: HashMap<(V, V, E), El>,
 }
 
-impl<V, E, Nl, El> IsLog for UWGraphLog<V, E, Nl, El>
+#[derive(Clone, Debug)]
+pub enum LabelledGraphRejection<V, E, Vl, El>
 where
-    Nl: IsLog,
+    Vl: IsLog,
     El: IsLog,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    V: Debug,
+    E: Debug,
+{
+    VertexNotFound(V),
+    ArcNotFound(V, V, E),
+    VertexDisabled(Vl::Rejection),
+    ArcDisabled(El::Rejection),
+}
+
+impl<V, E, Vl, El> Display for LabelledGraphRejection<V, E, Vl, El>
+where
+    Vl: IsLog,
+    El: IsLog,
+    V: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LabelledGraphRejection::VertexNotFound(v) => write!(f, "Vertex not found: {:?}", v),
+            LabelledGraphRejection::ArcNotFound(v1, v2, e) => {
+                write!(f, "Arc not found: {:?} -> {:?} (id: {:?})", v1, v2, e)
+            }
+            LabelledGraphRejection::VertexDisabled(r) => {
+                write!(f, "Vertex operation disabled in child log: {}", r)
+            }
+            LabelledGraphRejection::ArcDisabled(r) => {
+                write!(f, "Arc operation disabled in child log: {}", r)
+            }
+        }
+    }
+}
+
+impl<V, E, Vl, El> IsLog for UWGraphLog<V, E, Vl, El>
+where
+    Vl: IsLog + Debug,
+    El: IsLog + Debug,
+    V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
-    type Op = UWGraph<V, E, Nl::Op, El::Op>;
-    type Value = DiGraph<Content<V, Nl::Value>, Content<(V, V, E), El::Value>>;
+    type Command = UWGraph<V, E, Vl::Op, El::Op>;
+    type Op = UWGraph<V, E, Vl::Op, El::Op>;
+    type Rejection = LabelledGraphRejection<V, E, Vl, El>;
 
     fn new() -> Self {
         Self::default()
     }
 
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
+    }
+
     // TODO: add sink when vertex/arc creation/destruction
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             // Update the child at vertex `v`
             UWGraph::UpdateVertex { id: v, child: op } => {
                 let child_op = Event::unfold(event, op);
-                self.vertex_content.entry(v).or_default().effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    ownership,
-                );
+                self.vertices.entry(v).or_default().effect(child_op, ctx);
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
             UWGraph::RemoveVertex { id: v } => {
-                if let Some(child) = self.vertex_content.get_mut(&v) {
+                if let Some(child) = self.vertices.get_mut(&v) {
                     child.redundant_by_parent(event.version(), true);
                 }
                 let arcs_to_remove: Vec<(V, V, E)> = self
-                    .arc_content
+                    .arcs
                     .keys()
                     .filter(|(v1, v2, _)| v1 == &v || v2 == &v)
                     .cloned()
                     .collect();
                 for arc in arcs_to_remove {
-                    if let Some(child) = self.arc_content.get_mut(&arc) {
+                    if let Some(child) = self.arcs.get_mut(&arc) {
                         child.redundant_by_parent(event.version(), true);
                     }
                 }
@@ -115,15 +150,10 @@ where
                 child: op,
             } => {
                 let child_op = Event::unfold(event, op);
-                self.arc_content.entry((v1, v2, e)).or_default().effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    ownership,
-                );
+                self.arcs
+                    .entry((v1, v2, e))
+                    .or_default()
+                    .effect(child_op, ctx);
             }
             // Remove the arc `(v1, v2, e)` and reset its child
             UWGraph::RemoveArc {
@@ -131,7 +161,7 @@ where
                 target: v2,
                 id: e,
             } => {
-                if let Some(child) = self.arc_content.get_mut(&(v1, v2, e)) {
+                if let Some(child) = self.arcs.get_mut(&(v1, v2, e)) {
                     child.redundant_by_parent(event.version(), true);
                 }
             }
@@ -139,110 +169,131 @@ where
     }
 
     fn stabilize(&mut self, version: &Version) {
-        for v in self.arc_content.values_mut() {
+        for v in self.arcs.values_mut() {
             v.stabilize(version);
         }
 
-        for v in self.vertex_content.values_mut() {
+        for v in self.vertices.values_mut() {
             v.stabilize(version);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        for v in self.arc_content.values_mut() {
+        for v in self.arcs.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
 
-        for v in self.vertex_content.values_mut() {
+        for v in self.vertices.values_mut() {
             v.redundant_by_parent(version, conservative);
         }
     }
 
     fn is_default(&self) -> bool {
-        self.arc_content.is_empty() && self.vertex_content.is_empty()
+        self.arcs.is_empty() && self.vertices.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
         match op {
-            UWGraph::UpdateVertex { .. } => true,
-            UWGraph::RemoveVertex { id: v } => {
-                if let Some(child) = self.vertex_content.get(v) {
-                    !child.is_default()
+            UWGraph::UpdateVertex { id, child } => {
+                if let Some(log) = self.vertices.get(id) {
+                    log.is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
                 } else {
-                    false
+                    Vl::default()
+                        .is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
+                }
+            }
+            UWGraph::RemoveVertex { id: v } => {
+                if let Some(child) = self.vertices.get(v)
+                    && !child.is_default()
+                {
+                    Ok(())
+                } else {
+                    Err(LabelledGraphRejection::VertexNotFound(v.clone()))
                 }
             }
             UWGraph::UpdateArc {
-                source: v1,
-                target: v2,
-                ..
+                source,
+                target,
+                id,
+                child,
             } => {
                 if let (Some(child1), Some(child2)) =
-                    (self.vertex_content.get(v1), self.vertex_content.get(v2))
+                    (self.vertices.get(source), self.vertices.get(target))
                 {
                     if child1.is_default() || child2.is_default() {
-                        return false;
+                        return Err(LabelledGraphRejection::ArcNotFound(
+                            source.clone(),
+                            target.clone(),
+                            id.clone(),
+                        ));
                     }
-                    true
+                    El::default()
+                        .is_enabled(child)
+                        .map_err(|e| LabelledGraphRejection::ArcDisabled(e))
                 } else {
-                    false
+                    Err(LabelledGraphRejection::ArcNotFound(
+                        source.clone(),
+                        target.clone(),
+                        id.clone(),
+                    ))
                 }
             }
-            UWGraph::RemoveArc {
-                source: v1,
-                target: v2,
-                id: e,
-            } => {
-                if let Some(child) = self.arc_content.get(&(v1.clone(), v2.clone(), e.clone())) {
-                    !child.is_default()
+            UWGraph::RemoveArc { source, target, id } => {
+                if let Some(child) = self.arcs.get(&(source.clone(), target.clone(), id.clone()))
+                    && !child.is_default()
+                {
+                    Ok(())
                 } else {
-                    false
+                    Err(LabelledGraphRejection::ArcNotFound(
+                        source.clone(),
+                        target.clone(),
+                        id.clone(),
+                    ))
                 }
             }
         }
     }
 }
 
-impl<V, E, Nl, El> Default for UWGraphLog<V, E, Nl, El>
+impl<V, E, Vl, El> Default for UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
     E: Clone + Debug + Eq + PartialEq + Hash,
+    Vl: IsLog,
+    El: IsLog,
 {
     fn default() -> Self {
         Self {
-            arc_content: HashMap::default(),
-            vertex_content: HashMap::default(),
+            arcs: HashMap::default(),
+            vertices: HashMap::default(),
         }
     }
 }
 
-impl<V, E, No, Lo> InternalizeOp for UWGraph<V, E, No, Lo> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
-    }
-}
-
-impl<V, E, Nl, El> EvalNested<Read<<Self as IsLog>::Value>> for UWGraphLog<V, E, Nl, El>
+impl<V, E, Vl, VLabel, El, ELabel> EvalNested<Read<LabeledMultidigraph<V, E, VLabel, ELabel>>>
+    for UWGraphLog<V, E, Vl, El>
 where
-    Nl: IsLog + EvalNested<Read<<Nl as IsLog>::Value>>,
-    El: IsLog + EvalNested<Read<<El as IsLog>::Value>>,
-    V: Clone + Debug + Ord + PartialOrd + Hash + Eq + Default + Display,
+    Vl: IsLog + Debug + EvalNested<Read<VLabel>>,
+    El: IsLog + Debug + EvalNested<Read<ELabel>>,
+    V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
     fn execute_query(
         &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
-        let mut graph = Self::Value::new();
+        _q: &Read<LabeledMultidigraph<V, E, VLabel, ELabel>>,
+    ) -> <Read<LabeledMultidigraph<V, E, VLabel, ELabel>> as QueryOperation>::Response {
+        let mut graph = LabeledMultidigraph::new();
         let mut node_idx = HashMap::default();
-        for (v, child) in self.vertex_content.iter() {
+        for (v, child) in self.vertices.iter() {
             if child.is_default() {
                 continue;
             }
-            let idx = graph.add_node(Content::new(v.clone(), child.execute_query(Read::new())));
+            let idx = graph.add_node(Content::new(v.clone(), child.execute_query(&Read::new())));
             node_idx.insert(v.clone(), idx);
         }
-        for ((v1, v2, e), child) in self.arc_content.iter() {
+        for ((v1, v2, e), child) in self.arcs.iter() {
             if child.is_default() {
                 continue;
             }
@@ -255,7 +306,7 @@ where
                         *i2,
                         Content::new(
                             (v1.clone(), v2.clone(), e.clone()),
-                            child.execute_query(Read::new()),
+                            child.execute_query(&Read::new()),
                         ),
                     );
                 }
@@ -290,15 +341,122 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<V, E, Vl, El> CommandGenerator for UWGraphLog<V, E, Vl, El>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+    E: ValueGenerator + Clone + Hash + Debug + Eq,
+    Vl: CommandGenerator + IsLog<Command = <Vl as IsLog>::Op> + Debug,
+    El: CommandGenerator + IsLog<Command = <El as IsLog>::Op> + Debug,
+{
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            UpdateVertex,
+            RemoveVertex,
+            UpdateArc,
+            RemoveArc,
+        }
+
+        let vertices: Vec<&V> = self
+            .vertices
+            .iter()
+            .filter_map(|(id, child)| (!child.is_default()).then_some(id))
+            .collect();
+        let arcs: Vec<&(V, V, E)> = self
+            .arcs
+            .iter()
+            .filter_map(|(id, child)| {
+                (!child.is_default() && vertices.contains(&&id.0) && vertices.contains(&&id.1))
+                    .then_some(id)
+            })
+            .collect();
+
+        let choice = if vertices.len() < 2 {
+            &Choice::UpdateVertex
+        } else if arcs.is_empty() {
+            let dist = WeightedIndex::new([2, 1, 3]).unwrap();
+            &[
+                Choice::UpdateVertex,
+                Choice::RemoveVertex,
+                Choice::UpdateArc,
+            ][dist.sample(rng)]
+        } else {
+            let dist = WeightedIndex::new([2, 1, 2, 1]).unwrap();
+            &[
+                Choice::UpdateVertex,
+                Choice::RemoveVertex,
+                Choice::UpdateArc,
+                Choice::RemoveArc,
+            ][dist.sample(rng)]
+        };
+
+        match choice {
+            Choice::UpdateVertex => {
+                let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
+                let child_op = if let Some(child) = self.vertices.get(&v) {
+                    child.generate_command(rng)
+                } else {
+                    Vl::new().generate_command(rng)
+                };
+                UWGraph::UpdateVertex {
+                    id: v,
+                    child: child_op,
+                }
+            }
+            Choice::RemoveVertex => {
+                let v = vertices.iter().choose(rng).unwrap();
+                UWGraph::RemoveVertex { id: (*v).clone() }
+            }
+            Choice::UpdateArc => {
+                let v1 = vertices.iter().choose(rng).unwrap();
+                let v2 = vertices.iter().choose(rng).unwrap();
+                let edge = E::generate(rng, &<E as ValueGenerator>::Config::default());
+
+                let child_op = if let Some(child) =
+                    self.arcs
+                        .get(&((**v1).clone(), (**v2).clone(), edge.clone()))
+                {
+                    child.generate_command(rng)
+                } else {
+                    El::new().generate_command(rng)
+                };
+
+                UWGraph::UpdateArc {
+                    source: (**v1).clone(),
+                    target: (**v2).clone(),
+                    id: edge,
+                    child: child_op,
+                }
+            }
+            Choice::RemoveArc => {
+                let (source, target, id) = arcs.iter().choose(rng).unwrap();
+                UWGraph::RemoveArc {
+                    source: source.clone(),
+                    target: target.clone(),
+                    id: id.clone(),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
+    #[cfg(feature = "fuzz")]
+    use moirai_fuzz::config::Predicate;
+    use moirai_protocol::{
+        crdt::{policy::LwwPolicy, query::Read},
+        replica::IsReplica,
+        state::po_log::VecLog,
+    };
     use petgraph::graph::DiGraph;
 
+    #[cfg(feature = "fuzz")]
     use crate::{
         counter::resettable_counter::Counter,
-        graph::uw_multidigraph::{UWGraph, UWGraphLog},
-        policy::LwwPolicy,
+        graph::uw_multidigraph::{LabeledMultidigraph, UWGraph, UWGraphLog},
         register::unique_register::Register,
         utils::membership::{triplet_log, twins_log},
     };
@@ -414,9 +572,12 @@ mod tests {
         replica_b.receive(event);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -443,12 +604,12 @@ mod tests {
         graph.add_node(2);
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
+            &replica_a.query(&Read::new()),
             &graph
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_b.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_b.query(&Read::new())
         ));
     }
 
@@ -466,8 +627,8 @@ mod tests {
         let event_b = replica_b.send(UWGraph::RemoveVertex { id: "A" }).unwrap();
         replica_a.receive(event_b);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 0);
-        assert_eq!(replica_b.query(Read::new()).node_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 0);
+        assert_eq!(replica_b.query(&Read::new()).node_count(), 0);
     }
 
     #[test]
@@ -502,13 +663,16 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
@@ -518,13 +682,16 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
@@ -586,8 +753,8 @@ mod tests {
         replica_b.receive(event_c_2.clone());
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_b.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_b.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
 
         let event_a_1 = replica_a
@@ -608,20 +775,20 @@ mod tests {
         replica_a.receive(event_c_1);
         replica_a.receive(event_c_2);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_b.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_b.query(&Read::new())
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_a.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_a.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
         assert!(petgraph::algo::is_isomorphic(
-            &replica_b.query(Read::new()),
-            &replica_c.query(Read::new())
+            &replica_b.query(&Read::new()),
+            &replica_c.query(&Read::new())
         ));
     }
 
@@ -667,13 +834,16 @@ mod tests {
         replica_b.receive(event_a);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 1);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 0);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
             .send(UWGraph::UpdateVertex {
@@ -683,15 +853,44 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()).node_count(), 2);
-        assert_eq!(replica_a.query(Read::new()).edge_count(), 1);
+        assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
+        assert_eq!(replica_a.query(&Read::new()).edge_count(), 1);
 
         assert!(
-            vf2::isomorphisms(&replica_a.query(Read::new()), &replica_b.query(Read::new()))
-                .first()
-                .is_some()
+            vf2::isomorphisms(
+                &replica_a.query(&Read::new()),
+                &replica_b.query(&Read::new())
+            )
+            .first()
+            .is_some()
         );
     }
 
-    // TODO: fuzzer test
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_uw_graph() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<
+            UWGraphLog<usize, usize, Lww, Cntr>,
+            Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
+        >::new(
+            "uw_graph",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| {
+                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
+            }),
+            false,
+        );
+        fuzzer::<
+            UWGraphLog<usize, usize, Lww, Cntr>,
+            Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
+        >(config);
+    }
 }

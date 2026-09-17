@@ -1,9 +1,11 @@
-pub mod event_graph;
+pub mod cache;
+pub mod effect_context;
+pub mod graph_log;
 pub mod log;
 pub mod object_path;
 pub mod po_log;
-#[cfg(feature = "sink")]
 pub mod sink;
 pub mod stable_state;
 pub mod trace;
 pub mod unstable_state;
+pub use unstable_state::event_graph;

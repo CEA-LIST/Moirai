@@ -992,13 +992,13 @@ fn bag_op(op: &LeafOp) -> Result<UWMap<Scalar, Counter<usize>>, LeafMismatch> {
     }
 }
 
-impl moirai_protocol::utils::intern_str::InternalizeOp for LeafOp {
+impl moirai_protocol::broadcast::internalizer::InternalizeOp for LeafOp {
     /// Identity: a leaf operation carries scalars and positions, never an
     /// [`moirai_protocol::event::id::EventId`], so there is nothing here for
     /// an interner to re-index. The impl lives beside the type all the same,
     /// so that [`crate::op::ModelOp`]'s recursion has one exhaustive place to
     /// bottom out and cannot silently skip a leaf.
-    fn internalize(self, _interner: &moirai_protocol::utils::intern_str::Interner) -> Self {
+    fn internalize(self, _interner: &moirai_protocol::broadcast::internalizer::Interner) -> Self {
         self
     }
 }

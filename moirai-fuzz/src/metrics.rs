@@ -4,18 +4,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    state::{event_graph::EventGraph, log::IsLog, po_log::POLog, unstable_state::IsUnstableState},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 
-use crate::op_generator::OpGeneratorNested;
+use crate::op_generator::CommandGenerator;
 
 // Thread-local flag to control stability behavior during fuzzing
 thread_local! {
@@ -34,123 +31,7 @@ fn get_disable_stability() -> bool {
     DISABLE_STABILITY.with(|flag| *flag.borrow())
 }
 
-/// Metrics about the structure of the nested log
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct StructureMetrics {
-    /// Total number of children, including nested ones
-    pub size: usize,
-    /// Maximum number of children at any level
-    pub width: usize,
-    /// Maximum depth of the structure
-    pub height: usize,
-}
-
-impl StructureMetrics {
-    pub const fn empty() -> Self {
-        Self {
-            size: 0,
-            width: 0,
-            height: 0,
-        }
-    }
-
-    pub const fn scalar() -> Self {
-        Self {
-            size: 1,
-            width: 1,
-            height: 1,
-        }
-    }
-
-    pub fn object(children: impl IntoIterator<Item = Self>) -> Self {
-        let children = children
-            .into_iter()
-            .filter(|m| m.size > 0)
-            .collect::<Vec<_>>();
-        if children.is_empty() {
-            return Self::empty();
-        }
-
-        Self {
-            size: children.iter().map(|m| m.size).sum(),
-            width: children
-                .len()
-                .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
-            height: 1 + children.iter().map(|m| m.height).max().unwrap_or(0),
-        }
-    }
-
-    pub fn nested_collection(children: impl IntoIterator<Item = Self>) -> Self {
-        let children = children
-            .into_iter()
-            .filter(|m| m.size > 0)
-            .collect::<Vec<_>>();
-        if children.is_empty() {
-            return Self::empty();
-        }
-
-        Self {
-            size: children.iter().map(|m| m.size).sum(),
-            width: children
-                .len()
-                .max(children.iter().map(|m| m.width).max().unwrap_or(0)),
-            height: 1 + children.iter().map(|m| m.height).max().unwrap_or(0),
-        }
-    }
-
-    // case of collection of scalar values (e.g., a set, a bag)
-    pub fn collection() -> Self {
-        Self {
-            size: 1,
-            width: 1,
-            height: 1,
-        }
-    }
-}
-
-// TODO: verify the implementations (seems messy and not very accurate, but maybe it's good enough for now)
-pub trait FuzzMetrics: IsLog {
-    fn structure_metrics(&self) -> StructureMetrics;
-}
-
-impl<O> FuzzMetrics for EventGraph<O>
-where
-    O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        if self.is_default() {
-            StructureMetrics::empty()
-        } else {
-            StructureMetrics::scalar()
-        }
-    }
-}
-
-impl<O, U> FuzzMetrics for POLog<O, U>
-where
-    O: moirai_protocol::crdt::pure_crdt::PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        if self.is_default() {
-            StructureMetrics::empty()
-        } else {
-            StructureMetrics::scalar()
-        }
-    }
-}
-
-impl<L> FuzzMetrics for Box<L>
-where
-    L: FuzzMetrics,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        (**self).structure_metrics()
-    }
-}
-
-/// Wrapper autour d'un IsLog qui mesure le temps passé dans effect()
-#[derive(Debug)]
+#[derive(Debug, deepsize::DeepSizeOf)]
 pub struct MetricsLog<L: IsLog> {
     pub inner: L,
     pub total_effect_time: Duration,
@@ -165,6 +46,14 @@ impl<L: IsLog> MetricsLog<L> {
             effect_call_count: 0,
         }
     }
+
+    pub fn inner(&self) -> &L {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut L {
+        &mut self.inner
+    }
 }
 
 impl<L: IsLog> Default for MetricsLog<L> {
@@ -174,38 +63,25 @@ impl<L: IsLog> Default for MetricsLog<L> {
 }
 
 impl<L: IsLog> IsLog for MetricsLog<L> {
-    type Value = L::Value;
+    type Command = L::Command;
     type Op = L::Op;
+    type Rejection = L::Rejection;
 
     fn new() -> Self {
         Self::new(L::new())
     }
 
-    fn prepare(op: Self::Op) -> Self::Op {
-        L::prepare(op)
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        self.inner.prepare(cmd)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
         self.inner.is_enabled(op)
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         let start = Instant::now();
-        self.inner.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            sink,
-            #[cfg(feature = "sink")]
-            ownership,
-        );
+        self.inner.effect(event, ctx);
         self.total_effect_time += start.elapsed();
         self.effect_call_count += 1;
     }
@@ -232,25 +108,16 @@ where
     L: IsLog + EvalNested<Q>,
     Q: QueryOperation,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         self.inner.execute_query(q)
     }
 }
 
-impl<L> OpGeneratorNested for MetricsLog<L>
+impl<L> CommandGenerator for MetricsLog<L>
 where
-    L: IsLog + OpGeneratorNested,
+    L: IsLog + CommandGenerator,
 {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
-        self.inner.generate(rng)
-    }
-}
-
-impl<L> FuzzMetrics for MetricsLog<L>
-where
-    L: IsLog + FuzzMetrics,
-{
-    fn structure_metrics(&self) -> StructureMetrics {
-        self.inner.structure_metrics()
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        self.inner.generate_command(rng)
     }
 }

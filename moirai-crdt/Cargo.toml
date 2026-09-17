@@ -1,6 +1,6 @@
 [package]
 name = "moirai-crdt"
-version = "0.1.0"
+version = "0.7.0"
 edition = "2024"
 authors = [
     "Léo Olivier <leo.olivier@cea.fr>",
@@ -36,4 +36,8 @@ default = ["fuzz"]
 serde = ["dep:serde", "dep:tsify", "dep:wasm-bindgen", "moirai-protocol/serde", "moirai-macros/serde"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz/sink"]
-test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-macros/test_utils"]
+test_utils = [
+    "dep:deepsize",
+    "moirai-protocol/test_utils",
+    "moirai-macros/test_utils",
+]

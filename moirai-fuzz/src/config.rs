@@ -1,12 +1,48 @@
-use moirai_protocol::state::log::IsLog;
+use moirai_protocol::{
+    commitment::commit_log::CommitmentLog,
+    crdt::query::QueryOperation,
+    replica::{ReplicaId, ReplicaIdOwned},
+    state::log::IsLog,
+};
 
-use crate::metrics::MetricsLog;
-
-pub type QueryFn<L> = fn(&MetricsLog<L>);
-
-pub struct FuzzerConfig<'a, L>
+/// Connects the generic fuzzer to a log-specific leader oracle.
+pub struct OracleDriver<L>
 where
     L: IsLog,
+{
+    set_leader: fn(&mut L, &ReplicaId),
+}
+
+impl<L> OracleDriver<L>
+where
+    L: IsLog,
+{
+    pub(crate) fn set_leader(&self, log: &mut L, leader: &ReplicaId) {
+        (self.set_leader)(log, leader);
+    }
+}
+
+pub struct Predicate<Q>
+where
+    Q: QueryOperation,
+{
+    pub query: Q,
+    pub cmp: fn(&Q::Response, &Q::Response) -> bool,
+}
+
+impl<Q> Predicate<Q>
+where
+    Q: QueryOperation,
+{
+    pub fn new(query: Q, cmp: fn(&Q::Response, &Q::Response) -> bool) -> Self {
+        Self { query, cmp }
+    }
+}
+
+pub struct FuzzerConfig<'a, L, Q>
+where
+    L: IsLog,
+    Q: QueryOperation,
 {
     /// Name of the simulation, used for logging
     pub name: &'a str,
@@ -14,22 +50,23 @@ where
     /// Whether to perform a final merge after all operations are issued
     pub final_merge: bool,
     /// Comparison function to check if the replicas converge
-    pub compare: fn(&L::Value, &L::Value) -> bool,
+    pub predicate: Predicate<Q>,
     /// Whether to save the execution results to a JSON file in bench-results/
     pub save_execution: bool,
-    /// Optional query function executed on the local replica after each step
-    pub query: Option<QueryFn<L>>,
+    /// Optional adapter used to update a protocol oracle immediately before command preparation.
+    pub oracle_driver: Option<OracleDriver<L>>,
 }
 
-impl<'a, L> FuzzerConfig<'a, L>
+impl<'a, L, Q> FuzzerConfig<'a, L, Q>
 where
     L: IsLog,
+    Q: QueryOperation,
 {
     pub fn new(
         name: &'a str,
         runs: Vec<RunConfig>,
         final_merge: bool,
-        compare: fn(&L::Value, &L::Value) -> bool,
+        predicate: Predicate<Q>,
         save_execution: bool,
         query: Option<QueryFn<L>>,
     ) -> Self {
@@ -41,10 +78,24 @@ where
             name,
             runs,
             final_merge,
-            compare,
+            predicate,
             save_execution,
-            query,
+            oracle_driver: None,
         }
+    }
+}
+
+impl<'a, L, Q> FuzzerConfig<'a, CommitmentLog<L>, Q>
+where
+    L: IsLog,
+    Q: QueryOperation,
+{
+    /// Drive the commitment log's Omega oracle from the simulated network state.
+    pub fn with_omega_oracle(mut self) -> Self {
+        self.oracle_driver = Some(OracleDriver {
+            set_leader: |log, leader| log.oracle_mut().set_leader(ReplicaIdOwned::from(leader)),
+        });
+        self
     }
 }
 
@@ -64,6 +115,8 @@ pub struct RunConfig {
     pub generate_execution_graph: bool,
     /// Whether to disable stability (stabilize() will never be called)
     pub disable_stability: bool,
+    /// Sample retained replica memory every N issued operations; disabled by default.
+    pub memory_sample_interval: Option<usize>,
 }
 
 impl RunConfig {
@@ -115,6 +168,17 @@ impl RunConfig {
             seed,
             generate_execution_graph,
             disable_stability,
+            memory_sample_interval: None,
         }
+    }
+
+    /// Also samples the initial state, end of operations, each final merge, and final queries.
+    pub fn with_memory_sampling(mut self, interval: usize) -> Self {
+        assert!(
+            interval > 0,
+            "Memory sample interval must be greater than 0"
+        );
+        self.memory_sample_interval = Some(interval);
+        self
     }
 }

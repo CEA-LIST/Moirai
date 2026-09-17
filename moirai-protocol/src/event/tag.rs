@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::{id::EventId, lamport::Lamport};
 
+/// A tag that contains an event ID and a Lamport timestamp
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]

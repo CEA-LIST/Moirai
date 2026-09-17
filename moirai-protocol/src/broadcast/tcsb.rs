@@ -5,11 +5,11 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::replica::{ReplicaId, ReplicaIdOwned};
+use crate::replica::ReplicaIdOwned;
 use crate::{
-    HashMap, HashSet,
     broadcast::{
         batch::Batch,
+        internalizer::{Interner, Resolver, SharedInterner, lock_interner},
         message::{BatchMessage, EventMessage, SinceMessage},
         since::Since,
     },
@@ -19,8 +19,8 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport},
     log_id::LogId,
-    replica::ReplicaIdx,
-    utils::intern_str::{InternalizeOp, Interner, Resolver, SharedInterner, lock_interner},
+    replica::{ReplicaId, ReplicaIdx},
+    utils::hashmap::{HashMap, HashSet},
 };
 
 /// A read-only view of the causal-stability bookkeeping behind a replica.
@@ -305,14 +305,20 @@ pub trait IsTcsb<O> {
     /// logs were pointed at each other, which is a configuration mistake that
     /// otherwise shows up only as state that never converges.
     fn foreign_log_refusals(&self) -> u64;
+    /// Receive a message containing a single event from another replica.
     fn receive(&mut self, message: EventMessage<O>);
+    /// Receive a message containing a batch of events from another replica.
     fn receive_batch(&mut self, message: BatchMessage<O>);
+    /// Transform an operation into a message containing an event to be broadcast to other replicas.
     fn send(&mut self, op: O) -> EventMessage<O>;
+    /// Return a message containing the version vector and except set to pull events from other replicas.
     fn since(&self) -> SinceMessage;
+    /// Return the batch of events since the given version and are not in the except set.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O>;
+    /// Return the next causally ready event to be delivered, if any.
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
+    /// Return the new stable version if it has advanced
     fn is_stable(&mut self) -> Option<&Version>;
-    fn update_version(&mut self, version: &Version);
     /// Current causal-stability bookkeeping. See [`StabilitySnapshot`].
     fn stability(&self) -> StabilitySnapshot;
     /// `true` when this replica has already delivered at least one operation
@@ -334,11 +340,16 @@ pub trait IsTcsb<O> {
     /// instead of merging into its own.
     #[cfg(feature = "serde")]
     fn adopt(&mut self, snapshot: StateSnapshot<O>);
+    /// Return the replica IDs of all members in the system
+    fn members(&self) -> Vec<ReplicaIdOwned>;
+    /// Return the number of members in the system.
+    fn members_len(&self) -> usize;
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Tcsb<O> {
+    replica_idx: ReplicaIdx,
     /// Received events not yet causally ready.
     /// It contains only events from other replicas than the local one.
     inbox: HashMap<EventId, Event<O>>,
@@ -346,9 +357,11 @@ pub struct Tcsb<O> {
     /// It contains events from all replicas, including the local one.
     /// Organized by replica index and then by sequence number for efficient range queries.
     outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
+    /// The matrix clock tracks the latest known version of each replica, including the local one.
     matrix_clock: MatrixClock,
+    /// The last stable version is the greatest version such that all events causally preceding this version
+    /// have been delivered by all replicas.
     last_stable_version: Version,
-    replica_idx: ReplicaIdx,
     /// The member table, shared with every other log this node hosts. The
     /// clock above is indexed by it; `follow_shared_interner` keeps the two
     /// in step.
@@ -359,13 +372,17 @@ pub struct Tcsb<O> {
     /// Messages refused because they belong to another log. See
     /// [`IsTcsb::foreign_log_refusals`].
     foreign_log_refusals: u64,
-    /// TEMPORARY: for testing purposes only
+    /// The indices of the columns that were updated in the last matrix clock update, used for efficient stable version computation.
     last_updated_columns: Vec<ReplicaIdx>,
+    /// Snapshots of every version at which causal stability advanced.
+    /// The initial zero version is excluded.
+    #[cfg(feature = "test_utils")]
+    lsv_history: Vec<Version>,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug + InternalizeOp,
+    O: Clone + Debug,
 {
     fn new(replica_idx: ReplicaIdx, interner: SharedInterner, log_id: LogId) -> Self {
         let resolver = lock_interner(&interner).resolver().clone();
@@ -378,8 +395,9 @@ where
             replica_idx,
             log_id,
             foreign_log_refusals: 0,
-            // TEMPORARY: for testing purposes only
             last_updated_columns: Vec::new(),
+            #[cfg(feature = "test_utils")]
+            lsv_history: Vec::new(),
         }
     }
 
@@ -403,13 +421,7 @@ where
         self.follow_shared_interner();
         // TODO: do the checks before internalizing (i.e, before adding new replicas to the matrix clock)
         let event = self.internalize_event(message);
-        if self.is_valid(&event) {
-            self.inbox.insert(event.id().clone(), event.clone());
-            self.outbox
-                .entry(event.id().idx())
-                .or_default()
-                .insert(event.id().seq(), event);
-        }
+        self.record(event);
     }
 
     fn receive_batch(&mut self, message: BatchMessage<O>) {
@@ -421,13 +433,7 @@ where
         self.follow_shared_interner();
         let batch = self.internalize_batch(message);
         for event in batch.into_events() {
-            if self.is_valid(&event) {
-                self.inbox.insert(event.id().clone(), event.clone());
-                self.outbox
-                    .entry(event.id().idx())
-                    .or_default()
-                    .insert(event.id().seq(), event);
-            }
+            self.record(event);
         }
     }
 
@@ -438,7 +444,6 @@ where
         let lamport = Lamport::from(version);
         let resolver = self.matrix_clock.resolver().clone();
         let event_id = EventId::new(self.replica_idx, seq, resolver.clone());
-        // let op = op.translate_ids(self.replica_idx, &self.interner);
         let event = Event::new(event_id, lamport, op, version.clone());
         self.outbox
             .entry(event.id().idx())
@@ -473,18 +478,15 @@ where
         } else {
             self.prune_outbox(&lsv);
             self.last_stable_version = lsv;
+
+            #[cfg(feature = "test_utils")]
+            self.lsv_history.push(self.last_stable_version.clone());
+
             Some(&self.last_stable_version)
         }
     }
 
-    fn update_version(&mut self, version: &Version) {
-        self.follow_shared_interner();
-        self.matrix_clock.origin_version_mut().join(version);
-        self.matrix_clock
-            .set_by_idx(version.origin_idx(), version.clone());
-    }
-
-    /// # Performance
+    /// # Complexity
     /// `O(m log m + k log k)` where `m` is the number of replicas and `k` is the number of events returned.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
         self.follow_shared_interner();
@@ -722,11 +724,19 @@ where
         self.replica_idx = local_idx;
         self.last_updated_columns = Vec::new();
     }
+
+    fn members(&self) -> Vec<ReplicaIdOwned> {
+        self.matrix_clock.resolver().into_vec()
+    }
+
+    fn members_len(&self) -> usize {
+        self.matrix_clock.resolver().len()
+    }
 }
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone + InternalizeOp,
+    O: Debug + Clone,
 {
     /// Bring this log's clock in line with the shared member table before
     /// touching either.
@@ -786,6 +796,17 @@ where
         true
     }
 
+    /// Record a received event in the inbox and outbox if it is valid.
+    fn record(&mut self, event: Event<O>) {
+        if self.is_valid(&event) {
+            self.inbox.insert(event.id().clone(), event.clone());
+            self.outbox
+                .entry(event.id().idx())
+                .or_default()
+                .insert(event.id().seq(), event);
+        }
+    }
+
     fn is_valid(&self, event: &Event<O>) -> bool {
         // TODO: reject events from unknown replicas (?)
 
@@ -811,7 +832,7 @@ where
 
     /// Check that an event is causally ready to be delivered.
     /// It checks that all the event's dependencies have already been delivered.
-    /// # Performance
+    /// # Complexity
     /// `O(n)`
     fn is_causally_ready(&self, event: &Event<O>) -> bool {
         let version = self.matrix_clock.origin_version();
@@ -860,43 +881,29 @@ where
     /// Internalize an event by mapping its replica IDs to local indices.
     /// If a replica ID is unknown, it is added to the interner and the matrix clock.
     fn internalize_event(&mut self, message: EventMessage<O>) -> Event<O> {
-        let mut interner = lock_interner(&self.interner);
-        let (from, _) = interner.intern(message.event().id().origin_id());
-        interner.update_translation(from, message.resolver());
-        // Rows for everything the table holds, not only for what the two
-        // calls above added: the table is shared, so a member may have been
-        // interned by another log's traffic with this clock never told.
-        self.matrix_clock.grow_to(interner.resolver().len());
-
-        let resolver = interner.resolver().clone();
-        let event_id = EventId::new(from, message.event().id().seq(), resolver.clone());
-        let mut version = Version::new(from, resolver);
-
-        for (remote_idx, seq) in message.event().version().iter() {
-            let idx = interner.translate(from, remote_idx);
-            version.set_by_idx(idx, seq);
-        }
-
         let event = message.event();
-        let op = event.op().clone().internalize(&interner);
+
+        let (from, version) =
+            self.internalize(event.version(), event.id().origin_id(), message.resolver());
+
+        let op = event.op().clone();
+
+        let event_id = EventId::new(from, event.id().seq(), self.resolver());
+
         Event::new(event_id, *event.lamport(), op, version)
     }
 
     fn internalize_since(&mut self, message: SinceMessage) -> Since {
         let since = message.since();
 
-        let mut interner = lock_interner(&self.interner);
-        let (from, _) = interner.intern(since.origin_id());
-        interner.update_translation(from, message.resolver());
-        self.matrix_clock.grow_to(interner.resolver().len());
+        let (from, version) = self.internalize(
+            since.version(),
+            since.version().origin_id(),
+            message.resolver(),
+        );
 
-        let resolver = interner.resolver().clone();
-        let mut version = Version::new(from, resolver.clone());
-
-        for (remote_idx, seq) in since.version().iter() {
-            let idx = interner.translate(from, remote_idx);
-            version.set_by_idx(idx, seq);
-        }
+        let resolver = self.resolver();
+        let interner = lock_interner(&self.interner);
 
         #[allow(clippy::mutable_key_type)]
         let except: HashSet<EventId> = since
@@ -911,47 +918,86 @@ where
         Since::new(version, except)
     }
 
+    /// Internalize a batch of events by mapping their replica IDs to local indices.
     fn internalize_batch(&mut self, message: BatchMessage<O>) -> Batch<O> {
-        let (batch, batch_resolver) = message.into_parts();
-        let mut interner = lock_interner(&self.interner);
-        // Intern the batch origin ID
-        let (from, _) = interner.intern(batch.origin_id());
-        // Update the translation between our resolver and the batch resolver
-        interner.update_translation(from, &batch_resolver);
-        self.matrix_clock.grow_to(interner.resolver().len());
+        let (batch, resolver) = message.into_parts();
 
-        let resolver = interner.resolver().clone();
-        // Rebuild the batch version with local indices
-        let mut version = Version::new(from, resolver.clone());
-        for (remote_idx, seq) in batch.version().iter() {
-            let idx = interner.translate(from, remote_idx);
-            version.set_by_idx(idx, seq);
-        }
+        let (from, version) = self.internalize(batch.version(), batch.origin_id(), &resolver);
 
         let mut events = Vec::with_capacity(batch.events().len());
         // For each event, translate its event ID and version to our local indices
         for event in batch.into_events() {
             // Event origin idx in our mapping
-            let event_origin_idx = interner.translate(from, event.id().idx());
-            let event_id = EventId::new(event_origin_idx, event.id().seq(), resolver.clone());
-            let mut version = Version::new(event_origin_idx, resolver.clone());
-            for (remote_idx, seq) in event.version().iter() {
-                let idx = interner.translate(from, remote_idx);
-                version.set_by_idx(idx, seq);
-            }
-            let op = event.op().clone().internalize(&interner);
+            let event_origin_idx = lock_interner(&self.interner).translate(from, event.id().idx());
+            let event_id = EventId::new(event_origin_idx, event.id().seq(), self.resolver());
+            let version = self.internalize_version_from(event_origin_idx, from, event.version());
+            let op = event.op().clone();
             let e = Event::new(event_id, *event.lamport(), op, version);
             events.push(e);
         }
 
         Batch::new(events, version)
     }
+
+    /// The member table's resolver, cloned.
+    fn resolver(&self) -> Resolver {
+        lock_interner(&self.interner).resolver().clone()
+    }
+
+    fn internalize(
+        &mut self,
+        foreign_version: &Version,
+        origin_id: &ReplicaId,
+        foreign_resolver: &Resolver,
+    ) -> (ReplicaIdx, Version) {
+        let (from, table_len) = {
+            let mut interner = lock_interner(&self.interner);
+            // Intern the message origin ID
+            let (from, _) = interner.intern(origin_id);
+            // Update the translation between our resolver and the sender's
+            interner.update_translation(from, foreign_resolver);
+            (from, interner.resolver().len())
+        };
+
+        // Rows for everything the table holds, not only for what the two
+        // calls above added: the table is shared, so a member may have been
+        // interned by another log's traffic with this clock never told.
+        self.matrix_clock.grow_to(table_len);
+
+        let version = self.internalize_version(from, foreign_version);
+
+        (from, version)
+    }
+
+    fn internalize_version(&self, from: ReplicaIdx, foreign_version: &Version) -> Version {
+        self.internalize_version_from(from, from, foreign_version)
+    }
+
+    fn internalize_version_from(
+        &self,
+        origin_idx: ReplicaIdx,
+        translation_from: ReplicaIdx,
+        foreign_version: &Version,
+    ) -> Version {
+        let interner = lock_interner(&self.interner);
+        // Rebuild the version with local indices
+        let mut version = Version::new(origin_idx, interner.resolver().clone());
+
+        for (remote_idx, seq) in foreign_version.iter() {
+            let idx = interner.translate(translation_from, remote_idx);
+            version.set_by_idx(idx, seq);
+        }
+
+        version
+    }
 }
 
 #[cfg(feature = "test_utils")]
 pub trait IsTcsbTest<O>: IsTcsb<O> {
     fn matrix_clock(&self) -> &MatrixClock;
-    fn members(&self) -> Vec<ReplicaIdOwned>;
+    fn last_stable_version(&self) -> &Version;
+    fn lsv_history(&self) -> &[Version];
+    fn causally_stable_events_count(&self) -> usize;
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
         O: 'a;
@@ -967,19 +1013,29 @@ pub trait IsTcsbTest<O>: IsTcsb<O> {
 #[cfg(feature = "test_utils")]
 impl<O> IsTcsbTest<O> for Tcsb<O>
 where
-    O: Debug + Clone + InternalizeOp,
+    O: Debug + Clone,
 {
     fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
     }
 
-    fn members(&self) -> Vec<ReplicaIdOwned> {
-        self.matrix_clock.resolver().into_vec()
+    fn last_stable_version(&self) -> &Version {
+        &self.last_stable_version
+    }
+
+    fn lsv_history(&self) -> &[Version] {
+        &self.lsv_history
+    }
+
+    /// The number of causally stable events is the number of events that have been delivered and are causally stable.
+    /// It is the sum of the components of the LSV.
+    fn causally_stable_events_count(&self) -> usize {
+        self.last_stable_version.sum()
     }
 
     fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
-        O: 'a,
+        Self: 'a,
     {
         self.inbox.values()
     }
@@ -990,7 +1046,7 @@ where
 
     fn outbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
-        O: 'a,
+        Self: 'a,
     {
         self.outbox
             .values()
@@ -1024,16 +1080,11 @@ mod state_transfer {
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::utils::intern_str::Interner;
+    use crate::broadcast::internalizer::Interner;
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
 
-    impl InternalizeOp for Op {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
 
     /// A replica that interns itself first, then everybody else — the ordering
     /// `Replica::bootstrap` produces.
@@ -1234,16 +1285,11 @@ mod log_isolation {
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::utils::intern_str::Interner;
+    use crate::broadcast::internalizer::Interner;
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
 
-    impl InternalizeOp for Op {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
 
     fn tcsb(id: &str, members: &[&str], log_id: LogId) -> Tcsb<Op> {
         let mut interner = Interner::new();
@@ -1359,16 +1405,11 @@ mod shared_interner {
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::utils::intern_str::Interner;
+    use crate::broadcast::internalizer::Interner;
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Op(u32);
 
-    impl InternalizeOp for Op {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
 
     fn log_a() -> LogId {
         LogId::from_bytes([0xa1; 16])

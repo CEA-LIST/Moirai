@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use crate::event::id::EventId;
-
 pub trait QueryOperation {
     type Response;
 }
@@ -25,15 +23,22 @@ impl<V> Default for Read<V> {
     }
 }
 
-pub struct ReadId;
+#[derive(Debug)]
+pub struct ReadStable<V>(std::marker::PhantomData<V>);
 
-impl QueryOperation for ReadId {
-    type Response = Option<EventId>;
+impl<V> QueryOperation for ReadStable<V> {
+    type Response = V;
 }
 
-impl Default for ReadId {
+impl<V> ReadStable<V> {
+    pub fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<V> Default for ReadStable<V> {
     fn default() -> Self {
-        Self
+        Self::new()
     }
 }
 
@@ -47,18 +52,37 @@ where
     type Response = bool;
 }
 
-pub struct Get<'a, K, Q> {
-    pub key: &'a K,
-    pub nested_query: Q,
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Size;
 
-impl<'a, K, Q> Get<'a, K, Q> {
-    pub fn new(key: &'a K, nested_query: Q) -> Self {
-        Self { key, nested_query }
+impl Size {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<'a, K, Q> QueryOperation for Get<'a, K, Q>
+impl QueryOperation for Size {
+    type Response = usize;
+}
+
+pub struct Get<K, Q> {
+    pub key: K,
+    pub nested_query: Q,
+}
+
+impl<K, Q> Get<K, Q>
+where
+    K: Clone,
+{
+    pub fn new(key: &K, nested_query: Q) -> Self {
+        Self {
+            key: key.clone(),
+            nested_query,
+        }
+    }
+}
+
+impl<K, Q> QueryOperation for Get<K, Q>
 where
     Q: QueryOperation,
 {

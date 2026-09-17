@@ -3,17 +3,18 @@ use std::{
     ops::{Add, AddAssign, SubAssign},
 };
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use moirai_protocol::{
     crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp,
     state::stable_state::IsStableState,
 };
 
-use crate::counter::{
-    resettable_counter::Counter as ResettableCounter, simple_counter::Counter as SimpleCounter,
-};
+use crate::counter::resettable_counter::Counter as ResettableCounter;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct CounterStable<V>(V);
 
 impl<V> CounterStable<V> {
@@ -56,32 +57,5 @@ where
         if let ResettableCounter::Reset = tagged_op.op() {
             <CounterStable<V> as IsStableState<ResettableCounter<V>>>::clear(self)
         }
-    }
-}
-
-impl<V> IsStableState<SimpleCounter<V>> for CounterStable<V>
-where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
-{
-    fn is_default(&self) -> bool {
-        self.0 == V::default()
-    }
-
-    fn apply(&mut self, value: SimpleCounter<V>) {
-        match value {
-            SimpleCounter::Inc(v) => self.0 += v,
-            SimpleCounter::Dec(v) => self.0 -= v,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0 = V::default();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<SimpleCounter<V>>,
-        _tagged_op: &TaggedOp<SimpleCounter<V>>,
-    ) {
     }
 }

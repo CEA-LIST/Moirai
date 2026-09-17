@@ -28,3 +28,10 @@ keywords = [
     "rust",
 ]
 categories = []
+
+[profile.release]
+debug = true
+
+[profile.samply]
+inherits = "release"
+debug = true

@@ -1,45 +1,58 @@
-// #[cfg(feature = "test_utils")]
-// use deepsize::DeepSizeOf;
 use std::fmt::Debug;
 
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
 use crate::{
-    HashMap,
     clock::version_vector::Version,
     crdt::{
         eval::{Eval, EvalNested},
-        pure_crdt::PureCRDT,
         query::QueryOperation,
         redundancy::RedundancyRelation,
+        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
     },
-    event::{Event, id::EventId, tagged_op::TaggedOp},
-    state::{log::IsLog, stable_state::IsStableState, trace, unstable_state::IsUnstableState},
+    event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
+    state::{
+        cache::CachedLog, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
+        trace, unstable_state::IsUnstablePrune,
+    },
+    utils::hashmap::HashMap,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub type CachedVecLog<O, V> = CachedLog<VecLog<O>, V>;
+pub type CachedMapLog<O, V> = CachedLog<MapLog<O>, V>;
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-// #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
 {
     pub(crate) stable: O::StableState,
     pub(crate) unstable: U,
 }
 
+#[cfg(feature = "test_utils")]
+impl<O, U> deepsize::DeepSizeOf for POLog<O, U>
+where
+    O: ReplicatedDataType,
+    O::StableState: deepsize::DeepSizeOf,
+    U: deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)
+    }
+}
+
 impl<O, U> IsLog for POLog<O, U>
 where
-    O: PureCRDT + Clone,
-    U: IsUnstableState<O> + Default + Debug,
+    O: ReplicatedDataType + Clone + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
 {
-    type Value = O::Value;
+    type Command = O;
     type Op = O;
+    type Rejection = O::Rejection;
 
     fn new() -> Self {
         Self {
@@ -48,17 +61,15 @@ where
         }
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> bool {
-        O::is_enabled(op, &self.stable, &self.unstable)
+    fn prepare(&self, command: Self::Command) -> Self::Op {
+        command
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] _path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+        <O as UsesUnstableService<U>>::is_enabled(op, &self.stable, &self.unstable)
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let new_tagged_op = TaggedOp::from(&event);
         if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
             trace::note_redundant_on_arrival();
@@ -90,14 +101,18 @@ where
         // 2. for each of them, call stabilize, which may modify stable and/or unstable
         // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
 
-        let candidates = self.unstable.predecessors(version);
+        let candidates = self
+            .unstable
+            .predecessors(version)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
 
         for tagged_op in candidates {
-            let tagged_op_key = self.unstable.key_of(&tagged_op);
             O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
-            if self.unstable.get_by_key(&tagged_op_key).is_some() {
+            if self.unstable.get(tagged_op.id()).is_some() {
                 self.stable.apply(tagged_op.op().clone());
-                self.unstable.remove_by_key(&tagged_op_key);
+                self.unstable.remove(tagged_op.id());
             }
         }
     }
@@ -108,23 +123,41 @@ where
         // Recording which ids went is the difference between showing a viewer
         // "the key was removed" and showing them which edits it took with it.
         trace::note_reset();
-        self.stable.clear();
-        if conservative {
-            self.unstable.retain(|tagged_op| {
-                let dominated = tagged_op.id().is_predecessor_of(version);
-                if dominated {
-                    trace::note_superseded(tagged_op.id(), false);
-                }
-                !dominated
-            })
-        } else {
-            if trace::is_enabled() {
-                let removed: Vec<EventId> = self.unstable.iter().map(|t| t.id().clone()).collect();
-                for id in &removed {
-                    trace::note_superseded(id, false);
+        match <O as UsesUnstableService<U>>::causal_reset(
+            version,
+            conservative,
+            &self.stable,
+            &self.unstable,
+        ) {
+            CausalReset::Inject(ops) => {
+                for op in ops {
+                    let event_id = EventId::from(version);
+                    let lamport = Lamport::from(version);
+                    let event = Event::new(event_id, lamport, op, version.clone());
+                    self.unstable.append(event);
                 }
             }
-            self.unstable.clear();
+            CausalReset::Prune => {
+                self.stable.clear();
+                if conservative {
+                    self.unstable.retain(|tagged_op| {
+                        let dominated = tagged_op.id().is_predecessor_of(version);
+                        if dominated {
+                            trace::note_superseded(tagged_op.id(), false);
+                        }
+                        !dominated
+                    })
+                } else {
+                    if trace::is_enabled() {
+                        let removed: Vec<EventId> =
+                            self.unstable.iter().map(|t| t.id().clone()).collect();
+                        for id in &removed {
+                            trace::note_superseded(id, false);
+                        }
+                    }
+                    self.unstable.clear();
+                }
+            }
         }
     }
 
@@ -137,7 +170,7 @@ where
 
 impl<O, U> Default for POLog<O, U>
 where
-    O: PureCRDT,
+    O: ReplicatedDataType,
     U: Default,
 {
     fn default() -> Self {
@@ -150,8 +183,21 @@ where
 
 impl<O, U> POLog<O, U>
 where
-    O: PureCRDT,
-    U: IsUnstableState<O>,
+    O: ReplicatedDataType,
+{
+    pub fn stable(&self) -> &O::StableState {
+        &self.stable
+    }
+
+    pub fn unstable(&self) -> &U {
+        &self.unstable
+    }
+}
+
+impl<O, U> POLog<O, U>
+where
+    O: ReplicatedDataType,
+    U: IsUnstablePrune<O>,
 {
     fn prune_redundant_ops(
         &mut self,
@@ -183,10 +229,10 @@ where
 impl<Q, O, U> EvalNested<Q> for POLog<O, U>
 where
     Q: QueryOperation,
-    O: PureCRDT + Clone + Debug + Eval<Q>,
-    U: IsUnstableState<O> + Default + Debug,
+    O: ReplicatedDataType + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
+    U: IsUnstablePrune<O> + Default + Debug,
 {
-    fn execute_query(&self, q: Q) -> Q::Response {
+    fn execute_query(&self, q: &Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
     }
 }

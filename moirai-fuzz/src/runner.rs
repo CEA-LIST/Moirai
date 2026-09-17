@@ -1,30 +1,29 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
-use std::time::{Duration, Instant};
-
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
     broadcast::tcsb::{IsTcsbTest, Tcsb},
-    crdt::{eval::EvalNested, query::Read},
-    replica::{IsReplica, ReplicaIdx},
+    crdt::{eval::EvalNested, query::QueryOperation},
+    replica::{IsReplica, ReplicaId, ReplicaIdx},
     state::log::IsLog,
-    utils::intern_str::InternalizeOp,
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
+use std::fmt::Debug;
+use std::time::{Duration, Instant};
 
 use crate::{
-    HashMap,
-    config::QueryFn,
-    config::RunConfig,
+    config::{OracleDriver, Predicate, RunConfig},
     execution_graph::ExecutionGraph,
-    metrics::{FuzzMetrics, MetricsLog, StructureMetrics, set_disable_stability},
-    op_generator::OpGeneratorNested,
+    memory::{MemoryPhase, MemoryUsage},
+    metrics::{MetricsLog, set_disable_stability},
+    op_generator::CommandGenerator,
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, format_string_ellipsis, seed_to_hex},
+        hashmap::HashMap,
     },
 };
 
@@ -36,8 +35,6 @@ pub struct RunData {
     pub used_seed: [u8; 32],
     /// Final value observed after convergence
     pub first_value: String,
-    /// Structural metrics observed after convergence
-    pub final_metrics: StructureMetrics,
     /// Total time taken to deliver all ops, per replica
     pub total_time_to_deliver_per_replica: HashMap<ReplicaIdx, Duration>,
     /// Total time spent in effect() per replica
@@ -48,18 +45,25 @@ pub struct RunData {
     pub execution_graph_dot: Option<String>,
     /// Inter-replica concurrency ratio (if execution graph was generated)
     pub inter_replica_concurrency_ratio: Option<f64>,
+    pub memory_usage: Option<MemoryUsage>,
 }
 
-pub fn runner<L>(
+pub fn runner<L, Q>(
     config: RunConfig,
     final_merge: bool,
-    compare: fn(&L::Value, &L::Value) -> bool,
-    query: Option<QueryFn<L>>,
+    predicate: &Predicate<Q>,
+    oracle_driver: Option<&OracleDriver<L>>,
 ) -> RunData
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
-    <L as IsLog>::Op: InternalizeOp,
+    Q: QueryOperation,
+    <Q as QueryOperation>::Response: Debug,
+    L: IsLog + CommandGenerator + EvalNested<Q> + deepsize::DeepSizeOf,
+    L::Op: deepsize::DeepSizeOf,
 {
+    assert!(
+        config.memory_sample_interval != Some(0),
+        "Memory sample interval must be greater than 0"
+    );
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
         let rng: ChaCha8Rng = rand::make_rng();
@@ -74,6 +78,12 @@ where
     let mut rng = ChaCha8Rng::from_seed(used_seed);
 
     let mut replicas = bootstrap_n::<MetricsLog<L>, Tcsb<L::Op>>(config.num_replicas);
+    let mut memory_usage = config
+        .memory_sample_interval
+        .map(|_| MemoryUsage::default());
+    if let Some(memory) = &mut memory_usage {
+        memory.sample(0, MemoryPhase::Initial, &replicas);
+    }
     let reachability = config.reachability.clone().unwrap_or_else(|| {
         vec![vec![true; config.num_replicas.into()]; config.num_replicas.into()]
     });
@@ -127,8 +137,21 @@ where
             }
         }
 
-        // Send the operation
-        let op = replicas[replica_idx].state().generate(&mut rng);
+        if let Some(driver) = oracle_driver {
+            let replica_ids: Vec<_> = replicas.iter().map(|replica| replica.id()).collect();
+            let Some(leader_idx) =
+                select_omega_leader(replica_idx, &online, &reachability, &replica_ids)
+            else {
+                // An Omega-backed log cannot prepare a command until its oracle has an output.
+                continue;
+            };
+            let leader = replicas[leader_idx].id().to_owned();
+            driver.set_leader(replicas[replica_idx].state_mut().inner_mut(), &leader);
+        }
+
+        // Generate a client command. `send` then prepares the replicated payload, including any
+        // protocol metadata configured by the oracle driver above.
+        let command = replicas[replica_idx].state().generate_command(&mut rng);
         count_ops += 1;
 
         // Update progress bar
@@ -138,13 +161,16 @@ where
             ReplicaIdx(replica_idx),
             &mut total_time_to_deliver_per_replica,
             || {
-                replicas[replica_idx].send(op.clone()).unwrap_or_else(|| {
-                    panic!(
-                        "Failed to send operation from replica {}: {:?}",
-                        replicas[replica_idx].id(),
-                        op
-                    )
-                })
+                replicas[replica_idx]
+                    .send(command.clone())
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to send operation from replica {}: {:?}. Error: {}",
+                            replicas[replica_idx].id(),
+                            command,
+                            err
+                        )
+                    })
             },
         );
 
@@ -187,6 +213,12 @@ where
                 }
             }
         }
+        if let Some(interval) = config.memory_sample_interval
+            && (count_ops % interval == 0 || count_ops == config.num_operations)
+            && let Some(memory) = &mut memory_usage
+        {
+            memory.sample(count_ops, MemoryPhase::Operations, &replicas);
+        }
     }
 
     pb.finish_with_message("All operations completed ✓");
@@ -218,6 +250,9 @@ where
                     );
 
                     merge_pb.inc(1);
+                    if let Some(memory) = &mut memory_usage {
+                        memory.sample(count_ops, MemoryPhase::FinalMerge, &replicas);
+                    }
                 }
             }
         }
@@ -253,15 +288,8 @@ where
     );
     check_pb.set_message("Checking convergence...");
 
-    let first_value = replicas[0].query(Read::new());
+    let first_value = replicas[0].query(&predicate.query);
     let val = format_string_ellipsis(&first_value, Some(100));
-    let final_metrics = replicas[0].state().structure_metrics();
-    debug_assert!(
-        replicas[0].state().structure_metrics() == replicas[1].state().structure_metrics(),
-        "Replicas 0 and 1 have different structure metrics after convergence: {:?} vs {:?}",
-        replicas[0].state().structure_metrics(),
-        replicas[1].state().structure_metrics()
-    );
     let num_delivered_events = replicas[0].num_delivered_events();
 
     for (idx, r) in replicas.iter().enumerate().skip(1) {
@@ -274,8 +302,8 @@ where
                 r.id()
             );
         }
-        let value = r.query(Read::new());
-        if !compare(&first_value, &value) {
+        let value = r.query(&predicate.query);
+        if !(predicate.cmp)(&first_value, &value) {
             check_pb.finish_and_clear();
             if let Some(ref graph) = execution_graph {
                 warn!(
@@ -289,6 +317,9 @@ where
     }
 
     check_pb.finish_with_message("Convergence verified ✓");
+    if let Some(memory) = &mut memory_usage {
+        memory.sample(count_ops, MemoryPhase::FinalQueries, &replicas);
+    }
     debug!("Run completed");
 
     let total_time_in_effect_per_replica: HashMap<ReplicaIdx, Duration> = replicas
@@ -322,13 +353,28 @@ where
         config,
         used_seed,
         first_value: val,
-        final_metrics,
         total_time_to_deliver_per_replica,
         total_time_in_effect_per_replica,
         total_time_in_query_per_replica,
         execution_graph_dot,
         inter_replica_concurrency_ratio,
+        memory_usage,
     }
+}
+
+fn select_omega_leader(
+    selected: usize,
+    online: &[bool],
+    reachability: &[Vec<bool>],
+    replica_ids: &[&ReplicaId],
+) -> Option<usize> {
+    if online[selected] {
+        return Some(selected);
+    }
+
+    (0..online.len())
+        .filter(|&candidate| online[candidate] && reachability[selected][candidate])
+        .min_by(|&left, &right| replica_ids[left].cmp(replica_ids[right]))
 }
 
 fn timed<F, R>(replica_idx: ReplicaIdx, recorder: &mut HashMap<ReplicaIdx, Duration>, f: F) -> R

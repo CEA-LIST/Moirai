@@ -14,7 +14,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     state::unstable_state::IsUnstableState,
-    utils::intern_str::{InternalizeOp, Interner},
+    broadcast::internalizer::{InternalizeOp, Interner},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;

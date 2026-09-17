@@ -3,4 +3,5 @@
 **/target
 *.dot
 *.vscode
-*.DS_Store
+.DS_Store
+__MACOSX/

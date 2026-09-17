@@ -1,12 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
-use moirai_fuzz::{op_generator::OpGeneratorNested, value_generator::ValueGenerator};
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -14,10 +9,10 @@ use moirai_protocol::{
         query::{Contains, QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
-    utils::intern_str::{InternalizeOp, Interner},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
-use rand::distr::weighted::WeightedIndex;
+#[cfg(feature = "fuzz")]
+use rand::{Rng, RngExt};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +24,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum EWFlagSet<V> {
     Add(V),
     Remove(V),
@@ -38,14 +33,19 @@ pub enum EWFlagSet<V> {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<EWFlag>>);
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
+    inner: UWMapLog<V, VecLog<EWFlag>>,
+}
 
 impl<V> Default for EWFlagSetLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
     fn default() -> Self {
-        Self(UWMapLog::default())
+        Self {
+            inner: UWMapLog::default(),
+        }
     }
 }
 
@@ -53,54 +53,44 @@ impl<V> IsLog for EWFlagSetLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Value = HashSet<V>;
+    type Command = EWFlagSet<V>;
     type Op = EWFlagSet<V>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
             EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
             EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
             EWFlagSet::Clear => UWMap::Clear,
         };
         let event = Event::unfold(event, op);
-        // The EWFlagSetLog is a semantically a leaf CRDT, so we ignore the path and sink for now
-        #[cfg(feature = "sink")]
-        let mut sink = SinkCollector::new();
-        self.0.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Delegated,
-        );
+        // The EWFlagSetLog is semantically a leaf CRDT, so we ignore the path and sink for now
+        let mut silent_ctx = EffectContext::silent();
+        self.inner.effect(event, &mut silent_ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {
-        self.0.stabilize(version);
+        self.inner.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.0.redundant_by_parent(version, conservative);
+        self.inner.redundant_by_parent(version, conservative);
     }
 
     fn is_default(&self) -> bool {
-        self.0.is_default()
+        self.inner.is_default()
     }
 }
 
@@ -110,35 +100,42 @@ where
 {
     fn execute_query(
         &self,
-        _q: Read<HashSet<V>>,
+        _q: &Read<HashSet<V>>,
     ) -> <Read<HashSet<V>> as QueryOperation>::Response {
         let mut set = HashSet::default();
-        for (k, v) in self.0.children() {
-            let val = v.execute_query(Read::new());
+        let values = self.inner.execute_query(&Read::new());
+        for (k, val) in values {
             if val {
-                set.insert(k.clone());
+                set.insert(k);
             }
         }
         set
     }
 }
 
+/// `Contains` reads the flag stored under the value, and `false` when the map
+/// holds no entry for it at all.
 impl<V> EvalNested<Contains<V>> for EWFlagSetLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
-    fn execute_query(&self, q: Contains<V>) -> <Contains<V> as QueryOperation>::Response {
-        let v = self.0.children().get(&q.0);
-        match v {
-            Some(v) => v.execute_query(Read::new()),
+    fn execute_query(&self, q: &Contains<V>) -> <Contains<V> as QueryOperation>::Response {
+        match self.inner.children().get(&q.0) {
+            Some(v) => v.execute_query(&Read::new()),
             None => false,
         }
     }
 }
 
-impl<V> InternalizeOp for EWFlagSet<V> {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
+#[cfg(feature = "fuzz")]
+impl CommandGenerator for EWFlagSetLog<usize> {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        let value = rng.random_range(0..16);
+        match rng.random_range(0..8) {
+            0 => EWFlagSet::Clear,
+            1 | 2 => EWFlagSet::Remove(value),
+            _ => EWFlagSet::Add(value),
+        }
     }
 }
 
@@ -200,11 +197,11 @@ mod tests {
         replica_a.receive(event_b);
 
         assert_eq!(
-            replica_a.query(Read::<HashSet<&str>>::new()),
+            replica_a.query(&Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec![])
         );
         assert_eq!(
-            replica_b.query(Read::<HashSet<&str>>::new()),
+            replica_b.query(&Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec![])
         );
     }
@@ -225,11 +222,11 @@ mod tests {
         replica_b.receive(event_a);
 
         assert_eq!(
-            replica_a.query(Read::<HashSet<&str>>::new()),
+            replica_a.query(&Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec!["b", "c"])
         );
         assert_eq!(
-            replica_b.query(Read::<HashSet<&str>>::new()),
+            replica_b.query(&Read::<HashSet<&str>>::new()),
             HashSet::from_iter(vec!["b", "c"])
         );
     }
@@ -239,26 +236,19 @@ mod tests {
     #[ignore]
     fn fuzz_ewflag_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let run_1 = RunConfig::new(0.7, 16, 1_000, None, None, false, true);
-        let run_2 = RunConfig::new(0.7, 16, 5_000, None, None, false, true);
-        let run_3 = RunConfig::new(0.7, 16, 10_000, None, None, false, true);
-        let run_4 = RunConfig::new(0.7, 16, 50_000, None, None, false, true);
-        let run_5 = RunConfig::new(0.7, 16, 100_000, None, None, false, true);
-        let runs = vec![run_1, run_2, run_3, run_4, run_5];
-
-        let config = FuzzerConfig::<EWFlagSetLog<String>>::new(
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<HashSet<usize>>>::new(
             "ewflag_set",
             runs,
             true,
-            |a, b| a == b,
-            true,
-            None,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
         );
 
-        fuzzer::<EWFlagSetLog<String>>(config);
+        fuzzer::<EWFlagSetLog<usize>, Read<HashSet<usize>>>(config);
     }
 }

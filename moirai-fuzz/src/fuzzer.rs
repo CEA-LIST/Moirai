@@ -1,28 +1,30 @@
 // TODO: add information about the max number of events between two stabilizations
 // TODO: add information about the shape of the execution graph (height, width, etc.)
 
+use std::fmt::Debug;
+
 use log::{debug, info, warn};
 use moirai_protocol::{
-    crdt::{eval::EvalNested, query::Read},
+    crdt::{eval::EvalNested, query::QueryOperation},
     state::log::IsLog,
-    utils::intern_str::InternalizeOp,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{FuzzerConfig, RunConfig},
     display::{display_config_table, display_run_results, display_summary},
-    metrics::{FuzzMetrics, StructureMetrics},
-    op_generator::OpGeneratorNested,
+    op_generator::CommandGenerator,
     runner::{RunData, runner},
     serialize::save_execution_record,
     utils::format::seed_to_hex,
 };
 
-pub fn fuzzer<L>(config: FuzzerConfig<L>)
+pub fn fuzzer<L, Q>(config: FuzzerConfig<L, Q>)
 where
-    L: IsLog + OpGeneratorNested + EvalNested<Read<<L as IsLog>::Value>> + FuzzMetrics,
-    <L as IsLog>::Op: InternalizeOp,
+    L: IsLog + CommandGenerator + EvalNested<Q> + deepsize::DeepSizeOf,
+    L::Op: deepsize::DeepSizeOf,
+    Q: QueryOperation,
+    <Q as QueryOperation>::Response: Debug,
 {
     let _ = env_logger::builder()
         .format(|buf, record| {
@@ -30,17 +32,33 @@ where
             writeln!(buf, "{}", record.args())
         })
         .try_init();
+    let FuzzerConfig {
+        name,
+        runs,
+        final_merge,
+        predicate,
+        save_execution,
+        oracle_driver,
+    } = config;
+
+    if oracle_driver.is_some() {
+        assert!(
+            runs.iter().all(|run| run.churn_rate < 1.0),
+            "Omega fuzzing requires a churn rate below 1.0 so that an online leader can eventually be selected"
+        );
+    }
+
     let mut run_results_list: Vec<(usize, (RunResults, RunConfig))> = Vec::new();
 
-    for (run_idx, run_config) in config.runs.into_iter().enumerate() {
+    for (run_idx, run_config) in runs.into_iter().enumerate() {
         debug!("Starting run {}", run_idx + 1);
 
         // Run configuration display
-        let config_table = display_config_table(&run_config, config.final_merge);
+        let config_table = display_config_table(&run_config, final_merge);
 
         info!("{}", config_table);
 
-        let run_data = runner::<L>(run_config, config.final_merge, config.compare, config.query);
+        let run_data = runner::<L, Q>(run_config, final_merge, &predicate, oracle_driver.as_ref());
         let results = run_results(&run_data);
 
         debug!("Run {} completed", run_idx + 1);
@@ -49,7 +67,7 @@ where
 
         info!("{}", run_table);
 
-        if config.save_execution {
+        if save_execution {
             run_results_list.push((run_idx + 1, (results, run_data.config)));
         }
     }
@@ -63,14 +81,9 @@ where
     }
 
     // Save all runs at the end
-    if config.save_execution
+    if save_execution
         && !run_results_list.is_empty()
-        && let Err(e) = save_execution_record(
-            config.name,
-            config.final_merge,
-            run_results_list,
-            maybe_summary,
-        )
+        && let Err(e) = save_execution_record(name, final_merge, run_results_list, maybe_summary)
     {
         warn!("Failed to save execution record: {e}");
     }
@@ -100,8 +113,9 @@ pub struct RunResults {
     pub inter_replica_concurrency_ratio: Option<f64>,
     /// Seed
     pub used_seed: String,
-    /// Structural metrics of the final converged state
-    pub final_metrics: StructureMetrics,
+    /// Optional retained-memory timeline and sampled peaks, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_usage: Option<crate::memory::MemoryUsage>,
 }
 
 fn run_results(run_data: &RunData) -> RunResults {
@@ -174,7 +188,7 @@ fn run_results(run_data: &RunData) -> RunResults {
         execution_graph_dot: run_data.execution_graph_dot.clone(),
         inter_replica_concurrency_ratio: run_data.inter_replica_concurrency_ratio,
         used_seed: seed_to_hex(&run_data.used_seed),
-        final_metrics: run_data.final_metrics,
+        memory_usage: run_data.memory_usage.clone(),
     }
 }
 
@@ -191,12 +205,6 @@ pub struct ExecutionSummary {
     pub max_runs_per_replica_throughput_ops_per_sec: f64,
     /// Average time to deliver an operation (in milliseconds), across all runs, across all replicas
     pub avg_time_per_op_ms: f64,
-    /// Average final structural size across runs
-    pub avg_final_size: f64,
-    /// Maximum final tree width across runs
-    pub max_final_width: usize,
-    /// Maximum final tree height across runs
-    pub max_final_height: usize,
 }
 
 fn execution_summary(
@@ -214,20 +222,5 @@ fn execution_summary(
         min_runs_per_replica_throughput_ops_per_sec: 0.0,
         max_runs_per_replica_throughput_ops_per_sec: 0.0,
         avg_time_per_op_ms: 0.0,
-        avg_final_size: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.size as f64)
-            .sum::<f64>()
-            / total_runs as f64,
-        max_final_width: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.width)
-            .max()
-            .unwrap_or(0),
-        max_final_height: run_results_list
-            .iter()
-            .map(|(_, (results, _))| results.final_metrics.height)
-            .max()
-            .unwrap_or(0),
     })
 }

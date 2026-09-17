@@ -1,2 +1,2 @@
 pub mod boxer;
-pub mod intern_str;
+pub mod hashmap;

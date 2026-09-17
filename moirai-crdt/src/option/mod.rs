@@ -1,13 +1,7 @@
+use std::convert::Infallible;
+
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::{FuzzMetrics, StructureMetrics};
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGeneratorNested;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::Sink;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkCollector;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::{object_path::ObjectPath, sink::SinkOwnership};
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -15,14 +9,14 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::log::IsLog,
-    utils::intern_str::{InternalizeOp, Interner},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum Optional<O> {
     Set(O),
     Unset,
@@ -37,86 +31,49 @@ pub enum Optional<O> {
         deserialize = "L: serde::de::DeserializeOwned"
     ))
 )]
-pub struct OptionLog<L> {
-    child: Option<L>,
-}
-
-impl<L> Default for OptionLog<L> {
-    fn default() -> Self {
-        Self { child: None }
-    }
-}
-
-impl<L> OptionLog<L> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn child(&self) -> Option<&L> {
-        self.child.as_ref()
-    }
-}
-
-impl<O> InternalizeOp for Optional<O>
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+pub struct OptionLog<L>
 where
-    O: InternalizeOp,
+    L: IsLog,
 {
-    fn internalize(self, interner: &Interner) -> Self {
-        match self {
-            Optional::Set(o) => Optional::Set(o.internalize(interner)),
-            Optional::Unset => Optional::Unset,
-        }
-    }
+    child: Option<L>,
 }
 
 impl<L> IsLog for OptionLog<L>
 where
     L: IsLog,
 {
-    type Value = Option<L::Value>;
+    type Command = Optional<L::Op>;
     type Op = Optional<L::Op>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] ownership: SinkOwnership,
-    ) {
+    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             Optional::Set(o) => {
-                #[cfg(feature = "sink")]
-                {
-                    if self.child.is_some() {
-                        sink.collect(Sink::update(path.clone()));
-                    } else {
-                        sink.collect(Sink::create(path.clone()));
-                    }
+                if self.child.is_some() {
+                    ctx.update();
+                } else {
+                    ctx.create();
                 }
                 let child_op = Event::unfold(event, o);
-                self.child.get_or_insert_with(L::default).effect(
-                    child_op,
-                    #[cfg(feature = "sink")]
-                    path,
-                    #[cfg(feature = "sink")]
-                    sink,
-                    #[cfg(feature = "sink")]
-                    SinkOwnership::Delegated,
-                );
+                ctx.with_delegated(|ctx| {
+                    self.child
+                        .get_or_insert_with(L::default)
+                        .effect(child_op, ctx);
+                });
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
             Optional::Unset => {
-                #[cfg(feature = "sink")]
-                if ownership == SinkOwnership::Owned {
-                    sink.collect(Sink::delete(path.clone()));
+                if ctx.is_owned() {
+                    ctx.delete();
                 }
                 if let Some(child) = self.child.as_mut() {
                     child.redundant_by_parent(event.version(), true);
@@ -149,50 +106,59 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<L> FuzzMetrics for OptionLog<L>
+impl<L> CommandGenerator for OptionLog<L>
 where
-    L: FuzzMetrics,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
 {
-    fn structure_metrics(&self) -> StructureMetrics {
-        self.child
-            .as_ref()
-            .map(FuzzMetrics::structure_metrics)
-            .unwrap_or_else(StructureMetrics::empty)
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<L> OpGeneratorNested for OptionLog<L>
-where
-    L: OpGeneratorNested,
-{
-    fn generate(&self, rng: &mut impl rand::Rng) -> Self::Op {
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         match &self.child {
             Some(child) => {
                 if rng.random_bool(1.0 / 5.0) {
                     Optional::Unset
                 } else {
-                    Optional::Set(child.generate(rng))
+                    Optional::Set(child.generate_command(rng))
                 }
             }
-            None => Optional::Set(<L as OpGeneratorNested>::generate(&L::default(), rng)),
+            None => Optional::Set(<L as CommandGenerator>::generate_command(
+                &L::default(),
+                rng,
+            )),
         }
     }
 }
 
-impl<L> EvalNested<Read<<Self as IsLog>::Value>> for OptionLog<L>
+impl<L, V> EvalNested<Read<Option<V>>> for OptionLog<L>
 where
-    L: IsLog + EvalNested<Read<<L as IsLog>::Value>>,
-    <L as IsLog>::Value: Default + PartialEq,
+    L: IsLog + EvalNested<Read<V>>,
+    V: Clone + Default + PartialEq,
 {
-    fn execute_query(
-        &self,
-        _q: Read<Self::Value>,
-    ) -> <Read<Self::Value> as QueryOperation>::Response {
+    fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {
         match self.child {
-            Some(ref child) => Some(child.execute_query(Read::new())),
+            Some(ref child) => Some(child.execute_query(&Read::new())),
             None => Default::default(),
         }
+    }
+}
+
+impl<L> OptionLog<L>
+where
+    L: IsLog,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn child(&self) -> Option<&L> {
+        self.child.as_ref()
+    }
+}
+
+impl<L> Default for OptionLog<L>
+where
+    L: IsLog,
+{
+    fn default() -> Self {
+        Self { child: None }
     }
 }
 
@@ -219,8 +185,8 @@ mod tests {
         let event = replica_a.send(Optional::Set(Counter::Inc(5))).unwrap();
         replica_b.receive(event);
 
-        assert_eq!(replica_a.query(Read::new()), Some(5));
-        assert_eq!(replica_b.query(Read::new()), Some(5));
+        assert_eq!(replica_a.query(&Read::new()), Some(5));
+        assert_eq!(replica_b.query(&Read::new()), Some(5));
     }
 
     #[test]
@@ -233,8 +199,8 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), Some(7));
-        assert_eq!(replica_b.query(Read::new()), Some(7));
+        assert_eq!(replica_a.query(&Read::new()), Some(7));
+        assert_eq!(replica_b.query(&Read::new()), Some(7));
     }
 
     #[test]
@@ -250,7 +216,30 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(Read::new()), Some(2));
-        assert_eq!(replica_b.query(Read::new()), Some(2));
+        assert_eq!(replica_a.query(&Read::new()), Some(2));
+        assert_eq!(replica_b.query(&Read::new()), Some(2));
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_optional_counter() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, Predicate, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        type OptionalCounter = OptionLog<VecLog<Counter<i32>>>;
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<OptionalCounter, Read<Option<i32>>>::new(
+            "optional_counter",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+
+        fuzzer::<OptionalCounter, Read<Option<i32>>>(config);
     }
 }

@@ -3,47 +3,65 @@ use std::fmt::Debug;
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-#[cfg(feature = "test_utils")]
-use crate::broadcast::tcsb::IsTcsbTest;
 #[cfg(feature = "serde")]
 use crate::broadcast::tcsb::StateSnapshot;
-#[cfg(feature = "sink")]
-use crate::state::{object_path::ObjectPath, sink::SinkCollector, sink::SinkOwnership};
+#[cfg(feature = "test_utils")]
+use crate::{broadcast::tcsb::IsTcsbTest, clock::version_vector::Version};
 use crate::{
     broadcast::{
+        internalizer::{Interner, SharedInterner, lock_interner},
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::{IsTcsb, StabilitySnapshot},
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     log_id::LogId,
-    state::log::IsLog,
-    utils::intern_str::{Interner, SharedInterner, lock_interner},
+    state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
 };
 
 pub type ReplicaId = str;
 pub type ReplicaIdOwned = String;
 
+/// Local index of the replica. It is an alias for its string ID.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaIdx(pub usize);
 
+/// A replica in the system, which maintains a local state and communicates with other replicas via messages.
 pub trait IsReplica<L>
 where
     L: IsLog,
 {
-    fn new(id: ReplicaIdOwned) -> Self;
+    /// Inputs of the clients to the replica.
+    type Command;
+    /// Content of the event messages. In most cases, it will be the same as the input command.
+    type Payload;
+
+    /// Return the ID of this replica.
     fn id(&self) -> &ReplicaId;
-    fn receive(&mut self, message: EventMessage<L::Op>);
-    fn receive_batch(&mut self, message: BatchMessage<L::Op>);
+    /// Prepare a command to be sent to the network.
+    fn prepare(&self, cmd: Self::Command) -> Self::Payload;
+    /// Receive a message from the network.
+    fn receive(&mut self, message: EventMessage<Self::Payload>);
+    /// Receive a batch message from the network.
+    fn receive_batch(&mut self, message: BatchMessage<Self::Payload>);
+    /// Return a `since` message representing a request for all events causally after the given version.
     fn since(&self) -> SinceMessage;
-    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>>;
-    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op>;
-    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    /// Send a command to the network. Returns the message to be sent, or the log's rejection.
+    fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection>;
+    /// Return a batch message containing all events causally after the given version.
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
+    // TODO: add a method for state transfer
+    /// Query the current state of the replica with the given query operation.
+    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
     where
         L: EvalNested<Q>;
-    fn update(&mut self, op: L::Op);
+    /// Update the state of the replica with the given operation.
+    fn update(&mut self, cmd: Self::Command) -> Result<(), L::Rejection> {
+        self.send(cmd)?;
+        Ok(())
+    }
     /// Bootstrap a replica hosting a *fresh* log.
     ///
     /// Mints an id, which is right for the replica that creates a log and
@@ -79,9 +97,13 @@ where
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Replica<L, T> {
+    /// Replica ID (must be unique across all replicas in the system)
     id: ReplicaIdOwned,
+    /// Communication-layer
     tcsb: T,
+    /// Replica state
     state: L,
 }
 
@@ -90,53 +112,44 @@ where
     L: IsLog,
     T: IsTcsb<L::Op> + Debug,
 {
-    fn new(id: ReplicaIdOwned) -> Self {
-        let mut interner = Interner::new();
-        let idx = interner.intern(&id);
-        Self {
-            id,
-            tcsb: T::new(idx.0, interner.into_shared(), LogId::generate()),
-            state: L::new(),
-        }
+    type Command = L::Command;
+    type Payload = L::Op;
+
+    fn prepare(&self, cmd: Self::Command) -> Self::Payload {
+        self.state.prepare(cmd)
     }
 
-    fn receive(&mut self, message: EventMessage<L::Op>) {
+    fn receive(&mut self, message: EventMessage<Self::Payload>) {
         self.tcsb.receive(message);
         while let Some(e) = self.tcsb.next_causally_ready() {
             self.deliver(e);
         }
     }
 
-    fn receive_batch(&mut self, message: BatchMessage<L::Op>) {
+    fn receive_batch(&mut self, message: BatchMessage<Self::Payload>) {
         self.tcsb.receive_batch(message);
         while let Some(e) = self.tcsb.next_causally_ready() {
             self.deliver(e);
         }
     }
 
-    fn send(&mut self, op: L::Op) -> Option<EventMessage<L::Op>> {
-        if !self.state.is_enabled(&op) {
-            return None;
-        }
-        let op = L::prepare(op);
-        let message = self.tcsb.send(op);
+    fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection> {
+        let payload = self.prepare(cmd);
+        self.state.is_enabled(&payload)?;
+        let message = self.tcsb.send(payload);
         self.deliver(message.event().clone());
-        Some(message)
+        Ok(message)
     }
 
-    fn pull(&mut self, since: SinceMessage) -> BatchMessage<L::Op> {
+    fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload> {
         self.tcsb.pull(since)
     }
 
-    fn query<Q: QueryOperation>(&self, q: Q) -> Q::Response
+    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
     where
         L: EvalNested<Q>,
     {
         self.state.eval(q)
-    }
-
-    fn update(&mut self, op: L::Op) {
-        self.send(op).unwrap();
     }
 
     fn since(&self) -> SinceMessage {
@@ -241,22 +254,39 @@ where
         // A no-op unless someone has called `trace::set_enabled` — see the
         // module header for why this costs nothing when nobody is watching.
         crate::state::trace::begin(event.id(), event.lamport());
-        #[cfg(feature = "sink")]
+        // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)
         let mut sink = SinkCollector::new();
-        #[cfg(feature = "sink")]
-        let object_path = ObjectPath::new("root"); // TODO: pass actual path
-        self.state.effect(
-            event,
-            #[cfg(feature = "sink")]
-            object_path.clone(),
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Owned,
-        );
+        let mut ctx = EffectContext::root("root", Some(&mut sink));
+
+        self.state.effect(event, &mut ctx);
+
         let maybe_version = self.tcsb.is_stable();
         if let Some(version) = maybe_version {
             self.state.stabilize(version);
+        }
+    }
+
+    /// Bootstrap a replica whose log already carries `state`.
+    pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
+        assert!(
+            members.contains(&&(*id)),
+            "Bootstrap replica ID {} must be included in members list {:?}",
+            id,
+            members
+        );
+        let interner = Interner::new().into_shared();
+        let idx = {
+            let mut table = lock_interner(&interner);
+            let (idx, _) = table.intern(&id);
+            for member in members {
+                table.intern(member);
+            }
+            idx
+        };
+        Self {
+            id,
+            tcsb: T::new(idx, interner, LogId::generate()),
+            state,
         }
     }
 }
@@ -273,6 +303,12 @@ where
 
     pub fn num_delivered_events(&self) -> usize {
         self.tcsb.matrix_clock().origin_version().sum()
+    }
+
+    /// Versions at which the communication layer advanced causal stability.
+    /// The initial zero version is not included.
+    pub fn stable_version_history(&self) -> &[Version] {
+        self.tcsb.lsv_history()
     }
 
     pub fn state(&self) -> &L {

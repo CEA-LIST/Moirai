@@ -24,7 +24,7 @@ use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
-use moirai_protocol::utils::intern_str::{lock_interner, InternalizeOp, Interner, SharedInterner};
+use moirai_protocol::broadcast::internalizer::{lock_interner, InternalizeOp, Interner, SharedInterner};
 
 use crate::composite::CompositeTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};

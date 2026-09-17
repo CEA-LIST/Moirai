@@ -1,16 +1,20 @@
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-use crate::{HashSet, clock::version_vector::Version, event::id::EventId, replica::ReplicaId};
+use crate::{
+    clock::version_vector::Version, event::id::EventId, replica::ReplicaId, utils::hashmap::HashSet,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+/// Request all events since the given version, except for the events in the `except` set.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Since {
     version: Version,
+    /// Except the events in this set
     except: HashSet<EventId>,
 }
 

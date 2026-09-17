@@ -1,15 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::FuzzMetrics;
-#[cfg(feature = "fuzz")]
-use moirai_fuzz::metrics::StructureMetrics;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::object_path::ObjectPath;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkCollector;
-#[cfg(feature = "sink")]
-use moirai_protocol::state::sink::SinkOwnership;
+use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -17,11 +9,12 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{log::IsLog, po_log::VecLog},
-    utils::intern_str::{InternalizeOp, Interner},
+    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "fuzz")]
+use rand::Rng;
 
 use crate::{
     HashMap,
@@ -31,6 +24,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum AWBag<V> {
     Add(V),
     Remove(V),
@@ -46,6 +40,7 @@ pub enum AWBag<V> {
         deserialize = "V: serde::de::DeserializeOwned"
     ))
 )]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct AWBagLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<Counter<usize>>>);
 
 impl<V> Default for AWBagLog<V>
@@ -61,24 +56,23 @@ impl<V> IsLog for AWBagLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Value = HashMap<V, usize>;
+    type Command = AWBag<V>;
     type Op = AWBag<V>;
+    type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> bool {
-        true
+    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+        cmd
     }
 
-    fn effect(
-        &mut self,
-        event: Event<Self::Op>,
-        #[cfg(feature = "sink")] path: ObjectPath,
-        #[cfg(feature = "sink")] _sink: &mut SinkCollector,
-        #[cfg(feature = "sink")] _ownership: SinkOwnership,
-    ) {
+    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
+
+    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
             AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
             AWBag::Remove(k) => UWMap::Update(k.clone(), Counter::Dec(1)),
@@ -86,17 +80,8 @@ where
         };
         let event = Event::unfold(event, op);
         // While the Bag contains a map, it is semantically a leaf CRDT, so we ignore the path and sink.
-        #[cfg(feature = "sink")]
-        let mut sink = SinkCollector::new();
-        self.0.effect(
-            event,
-            #[cfg(feature = "sink")]
-            path,
-            #[cfg(feature = "sink")]
-            &mut sink,
-            #[cfg(feature = "sink")]
-            SinkOwnership::Delegated,
-        );
+        let mut silent_ctx = EffectContext::silent();
+        self.0.effect(event, &mut silent_ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {
@@ -118,28 +103,34 @@ where
 {
     fn execute_query(
         &self,
-        _q: Read<HashMap<V, usize>>,
+        _q: &Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
-        self.0.execute_query(Read::new())
-    }
-}
-
-impl<V> InternalizeOp for AWBag<V>
-where
-    V: Clone + Hash + Debug + Eq,
-{
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
+        self.0.execute_query(&Read::new())
     }
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> FuzzMetrics for AWBagLog<V>
+impl<V> CommandGenerator for AWBagLog<V>
 where
-    V: Clone + Hash + Debug + Eq,
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
 {
-    fn structure_metrics(&self) -> StructureMetrics {
-        StructureMetrics::collection()
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        use rand::distr::{Distribution, weighted::WeightedIndex};
+
+        enum Choice {
+            Add,
+            Remove,
+            Clear,
+        }
+        let dist = WeightedIndex::new([5, 2, 1]).unwrap();
+
+        let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
+        let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
+        match choice {
+            Choice::Add => AWBag::Add(value),
+            Choice::Remove => AWBag::Remove(value),
+            Choice::Clear => AWBag::Clear,
+        }
     }
 }
 
@@ -164,8 +155,9 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("b", 1);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
     }
 
     #[test]
@@ -179,7 +171,28 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", 2);
-        assert_eq!(replica_a.query(Read::new()), result);
-        assert_eq!(replica_b.query(Read::new()), result);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_aw_bag() {
+        use moirai_fuzz::{
+            config::{FuzzerConfig, Predicate, RunConfig},
+            fuzzer::fuzzer,
+        };
+
+        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let config = FuzzerConfig::<AWBagLog<usize>, Read<HashMap<usize, usize>>>::new(
+            "aw_bag",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
+
+        fuzzer::<AWBagLog<usize>, Read<HashMap<usize, usize>>>(config);
     }
 }

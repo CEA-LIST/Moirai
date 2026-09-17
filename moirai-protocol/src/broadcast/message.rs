@@ -6,10 +6,9 @@ use deepsize::DeepSizeOf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    broadcast::{batch::Batch, since::Since},
+    broadcast::{batch::Batch, internalizer::Resolver, since::Since},
     event::Event,
     log_id::LogId,
-    utils::intern_str::Resolver,
 };
 
 pub mod kind {
@@ -30,15 +29,15 @@ pub mod kind {
     pub struct Since;
 }
 
-pub type EventMessage<O> = Message<O, kind::Event>;
-pub type BatchMessage<O> = Message<O, kind::Batch>;
+pub type EventMessage<P> = Message<P, kind::Event>;
+pub type BatchMessage<P> = Message<P, kind::Batch>;
 pub type SinceMessage = Message<(), kind::Since>;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub struct Message<O, K = kind::Any> {
-    payload: Payload<O>,
+pub struct Message<P, K = kind::Any> {
+    payload: Payload<P>,
     resolver: Resolver,
     /// Which log this message belongs to.
     ///
@@ -54,13 +53,13 @@ pub struct Message<O, K = kind::Any> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum Payload<O> {
-    Event(Event<O>),
-    Batch(Batch<O>),
+pub enum Payload<P> {
+    Event(Event<P>),
+    Batch(Batch<P>),
     Since(Since),
 }
 
-impl<O, K> Message<O, K> {
+impl<P, K> Message<P, K> {
     pub fn resolver(&self) -> &Resolver {
         &self.resolver
     }
@@ -72,8 +71,8 @@ impl<O, K> Message<O, K> {
     }
 }
 
-impl<O> Message<O> {
-    pub fn new(payload: Payload<O>, resolver: Resolver, log_id: LogId) -> Self {
+impl<P> Message<P> {
+    pub fn new(payload: Payload<P>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload,
             resolver,
@@ -82,13 +81,13 @@ impl<O> Message<O> {
         }
     }
 
-    pub fn payload(&self) -> &Payload<O> {
+    pub fn payload(&self) -> &Payload<P> {
         &self.payload
     }
 }
 
-impl<O> Message<O, kind::Event> {
-    pub fn new(event: Event<O>, resolver: Resolver, log_id: LogId) -> Self {
+impl<P> Message<P, kind::Event> {
+    pub fn new(event: Event<P>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Event(event),
             resolver,
@@ -97,7 +96,7 @@ impl<O> Message<O, kind::Event> {
         }
     }
 
-    pub fn event(&self) -> &Event<O> {
+    pub fn event(&self) -> &Event<P> {
         match &self.payload {
             Payload::Event(event) => event,
             _ => unreachable!("EventMessage is expected to hold an event payload"),
@@ -105,8 +104,8 @@ impl<O> Message<O, kind::Event> {
     }
 }
 
-impl<O> Message<O, kind::Batch> {
-    pub fn new(batch: Batch<O>, resolver: Resolver, log_id: LogId) -> Self {
+impl<P> Message<P, kind::Batch> {
+    pub fn new(batch: Batch<P>, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Batch(batch),
             resolver,
@@ -115,21 +114,21 @@ impl<O> Message<O, kind::Batch> {
         }
     }
 
-    pub fn batch(&self) -> &Batch<O> {
+    pub fn batch(&self) -> &Batch<P> {
         match &self.payload {
             Payload::Batch(batch) => batch,
             _ => unreachable!("BatchMessage is expected to hold a batch payload"),
         }
     }
 
-    pub fn into_batch(self) -> Batch<O> {
+    pub fn into_batch(self) -> Batch<P> {
         match self.payload {
             Payload::Batch(batch) => batch,
             _ => unreachable!("BatchMessage is expected to hold a batch payload"),
         }
     }
 
-    pub fn into_parts(self) -> (Batch<O>, Resolver) {
+    pub fn into_parts(self) -> (Batch<P>, Resolver) {
         match self.payload {
             Payload::Batch(batch) => (batch, self.resolver),
             _ => unreachable!("BatchMessage is expected to hold a batch payload"),
@@ -137,7 +136,7 @@ impl<O> Message<O, kind::Batch> {
     }
 }
 
-impl<O> Message<O, kind::Since> {
+impl<P> Message<P, kind::Since> {
     pub fn new(since: Since, resolver: Resolver, log_id: LogId) -> Self {
         Self {
             payload: Payload::Since(since),
@@ -167,8 +166,8 @@ mod wire_overhead {
     use super::*;
     use crate::{
         broadcast::tcsb::{IsTcsb, Tcsb},
+        broadcast::internalizer::Interner,
         log_id::LOG_ID_LEN,
-        utils::intern_str::{InternalizeOp, Interner},
     };
 
     /// The bytes `log_id` adds to a compact frame.
@@ -176,12 +175,6 @@ mod wire_overhead {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Op(u32);
-
-    impl InternalizeOp for Op {
-        fn internalize(self, _interner: &Interner) -> Self {
-            self
-        }
-    }
 
     /// An event as a replica broadcasts it: minted by a `Tcsb`, so the
     /// resolver, the version and the lamport are what a real frame carries.

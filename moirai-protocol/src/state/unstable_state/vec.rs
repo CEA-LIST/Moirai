@@ -1,0 +1,86 @@
+use std::{fmt::Debug, range::Range};
+
+use crate::{
+    clock::version_vector::Version,
+    event::{Event, id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
+    state::unstable_state::{IsUnstableCore, IsUnstableDelivery, IsUnstablePrune},
+};
+
+impl<O> IsUnstableCore<O> for Vec<TaggedOp<O>>
+where
+    O: Debug + Clone,
+{
+    fn append(&mut self, event: Event<O>) {
+        let tagged_op = TaggedOp::from(&event);
+        self.push(tagged_op);
+    }
+
+    fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>> {
+        self.iter().find(|to| to.id() == event_id)
+    }
+
+    /// # Complexity
+    /// O(n) where n is the number of events in the unstable state.
+    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>> {
+        self.iter()
+            .filter(|to| to.id().is_predecessor_of(version))
+            .collect()
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.as_slice().iter()
+    }
+
+    fn replica_events<'a>(
+        &'a self,
+        replica_idx: ReplicaIdx,
+        range: Range<crate::clock::version_vector::Seq>,
+    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    where
+        O: 'a,
+    {
+        self.iter()
+            .filter(move |to| to.id().idx() == replica_idx && range.contains(&to.id().seq()))
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<O> IsUnstablePrune<O> for Vec<TaggedOp<O>>
+where
+    O: Debug + Clone,
+{
+    fn remove(&mut self, event_id: &EventId) {
+        let maybe_pos = self.iter().position(|to| to.id() == event_id);
+        if let Some(pos) = maybe_pos {
+            self.remove(pos);
+        }
+    }
+
+    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
+        Vec::retain(self, predicate);
+    }
+
+    fn clear(&mut self) {
+        Vec::clear(self);
+    }
+}
+
+impl<O> IsUnstableDelivery<O> for Vec<TaggedOp<O>>
+where
+    O: Debug + Clone,
+{
+    fn delivery_order(&self, event_id: &EventId) -> Option<usize> {
+        self.as_slice().iter().position(|to| to.id() == event_id)
+    }
+}

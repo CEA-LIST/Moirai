@@ -72,7 +72,7 @@ use moirai_protocol::{
     log_id::LogId,
     replica::{IsReplica, Replica},
     state::log::IsLog,
-    utils::intern_str::InternalizeOp,
+    broadcast::internalizer::InternalizeOp,
 };
 use moirai_semantics::{
     FlagWins, LeafRule, MergeRule, MetamodelSemantics, NumKind, SetTie, Shape, TieBreak,
@@ -1633,7 +1633,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     use moirai_protocol::{clock::version_vector::Version, event::Event, state::log::IsLog};
-    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
     use serde_json::{Value, json};
 
     use super::{Arm, Cell, Rep, pattern, run_cell};

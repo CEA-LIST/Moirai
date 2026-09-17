@@ -1,10 +1,33 @@
-// A macro to define a record type with multiple fields, each field being a different log type.
-// It generates the necessary structures and implements the Log trait for the record.
+/// Defines a record CRDT whose fields are nested logs.
+///
+/// The generic form lets callers choose the value projection for each field when querying the
+/// record. The explicit form uses `Log => Value` fields and generates a concrete, nominal value
+/// type, which also supports recursive records through [`BoxedLog`](crate::moirai_protocol::state::log::BoxedLog).
 
 #[macro_export]
 macro_rules! record {
+    // Explicit field values produce a concrete record value type.
+    ($name:ident { $($field:ident : $T:ty => $V:ty),+ $(,)? }) => {
+        $crate::record!(@impl [] $name { $($field: $T => $V),+ });
+        $crate::record!(@explicit_eval $name { $($field: $T => $V),+ });
+    };
+    // Without explicit values, preserve the generic value projection.
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
+            $crate::record!(@impl [$([<$field:camel Value>]),*] $name {
+                $($field: $T => [<$field:camel Value>]),*
+            });
+            $crate::record!(@generic_eval [$([<$field:camel Value>]),*] $name {
+                $($field: $T => [<$field:camel Value>]),*
+            });
+        }
+    };
+    (@impl [$($value_param:ident),*] $name:ident {
+        $($field:ident : $T:ty => $V:ty),* $(,)?
+    }) => {
+        $crate::paste::paste! {
+            /// Set of operations that can be applied to the record.
+            /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
             #[derive(Clone, Debug)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
@@ -15,25 +38,32 @@ macro_rules! record {
                 New,
             }
 
-            impl $crate::moirai_protocol::utils::intern_str::InternalizeOp for $name {
-                fn internalize(self, interner: &$crate::moirai_protocol::utils::intern_str::Interner) -> Self {
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for $name {
+                fn deep_size_of_children(
+                    &self,
+                    context: &mut ::deepsize::Context,
+                ) -> ::std::primitive::usize {
                     match self {
                         $(
-                            Self::[<$field:camel>](o) => Self::[<$field:camel>](o.internalize(interner)),
+                            Self::[<$field:camel>](op) =>
+                                ::deepsize::DeepSizeOf::deep_size_of_children(op, context),
                         )*
-                        Self::New => Self::New,
+                        Self::New => 0,
                     }
                 }
             }
 
+            /// Returned value when reading the record, containing the values of all fields.
             #[derive(Debug, Clone, Default, PartialEq)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-            pub struct [<$name Value>] {
+            pub struct [<$name Value>]<$($value_param),*> {
                 $(
-                    pub $field: <$T as $crate::moirai_protocol::state::log::IsLog>::Value,
+                    pub $field: $V,
                 )*
             }
 
+            /// Record log type, containing a log for each field.
             #[derive(Debug, Default, Clone)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Log>] {
@@ -42,17 +72,54 @@ macro_rules! record {
                 )*
             }
 
+            #[cfg(feature = "test_utils")]
+            impl<$($value_param: ::deepsize::DeepSizeOf),*> ::deepsize::DeepSizeOf
+                for [<$name Value>]<$($value_param),*>
+            {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    0 $(+ ::deepsize::DeepSizeOf::deep_size_of_children(&self.$field, context))*
+                }
+            }
+
+            #[cfg(feature = "test_utils")]
+            impl ::deepsize::DeepSizeOf for [<$name Log>] {
+                fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
+                    0 $(+ ::deepsize::DeepSizeOf::deep_size_of_children(&self.$field, context))*
+                }
+            }
+
+            /// Accessor methods for each field log.
             impl [<$name Log>] {
                 $(
-                        pub fn $field(&self) -> &$T {
+                    pub fn $field(&self) -> &$T {
                         &self.$field
                     }
                 )*
+
+                #[doc(hidden)]
+                pub fn default_sink_expansion(
+                    &self,
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
+                ) {
+                    ctx.create_typed(::std::stringify!($name));
+                    $(
+                        ctx.with_field(::std::stringify!($field), |ctx| {
+                            <$T as $crate::moirai_protocol::state::log::DefaultSinkExpansion>::default_sink_expansion(
+                                &<$T as $crate::moirai_protocol::state::log::IsLog>::new(),
+                                ctx,
+                            );
+                        });
+                    )*
+                }
             }
 
+            /// Implementation of the Log trait for the record.
+            /// No semantics are defined at the record level, all semantics are defined at the field level.
+            /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
-                type Value = [<$name Value>];
+                type Command = $name;
                 type Op = $name;
+                type Rejection = [<$name Rejection>];
 
                 fn new() -> Self {
                     Self {
@@ -62,111 +129,185 @@ macro_rules! record {
                     }
                 }
 
+                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                    cmd
+                }
+
                 fn effect(
                     &mut self,
                     event: $crate::moirai_protocol::event::Event<Self::Op>,
-                    #[cfg(feature = "sink")]
-                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
-                    #[cfg(feature = "sink")]
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
-                    #[cfg(feature = "sink")]
-                    ownership: $crate::moirai_protocol::state::sink::SinkOwnership)
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
-                    match event.op().clone() {
+                    match ::std::clone::Clone::clone(event.op()) {
                         $(
                             $name::[<$field:camel>](op) => {
-                                #[cfg(feature = "sink")]
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
-                                #[cfg(feature = "sink")] {
-                                    if is_default {
-                                        self.default_sink_expansion(path.clone(), sink);
-                                    } else {
-                                        sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                    }
+
+                                if is_default {
+                                    Self::default_sink_expansion(self, ctx);
+                                } else {
+                                    ctx.update_typed(::std::stringify!($name));
                                 }
-                                #[cfg(feature = "sink")]
-                                let path = path.field(stringify!($field));
-                                #[cfg(feature = "sink")]
-                                if !is_default {
-                                    sink.collect($crate::moirai_protocol::state::sink::Sink::update(path.clone()));
-                                }
+
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
-                                self.$field.effect(child_op, #[cfg(feature = "sink")] path, #[cfg(feature = "sink")] sink, #[cfg(feature = "sink")] $crate::moirai_protocol::state::sink::SinkOwnership::Owned);
+                                ctx.with_field(::std::stringify!($field), |ctx| {
+                                    if !is_default {
+                                        ctx.update();
+                                    }
+                                    <$T as $crate::moirai_protocol::state::log::IsLog>::effect(
+                                        &mut self.$field,
+                                        child_op,
+                                        ctx,
+                                    );
+                                });
                             }
                         )*
                         $name::New => {
-                            #[cfg(feature = "sink")] {
-                                self.default_sink_expansion(path.clone(), sink);
-                            }
+                            Self::default_sink_expansion(self, ctx);
                         }
                     }
                 }
 
                 fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
                     $(
-                        self.$field.stabilize(version);
+                        <$T as $crate::moirai_protocol::state::log::IsLog>::stabilize(
+                            &mut self.$field,
+                            version,
+                        );
                     )*
                 }
 
-                fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: bool) {
+                fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
                     $(
-                        self.$field.redundant_by_parent(version, conservative);
+                        <$T as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
+                            &mut self.$field,
+                            version,
+                            conservative,
+                        );
                     )*
                 }
 
-                fn is_default(&self) -> bool {
+                fn is_default(&self) -> ::std::primitive::bool {
                     $(
-                        if !self.$field.is_default() {
+                        if !<$T as $crate::moirai_protocol::state::log::IsLog>::is_default(
+                            &self.$field,
+                        ) {
                             return false;
                         }
                     )*
                     true
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> bool {
+                fn is_enabled(
+                    &self,
+                    op: &Self::Op,
+                ) -> ::std::result::Result<(), Self::Rejection> {
                     match op {
                         $(
-                            $name::[<$field:camel>](o) => self.$field.is_enabled(o),
+                            $name::[<$field:camel>](o) =>
+                                <$T as $crate::moirai_protocol::state::log::IsLog>::is_enabled(
+                                    &self.$field,
+                                    o,
+                                )
+                                .map_err([<$name Rejection>]::[<$field:camel>]),
                         )*
-                        $name::New => self.is_default(),
-                        _ => unreachable!(),
+                        // "New" can only be applied if the record is in its default state
+                        $name::New => if <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self) {
+                            ::std::result::Result::Ok(())
+                        } else {
+                            ::std::result::Result::Err([<$name Rejection>]::AlreadyInitialized)
+                        },
+                        _ => ::std::unreachable!(),
                     }
                 }
 
-                #[cfg(feature = "sink")]
-                fn default_sink_expansion(
-                    &self,
-                    path: $crate::moirai_protocol::state::object_path::ObjectPath,
-                    sink: &mut $crate::moirai_protocol::state::sink::SinkCollector,
-                ) {
-                    sink.collect($crate::moirai_protocol::state::sink::Sink::create(path.clone()));
-                    $(
-                        <$T as $crate::moirai_protocol::state::log::IsLog>::new().default_sink_expansion(
-                            path.clone().field(stringify!($field)),
-                            sink,
-                        );
-                    )*
-                }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>> for [<$name Log>] {
-                fn execute_query(&self, _q: $crate::moirai_protocol::crdt::query::Read<<Self as $crate::moirai_protocol::state::log::IsLog>::Value>) -> [<$name Value>] {
+            /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
+            /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.
+            #[derive(Debug)]
+            pub enum [<$name Rejection>] {
+                $(
+                    [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Rejection),
+                )*
+                AlreadyInitialized,
+            }
+
+            impl ::std::fmt::Display for [<$name Rejection>] {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                    match self {
+                        $(
+                            Self::[<$field:camel>](e) => ::std::write!(
+                                f,
+                                "{}: {}",
+                                ::std::stringify!($field),
+                                e,
+                            ),
+                        )*
+                        Self::AlreadyInitialized => ::std::write!(f, "Already initialized"),
+                    }
+                }
+            }
+        }
+    };
+    (@explicit_eval $name:ident {
+        $($field:ident : $T:ty => $V:ty),+ $(,)?
+    }) => {
+        $crate::paste::paste! {
+            impl $crate::moirai_protocol::crdt::eval::EvalNested<
+                $crate::moirai_protocol::crdt::query::Read<[<$name Value>]>
+            > for [<$name Log>] {
+                fn execute_query(
+                    &self,
+                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
+                ) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: self.$field.execute_query($crate::moirai_protocol::crdt::query::Read::new()),
-                        )*
+                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
+                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            >>::execute_query(
+                                &self.$field,
+                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                            ),
+                        )+
                     }
                 }
             }
-
-            #[cfg(feature = "fuzz")]
-            impl ::moirai_fuzz::metrics::FuzzMetrics for [<$name Log>] {
-                fn structure_metrics(&self) -> ::moirai_fuzz::metrics::StructureMetrics {
-                    ::moirai_fuzz::metrics::StructureMetrics::object([
+        }
+    };
+    (@generic_eval [$($value_param:ident),*] $name:ident {
+        $($field:ident : $T:ty => $V:ty),* $(,)?
+    }) => {
+        $crate::paste::paste! {
+            impl<$($value_param),*>
+                $crate::moirai_protocol::crdt::eval::EvalNested<
+                    $crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$($value_param),*>
+                    >
+                > for [<$name Log>]
+            where
+                $(
+                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
+                        $crate::moirai_protocol::crdt::query::Read<$V>
+                    >,
+                )*
+            {
+                fn execute_query(
+                    &self,
+                    _q: &$crate::moirai_protocol::crdt::query::Read<
+                        [<$name Value>]<$($value_param),*>
+                    >,
+                ) -> [<$name Value>]<$($value_param),*> {
+                    [<$name Value>] {
                         $(
-                            ::moirai_fuzz::metrics::FuzzMetrics::structure_metrics(&self.$field),
+                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
+                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            >>::execute_query(
+                                &self.$field,
+                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                            ),
                         )*
-                    ])
+                    }
                 }
             }
         }

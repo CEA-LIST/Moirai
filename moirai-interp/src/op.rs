@@ -27,7 +27,7 @@
 //! # Why `InternalizeOp` is written out
 //!
 //! An operation crosses a replica boundary, and the receiving replica indexes
-//! its members in an order of its own (`intern_str.rs:148-202`). Anything in
+//! its members in an order of its own (`internalizer.rs:148-202`). Anything in
 //! an operation that names a replica has to be re-indexed on arrival. Nothing
 //! in this tree does — a sequence position is an index resolved against the
 //! event's own version, exactly as `NestedList` resolves it — so every arm
@@ -35,7 +35,7 @@
 //! identity so that the day a variant *does* carry an
 //! [`moirai_protocol::event::id::EventId`], the compiler asks about it.
 
-use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
 use moirai_semantics::{ClassSlot, FeatureSlot};
 
 use crate::leaf::{LeafOp, Scalar};
@@ -326,7 +326,7 @@ mod tests {
     //! has to check is that every arm *is* rebuilt and nothing is dropped on
     //! the way down.
 
-    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
     use moirai_semantics::{ClassSlot, FeatureSlot};
 
     use super::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};

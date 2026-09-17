@@ -1,14 +1,18 @@
-use std::fmt::Debug;
+use std::{convert::Infallible, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::OpGenerator;
 use moirai_protocol::{
-    crdt::{eval::Eval, pure_crdt::PureCRDT, query::Read, redundancy::RedundancyRelation},
+    crdt::{
+        eval::Eval,
+        query::Read,
+        redundancy::RedundancyRelation,
+        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+    },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
-    utils::intern_str::{InternalizeOp, Interner},
+    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -62,9 +66,9 @@ impl IsStableState<DWFlag> for Option<bool> {
     }
 }
 
-impl PureCRDT for DWFlag {
-    type Value = bool;
+impl ReplicatedDataType for DWFlag {
     type StableState = Option<bool>;
+    type Rejection = Infallible;
 
     fn redundant_itself<'a>(
         new_tagged_op: &TaggedOp<Self>,
@@ -96,12 +100,13 @@ impl PureCRDT for DWFlag {
     }
 }
 
-impl Eval<Read<<Self as PureCRDT>::Value>> for DWFlag {
-    fn execute_query(
-        _q: Read<<Self as PureCRDT>::Value>,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> bool {
+impl<U> UsesUnstableService<U> for DWFlag where U: IsUnstableCore<Self> {}
+
+impl<U> Eval<Read<bool>, U> for DWFlag
+where
+    U: IsUnstableCore<Self>,
+{
+    fn execute_query(_q: &Read<bool>, stable: &Self::StableState, unstable: &U) -> bool {
         let mut flag = false;
 
         if let Some(v) = stable {
@@ -134,8 +139,8 @@ impl OpGenerator for DWFlag {
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as PureCRDT>::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _stable: &<Self as ReplicatedDataType>::StableState,
+        _unstable: &impl IsUnstableCore<Self>,
     ) -> Self {
         let choice = rand::seq::IteratorRandom::choose(
             [DWFlag::Enable, DWFlag::Disable, DWFlag::Clear].iter(),
@@ -143,12 +148,6 @@ impl OpGenerator for DWFlag {
         )
         .unwrap();
         choice.clone()
-    }
-}
-
-impl InternalizeOp for DWFlag {
-    fn internalize(self, _interner: &Interner) -> Self {
-        self
     }
 }
 
@@ -174,20 +173,20 @@ mod tests {
         // Replica A enables the flag
         let event = replica_a.send(DWFlag::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(Read::new()), true);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), true);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica B disables the flag
         let event = replica_b.send(DWFlag::Disable).unwrap();
         replica_a.receive(event);
-        assert_eq!(replica_b.query(Read::new()), false);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_b.query(&Read::new()), false);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica A enables again
         let event = replica_a.send(DWFlag::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(Read::new()), true);
-        assert_eq!(replica_a.query(Read::new()), replica_b.query(Read::new()));
+        assert_eq!(replica_a.query(&Read::new()), true);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
     #[test]
@@ -196,16 +195,16 @@ mod tests {
 
         // Concurrent Enable and Disable: Disable wins
         let event_a = replica_a.send(DWFlag::Enable).unwrap();
-        assert_eq!(replica_a.query(Read::new()), true);
+        assert_eq!(replica_a.query(&Read::new()), true);
 
         let event_b = replica_b.send(DWFlag::Disable).unwrap();
-        assert_eq!(replica_b.query(Read::new()), false);
+        assert_eq!(replica_b.query(&Read::new()), false);
 
         replica_a.receive(event_b.clone());
         replica_b.receive(event_a.clone());
 
-        assert_eq!(replica_a.query(Read::new()), false);
-        assert_eq!(replica_b.query(Read::new()), false);
+        assert_eq!(replica_a.query(&Read::new()), false);
+        assert_eq!(replica_b.query(&Read::new()), false);
     }
 
     /// Two replicas that stabilize the same concurrent `Enable` and `Disable`
@@ -255,7 +254,7 @@ mod tests {
     #[ignore]
     fn fuzz_dw_flag() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -263,9 +262,14 @@ mod tests {
         let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
         let runs = vec![run.clone(); 1];
 
-        let config =
-            FuzzerConfig::<VecLog<DWFlag>>::new("dw_flag", runs, true, |a, b| a == b, false, None);
+        let config = FuzzerConfig::<VecLog<DWFlag>, Read<bool>>::new(
+            "dw_flag",
+            runs,
+            true,
+            Predicate::new(Read::new(), |a, b| a == b),
+            false,
+        );
 
-        fuzzer::<VecLog<DWFlag>>(config);
+        fuzzer::<VecLog<DWFlag>, Read<bool>>(config);
     }
 }

@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
 use crate::{
+    broadcast::internalizer::Resolver,
     event::id::EventId,
     replica::{ReplicaId, ReplicaIdx},
-    utils::intern_str::Resolver,
 };
 
 /// Sequence number
@@ -353,7 +353,7 @@ impl PartialOrd for Version {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::intern_str::Interner;
+    use crate::broadcast::internalizer::Interner;
 
     #[test]
     fn concurrent_clock() {

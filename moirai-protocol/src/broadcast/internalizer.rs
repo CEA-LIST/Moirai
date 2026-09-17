@@ -11,8 +11,8 @@ use elsa::sync::FrozenVec;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    HashMap,
     replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
+    utils::hashmap::HashMap,
 };
 
 #[derive(Clone)]
@@ -57,9 +57,27 @@ impl DeepSizeOf for Resolver {
     }
 }
 
+impl Default for Resolver {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(FrozenVec::new()),
+        }
+    }
+}
+
 impl Resolver {
+    /// # Complexity
+    /// `O(1)`
     pub fn resolve(&self, idx: ReplicaIdx) -> Option<&ReplicaId> {
         self.inner.get(idx.0)
+    }
+
+    /// # Complexity
+    /// `O(n)`
+    pub fn get(&self, id: &ReplicaId) -> Option<ReplicaIdx> {
+        (0..self.inner.len())
+            .find(|i| self.inner.get(*i) == Some(id))
+            .map(ReplicaIdx)
     }
 
     pub fn len(&self) -> usize {
@@ -262,15 +280,5 @@ impl Interner {
 
     pub fn resolver(&self) -> &Resolver {
         &self.int_to_str
-    }
-}
-
-pub trait InternalizeOp {
-    fn internalize(self, interner: &Interner) -> Self;
-}
-
-impl<T: InternalizeOp> InternalizeOp for Box<T> {
-    fn internalize(self, interner: &Interner) -> Self {
-        Box::new((*self).internalize(interner))
     }
 }

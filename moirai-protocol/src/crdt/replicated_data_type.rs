@@ -1,21 +1,18 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use crate::{
     clock::version_vector::Version,
     crdt::{eval::Eval, query::QueryOperation},
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableState},
+    state::{
+        stable_state::IsStableState,
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
+    },
 };
 
-pub enum CausalReset<O> {
-    Prune,
-    Inject(Vec<O>),
-}
-
-pub trait PureCRDT: Debug + Sized {
-    // TODO: try to get rid of this
-    type Value: Default + Debug;
+pub trait ReplicatedDataType: Debug + Sized {
     type StableState: IsStableState<Self>;
+    type Rejection: Debug + Display;
 
     const DISABLE_R_WHEN_R: bool = false;
     const DISABLE_R_WHEN_NOT_R: bool = false;
@@ -53,27 +50,33 @@ pub trait PureCRDT: Debug + Sized {
     fn stabilize(
         _tagged_op: &TaggedOp<Self>,
         _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstableState<Self>,
+        _unstable: &mut impl IsUnstablePrune<Self>,
     ) {
     }
 
-    fn eval<Q>(
-        q: Q,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableState<Self>,
-    ) -> Q::Response
+    fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
     where
         Q: QueryOperation,
-        Self: Eval<Q>,
+        Self: Eval<Q, U>,
     {
         Self::execute_query(q, stable, unstable)
     }
+}
 
+pub enum CausalReset<O> {
+    Prune,
+    Inject(Vec<O>),
+}
+
+pub trait UsesUnstableService<U>: ReplicatedDataType
+where
+    U: IsUnstableCore<Self>,
+{
     fn causal_reset(
         _version: &Version,
         _conservative: bool,
         _stable: &Self::StableState,
-        _unstable: &impl IsUnstableState<Self>,
+        _unstable: &U,
     ) -> CausalReset<Self> {
         CausalReset::Prune
     }
@@ -82,8 +85,8 @@ pub trait PureCRDT: Debug + Sized {
     fn is_enabled(
         _op: &Self,
         _stable: &Self::StableState,
-        _unstable: &impl IsUnstableState<Self>,
-    ) -> bool {
-        true
+        _unstable: &U,
+    ) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }

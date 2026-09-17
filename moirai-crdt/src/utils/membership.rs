@@ -1,10 +1,10 @@
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
-    crdt::pure_crdt::PureCRDT,
+    crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+    event::tagged_op::TaggedOp,
     log_id::LogId,
     replica::{IsReplica, Replica},
     state::{log::IsLog, po_log::VecLog},
-    utils::intern_str::InternalizeOp,
 };
 
 pub type Twins<O, L> = (Replica<L, Tcsb<O>>, Replica<L, Tcsb<O>>);
@@ -27,7 +27,7 @@ pub type Quadruplet<O, L> = (
 
 pub fn twins<O>() -> Twins<O, VecLog<O>>
 where
-    O: PureCRDT + Clone + InternalizeOp,
+    O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
     let log_id = LogId::generate();
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap_with_log_id(
@@ -43,7 +43,6 @@ where
 pub fn twins_log<L>() -> Twins<L::Op, L>
 where
     L: IsLog,
-    L::Op: InternalizeOp,
 {
     let log_id = LogId::generate();
     let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap_with_log_id(
@@ -56,7 +55,10 @@ where
     (replica_a, replica_b)
 }
 
-pub fn triplet<O: PureCRDT + Clone + InternalizeOp>() -> Triplet<O, VecLog<O>> {
+pub fn triplet<O>() -> Triplet<O, VecLog<O>>
+where
+    O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
+{
     let log_id = LogId::generate();
     let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap_with_log_id(
         "a".to_string(),
@@ -79,7 +81,6 @@ pub fn triplet<O: PureCRDT + Clone + InternalizeOp>() -> Triplet<O, VecLog<O>> {
 pub fn triplet_log<L>() -> Triplet<L::Op, L>
 where
     L: IsLog,
-    L::Op: InternalizeOp,
 {
     let log_id = LogId::generate();
     let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap_with_log_id(

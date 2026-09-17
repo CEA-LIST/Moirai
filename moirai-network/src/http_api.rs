@@ -562,7 +562,7 @@ mod tests {
     use std::sync::{Arc, RwLock};
 
     use moirai_protocol::log_id::LogId;
-    use moirai_protocol::utils::intern_str::{InternalizeOp, Interner};
+    use moirai_protocol::broadcast::internalizer::{InternalizeOp, Interner};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
