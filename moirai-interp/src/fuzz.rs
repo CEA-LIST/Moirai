@@ -21,7 +21,7 @@ use moirai_fuzz::{
     op_generator::OpGeneratorNested,
 };
 use moirai_semantics::{
-    ClassSlot, FeatureSlot, LeafRule, MetamodelSemantics, NumKind, TieBreak, metamodel_digest,
+    ClassSlot, FeatureSlot, LeafRule, MetamodelSemantics, TieBreak, metamodel_digest,
 };
 use rand::{Rng, RngExt};
 
@@ -289,14 +289,14 @@ fn leaf_op(
                 }
             }
         }
-        LeafSite::Scalar(LeafRule::Counter { num, resettable }) => {
+        // Every numeric width Ecore has is signed, `EByte` included since it
+        // is `i8` and no longer `u8`, so a decrement below zero is in range at
+        // all six and no width is held back from one.
+        LeafSite::Scalar(LeafRule::Counter { resettable, .. }) => {
             let step = i64::from(rng.random_range(0..3u8));
             match rng.random_range(0..6) {
                 0 if resettable => LeafOp::Reset,
-                // `EByte` is unsigned, so a decrement below zero is the panic
-                // the generated path would take too; the fuzzer's business is
-                // convergence and not that.
-                1..=2 if !matches!(num, NumKind::U8) => LeafOp::Dec(Scalar::Int(step)),
+                1..=2 => LeafOp::Dec(Scalar::Int(step)),
                 _ => LeafOp::Inc(Scalar::Int(step)),
             }
         }
@@ -332,6 +332,25 @@ fn leaf_op(
             1..=2 => LeafOp::Remove(word),
             _ => LeafOp::Add(word),
         },
+        LeafSite::OrderedSet => {
+            let len = leaf
+                .and_then(|leaf| {
+                    leaf.read_json(None)
+                        .as_array()
+                        .map(|elements| elements.len())
+                })
+                .unwrap_or(0);
+            if len > 0 && rng.random_range(0..4) == 0 {
+                LeafOp::DeleteChar {
+                    pos: rng.random_range(0..len),
+                }
+            } else {
+                LeafOp::Insert {
+                    pos: rng.random_range(0..=len),
+                    value: word,
+                }
+            }
+        }
     }
 }
 

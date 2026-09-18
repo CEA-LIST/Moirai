@@ -62,7 +62,7 @@
           "provenance": {
             "leaf": "houseDefault",
             "ordered": "notApplicable",
-            "presence": "ecoreDefault",
+            "presence": "declared",
             "unique": "notApplicable"
           },
           "required": true
@@ -100,7 +100,7 @@
           "provenance": {
             "leaf": "declared",
             "ordered": "notApplicable",
-            "presence": "ecoreDefault",
+            "presence": "declared",
             "unique": "notApplicable"
           },
           "required": true
@@ -170,7 +170,7 @@
           "provenance": {
             "leaf": "houseDefault",
             "ordered": "notApplicable",
-            "presence": "ecoreDefault",
+            "presence": "declared",
             "unique": "notApplicable"
           },
           "required": true
@@ -247,7 +247,7 @@
           "provenance": {
             "leaf": "declared",
             "ordered": "notApplicable",
-            "presence": "ecoreDefault",
+            "presence": "declared",
             "unique": "notApplicable"
           },
           "required": true

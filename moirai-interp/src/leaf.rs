@@ -13,11 +13,11 @@
 //!
 //! # The arms, and the counter width decision
 //!
-//! [`NumKind`] carries six widths, because `to_crdt.rs` maps `EByte` to `u8`
-//! (unsigned), `EShort` to `i16`, `EInt` to `i32`, `ELong` to `i64`, `EFloat`
-//! to `f32` and `EDouble` to `f64`. This enum monomorphises **all six**, in
-//! both the resettable and the non-resettable form, rather than folding them
-//! onto `i64` and `f64`.
+//! [`NumKind`] carries six widths, because `to_crdt.rs` maps `EByte` to `i8`,
+//! `EShort` to `i16`, `EInt` to `i32`, `ELong` to `i64`, `EFloat` to `f32` and
+//! `EDouble` to `f64`. This enum monomorphises **all six**, in both the
+//! resettable and the non-resettable form, rather than folding them onto
+//! `i64` and `f64`.
 //!
 //! The consequence is the point: step 5's equivalence oracle compares a
 //! generated `Counter<i32>` against an interpreted `Counter<i32>`, bit for
@@ -178,9 +178,21 @@ pub enum LeafOp {
         /// The character.
         ch: char,
     },
-    /// Text: one character out.
+    /// Ordered set: one value in, at a position.
+    ///
+    /// The ordered set's own insert, and not [`LeafOp::InsertChar`] widened:
+    /// text holds `char`s and an ordered set holds whatever its leaf rule
+    /// types, so one operation cannot carry both without the text arm having
+    /// to refuse most of what it is handed.
+    Insert {
+        /// Position among the visible elements.
+        pos: usize,
+        /// The value.
+        value: Scalar,
+    },
+    /// Text or ordered set: one element out, by position.
     DeleteChar {
-        /// Position among the visible characters.
+        /// Position among the visible characters or elements.
         pos: usize,
     },
     /// Text: a run out, which is also what a causal reset injects.
@@ -215,6 +227,7 @@ impl LeafOp {
     pub const fn kind(&self) -> &'static str {
         match self {
             LeafOp::InsertChar { .. } => "InsertChar",
+            LeafOp::Insert { .. } => "Insert",
             LeafOp::DeleteChar { .. } => "DeleteChar",
             LeafOp::DeleteRange { .. } => "DeleteRange",
             LeafOp::Inc(_) => "Inc",
@@ -292,7 +305,7 @@ macro_rules! integer_width {
     };
 }
 
-integer_width!(u8, "counter<u8>");
+integer_width!(i8, "counter<i8>");
 integer_width!(i16, "counter<i16>");
 integer_width!(i32, "counter<i32>");
 integer_width!(i64, "counter<i64>");
@@ -331,15 +344,24 @@ type BagLog = UWMapLog<Scalar, VecLog<Counter<usize>>>;
 
 /// One leaf, at one of the constructions the generator can compile.
 ///
-/// Twenty-three arms: one text, twelve counters (six widths, resettable and
-/// not), two flags, five registers, two sets and one bag.
+/// Twenty-four arms: one text, twelve counters (six widths, resettable and
+/// not), two flags, five registers, two sets, one bag and one ordered set.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LeafLog {
     /// `GraphLog<List<char>>`: every string, `iD="true"` included.
     Text(GraphLog<List<char>>),
+    /// `GraphLog<List<V>>` over the attribute's own value type: a many-valued
+    /// attribute that is `unique` and `ordered`, which is what Ecore's two
+    /// silent facets mean.
+    ///
+    /// The same construction the generator compiles, `attribute.rs:152-162`,
+    /// at the one element type this crate has: [`Scalar`] stands in for the
+    /// `String`, `i32` or enum Rust type the generated field is over, exactly
+    /// as it does for a set and for a bag.
+    OrderedSet(GraphLog<List<Scalar>>),
     /// `EByte`, resettable.
-    CounterU8(VecLog<Counter<u8>>),
+    CounterI8(VecLog<Counter<i8>>),
     /// `EShort`, resettable.
     CounterI16(VecLog<Counter<i16>>),
     /// `EInt`, resettable.
@@ -351,7 +373,7 @@ pub enum LeafLog {
     /// `EDouble`, resettable.
     CounterF64(VecLog<Counter<f64>>),
     /// `EByte`, not resettable.
-    SimpleCounterU8(VecLog<SimpleCounter<u8>>),
+    SimpleCounterI8(VecLog<SimpleCounter<i8>>),
     /// `EShort`, not resettable.
     SimpleCounterI16(VecLog<SimpleCounter<i16>>),
     /// `EInt`, not resettable.
@@ -393,13 +415,14 @@ macro_rules! dispatch {
     ($this:expr, $log:ident => $body:expr) => {
         match $this {
             LeafLog::Text($log) => $body,
-            LeafLog::CounterU8($log) => $body,
+            LeafLog::OrderedSet($log) => $body,
+            LeafLog::CounterI8($log) => $body,
             LeafLog::CounterI16($log) => $body,
             LeafLog::CounterI32($log) => $body,
             LeafLog::CounterI64($log) => $body,
             LeafLog::CounterF32($log) => $body,
             LeafLog::CounterF64($log) => $body,
-            LeafLog::SimpleCounterU8($log) => $body,
+            LeafLog::SimpleCounterI8($log) => $body,
             LeafLog::SimpleCounterI16($log) => $body,
             LeafLog::SimpleCounterI32($log) => $body,
             LeafLog::SimpleCounterI64($log) => $body,
@@ -432,7 +455,7 @@ impl LeafLog {
                 num,
                 resettable: true,
             } => match num {
-                NumKind::U8 => LeafLog::CounterU8(VecLog::default()),
+                NumKind::I8 => LeafLog::CounterI8(VecLog::default()),
                 NumKind::I16 => LeafLog::CounterI16(VecLog::default()),
                 NumKind::I32 => LeafLog::CounterI32(VecLog::default()),
                 NumKind::I64 => LeafLog::CounterI64(VecLog::default()),
@@ -443,7 +466,7 @@ impl LeafLog {
                 num,
                 resettable: false,
             } => match num {
-                NumKind::U8 => LeafLog::SimpleCounterU8(VecLog::default()),
+                NumKind::I8 => LeafLog::SimpleCounterI8(VecLog::default()),
                 NumKind::I16 => LeafLog::SimpleCounterI16(VecLog::default()),
                 NumKind::I32 => LeafLog::SimpleCounterI32(VecLog::default()),
                 NumKind::I64 => LeafLog::SimpleCounterI64(VecLog::default()),
@@ -484,11 +507,21 @@ impl LeafLog {
         LeafLog::Bag(BagLog::default())
     }
 
+    /// The ordered set a `Shape::OrderedSet` names, minted empty.
+    ///
+    /// Like a set and a bag it holds scalars and not leaf CRDTs:
+    /// `attribute.rs:152-162` compiles a unique ordered attribute as
+    /// `GraphLog<List<V>>` over the *value* type whatever the leaf rule says,
+    /// so the leaf rule types the scalar and chooses nothing else.
+    pub fn for_ordered_set() -> Self {
+        LeafLog::OrderedSet(GraphLog::default())
+    }
+
     /// The word a refusal sentence uses for this leaf.
     pub const fn kind(&self) -> &'static str {
         match self {
             LeafLog::Text(_) => "text",
-            LeafLog::CounterU8(_) | LeafLog::SimpleCounterU8(_) => u8::WIDTH,
+            LeafLog::CounterI8(_) | LeafLog::SimpleCounterI8(_) => i8::WIDTH,
             LeafLog::CounterI16(_) | LeafLog::SimpleCounterI16(_) => i16::WIDTH,
             LeafLog::CounterI32(_) | LeafLog::SimpleCounterI32(_) => i32::WIDTH,
             LeafLog::CounterI64(_) | LeafLog::SimpleCounterI64(_) => i64::WIDTH,
@@ -501,6 +534,7 @@ impl LeafLog {
             LeafLog::RegisterFair(_) => "fair register",
             LeafLog::RegisterPo(_) => "partial-order register",
             LeafLog::RegisterTo(_) => "total-order register",
+            LeafLog::OrderedSet(_) => "ordered set",
             LeafLog::SetAw(_) => "add-wins set",
             LeafLog::SetRw(_) => "remove-wins set",
             LeafLog::Bag(_) => "bag",
@@ -532,13 +566,17 @@ impl LeafLog {
                 let inner = text_op(op)?;
                 enabled(log, &inner, op, self.kind(), strict)
             }
-            LeafLog::CounterU8(log) => counter_enabled(log, op, self.kind(), strict),
+            LeafLog::OrderedSet(log) => {
+                let inner = ordered_set_op(op)?;
+                enabled(log, &inner, op, self.kind(), strict)
+            }
+            LeafLog::CounterI8(log) => counter_enabled(log, op, self.kind(), strict),
             LeafLog::CounterI16(log) => counter_enabled(log, op, self.kind(), strict),
             LeafLog::CounterI32(log) => counter_enabled(log, op, self.kind(), strict),
             LeafLog::CounterI64(log) => counter_enabled(log, op, self.kind(), strict),
             LeafLog::CounterF32(log) => counter_enabled(log, op, self.kind(), strict),
             LeafLog::CounterF64(log) => counter_enabled(log, op, self.kind(), strict),
-            LeafLog::SimpleCounterU8(log) => simple_counter_enabled(log, op, self.kind(), strict),
+            LeafLog::SimpleCounterI8(log) => simple_counter_enabled(log, op, self.kind(), strict),
             LeafLog::SimpleCounterI16(log) => simple_counter_enabled(log, op, self.kind(), strict),
             LeafLog::SimpleCounterI32(log) => simple_counter_enabled(log, op, self.kind(), strict),
             LeafLog::SimpleCounterI64(log) => simple_counter_enabled(log, op, self.kind(), strict),
@@ -601,13 +639,17 @@ impl LeafLog {
                 let inner = text_op(event.op())?;
                 apply(log, event, inner);
             }
-            LeafLog::CounterU8(log) => counter_effect(log, event)?,
+            LeafLog::OrderedSet(log) => {
+                let inner = ordered_set_op(event.op())?;
+                apply(log, event, inner);
+            }
+            LeafLog::CounterI8(log) => counter_effect(log, event)?,
             LeafLog::CounterI16(log) => counter_effect(log, event)?,
             LeafLog::CounterI32(log) => counter_effect(log, event)?,
             LeafLog::CounterI64(log) => counter_effect(log, event)?,
             LeafLog::CounterF32(log) => counter_effect(log, event)?,
             LeafLog::CounterF64(log) => counter_effect(log, event)?,
-            LeafLog::SimpleCounterU8(log) => simple_counter_effect(log, event)?,
+            LeafLog::SimpleCounterI8(log) => simple_counter_effect(log, event)?,
             LeafLog::SimpleCounterI16(log) => simple_counter_effect(log, event)?,
             LeafLog::SimpleCounterI32(log) => simple_counter_effect(log, event)?,
             LeafLog::SimpleCounterI64(log) => simple_counter_effect(log, event)?,
@@ -677,13 +719,21 @@ impl LeafLog {
     pub fn read_json(&self, sem: Option<&MetamodelSemantics>) -> Value {
         match self {
             LeafLog::Text(log) => Value::String(log.execute_query(&Read::<String>::new())),
-            LeafLog::CounterU8(log) => log.execute_query(&Read::new()).to_json(),
+            // In the list's own order and not sorted: an ordered set is
+            // ordered, which is the whole of what tells it from a set.
+            LeafLog::OrderedSet(log) => Value::Array(
+                log.execute_query(&Read::<Vec<Scalar>>::new())
+                    .iter()
+                    .map(|value| value.to_json(sem))
+                    .collect(),
+            ),
+            LeafLog::CounterI8(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::CounterI16(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::CounterI32(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::CounterI64(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::CounterF32(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::CounterF64(log) => log.execute_query(&Read::new()).to_json(),
-            LeafLog::SimpleCounterU8(log) => log.execute_query(&Read::new()).to_json(),
+            LeafLog::SimpleCounterI8(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::SimpleCounterI16(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::SimpleCounterI32(log) => log.execute_query(&Read::new()).to_json(),
             LeafLog::SimpleCounterI64(log) => log.execute_query(&Read::new()).to_json(),
@@ -736,13 +786,17 @@ impl LeafLog {
             // why `ip11` excludes text by naming the exclusion rather than by
             // forgetting it.
             LeafLog::Text(log) => IsUnstableCore::len(log.unstable()),
-            LeafLog::CounterU8(log) => log.unstable().len(),
+            // An ordered set is the same `GraphLog<List<_>>` as text, so the
+            // same `DISABLE_STABILIZE` applies and this number does not fall
+            // for it either.
+            LeafLog::OrderedSet(log) => IsUnstableCore::len(log.unstable()),
+            LeafLog::CounterI8(log) => log.unstable().len(),
             LeafLog::CounterI16(log) => log.unstable().len(),
             LeafLog::CounterI32(log) => log.unstable().len(),
             LeafLog::CounterI64(log) => log.unstable().len(),
             LeafLog::CounterF32(log) => log.unstable().len(),
             LeafLog::CounterF64(log) => log.unstable().len(),
-            LeafLog::SimpleCounterU8(log) => log.unstable().len(),
+            LeafLog::SimpleCounterI8(log) => log.unstable().len(),
             LeafLog::SimpleCounterI16(log) => log.unstable().len(),
             LeafLog::SimpleCounterI32(log) => log.unstable().len(),
             LeafLog::SimpleCounterI64(log) => log.unstable().len(),
@@ -835,6 +889,21 @@ fn text_op(op: &LeafOp) -> Result<List<char>, LeafMismatch> {
             len: *len,
         }),
         other => mismatch(other, "text"),
+    }
+}
+
+fn ordered_set_op(op: &LeafOp) -> Result<List<Scalar>, LeafMismatch> {
+    match op {
+        LeafOp::Insert { pos, value } => Ok(List::Insert {
+            content: value.clone(),
+            pos: *pos,
+        }),
+        LeafOp::DeleteChar { pos } => Ok(List::Delete { pos: *pos }),
+        LeafOp::DeleteRange { start, len } => Ok(List::DeleteRange {
+            start: *start,
+            len: *len,
+        }),
+        other => mismatch(other, "ordered set"),
     }
 }
 
@@ -1143,11 +1212,11 @@ mod tests {
     /// tests, at one width: up five and down five reads zero, then a reset
     /// concurrent with an increment keeps the increment.
     ///
-    /// The library's own test decrements first, which this one cannot do at
-    /// every width: `EByte` is `u8` and *unsigned*, so `Dec(5)` from zero
-    /// underflows and panics — on the generated path too, at the same line of
-    /// `counter/stable.rs`. Monomorphising all six widths is what makes that
-    /// visible here instead of at a reviewer's desk.
+    /// It increments before it decrements, which is the order every width can
+    /// take. Monomorphising all six widths is what would make a width-specific
+    /// overflow visible here instead of at a reviewer's desk; `EByte` is `i8`
+    /// now, so the one width that used to underflow on a decrement from zero
+    /// no longer does.
     fn counter_sequence(num: NumKind, zero: Value, expected: Value) {
         let (mut a, mut b) = twins_for(Recipe::Scalar(LeafRule::Counter {
             num,
@@ -1171,8 +1240,8 @@ mod tests {
     }
 
     #[test]
-    fn ip6_counter_u8() {
-        counter_sequence(NumKind::U8, json!(0), json!(18));
+    fn ip6_counter_i8() {
+        counter_sequence(NumKind::I8, json!(0), json!(18));
     }
 
     #[test]
@@ -1230,8 +1299,8 @@ mod tests {
     }
 
     #[test]
-    fn ip6_simple_counter_u8() {
-        simple_counter_sequence(NumKind::U8, json!(0), json!(7));
+    fn ip6_simple_counter_i8() {
+        simple_counter_sequence(NumKind::I8, json!(0), json!(7));
     }
 
     #[test]
@@ -1555,12 +1624,12 @@ mod tests {
 
     #[test]
     fn ip6_every_arm_is_reachable_from_a_rule() {
-        // Twenty-three arms, and the constructors between them name each one
+        // Twenty-four arms, and the constructors between them name each one
         // once: a rule this crate cannot mint is a rule the node would refuse
         // at run time for no reason a reader could find.
         let mut kinds = Vec::new();
         for num in [
-            NumKind::U8,
+            NumKind::I8,
             NumKind::I16,
             NumKind::I32,
             NumKind::I64,
@@ -1587,8 +1656,9 @@ mod tests {
         kinds.push(LeafLog::for_set(SetTie::AddWins));
         kinds.push(LeafLog::for_set(SetTie::RemoveWins));
         kinds.push(LeafLog::for_bag());
+        kinds.push(LeafLog::for_ordered_set());
 
-        assert_eq!(kinds.len(), 23);
+        assert_eq!(kinds.len(), 24);
         assert!(kinds.iter().all(LeafLog::is_default));
     }
 }

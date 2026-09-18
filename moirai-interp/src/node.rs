@@ -333,6 +333,8 @@ pub(crate) enum LeafSite {
     Set(SetTie),
     /// A whole bag of scalars in one CRDT.
     Bag,
+    /// A whole ordered set of scalars in one CRDT.
+    OrderedSet,
 }
 
 /// Which classes may sit in one containment.
@@ -424,6 +426,7 @@ impl Shaped {
             Shaped::Bare(Site::Leaf(LeafSite::Scalar(_))) => "a single-valued attribute",
             Shaped::Bare(Site::Leaf(LeafSite::Set(_))) => "a set",
             Shaped::Bare(Site::Leaf(LeafSite::Bag)) => "a bag",
+            Shaped::Bare(Site::Leaf(LeafSite::OrderedSet)) => "an ordered set",
             Shaped::Optional(_) => "optional",
             Shaped::Sequence(_) => "a sequence",
             Shaped::Keyed(_) => "a keyed collection",
@@ -437,21 +440,22 @@ impl Shaped {
 /// the one place decision D6's refusals are turned into a value.
 pub(crate) fn shaped(rule: &MergeRule) -> Result<Shaped, UnsupportedReason> {
     Ok(match *rule {
-        MergeRule::Attribute { shape, leaf } => match shape.effective() {
+        MergeRule::Attribute { shape, leaf } => match shape {
             Shape::Single => Shaped::Bare(Site::Leaf(LeafSite::Scalar(leaf))),
             Shape::Optional => Shaped::Optional(Site::Leaf(LeafSite::Scalar(leaf))),
             Shape::Sequence => Shaped::Sequence(Site::Leaf(LeafSite::Scalar(leaf))),
             Shape::Set { tie } => Shaped::Bare(Site::Leaf(LeafSite::Set(tie))),
             Shape::Bag => Shaped::Bare(Site::Leaf(LeafSite::Bag)),
+            // One CRDT holding the whole collection, exactly as a set and a
+            // bag are: `GraphLog<List<V>>` and not a `NestedListLog` of leaf
+            // logs, which is what tells it from `Shape::Sequence`.
+            Shape::OrderedSet => Shaped::Bare(Site::Leaf(LeafSite::OrderedSet)),
             // A `uw-map` whose entry class's value feature is an attribute:
             // `containment.rs`'s `uw_map_value_log_type` compiles the leaf's
             // own log under the map, and the entry class disappears.
             Shape::Keyed { .. } => Shaped::Keyed(Site::Leaf(LeafSite::Scalar(leaf))),
-            // `Shape::effective` degrades the one shape the generator cannot
-            // compile, so nothing reaches here.
-            Shape::OrderedSet => unreachable!("`effective` degrades an ordered set to a sequence"),
         },
-        MergeRule::Containment { shape, target } => match shape.effective() {
+        MergeRule::Containment { shape, target } => match shape {
             Shape::Optional => Shaped::Optional(Site::Object(Target::Class(target))),
             Shape::Sequence => Shaped::Sequence(Site::Object(Target::Class(target))),
             // `target` is the *value* feature's class and never the entry
@@ -842,6 +846,7 @@ impl Node {
             Site::Leaf(LeafSite::Scalar(rule)) => Node::Leaf(LeafLog::for_rule(rule)),
             Site::Leaf(LeafSite::Set(tie)) => Node::Leaf(LeafLog::for_set(tie)),
             Site::Leaf(LeafSite::Bag) => Node::Leaf(LeafLog::for_bag()),
+            Site::Leaf(LeafSite::OrderedSet) => Node::Leaf(LeafLog::for_ordered_set()),
         }
     }
 
@@ -2459,16 +2464,23 @@ mod tests {
     }
 
     #[test]
-    fn an_ordered_set_is_minted_as_the_sequence_the_generator_emits() {
-        // `attribute.rs:183-198` warns and emits a list; `Shape::effective`
-        // is where that degradation is written down, and this is where it is
-        // checked to reach the node.
+    fn an_ordered_set_is_minted_as_the_one_log_the_generator_emits() {
+        // `attribute.rs:152-162` emits `GraphLog<List<V>>` for a unique
+        // ordered attribute, which is one CRDT over the whole collection and
+        // not a nested list of leaf logs. The node is the matching leaf, so a
+        // `Shaped::Sequence` here would be the old degradation coming back.
         let rule = MergeRule::Attribute {
             shape: Shape::OrderedSet,
             leaf: LeafRule::Text,
         };
-        assert!(matches!(shaped(&rule).unwrap(), super::Shaped::Sequence(_)));
-        assert!(matches!(Node::for_rule(&rule).unwrap(), Node::Seq(_)));
+        assert!(matches!(
+            shaped(&rule).unwrap(),
+            super::Shaped::Bare(Site::Leaf(super::LeafSite::OrderedSet))
+        ));
+        assert!(matches!(
+            Node::for_rule(&rule).unwrap(),
+            Node::Leaf(crate::leaf::LeafLog::OrderedSet(_))
+        ));
     }
 
     #[test]
@@ -2496,7 +2508,7 @@ mod tests {
     #[test]
     fn a_counter_of_every_width_mints_its_own_arm() {
         for num in [
-            NumKind::U8,
+            NumKind::I8,
             NumKind::I16,
             NumKind::I32,
             NumKind::I64,

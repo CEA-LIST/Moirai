@@ -37,16 +37,21 @@ impl FeatureSlot {
 /// The width the generator picked for a numeric attribute.
 ///
 /// These are exactly the six Rust types `to_crdt.rs`'s `to_rust_type` can
-/// return for a numeric Ecore builtin: `EByte` is `u8` and *unsigned*,
-/// `EShort` `i16`, `EInt` `i32`, `ELong` `i64`, `EFloat` `f32`, `EDouble`
-/// `f64`. The width is carried rather than collapsed to int-or-float because
-/// the equivalence oracle compares a `Counter<i32>` against an interpreted
-/// counter and has to know which one it is holding.
+/// return for a numeric Ecore builtin: `EByte` is `i8`, `EShort` `i16`, `EInt`
+/// `i32`, `ELong` `i64`, `EFloat` `f32`, `EDouble` `f64`. The width is carried
+/// rather than collapsed to int-or-float because the equivalence oracle
+/// compares a `Counter<i32>` against an interpreted counter and has to know
+/// which one it is holding.
+///
+/// `EByte` is signed because Ecore says so: `ecore.ecore` gives `EByte` the
+/// `instanceClassName` `byte`, which is Java's signed eight-bit integer, and
+/// `EByteObject` `java.lang.Byte`. Ecore has no unsigned byte at all, so a
+/// `u8` here would have been a width Ecore cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NumKind {
     /// `EByte`.
-    U8,
+    I8,
     /// `EShort`.
     I16,
     /// `EInt`.
@@ -188,25 +193,16 @@ pub enum Shape {
         /// What the keys are.
         key: KeyKind,
     },
-    /// Declared `unique` *and* `ordered`, which the generator cannot compile:
-    /// it warns and emits a list (`attribute.rs:183-198`). Recorded so the
-    /// declaration is not lost, and degraded by [`Shape::effective`]
-    /// everywhere a rule is acted on.
-    OrderedSet,
-}
-
-impl Shape {
-    /// The shape actually merged by: [`Shape::OrderedSet`] degraded to
-    /// [`Shape::Sequence`], every other shape itself.
+    /// `GraphLog<List<T>>`: many, ordered, over the values themselves rather
+    /// than over a log each. `unique` *and* `ordered`, which is what Ecore's
+    /// two silent facets mean, and what `attribute.rs:152-162` compiles.
     ///
-    /// The interpreter merges by this, never by the recorded shape, so that
-    /// it drops uniqueness exactly where the generator does.
-    pub const fn effective(self) -> Shape {
-        match self {
-            Shape::OrderedSet => Shape::Sequence,
-            other => other,
-        }
-    }
+    /// It is a distinct construction and not a [`Shape::Sequence`]: a sequence
+    /// is a `NestedListLog` whose elements are leaf logs a later operation can
+    /// still edit, and this one holds plain values that are only inserted and
+    /// deleted. Both paths merge it the same way, so nothing degrades it any
+    /// more.
+    OrderedSet,
 }
 
 /// Why a feature carries no rule the interpreted path can run.

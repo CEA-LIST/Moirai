@@ -1021,11 +1021,12 @@ mod tests {
         assert_eq!(table.rule(ClassSlot(u16::MAX), FeatureSlot(u16::MAX)), None);
     }
 
-    /// A declared `unique` and `ordered` collection is recorded as it was
-    /// declared and merged as a sequence, because that is what the generator
-    /// compiles (`attribute.rs:183-198`).
+    /// A `unique` and `ordered` collection is recorded as what it is and
+    /// merged as what it is: `attribute.rs:152-162` compiles
+    /// `GraphLog<List<T>>` for it and the interpreted path holds the same
+    /// construction, so nothing degrades it to a sequence any more.
     #[test]
-    fn an_ordered_set_is_recorded_and_degrades_to_a_sequence() {
+    fn an_ordered_set_is_recorded_and_merged_as_one() {
         let table = table();
         let MergeRule::Attribute { shape, .. } = table
             .rule(INVERTER, FeatureSlot(0))
@@ -1035,7 +1036,7 @@ mod tests {
             panic!("`Inverter.aliases` is an attribute");
         };
         assert_eq!(shape, Shape::OrderedSet, "the declaration is not lost");
-        assert_eq!(shape.effective(), Shape::Sequence, "and is not merged by");
+        assert_ne!(shape, Shape::Sequence, "and is not merged as a sequence");
     }
 
     /// `derived`, `transient` and `volatile` are recorded and not merged;
@@ -1208,11 +1209,6 @@ mod tests {
                 shape: Shape::Keyed { key: KeyKind::Str },
                 target: class("Json").slot,
             }
-        );
-        assert_eq!(
-            Shape::Keyed { key: KeyKind::Str }.effective(),
-            Shape::Keyed { key: KeyKind::Str },
-            "a keyed collection is merged by, and not degraded like an ordered set"
         );
         for (name, feature) in [("Array", "items"), ("Object", "entry"), ("String", "value")] {
             let holder = class(name);

@@ -110,6 +110,9 @@ pub enum Construction {
     RemoveWinsSet,
     /// `AWBagLog`, spelled out as `UWMapLog<V, VecLog<Counter<usize>>>`.
     Bag,
+    /// `GraphLog<List<V>>` over an attribute's own values: the ordered set a
+    /// `unique` and `ordered` attribute is.
+    OrderedSet,
     /// `NestedListLog` over attribute values.
     SequenceOfValues,
     /// `OptionLog` over an attribute value.
@@ -125,7 +128,7 @@ pub enum Construction {
 }
 
 const NUMS: [NumKind; 6] = [
-    NumKind::U8,
+    NumKind::I8,
     NumKind::I16,
     NumKind::I32,
     NumKind::I64,
@@ -154,6 +157,7 @@ impl fmt::Display for Construction {
             Construction::AddWinsSet => write!(f, "add-wins set"),
             Construction::RemoveWinsSet => write!(f, "remove-wins set"),
             Construction::Bag => write!(f, "bag"),
+            Construction::OrderedSet => write!(f, "ordered set"),
             Construction::SequenceOfValues => write!(f, "sequence of attribute values"),
             Construction::OptionalAttribute => write!(f, "optional attribute"),
             Construction::SingleContainment => write!(f, "single containment"),
@@ -178,6 +182,7 @@ impl Construction {
             Construction::AddWinsSet,
             Construction::RemoveWinsSet,
             Construction::Bag,
+            Construction::OrderedSet,
             Construction::SequenceOfValues,
             Construction::OptionalAttribute,
             Construction::SingleContainment,
@@ -194,13 +199,13 @@ impl Construction {
 pub fn leaf_construction(leaf: &LeafLog) -> Construction {
     match leaf {
         LeafLog::Text(_) => Construction::Text,
-        LeafLog::CounterU8(_) => Construction::Counter(NumKind::U8),
+        LeafLog::CounterI8(_) => Construction::Counter(NumKind::I8),
         LeafLog::CounterI16(_) => Construction::Counter(NumKind::I16),
         LeafLog::CounterI32(_) => Construction::Counter(NumKind::I32),
         LeafLog::CounterI64(_) => Construction::Counter(NumKind::I64),
         LeafLog::CounterF32(_) => Construction::Counter(NumKind::F32),
         LeafLog::CounterF64(_) => Construction::Counter(NumKind::F64),
-        LeafLog::SimpleCounterU8(_) => Construction::SimpleCounter(NumKind::U8),
+        LeafLog::SimpleCounterI8(_) => Construction::SimpleCounter(NumKind::I8),
         LeafLog::SimpleCounterI16(_) => Construction::SimpleCounter(NumKind::I16),
         LeafLog::SimpleCounterI32(_) => Construction::SimpleCounter(NumKind::I32),
         LeafLog::SimpleCounterI64(_) => Construction::SimpleCounter(NumKind::I64),
@@ -216,6 +221,7 @@ pub fn leaf_construction(leaf: &LeafLog) -> Construction {
         LeafLog::SetAw(_) => Construction::AddWinsSet,
         LeafLog::SetRw(_) => Construction::RemoveWinsSet,
         LeafLog::Bag(_) => Construction::Bag,
+        LeafLog::OrderedSet(_) => Construction::OrderedSet,
     }
 }
 
@@ -243,7 +249,7 @@ pub fn rule_constructions(rule: &MergeRule) -> Vec<Construction> {
         LeafRule::Enum { tie, .. } => Construction::EnumRegister(tie),
     };
     match rule {
-        MergeRule::Attribute { shape, leaf: rule } => match shape.effective() {
+        MergeRule::Attribute { shape, leaf: rule } => match shape {
             Shape::Single => vec![leaf(*rule)],
             Shape::Optional => vec![Construction::OptionalAttribute, leaf(*rule)],
             Shape::Sequence => vec![Construction::SequenceOfValues, leaf(*rule)],
@@ -254,16 +260,15 @@ pub fn rule_constructions(rule: &MergeRule) -> Vec<Construction> {
                 tie: SetTie::RemoveWins,
             } => vec![Construction::RemoveWinsSet],
             Shape::Bag => vec![Construction::Bag],
+            Shape::OrderedSet => vec![Construction::OrderedSet],
             Shape::Keyed { .. } => vec![Construction::KeyedMap],
-            Shape::OrderedSet => unreachable!("`effective` degrades an ordered set"),
         },
-        MergeRule::Containment { shape, .. } => match shape.effective() {
+        MergeRule::Containment { shape, .. } => match shape {
             Shape::Single => vec![Construction::SingleContainment],
             Shape::Optional => vec![Construction::OptionalContainment],
             Shape::Sequence => vec![Construction::SequenceContainment],
             Shape::Keyed { .. } => vec![Construction::KeyedMap],
-            Shape::Set { .. } | Shape::Bag => Vec::new(),
-            Shape::OrderedSet => unreachable!("`effective` degrades an ordered set"),
+            Shape::Set { .. } | Shape::Bag | Shape::OrderedSet => Vec::new(),
         },
         MergeRule::Reference { .. } | MergeRule::Unsupported { .. } => Vec::new(),
     }
@@ -281,6 +286,8 @@ pub mod pattern {
     pub const INSERT_INSERT_SAME_POS: &str = "insert ∥ insert at one position";
     pub const INSERT_INSERT_SAME_CHAR: &str = "insert ∥ insert of the same char at one position";
     pub const INSERT_DELETE_SAME_CHAR: &str = "insert beside a char ∥ delete of that char";
+    pub const INSERT_INSERT_SAME_VALUE: &str = "insert ∥ insert of the same value at one position";
+    pub const INSERT_DELETE_SAME_VALUE: &str = "insert beside a value ∥ delete of that value";
     pub const DELETE_DELETE_SAME: &str = "delete ∥ delete of the same element";
     pub const DELETE_DELETE_DIFFERENT: &str = "delete ∥ delete of different elements";
 
@@ -369,6 +376,15 @@ const TEXT: &[&str] = &[
     DELETE_DELETE_SAME,
     DELETE_DELETE_DIFFERENT,
 ];
+/// An ordered set is the same `GraphLog<List<_>>` as text, so it is driven
+/// through the same five patterns, over values rather than over characters.
+const ORDERED_SET: &[&str] = &[
+    INSERT_INSERT_SAME_POS,
+    INSERT_INSERT_SAME_VALUE,
+    INSERT_DELETE_SAME_VALUE,
+    DELETE_DELETE_SAME,
+    DELETE_DELETE_DIFFERENT,
+];
 const COUNTER: &[&str] = &[INC_INC, INC_DEC, INC_RESET, RESET_RESET];
 const FLAG: &[&str] = &[
     ENABLE_DISABLE,
@@ -449,7 +465,7 @@ pub fn row(construction: Construction) -> Row {
             at(
                 KITCHEN,
                 match num {
-                    NumKind::U8 => "Foo.myByte",
+                    NumKind::I8 => "Foo.myByte",
                     NumKind::I16 => "Foo.myShort",
                     NumKind::I32 => "Foo.myInt",
                     NumKind::I64 => "Foo.myLong",
@@ -507,7 +523,12 @@ pub fn row(construction: Construction) -> Row {
         Construction::AddWinsSet => (SET, at(CLASSDIAGRAM, "Class.tags")),
         Construction::RemoveWinsSet => (SET, at(CLASSDIAGRAM, "Class.invariants")),
         Construction::Bag => (BAG, at(KITCHEN, "Foo.bag")),
-        Construction::SequenceOfValues => (SEQUENCE, at(KITCHEN, "Foo.bounds0inf")),
+        Construction::OrderedSet => (ORDERED_SET, at(KITCHEN, "Foo.uniqueList")),
+        // `Foo.bounds0inf` was this row's feature until Ecore's silent
+        // `unique` was read as `true`, which made it an ordered set;
+        // `Foo.simpleList` writes `unique="false"` and is the one attribute
+        // sequence the checked-in corpus has left.
+        Construction::SequenceOfValues => (SEQUENCE, at(KITCHEN, "Foo.simpleList")),
         Construction::OptionalAttribute => (OPTIONAL, at(BT, "TreeNode.name")),
         Construction::SingleContainment => (SINGLE, at(BT, "BehaviorTree.child")),
         Construction::OptionalContainment => (
@@ -1579,7 +1600,7 @@ mod tests {
 
     use crate::leaf::LeafLog;
 
-    /// Every one of the twenty-three leaf arms, minted the only way a leaf is
+    /// Every one of the twenty-four leaf arms, minted the only way a leaf is
     /// minted, has a row, and the row has patterns.
     #[test]
     fn every_leaf_arm_has_a_row_with_patterns() {
@@ -1599,13 +1620,14 @@ mod tests {
         arms.push(LeafLog::for_set(SetTie::AddWins));
         arms.push(LeafLog::for_set(SetTie::RemoveWins));
         arms.push(LeafLog::for_bag());
+        arms.push(LeafLog::for_ordered_set());
         let kinds: BTreeSet<&str> = arms.iter().map(LeafLog::kind).collect();
-        assert_eq!(arms.len(), 23, "the twenty-three arms");
+        assert_eq!(arms.len(), 24, "the twenty-four arms");
         let rows: BTreeSet<Construction> = arms.iter().map(leaf_construction).collect();
         assert_eq!(
             rows.len(),
-            23,
-            "twenty-three arms, twenty-three rows: {kinds:?}"
+            24,
+            "twenty-four arms, twenty-four rows: {kinds:?}"
         );
         for construction in rows {
             assert!(!row(construction).patterns.is_empty(), "{construction}");
@@ -1636,12 +1658,13 @@ mod tests {
                 }
             }
         }
-        assert_eq!(rows.len(), 34, "thirty-four rows");
+        assert_eq!(rows.len(), 35, "thirty-five rows");
         assert_eq!(
             reachable_cells,
-            109 + 4,
-            "the audit's hundred and eight cells, the keyed map's three-writer column, and \
-             the total-order enum register's four through `Relation.typ`"
+            109 + 4 + 5,
+            "the audit's hundred and eight cells, the keyed map's three-writer column, the \
+             total-order enum register's four through `Relation.typ`, and the ordered set's \
+             five through `Foo.uniqueList`"
         );
         assert_eq!(
             unreachable.len(),
@@ -1649,7 +1672,7 @@ mod tests {
             "six simple counters, three enum registers that are neither multi-value nor \
              total-order, the optional containment: {unreachable:?}"
         );
-        assert!(unreachable.contains(&Construction::SimpleCounter(NumKind::U8)));
+        assert!(unreachable.contains(&Construction::SimpleCounter(NumKind::I8)));
         assert!(unreachable.contains(&Construction::EnumRegister(TieBreak::Fair)));
         assert!(unreachable.contains(&Construction::EnumRegister(TieBreak::PartialOrder)));
         assert!(!unreachable.contains(&Construction::EnumRegister(TieBreak::TotalOrder)));

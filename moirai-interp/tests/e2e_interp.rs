@@ -79,7 +79,9 @@ use std::time::{Duration, Instant};
 use moirai_interp::leaf::LeafOp;
 use moirai_interp::testing::{class_slot, feature_slot};
 use moirai_interp::{InstanceOp, ModelOp};
-use moirai_semantics::{MetamodelSemantics, from_descriptor, metamodel_digest};
+use moirai_semantics::{
+    MergeRule, MetamodelSemantics, Shape, from_descriptor, metamodel_digest,
+};
 use serde_json::{Value, json};
 
 /// The two descriptors, `formatVersion` 2, byte-identical to
@@ -566,11 +568,17 @@ fn digest(text: &str) -> String {
 }
 
 /// The operations that put one object of `child` at position `pos` of the
-/// root's `feature` sequence and write `text` into its single-valued text
-/// attribute `attribute`, one character at a time.
+/// root's `feature` sequence and write `text` into its text attribute
+/// `attribute`, one character at a time.
 ///
 /// The first is an insert and the rest are updates of what it created, which
 /// is what a text CRDT under a freshly minted object looks like from outside.
+///
+/// The attribute is optional whenever the `.ecore` file left its `lowerBound`
+/// silent, which is Ecore's `0`, so the write is wrapped in a `Set` — the
+/// shape is read from the table rather than assumed, because the two
+/// metamodels this drives do not agree on it: `BehaviorTree.ID` writes
+/// `lowerBound="1"` and `ModelElement.name` does not.
 fn named_child(
     sem: &MetamodelSemantics,
     root: &str,
@@ -584,16 +592,28 @@ fn named_child(
     let feature_slot = feature_slot(sem, root_slot, feature);
     let child_slot = class_slot(sem, child);
     let attribute_slot = self::feature_slot(sem, child_slot, attribute);
+    // The slot is a *visible* one and `rule` addresses declared features, so
+    // the declaring class is resolved first: `name` is `ModelElement`'s and
+    // not `Class`'s.
+    let (_, owner, declared) = sem.classes[child_slot.index()].visible[attribute_slot.index()];
+    let optional = matches!(
+        sem.rule(owner, declared),
+        Some(MergeRule::Attribute {
+            shape: Shape::Optional,
+            ..
+        })
+    );
     text.chars()
         .enumerate()
         .map(|(index, ch)| {
-            let write = InstanceOp::variant(
-                child_slot,
-                InstanceOp::field(
-                    attribute_slot,
-                    InstanceOp::Leaf(LeafOp::InsertChar { pos: index, ch }),
-                ),
-            );
+            let leaf = InstanceOp::Leaf(LeafOp::InsertChar { pos: index, ch });
+            let leaf = if optional {
+                InstanceOp::set(leaf)
+            } else {
+                leaf
+            };
+            let write =
+                InstanceOp::variant(child_slot, InstanceOp::field(attribute_slot, leaf));
             let step = if index == 0 {
                 InstanceOp::insert(pos, write)
             } else {
