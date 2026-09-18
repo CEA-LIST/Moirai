@@ -136,6 +136,29 @@ pub enum LeafRule {
         /// How concurrent writes settle.
         tie: TieBreak,
     },
+    /// `VecLog<MVRegister<Option<T>>>`: a scalar that may be *absent*, held in
+    /// a multi-value register.
+    ///
+    /// Reachable in one place only, the value of a [`Shape::Keyed`] collection
+    /// whose entry class's value feature is an optional attribute, which is
+    /// what Ecore's own `EStringToStringMapEntry.value` is. `UWMapLog` reads a
+    /// key back only while that key's value log is not default, and an
+    /// `OptionLog` holding nothing *is* default, so a key put without a value
+    /// would vanish; a register holding `None` is not default, so the key is
+    /// read back with no value. That is `containment.rs`'s
+    /// `uw_map_optional_value_log_type`, and the reason this is a leaf of its
+    /// own rather than a [`LeafRule::Register`]: the two compile to different
+    /// Rust types and merge over different value spaces.
+    ///
+    /// The tie-break is not carried because the generator has none to make: it
+    /// writes `MVRegister` here whatever the file says and refuses a
+    /// `urn:arachne:semantics` `datatype` on such a value feature.
+    OptionalRegister {
+        /// Slot in `enums` of the enum whose literals the register holds, when
+        /// the value feature is enum-typed; `None` for every other scalar.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<ClassSlot>,
+    },
 }
 
 /// What the values of a keyed collection's key are.
@@ -206,8 +229,12 @@ pub enum Shape {
 }
 
 /// Why a feature carries no rule the interpreted path can run.
+///
+/// The spellings are `camelCase`, which for the five single words below is
+/// the `lowercase` they were written under until 2026-09-18 and is therefore
+/// no change to any descriptor already emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum UnsupportedReason {
     /// A `uw-map` containment: keyed by a feature of its target.
     Keyed,
@@ -220,10 +247,30 @@ pub enum UnsupportedReason {
     Transient,
     /// `volatile="true"`.
     Volatile,
+    /// A containment typed by Ecore's `EObject`, the class of every object:
+    /// `EAnnotation.contents`, and any feature a metamodel types that way.
+    ///
+    /// The generated path emits no field for one and warns
+    /// (`classifier/mod.rs:173`): a containment compiles to the target's own
+    /// log, and `EObject` has no log because it has no feature and stands for
+    /// every class at once. Nothing to merge, so nothing is claimed.
+    EObjectContainment,
+    /// A non-containment reference typed by Ecore's `EObject`:
+    /// `EAnnotation.references`, and any feature a metamodel types that way.
+    ///
+    /// A reference is carried by `moirai-macros`' typed graph, whose arc kinds
+    /// name a source and a target *class*; there is no arc that may point at
+    /// any vertex (code note 39), so the generated path emits no vertex kind,
+    /// no edge and no arc for one, and warns.
+    EObjectReference,
 }
 
 impl UnsupportedReason {
     /// The word used in the descriptor and in a refusal sentence.
+    ///
+    /// The same string `serde` writes for the variant, which is what lets the
+    /// emitter render a reason by hand and the parser read it back.
+    /// `the_reason_words_are_the_serde_spellings` holds the two together.
     pub const fn as_str(self) -> &'static str {
         match self {
             UnsupportedReason::Keyed => "keyed",
@@ -231,13 +278,42 @@ impl UnsupportedReason {
             UnsupportedReason::Derived => "derived",
             UnsupportedReason::Transient => "transient",
             UnsupportedReason::Volatile => "volatile",
+            UnsupportedReason::EObjectContainment => "eObjectContainment",
+            UnsupportedReason::EObjectReference => "eObjectReference",
+        }
+    }
+
+    /// The sentence a refusal gives for this reason, in the words of what the
+    /// generated path does with such a feature.
+    pub const fn why(self) -> &'static str {
+        match self {
+            UnsupportedReason::Keyed => {
+                "it is keyed by a feature of its target and carries no rule of its own"
+            }
+            UnsupportedReason::Transparent => {
+                "its class is represented by one of its own fields and has no record"
+            }
+            UnsupportedReason::Derived => "it is `derived`, so nothing writes it",
+            UnsupportedReason::Transient => "it is `transient`, so nothing stores it",
+            UnsupportedReason::Volatile => "it is `volatile`, so nothing stores it",
+            UnsupportedReason::EObjectContainment => {
+                "it contains an object of any class, which neither path represents"
+            }
+            UnsupportedReason::EObjectReference => {
+                "it refers to an object of any class, and a typed graph cannot point an arc at \
+                 any vertex"
+            }
         }
     }
 
     /// Whether the parser refuses a whole metamodel over this reason, per
     /// decision D6: a keyed or transparent feature is a form the interpreted
     /// node has no node type for, and the honest answer is to stay on the
-    /// generated path. The other three are recorded and simply not merged.
+    /// generated path. The other five are recorded and simply not merged,
+    /// which is what the generated path does with them too: a `derived`,
+    /// `transient` or `EObject`-typed feature is a feature *neither* path
+    /// stores, so a metamodel that has one is not thereby a metamodel the
+    /// interpreted path runs differently.
     pub const fn refused_at_parse(self) -> bool {
         matches!(
             self,

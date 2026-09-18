@@ -161,6 +161,12 @@ enum RawLeaf {
         class: Option<String>,
         tie: TieBreak,
     },
+    OptionalRegister {
+        /// The enum whose literals the register holds, when the value feature
+        /// is enum-typed; absent for every other scalar.
+        #[serde(default)]
+        class: Option<String>,
+    },
 }
 
 /// One class as pass one leaves it: features parsed, inheritance not yet
@@ -573,6 +579,21 @@ fn feature_rule(
                         tie,
                     }
                 }
+                // No fall-back to the entry's `enum` key here: an
+                // `optionalRegister` sits on a *containment* entry, whose
+                // format 1 keys name the entry class and never a datatype,
+                // so the only place the enum can be written is the leaf.
+                RawLeaf::OptionalRegister { class: named } => LeafRule::OptionalRegister {
+                    class: match named {
+                        None => None,
+                        Some(named) => Some(enum_slots.get(named.as_str()).copied().ok_or(
+                            SemanticsError::UnknownClass {
+                                at: at(),
+                                name: named,
+                            },
+                        )?),
+                    },
+                },
             };
             Ok(MergeRule::Attribute { shape, leaf })
         }
@@ -1298,6 +1319,250 @@ mod tests {
             Err(SemanticsError::UnknownClass {
                 at: "Root.child".to_string(),
                 name: "Missing".to_string(),
+            })
+        );
+    }
+
+    /// A descriptor holding Ecore's own classes: the qualified keys, the
+    /// ordered containment of annotations, the optional `source`, the
+    /// `details` map to a register over an optional text, and the two
+    /// `EObject`-typed features recorded as unsupported rather than dropped.
+    ///
+    /// Hand-written, small, and the shape `arachne describe` emits for
+    /// `examples/pet_metamodels/ecore_builtins.ecore`; the real descriptor is
+    /// driven through this parser by that crate's own oracle.
+    fn builtins() -> Value {
+        let prov = || provenance("declared", "declared", "declared", "declared");
+        json!({
+            "formatVersion": 2,
+            "package": "annotated",
+            "nsURI": "http://www.example.org/annotated",
+            "rootClasses": ["Model"],
+            "enums": {},
+            "classes": {
+                "Model": {
+                    "abstract": false, "superTypes": ["ecore::EObject"],
+                    "attributes": [], "references": [],
+                    "containments": [{"name": "parts",
+                        "merge": {"kind": "containment", "shape": {"kind": "sequence"},
+                                  "target": "Part"},
+                        "provenance": prov()}]
+                },
+                "Part": {
+                    "abstract": false, "superTypes": ["ecore::EModelElement"],
+                    "attributes": [], "containments": [],
+                    "references": [{"name": "subject", "target": "ecore::EObject",
+                        "merge": {"kind": "unsupported", "reason": "eObjectReference"},
+                        "provenance": prov()}]
+                },
+                "ecore::EObject": {
+                    "abstract": false, "superTypes": [],
+                    "attributes": [], "containments": [], "references": []
+                },
+                "ecore::EModelElement": {
+                    "abstract": true, "superTypes": [],
+                    "attributes": [], "references": [],
+                    "containments": [{"name": "eAnnotations", "target": "ecore::EAnnotation",
+                        "merge": {"kind": "containment", "shape": {"kind": "sequence"},
+                                  "target": "ecore::EAnnotation"},
+                        "provenance": prov()}]
+                },
+                "ecore::EAnnotation": {
+                    "abstract": false, "superTypes": ["ecore::EModelElement"],
+                    "attributes": [{"name": "source",
+                        "merge": {"kind": "attribute", "shape": {"kind": "optional"},
+                                  "leaf": {"kind": "text"}},
+                        "provenance": prov()}],
+                    "references": [{"name": "references", "target": "ecore::EObject",
+                        "merge": {"kind": "unsupported", "reason": "eObjectReference"},
+                        "provenance": prov()}],
+                    "containments": [
+                        {"name": "details", "target": "ecore::EStringToStringMapEntry",
+                         "merge": {"kind": "attribute",
+                                   "shape": {"kind": "keyed", "key": {"kind": "str"}},
+                                   "leaf": {"kind": "optionalRegister"}},
+                         "provenance": prov()},
+                        {"name": "contents", "target": "ecore::EObject",
+                         "merge": {"kind": "unsupported", "reason": "eObjectContainment"},
+                         "provenance": prov()}
+                    ]
+                },
+                "ecore::EStringToStringMapEntry": {
+                    "abstract": false, "superTypes": [],
+                    "containments": [], "references": [],
+                    "attributes": [
+                        {"name": "key",
+                         "merge": {"kind": "attribute", "shape": {"kind": "optional"},
+                                   "leaf": {"kind": "text"}},
+                         "provenance": prov()},
+                        {"name": "value",
+                         "merge": {"kind": "attribute", "shape": {"kind": "optional"},
+                                   "leaf": {"kind": "text"}},
+                         "provenance": prov()}
+                    ]
+                }
+            }
+        })
+    }
+
+    /// Ecore's classes are ordinary classes here: they take slots, they are
+    /// reached as supertypes and as containment targets under a key no
+    /// metamodel's own class can be spelled with, and their features carry
+    /// rules like anyone else's.
+    #[test]
+    fn ecore_builtins_parse_as_ordinary_classes_under_a_qualified_key() {
+        let table = from_descriptor(&builtins()).expect("the built-ins parse");
+        let class = |name: &str| {
+            table
+                .classes
+                .iter()
+                .find(|class| &*class.name == name)
+                .unwrap_or_else(|| panic!("no class `{name}`"))
+        };
+
+        let annotation = class("ecore::EAnnotation");
+        assert_eq!(
+            annotation.supers.as_slice(),
+            &[class("ecore::EModelElement").slot]
+        );
+        // `source`, and `eAnnotations` inherited from `EModelElement`.
+        let visible: Vec<&str> = annotation
+            .visible
+            .iter()
+            .map(|(name, _, _)| &**name)
+            .collect();
+        assert_eq!(visible, ["contents", "details", "eAnnotations", "references", "source"]);
+
+        let element = class("ecore::EModelElement");
+        assert_eq!(
+            element.declared[0].merge,
+            MergeRule::Containment {
+                shape: Shape::Sequence,
+                target: annotation.slot,
+            }
+        );
+        // A part is an annotated element, so its own `eAnnotations` is the
+        // one `EModelElement` declares, reached through the declaring class.
+        let part = class("Part");
+        let (name, owner, slot) = &part.visible[0];
+        assert_eq!(&**name, "eAnnotations");
+        assert_eq!(*owner, element.slot);
+        assert_eq!(
+            table.rule(*owner, *slot).copied(),
+            Some(MergeRule::Containment {
+                shape: Shape::Sequence,
+                target: annotation.slot,
+            })
+        );
+    }
+
+    /// `details` is a keyed collection whose value is a register over an
+    /// optional text, which is the one construction the vocabulary gained for
+    /// Ecore's own classes; `contents` and the two `EObject` references are
+    /// recorded as unsupported and cost nothing else.
+    #[test]
+    fn the_details_map_is_a_register_over_an_optional_value() {
+        let table = from_descriptor(&builtins()).expect("the built-ins parse");
+        let annotation = table
+            .classes
+            .iter()
+            .find(|class| &*class.name == "ecore::EAnnotation")
+            .expect("`ecore::EAnnotation`");
+        let rule = |name: &str| {
+            annotation
+                .declared
+                .iter()
+                .find(|feature| &*feature.name == name)
+                .unwrap_or_else(|| panic!("no feature `{name}`"))
+                .merge
+        };
+        assert_eq!(
+            rule("details"),
+            MergeRule::Attribute {
+                shape: Shape::Keyed { key: KeyKind::Str },
+                leaf: LeafRule::OptionalRegister { class: None },
+            }
+        );
+        assert_eq!(
+            rule("contents"),
+            MergeRule::Unsupported {
+                reason: UnsupportedReason::EObjectContainment
+            }
+        );
+        assert_eq!(
+            rule("references"),
+            MergeRule::Unsupported {
+                reason: UnsupportedReason::EObjectReference
+            }
+        );
+    }
+
+    /// The emitter writes a reason by hand and the parser reads it with
+    /// `serde`; the two spellings are held together here rather than in a
+    /// comment.
+    #[test]
+    fn the_reason_words_are_the_serde_spellings() {
+        for reason in [
+            UnsupportedReason::Keyed,
+            UnsupportedReason::Transparent,
+            UnsupportedReason::Derived,
+            UnsupportedReason::Transient,
+            UnsupportedReason::Volatile,
+            UnsupportedReason::EObjectContainment,
+            UnsupportedReason::EObjectReference,
+        ] {
+            assert_eq!(
+                serde_json::to_value(reason).expect("a reason serializes"),
+                Value::String(reason.as_str().to_string()),
+                "{reason:?}"
+            );
+            assert!(!reason.why().is_empty());
+        }
+        assert!(!UnsupportedReason::EObjectContainment.refused_at_parse());
+        assert!(!UnsupportedReason::EObjectReference.refused_at_parse());
+    }
+
+    /// An `optionalRegister` over an enum names its enum in the leaf, because
+    /// a containment entry's format 1 keys hold no datatype to fall back on.
+    #[test]
+    fn an_optional_register_over_an_enum_resolves_its_class() {
+        let mut descriptor = builtins();
+        descriptor["enums"] = json!({"Visibility": ["PUBLIC", "PRIVATE"]});
+        descriptor["classes"]["ecore::EAnnotation"]["containments"][0]["merge"]["leaf"] =
+            json!({"kind": "optionalRegister", "class": "Visibility"});
+        let table = from_descriptor(&descriptor).expect("the enum resolves");
+        assert_eq!(
+            table.enums[0].name.as_ref(),
+            "Visibility",
+            "the enum takes slot 0 of `enums`"
+        );
+        let annotation = table
+            .classes
+            .iter()
+            .find(|class| &*class.name == "ecore::EAnnotation")
+            .expect("`ecore::EAnnotation`");
+        let details = annotation
+            .declared
+            .iter()
+            .find(|feature| &*feature.name == "details")
+            .expect("`details`");
+        assert_eq!(
+            details.merge,
+            MergeRule::Attribute {
+                shape: Shape::Keyed { key: KeyKind::Str },
+                leaf: LeafRule::OptionalRegister {
+                    class: Some(table.enums[0].slot)
+                },
+            }
+        );
+
+        descriptor["classes"]["ecore::EAnnotation"]["containments"][0]["merge"]["leaf"] =
+            json!({"kind": "optionalRegister", "class": "Nowhere"});
+        assert_eq!(
+            from_descriptor(&descriptor),
+            Err(SemanticsError::UnknownClass {
+                at: "ecore::EAnnotation.details".to_string(),
+                name: "Nowhere".to_string(),
             })
         );
     }
