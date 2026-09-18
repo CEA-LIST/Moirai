@@ -453,6 +453,55 @@ fn regression_2() {
     assert_eq!(state_b, result);
 }
 
+/// `CachedLog::effect` used to replay the incoming operation onto the
+/// materialised value instead of recomputing it whenever the event's version
+/// compared `Greater` to the version of the event delivered just before it.
+/// Being greater than the event before is not being greater than everything
+/// the log holds, and `Version::partial_cmp` shortcuts two versions that share
+/// an origin to a comparison of that origin's own sequence numbers, so the
+/// second of two events from one replica took the replay path even when the
+/// log had since taken in an event concurrent with both.
+///
+/// The replayed operation carries the *sender's* index, and the cached list was
+/// not the sender's list. Here `b`'s character sits ahead of everything `a`
+/// wrote, so `a`'s second insert was replayed one place too early and `b` read
+/// `bxzy` where the same schedule without the middle read gives `bxyz` on both
+/// replicas — the state of a replica depended on whether anyone looked at it
+/// while events were arriving.
+///
+/// `CachedLog` now keeps the join of every version it has taken in and replays
+/// only an event that is after all of it, so the third event is recomputed and
+/// the read in the middle changes nothing.
+///
+/// This is `a_read_between_deliveries_changes_what_the_cached_list_holds` of
+/// `repro/nested-list-cache-replays-a-concurrent-event` (`7999b7c`), no longer
+/// ignored.
+#[test]
+fn a_read_between_deliveries_changes_what_the_cached_list_holds() {
+    let (mut replica_a, mut replica_b) = twins_log::<CachedLog<GraphLog<List<char>>, Vec<char>>>();
+
+    let e1 = replica_a.send(List::insert('x', 0)).unwrap();
+    replica_b.receive(e1);
+
+    // `b` writes once; `a` writes twice without having seen it.
+    let event_b = replica_b.send(List::insert('b', 0)).unwrap();
+    let event_a_second = replica_a.send(List::insert('y', 1)).unwrap();
+    let event_a_third = replica_a.send(List::insert('z', 2)).unwrap();
+
+    replica_b.receive(event_a_second);
+    // The only thing this read does is populate the cache.
+    assert_eq!(
+        replica_b.query(&Read::<Vec<char>>::new()),
+        vec!['b', 'x', 'y']
+    );
+    replica_b.receive(event_a_third);
+    replica_a.receive(event_b);
+
+    let expected = vec!['b', 'x', 'y', 'z'];
+    assert_eq!(replica_a.query(&Read::<Vec<char>>::new()), expected);
+    assert_eq!(replica_b.query(&Read::<Vec<char>>::new()), expected);
+}
+
 /// Simulate a long sequence of operations to test caching and performance.
 #[test]
 fn caching() {
@@ -543,3 +592,4 @@ fn fuzz_list() {
 
     fuzzer::<GraphLog<List<char>>, Read<String>>(config);
 }
+

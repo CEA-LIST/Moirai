@@ -427,6 +427,139 @@ mod tests {
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
+    /// The positions of a nested list are held in a `CachedLog`, whose `effect`
+    /// used to replay the incoming operation onto the materialised value
+    /// instead of recomputing it whenever the event's version compared
+    /// `Greater` to the version of the event delivered just before it. Being
+    /// greater than the previous event is not being greater than everything the
+    /// log holds, so a concurrent event took the replay path, and the replay is
+    /// a plain `Vec::remove` that knows nothing of update-wins.
+    ///
+    /// Here `b`'s update is concurrent with both of `a`'s later operations. The
+    /// delete arrives right after `a`'s update, which has the same origin and a
+    /// higher sequence number, so the shortcut in `Version::partial_cmp` called
+    /// it `Greater` and the delete was replayed. It was only visible when the
+    /// cache held a value, and only a read puts one there: without the middle
+    /// read both replicas converge on `[5]`, with it `b` read `[]`.
+    ///
+    /// `CachedLog` compares against the join of every version it has taken in
+    /// now, so `a`'s delete — which never saw `b`'s update — recomputes.
+    ///
+    /// This is `a_read_between_deliveries_drops_a_child_a_concurrent_update_keeps`
+    /// of `repro/nested-list-cache-replays-a-concurrent-event` (`95e122a`), no
+    /// longer ignored.
+    #[test]
+    fn a_read_between_deliveries_drops_a_child_a_concurrent_update_keeps() {
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b
+            .send(NestedList::update(0, Counter::Inc(5)))
+            .unwrap();
+        let event_a_update = replica_a
+            .send(NestedList::update(0, Counter::Inc(1)))
+            .unwrap();
+        let event_a_delete = replica_a.send(NestedList::delete(0)).unwrap();
+
+        replica_b.receive(event_a_update);
+        // The only thing this read does is populate the positions cache.
+        assert_eq!(replica_b.query(&Read::new()), vec![16]);
+        replica_b.receive(event_a_delete);
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(&Read::new()), vec![5]);
+        assert_eq!(replica_b.query(&Read::new()), vec![5]);
+        assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
+    }
+
+    /// The same replay carried the sender's own position index, which is an
+    /// index into the sender's list and not into the cached one. When `b`'s
+    /// concurrent delete had made the cached list shorter than the list `a` was
+    /// looking at, the replayed insert indexed past its end and
+    /// `IncrementalCache::apply` panicked inside `Vec::insert` — the replica
+    /// died on delivery rather than diverging, which is the same panic site and
+    /// the same shape as upstream's unexplained `fuzz_json` failure.
+    ///
+    /// Without the middle read both replicas converge on `[2, 3]`, and they do
+    /// with it now.
+    ///
+    /// This is `a_read_between_deliveries_panics_the_positions_cache_on_the_next_insert`
+    /// of `repro/nested-list-cache-replays-a-concurrent-event`, no longer
+    /// ignored.
+    #[test]
+    fn a_read_between_deliveries_panics_the_positions_cache_on_the_next_insert() {
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Inc(1)))
+            .unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b.send(NestedList::delete(0)).unwrap();
+        let event_a_second = replica_a
+            .send(NestedList::insert(1, Counter::Inc(2)))
+            .unwrap();
+        let event_a_third = replica_a
+            .send(NestedList::insert(2, Counter::Inc(3)))
+            .unwrap();
+
+        replica_b.receive(event_a_second);
+        // The only thing this read does is populate the positions cache.
+        assert_eq!(replica_b.query(&Read::new()), vec![2]);
+        // Used to panic: `insertion index (is 2) should be <= len (is 1)`.
+        replica_b.receive(event_a_third);
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(&Read::new()), vec![2, 3]);
+        assert_eq!(replica_b.query(&Read::new()), vec![2, 3]);
+    }
+
+    /// When the cached list was longer than the sender's list rather than
+    /// shorter, the replayed index landed on the wrong element and the order
+    /// came out wrong. `b`'s element sits ahead of everything `a` inserted, so
+    /// every index `a` sends is off by one, and `a`'s own two inserts — which
+    /// are not concurrent with each other at all — came out in the opposite
+    /// order.
+    ///
+    /// Without the middle read both replicas converge on `[2, 1, 3, 4]`, and
+    /// they do with it now.
+    ///
+    /// This is `a_read_between_deliveries_puts_two_inserts_from_one_replica_in_the_wrong_order`
+    /// of `repro/nested-list-cache-replays-a-concurrent-event`, no longer
+    /// ignored.
+    #[test]
+    fn a_read_between_deliveries_puts_two_inserts_from_one_replica_in_the_wrong_order() {
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event_a = replica_a
+            .send(NestedList::insert(0, Counter::Inc(1)))
+            .unwrap();
+        replica_b.receive(event_a);
+
+        let event_b = replica_b
+            .send(NestedList::insert(0, Counter::Inc(2)))
+            .unwrap();
+        let event_a_second = replica_a
+            .send(NestedList::insert(1, Counter::Inc(3)))
+            .unwrap();
+        let event_a_third = replica_a
+            .send(NestedList::insert(2, Counter::Inc(4)))
+            .unwrap();
+
+        replica_b.receive(event_a_second);
+        // The only thing this read does is populate the positions cache.
+        assert_eq!(replica_b.query(&Read::new()), vec![2, 1, 3]);
+        replica_b.receive(event_a_third);
+        replica_a.receive(event_b);
+
+        assert_eq!(replica_a.query(&Read::new()), vec![2, 1, 3, 4]);
+        assert_eq!(replica_b.query(&Read::new()), vec![2, 1, 3, 4]);
+    }
+
     #[test]
     fn concurrent_update_delete_insert() {
         let (mut replica_a, mut replica_b, mut replica_c) =
