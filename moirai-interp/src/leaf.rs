@@ -344,8 +344,9 @@ type BagLog = UWMapLog<Scalar, VecLog<Counter<usize>>>;
 
 /// One leaf, at one of the constructions the generator can compile.
 ///
-/// Twenty-four arms: one text, twelve counters (six widths, resettable and
-/// not), two flags, five registers, two sets, one bag and one ordered set.
+/// Twenty-five arms: one text, twelve counters (six widths, resettable and
+/// not), two flags, five registers, one register over an optional value, two
+/// sets, one bag and one ordered set.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LeafLog {
@@ -398,6 +399,24 @@ pub enum LeafLog {
     RegisterPo(VecLog<PORegister<Scalar>>),
     /// Total-order register.
     RegisterTo(VecLog<TORegister<Scalar>>),
+    /// `VecLog<MVRegister<Option<T>>>`: a multi-value register whose value may
+    /// be *absent*, which is the value of a keyed collection whose entry
+    /// class's value feature is an optional attribute — Ecore's
+    /// `EAnnotation.details`, and nothing else the generator compiles.
+    ///
+    /// The same `VecLog<MVRegister<Scalar>>` as [`LeafLog::RegisterMv`], and a
+    /// separate arm all the same, because it is read out differently and has
+    /// to be. [`Scalar::Null`] is this vocabulary's absent value, so a plain
+    /// multi-value register cannot tell "nobody wrote" from "somebody wrote
+    /// nothing": both read as JSON `null` through [`many_valued`]. A keyed
+    /// collection drops the entries that read as their default
+    /// (`uw_map.rs:180-189`, `V::default()` over the *read-out*), so under a
+    /// plain register a key put with no value would vanish while
+    /// `HashSet<Option<String>>`'s `{None}` keeps it on the generated path.
+    /// This arm reads as the set of values it holds, empty when nobody wrote,
+    /// which is `HashSet<Option<T>>` itself and separates the two states the
+    /// way the generated path separates them.
+    RegisterOptional(VecLog<MVRegister<Scalar>>),
     /// Add-wins set.
     SetAw(VecLog<AWSet<Scalar>>),
     /// Remove-wins set.
@@ -435,6 +454,7 @@ macro_rules! dispatch {
             LeafLog::RegisterFair($log) => $body,
             LeafLog::RegisterPo($log) => $body,
             LeafLog::RegisterTo($log) => $body,
+            LeafLog::RegisterOptional($log) => $body,
             LeafLog::SetAw($log) => $body,
             LeafLog::SetRw($log) => $body,
             LeafLog::Bag($log) => $body,
@@ -486,6 +506,14 @@ impl LeafLog {
                 TieBreak::PartialOrder => LeafLog::RegisterPo(VecLog::default()),
                 TieBreak::TotalOrder => LeafLog::RegisterTo(VecLog::default()),
             },
+            // `VecLog<MVRegister<Option<T>>>` on the generated path, and the
+            // very same `VecLog<MVRegister<_>>` here: [`Scalar::Null`] *is*
+            // this vocabulary's absent value, so `None` and `Some(v)` are
+            // `Scalar::Null` and `v` and the two registers merge over value
+            // spaces in bijection. Nothing new is monomorphised, in this
+            // crate or in `moirai-crdt`; the arm is separate because it is
+            // read out as a set and a plain register is not.
+            LeafRule::OptionalRegister { .. } => LeafLog::RegisterOptional(VecLog::default()),
         }
     }
 
@@ -534,6 +562,7 @@ impl LeafLog {
             LeafLog::RegisterFair(_) => "fair register",
             LeafLog::RegisterPo(_) => "partial-order register",
             LeafLog::RegisterTo(_) => "total-order register",
+            LeafLog::RegisterOptional(_) => "register over an optional value",
             LeafLog::OrderedSet(_) => "ordered set",
             LeafLog::SetAw(_) => "add-wins set",
             LeafLog::SetRw(_) => "remove-wins set",
@@ -610,6 +639,10 @@ impl LeafLog {
                 let inner = to_register_op(op)?;
                 enabled(log, &inner, op, self.kind(), strict)
             }
+            LeafLog::RegisterOptional(log) => {
+                let inner = mv_register_op(op)?;
+                enabled(log, &inner, op, self.kind(), strict)
+            }
             LeafLog::SetAw(log) => {
                 let inner = aw_set_op(op)?;
                 enabled(log, &inner, op, self.kind(), strict)
@@ -681,6 +714,10 @@ impl LeafLog {
             }
             LeafLog::RegisterTo(log) => {
                 let inner = to_register_op(event.op())?;
+                apply(log, event, inner);
+            }
+            LeafLog::RegisterOptional(log) => {
+                let inner = mv_register_op(event.op())?;
                 apply(log, event, inner);
             }
             LeafLog::SetAw(log) => {
@@ -755,6 +792,11 @@ impl LeafLog {
                 .execute_query(&Read::<Option<Scalar>>::new())
                 .unwrap_or_default()
                 .to_json(sem),
+            // Every value it holds, in order, and `[]` when it holds none:
+            // `HashSet<Option<T>>` itself, which is what tells a key put with
+            // no value from a key nobody wrote. [`Scalar::Null`] sorts first,
+            // exactly as `None` does among `Option<T>`s.
+            LeafLog::RegisterOptional(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::SetAw(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::SetRw(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::Bag(log) => {
@@ -809,6 +851,7 @@ impl LeafLog {
             LeafLog::RegisterFair(log) => log.unstable().len(),
             LeafLog::RegisterPo(log) => log.unstable().len(),
             LeafLog::RegisterTo(log) => log.unstable().len(),
+            LeafLog::RegisterOptional(log) => log.unstable().len(),
             LeafLog::SetAw(log) => log.unstable().len(),
             LeafLog::SetRw(log) => log.unstable().len(),
             LeafLog::Bag(log) => log

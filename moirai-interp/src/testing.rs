@@ -76,6 +76,15 @@ pub fn reference(name: &str, target: &str, many: bool) -> Value {
     })
 }
 
+/// One feature entry whose rule is a refusal, by the reason's own word.
+pub fn unsupported(name: &str, reason: &str) -> Value {
+    json!({
+        "name": name,
+        "merge": {"kind": "unsupported", "reason": reason},
+        "provenance": provenance()
+    })
+}
+
 /// One class entry, with its features split into the three arrays the
 /// descriptor keeps them in.
 pub fn class(is_abstract: bool, supers: &[&str], features: Vec<Value>) -> Value {

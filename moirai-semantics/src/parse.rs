@@ -1431,7 +1431,16 @@ mod tests {
             .iter()
             .map(|(name, _, _)| &**name)
             .collect();
-        assert_eq!(visible, ["contents", "details", "eAnnotations", "references", "source"]);
+        assert_eq!(
+            visible,
+            [
+                "contents",
+                "details",
+                "eAnnotations",
+                "references",
+                "source"
+            ]
+        );
 
         let element = class("ecore::EModelElement");
         assert_eq!(

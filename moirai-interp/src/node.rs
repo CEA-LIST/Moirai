@@ -258,8 +258,9 @@ impl fmt::Display for Refusal {
             } => write!(
                 f,
                 "`{class}.{feature}` is `{}`, which the interpreted path does not merge \
-                 (decision D6)",
-                reason.as_str()
+                 (decision D6): {}",
+                reason.as_str(),
+                reason.why()
             ),
             Refusal::NotNew { class } => write!(
                 f,
@@ -1692,6 +1693,38 @@ mod tests {
         sequence, text_of, twins,
     };
 
+    /// Ecore's own `EAnnotation` as a descriptor describes it: an optional
+    /// `source`, a `details` map from a key to a register over an optional
+    /// text, and the two `EObject`-typed features recorded as unsupported.
+    ///
+    /// Rooted at the annotation itself, which is what lets a test drive it
+    /// without a metamodel around it; the real one, reached through
+    /// `EModelElement.eAnnotations`, is what the `annotated` crate's oracle
+    /// drives.
+    fn annotated() -> std::sync::Arc<MetamodelSemantics> {
+        testing::table(&testing::descriptor(
+            &["ecore::EAnnotation"],
+            vec![(
+                "ecore::EAnnotation",
+                testing::class(
+                    false,
+                    &[],
+                    vec![
+                        testing::optional_text("source"),
+                        testing::attribute(
+                            "details",
+                            serde_json::json!({"kind": "keyed", "key": {"kind": "str"}}),
+                            serde_json::json!({"kind": "optionalRegister"}),
+                        ),
+                        testing::unsupported("contents", "eObjectContainment"),
+                        testing::unsupported("references", "eObjectReference"),
+                    ],
+                ),
+            )],
+            serde_json::json!({}),
+        ))
+    }
+
     /// `Variant(class, inner)` at the root, which every operation starts with.
     fn at_root(sem: &MetamodelSemantics, class: &str, inner: InstanceOp) -> InstanceOp {
         InstanceOp::variant(class_slot(sem, class), inner)
@@ -2455,10 +2488,127 @@ mod tests {
             UnsupportedReason::Derived,
             UnsupportedReason::Transient,
             UnsupportedReason::Volatile,
+            UnsupportedReason::EObjectContainment,
+            UnsupportedReason::EObjectReference,
         ] {
             assert_eq!(
                 Node::for_rule(&MergeRule::Unsupported { reason }).unwrap_err(),
                 reason
+            );
+        }
+    }
+
+    /// A feature typed by `EObject` is refused with the reason and the
+    /// sentence that says why, and the sentence is the one a reader of the
+    /// descriptor gets: neither path represents an object of any class, and a
+    /// typed graph cannot point an arc at any vertex.
+    #[test]
+    fn an_eobject_feature_is_refused_with_a_sentence_that_says_why() {
+        let sem = annotated();
+        let annotation = class_slot(&sem, "ecore::EAnnotation");
+        for (feature, reason) in [
+            ("contents", UnsupportedReason::EObjectContainment),
+            ("references", UnsupportedReason::EObjectReference),
+        ] {
+            let refusal = check(
+                &sem,
+                None,
+                super::Shaped::Bare(Site::Object(Target::Class(annotation))),
+                &InstanceOp::variant(
+                    annotation,
+                    InstanceOp::field(feature_slot(&sem, annotation, feature), InstanceOp::New),
+                ),
+                &super::At::root(),
+                Mode::Local,
+            )
+            .unwrap_err();
+            match &refusal {
+                Refusal::Unsupported { reason: got, .. } => assert_eq!(*got, reason),
+                other => panic!("{other:?}"),
+            }
+            let sentence = refusal.to_string();
+            assert!(sentence.contains(feature), "{sentence}");
+            assert!(sentence.contains("any class"), "{sentence}");
+        }
+    }
+
+    /// The whole of what Ecore's `EAnnotation.details` needs, driven on two
+    /// replicas: concurrent puts on one key keep both values, a key put with
+    /// **no** value is still read back, and a removal loses to a concurrent
+    /// put.
+    ///
+    /// The middle one is why the register over an optional value is its own
+    /// leaf arm. A keyed collection drops an entry that reads as its default,
+    /// so under a plain multi-value register — where `Scalar::Null` is both
+    /// "nobody wrote" and "somebody wrote nothing" — the key would vanish,
+    /// while the generated `HashSet<Option<String>>` holding `{None}` keeps
+    /// it.
+    #[test]
+    fn a_details_map_keeps_a_key_whose_value_is_absent() {
+        let sem = annotated();
+        let (mut a, mut b) = twins(&sem, "ecore::EAnnotation");
+        let put = |key: &str, value: Option<&str>| {
+            at_root(
+                &sem,
+                "ecore::EAnnotation",
+                on(
+                    &sem,
+                    "ecore::EAnnotation",
+                    "details",
+                    InstanceOp::entry(
+                        Scalar::text(key),
+                        InstanceOp::Leaf(LeafOp::Write(match value {
+                            Some(value) => Scalar::text(value),
+                            None => Scalar::Null,
+                        })),
+                    ),
+                ),
+            )
+        };
+        let remove = |key: &str| {
+            at_root(
+                &sem,
+                "ecore::EAnnotation",
+                on(
+                    &sem,
+                    "ecore::EAnnotation",
+                    "details",
+                    InstanceOp::remove(Scalar::text(key)),
+                ),
+            )
+        };
+
+        // A key with no value, delivered everywhere.
+        let event = a.send(put("bare", None)).unwrap();
+        b.receive(event);
+        // A key that is removed against a concurrent put.
+        let event = a.send(put("contested", Some("x"))).unwrap();
+        b.receive(event);
+        // A key that is removed with nothing concurrent.
+        let event = a.send(put("gone", Some("x"))).unwrap();
+        b.receive(event);
+        let event = a.send(remove("gone")).unwrap();
+        b.receive(event);
+
+        let from_a = a.send(put("keyword", Some("left"))).unwrap();
+        let from_b = b.send(put("keyword", Some("right"))).unwrap();
+        let removed = a.send(remove("contested")).unwrap();
+        let written = b.send(put("contested", Some("y"))).unwrap();
+        a.receive(from_b);
+        a.receive(written);
+        b.receive(from_a);
+        b.receive(removed);
+
+        for (who, replica) in [("a", &a), ("b", &b)] {
+            let read = crate::eval::read(&sem, &replica.state().root);
+            assert_eq!(
+                read["details"],
+                serde_json::json!({
+                    "bare": [null],
+                    "contested": ["y"],
+                    "keyword": ["left", "right"],
+                }),
+                "{who}"
             );
         }
     }

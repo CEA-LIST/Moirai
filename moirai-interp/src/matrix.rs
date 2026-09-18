@@ -104,6 +104,16 @@ pub enum Construction {
     Register(TieBreak),
     /// A register over an enum literal, at one tie-break.
     EnumRegister(TieBreak),
+    /// `VecLog<MVRegister<Option<T>>>`: the value of a keyed collection whose
+    /// entry class's value feature is an *optional* attribute, which is what
+    /// Ecore's `EAnnotation.details` holds.
+    ///
+    /// Its own row and not [`Construction::Register`]'s: the generated path
+    /// compiles a different Rust type for it, its value space carries an
+    /// explicit absent, and the two states a plain register never has to tell
+    /// apart — a key put with no value, and a key that is not there — are
+    /// what its patterns exist to separate.
+    OptionalRegister,
     /// `AWSet`.
     AddWinsSet,
     /// `RWSet`.
@@ -154,6 +164,7 @@ impl fmt::Display for Construction {
             Construction::DisableWinsFlag => write!(f, "disable-wins flag"),
             Construction::Register(tie) => write!(f, "register<{tie:?}>"),
             Construction::EnumRegister(tie) => write!(f, "enum register<{tie:?}>"),
+            Construction::OptionalRegister => write!(f, "register over an optional value"),
             Construction::AddWinsSet => write!(f, "add-wins set"),
             Construction::RemoveWinsSet => write!(f, "remove-wins set"),
             Construction::Bag => write!(f, "bag"),
@@ -179,6 +190,7 @@ impl Construction {
         out.extend(TIES.iter().map(|tie| Construction::Register(*tie)));
         out.extend(TIES.iter().map(|tie| Construction::EnumRegister(*tie)));
         out.extend([
+            Construction::OptionalRegister,
             Construction::AddWinsSet,
             Construction::RemoveWinsSet,
             Construction::Bag,
@@ -218,6 +230,7 @@ pub fn leaf_construction(leaf: &LeafLog) -> Construction {
         LeafLog::RegisterFair(_) => Construction::Register(TieBreak::Fair),
         LeafLog::RegisterPo(_) => Construction::Register(TieBreak::PartialOrder),
         LeafLog::RegisterTo(_) => Construction::Register(TieBreak::TotalOrder),
+        LeafLog::RegisterOptional(_) => Construction::OptionalRegister,
         LeafLog::SetAw(_) => Construction::AddWinsSet,
         LeafLog::SetRw(_) => Construction::RemoveWinsSet,
         LeafLog::Bag(_) => Construction::Bag,
@@ -247,6 +260,11 @@ pub fn rule_constructions(rule: &MergeRule) -> Vec<Construction> {
         } => Construction::DisableWinsFlag,
         LeafRule::Register { tie } => Construction::Register(tie),
         LeafRule::Enum { tie, .. } => Construction::EnumRegister(tie),
+        // One row whether the scalar is an enum literal or not: the enum
+        // class changes what a value is *called* in the read-out and changes
+        // no merge, and the log is the same `VecLog<MVRegister<_>>` either
+        // way.
+        LeafRule::OptionalRegister { .. } => Construction::OptionalRegister,
     };
     match rule {
         MergeRule::Attribute { shape, leaf: rule } => match shape {
@@ -261,7 +279,10 @@ pub fn rule_constructions(rule: &MergeRule) -> Vec<Construction> {
             } => vec![Construction::RemoveWinsSet],
             Shape::Bag => vec![Construction::Bag],
             Shape::OrderedSet => vec![Construction::OrderedSet],
-            Shape::Keyed { .. } => vec![Construction::KeyedMap],
+            // The leaf is named beside the map because a keyed *attribute*
+            // holds one leaf log per key and the map is only the outer half;
+            // a keyed containment holds objects and has no leaf to name.
+            Shape::Keyed { .. } => vec![Construction::KeyedMap, leaf(*rule)],
         },
         MergeRule::Containment { shape, .. } => match shape {
             Shape::Single => vec![Construction::SingleContainment],
@@ -305,6 +326,11 @@ pub mod pattern {
     pub const WRITE_WRITE_DIFFERENT: &str = "write ∥ write of different values";
     pub const WRITE_WRITE_SAME: &str = "write ∥ write of the same value";
     pub const WRITE_CLEAR: &str = "write ∥ clear";
+    /// The column a register over an optional value has and a plain register
+    /// cannot: one writer puts a value at a key and another puts *no* value
+    /// at the same key, so the entry has to keep both and the absent one has
+    /// to survive being read.
+    pub const WRITE_WRITE_ABSENT: &str = "write of a value ∥ write of no value";
     pub const TIE_EVERY_RESIDUE: &str = "Lamport tie at every residue of the member count";
     pub const LAMPORT_DOMINATES: &str = "write ∥ write whose Lamport time dominates";
     pub const THREE_WRITERS: &str = "three concurrent writes";
@@ -399,6 +425,16 @@ const CLEARABLE_REGISTER: &[&str] = &[
     WRITE_CLEAR,
     THREE_WRITERS,
 ];
+/// A register over an optional value is a multi-value register with one more
+/// value in its space, so it takes the multi-value register's own four
+/// patterns and the one column that value adds.
+const OPTIONAL_REGISTER: &[&str] = &[
+    WRITE_WRITE_DIFFERENT,
+    WRITE_WRITE_SAME,
+    WRITE_CLEAR,
+    THREE_WRITERS,
+    WRITE_WRITE_ABSENT,
+];
 const POLICY_REGISTER: &[&str] = &[
     WRITE_WRITE_DIFFERENT,
     WRITE_WRITE_SAME,
@@ -450,6 +486,12 @@ pub const KITCHEN: &str = "kitchen_crdt";
 pub const BT: &str = "bt_crdt";
 /// See [`CLASSDIAGRAM`].
 pub const JSON: &str = "json_crdt";
+/// The crate `arachne-codegen`'s `generated_crates::ecore_builtins` writes
+/// from `examples/pet_metamodels/ecore_builtins.ecore` and runs the tests of
+/// `tests/generated/annotated/` in. It is generated on demand rather than
+/// checked in, which is why its name is the project name and not a
+/// `_crdt` one.
+pub const ANNOTATED: &str = "annotated";
 
 const fn at(krate: &'static str, feature: &'static str) -> Reach {
     Reach::Crate { krate, feature }
@@ -520,6 +562,10 @@ pub fn row(construction: Construction) -> Row {
         Construction::EnumRegister(TieBreak::TotalOrder) => {
             (CLEARABLE_REGISTER, at(CLASSDIAGRAM, "Relation.typ"))
         }
+        Construction::OptionalRegister => (
+            OPTIONAL_REGISTER,
+            at(ANNOTATED, "ecore::EAnnotation.details"),
+        ),
         Construction::AddWinsSet => (SET, at(CLASSDIAGRAM, "Class.tags")),
         Construction::RemoveWinsSet => (SET, at(CLASSDIAGRAM, "Class.invariants")),
         Construction::Bag => (BAG, at(KITCHEN, "Foo.bag")),
@@ -1600,7 +1646,7 @@ mod tests {
 
     use crate::leaf::LeafLog;
 
-    /// Every one of the twenty-four leaf arms, minted the only way a leaf is
+    /// Every one of the twenty-five leaf arms, minted the only way a leaf is
     /// minted, has a row, and the row has patterns.
     #[test]
     fn every_leaf_arm_has_a_row_with_patterns() {
@@ -1617,17 +1663,20 @@ mod tests {
         for tie in super::TIES {
             arms.push(LeafLog::for_rule(LeafRule::Register { tie }));
         }
+        arms.push(LeafLog::for_rule(LeafRule::OptionalRegister {
+            class: None,
+        }));
         arms.push(LeafLog::for_set(SetTie::AddWins));
         arms.push(LeafLog::for_set(SetTie::RemoveWins));
         arms.push(LeafLog::for_bag());
         arms.push(LeafLog::for_ordered_set());
         let kinds: BTreeSet<&str> = arms.iter().map(LeafLog::kind).collect();
-        assert_eq!(arms.len(), 24, "the twenty-four arms");
+        assert_eq!(arms.len(), 25, "the twenty-five arms");
         let rows: BTreeSet<Construction> = arms.iter().map(leaf_construction).collect();
         assert_eq!(
             rows.len(),
-            24,
-            "twenty-four arms, twenty-four rows: {kinds:?}"
+            25,
+            "twenty-five arms, twenty-five rows: {kinds:?}"
         );
         for construction in rows {
             assert!(!row(construction).patterns.is_empty(), "{construction}");
@@ -1645,8 +1694,14 @@ mod tests {
             match row.reach {
                 Reach::Crate { krate, feature } => {
                     assert!(
-                        [super::CLASSDIAGRAM, super::KITCHEN, super::BT, super::JSON]
-                            .contains(&krate),
+                        [
+                            super::CLASSDIAGRAM,
+                            super::KITCHEN,
+                            super::BT,
+                            super::JSON,
+                            super::ANNOTATED
+                        ]
+                        .contains(&krate),
                         "{krate}"
                     );
                     assert!(feature.contains('.'), "{feature}");
@@ -1658,13 +1713,14 @@ mod tests {
                 }
             }
         }
-        assert_eq!(rows.len(), 35, "thirty-five rows");
+        assert_eq!(rows.len(), 36, "thirty-six rows");
         assert_eq!(
             reachable_cells,
-            109 + 4 + 5,
+            109 + 4 + 5 + 5,
             "the audit's hundred and eight cells, the keyed map's three-writer column, the \
-             total-order enum register's four through `Relation.typ`, and the ordered set's \
-             five through `Foo.uniqueList`"
+             total-order enum register's four through `Relation.typ`, the ordered set's five \
+             through `Foo.uniqueList`, and the optional-value register's five through \
+             `ecore::EAnnotation.details`"
         );
         assert_eq!(
             unreachable.len(),
