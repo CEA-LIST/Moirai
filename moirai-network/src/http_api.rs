@@ -394,12 +394,34 @@ impl<O: NetworkOp> Api<O> {
 
     /// `POST /api/op` and `POST /api/model/{id}/op`: parse the body as an
     /// operation and hand it to the event loop.
+    ///
+    /// The body is parsed through a [`serde_json::Deserializer`] with the
+    /// recursion limit lifted rather than through `from_str`, because an
+    /// operation's depth is the *model's* depth and not the protocol's. An
+    /// interpreted `ModelOp` carries its whole path from the model root, about
+    /// seven JSON levels per containment step, so an element at containment
+    /// depth 24 — which SysON's Batmobile reaches, and which the SysML v2
+    /// standard libraries pass three times over — produces an operation
+    /// nesting 168 levels. With the default limit of 128 such an operation is
+    /// answered `400 Invalid op JSON: recursion limit exceeded` and a real
+    /// model cannot be handed to a node at all.
+    ///
+    /// What the limit protects against is a stack overflow on a hostile body,
+    /// and that is still a property of this endpoint: it is reachable only by
+    /// whoever may already submit operations to this replica.
     fn submit(&self, request: &mut Request, log_id: Option<LogId>) -> Reply {
         let body = match read_body(request) {
             Ok(body) => body,
             Err(reply) => return reply,
         };
-        let op = match serde_json::from_str::<O>(&body) {
+        let mut deserializer = serde_json::Deserializer::from_str(&body);
+        deserializer.disable_recursion_limit();
+        let op = match O::deserialize(&mut deserializer).and_then(|op| {
+            // `from_str` ends the input for us; a hand-built `Deserializer`
+            // does not, and without this a body with an operation and then
+            // trailing rubbish would be accepted.
+            deserializer.end().map(|()| op)
+        }) {
             Ok(op) => op,
             Err(e) => return error(400, format!("Invalid op JSON: {e}")),
         };
@@ -568,7 +590,7 @@ mod tests {
     use super::testing::{free_port, request};
     use super::{route, start_http_api, ModelLeaf, Route};
     use crate::generic::{
-        ControlCmd, OpEnvelope, OpResult, ServeRefused, Served, ServedDescriptor,
+        ControlCmd, NetworkOp, OpEnvelope, OpResult, ServeRefused, Served, ServedDescriptor,
     };
 
     /// The log id every spawned API reports, fixed so bodies can be asserted
@@ -584,9 +606,14 @@ mod tests {
 
     /// The channels a spawned API is wired to, kept alive for the test's
     /// duration so the server never observes a closed channel.
-    struct Api {
+    ///
+    /// Generic over the operation type, with [`TestOp`] as the default, so that
+    /// the one test which needs an operation of an arbitrary *shape* — the
+    /// deep-nesting test below — can have one without every other test
+    /// changing.
+    struct Api<O = TestOp> {
         port: u16,
-        op_rx: mpsc::Receiver<OpEnvelope<TestOp>>,
+        op_rx: mpsc::Receiver<OpEnvelope<O>>,
         ctrl_rx: mpsc::Receiver<ControlCmd>,
         /// The list the event loop would own, so a test can play the loop:
         /// take the command, write the list, answer.
@@ -594,6 +621,10 @@ mod tests {
     }
 
     fn spawn_api(metamodel: Option<String>) -> Api {
+        spawn_api_for::<TestOp>(metamodel)
+    }
+
+    fn spawn_api_for<O: NetworkOp>(metamodel: Option<String>) -> Api<O> {
         let port = free_port();
         let (op_tx, op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
@@ -604,7 +635,7 @@ mod tests {
                 .map(ServedDescriptor::unlisted)
                 .collect::<Vec<_>>(),
         ));
-        start_http_api::<TestOp>(
+        start_http_api::<O>(
             port,
             "test-replica".into(),
             log_id,
@@ -709,6 +740,88 @@ mod tests {
             (200, Some(true)),
             "unexpected body: {body}"
         );
+    }
+
+    /// A body nesting `levels` JSON objects, the innermost holding a number.
+    fn nested(levels: usize) -> String {
+        let mut body = String::from("1");
+        for _ in 0..levels {
+            body = format!("{{\"a\":{body}}}");
+        }
+        body
+    }
+
+    /// Both op routes take an operation nested past `serde_json`'s default
+    /// recursion limit of 128.
+    ///
+    /// The limit is not a protocol bound: an interpreted `ModelOp` carries its
+    /// whole path from the model root, about seven JSON levels per containment
+    /// step, so an element at containment depth 24 produces an operation
+    /// nesting 168 levels. SysON's Batmobile — 741 elements, containment depth
+    /// 24 — has 335 such operations out of 30,344, and the SysML v2 standard
+    /// libraries reach containment depth 69. Before this test, a real SysML
+    /// model could not be handed to a node over HTTP at all.
+    #[test]
+    fn both_op_routes_take_an_operation_nested_past_the_default_recursion_limit() {
+        let body = nested(200);
+        // The reason the ingest cannot use `from_str`, pinned rather than
+        // described: this is what the node used to answer 400 over.
+        let refused = serde_json::from_str::<serde_json::Value>(&body)
+            .expect_err("200 levels is past serde_json's default limit of 128");
+        assert!(
+            refused.to_string().contains("recursion limit exceeded"),
+            "unexpected error: {refused}"
+        );
+
+        let api = spawn_api_for::<serde_json::Value>(Some("{}".to_string()));
+        let port = api.port;
+        let op_rx = api.op_rx;
+        let ctrl_rx = api.ctrl_rx;
+        // The event loop's two answers: every operation applies, and this node
+        // hosts the log the model route names.
+        std::thread::spawn(move || {
+            while let Ok(envelope) = op_rx.recv() {
+                let _ = envelope.reply.send(OpResult {
+                    success: true,
+                    message: format!("applied at depth {}", depth_of(&envelope.op)),
+                });
+            }
+        });
+        std::thread::spawn(move || {
+            while let Ok(cmd) = ctrl_rx.recv() {
+                if let ControlCmd::Hosts { reply, .. } = cmd {
+                    let _ = reply.send(true);
+                }
+            }
+        });
+
+        for route in [
+            "POST /api/op".to_string(),
+            format!("POST /api/model/{TEST_LOG_ID}/op"),
+        ] {
+            let (status, answer) = request(port, &route, Some(&body));
+            let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+            assert_eq!(
+                (status, parsed["success"].as_bool()),
+                (200, Some(true)),
+                "`{route}` refused a 200-level operation: {answer}"
+            );
+            assert_eq!(
+                parsed["message"].as_str(),
+                Some("applied at depth 201"),
+                "`{route}` delivered something other than the operation sent: {answer}"
+            );
+        }
+    }
+
+    /// How many JSON levels a value nests, so the test can show that the whole
+    /// operation arrived and not a truncated one.
+    fn depth_of(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::Object(map) => 1 + map.values().map(depth_of).max().unwrap_or(0),
+            serde_json::Value::Array(items) => 1 + items.iter().map(depth_of).max().unwrap_or(0),
+            _ => 1,
+        }
     }
 
     #[test]
