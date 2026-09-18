@@ -9,13 +9,14 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
 use crate::{
     HashMap,
+    bag::{Count, CountLog, counts},
     counter::resettable_counter::Counter,
     map::rw_map::{RWMap, RWMapLog},
 };
@@ -30,7 +31,7 @@ pub enum RWBag<V> {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub struct RWBagLog<V: Clone + Hash + Debug + Eq>(RWMapLog<V, VecLog<Counter<usize>>>);
+pub struct RWBagLog<V: Clone + Hash + Debug + Eq>(RWMapLog<V, CountLog>);
 
 impl<V> Default for RWBagLog<V>
 where
@@ -94,7 +95,8 @@ where
         &self,
         _q: &Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
-        self.0.execute_query(&Read::new())
+        let nets: HashMap<V, Count> = self.0.execute_query(&Read::new());
+        counts(nets)
     }
 }
 
@@ -160,6 +162,66 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", 2);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// The remove-wins bag carries the same count and had the same underflow.
+    /// Two replicas each remove the one copy of `7`; the net is `-1` and the
+    /// read-out drops the value rather than panicking.
+    #[test]
+    fn rw_bag_concurrent_removes_of_one_copy_read_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<RWBagLog<usize>>();
+
+        let add = replica_a.send(RWBag::Add(7)).unwrap();
+        replica_b.receive(add);
+
+        let remove_a = replica_a.send(RWBag::Remove(7)).unwrap();
+        let remove_b = replica_b.send(RWBag::Remove(7)).unwrap();
+        replica_a.receive(remove_b);
+        replica_b.receive(remove_a);
+
+        let result: HashMap<usize, usize> = HashMap::default();
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// The same two removes made causally stable by a write on another value
+    /// from each replica: the stable fold holds the net instead of underflowing
+    /// on receipt.
+    #[test]
+    fn rw_bag_concurrent_removes_of_one_copy_stabilize_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<RWBagLog<usize>>();
+
+        let add = replica_a.send(RWBag::Add(7)).unwrap();
+        replica_b.receive(add);
+
+        let remove_a = replica_a.send(RWBag::Remove(7)).unwrap();
+        let remove_b = replica_b.send(RWBag::Remove(7)).unwrap();
+        replica_a.receive(remove_b);
+        replica_b.receive(remove_a);
+
+        let spacer_a = replica_a.send(RWBag::Add(8)).unwrap();
+        let spacer_b = replica_b.send(RWBag::Add(9)).unwrap();
+        replica_a.receive(spacer_b);
+        replica_b.receive(spacer_a);
+
+        let mut result = HashMap::default();
+        result.insert(8, 1);
+        result.insert(9, 1);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// Removing a value the bag does not hold reads as the empty bag.
+    #[test]
+    fn rw_bag_remove_of_an_absent_value_reads_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<RWBagLog<usize>>();
+
+        let remove = replica_a.send(RWBag::Remove(7)).unwrap();
+        replica_b.receive(remove);
+
+        let result: HashMap<usize, usize> = HashMap::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }

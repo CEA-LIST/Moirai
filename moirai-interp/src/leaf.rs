@@ -41,6 +41,7 @@ use std::ops::{Add, AddAssign, SubAssign};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_crdt::{
+    bag::{Count, CountLog, counts},
     counter::{resettable_counter::Counter, simple_counter::Counter as SimpleCounter},
     flag::{dw_flag::DWFlag, ew_flag::EWFlag},
     list::eg_walker::List,
@@ -335,12 +336,16 @@ float_width!(f64, "counter<f64>");
 
 /// A bag over scalars, composed exactly as `AWBagLog` composes it.
 ///
-/// `moirai-crdt`'s `AWBagLog` is `UWMapLog<V, VecLog<Counter<usize>>>` with a
-/// three-line `effect` and no serde derive; the table has to reach a joiner
-/// inside a serialized log (decision D2), so the same composition is spelled
-/// out here over the same library types rather than `AWBagLog` being changed,
-/// which is a crate this phase does not touch.
-type BagLog = UWMapLog<Scalar, VecLog<Counter<usize>>>;
+/// `moirai-crdt`'s `AWBagLog` is `UWMapLog<V, CountLog>` with a three-line
+/// `effect` and no serde derive; the table has to reach a joiner inside a
+/// serialized log (decision D2), so the same composition is spelled out here
+/// over the same library types rather than `AWBagLog` being changed.
+///
+/// [`CountLog`] is the shared piece, and naming it here rather than respelling
+/// it is what keeps the copy count the same width on both paths: it is signed,
+/// so two concurrent removes of one copy net to `-1` instead of underflowing,
+/// and [`counts`] does the clamp for both.
+type BagLog = UWMapLog<Scalar, CountLog>;
 
 /// One leaf, at one of the constructions the generator can compile.
 ///
@@ -800,9 +805,8 @@ impl LeafLog {
             LeafLog::SetAw(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::SetRw(log) => sorted_array(log.execute_query(&Read::new()), sem),
             LeafLog::Bag(log) => {
-                let counts = log.execute_query(&Read::new());
                 let mut values: Vec<Scalar> = Vec::new();
-                for (value, count) in counts {
+                for (value, count) in counts(log.execute_query(&Read::new())) {
                     for _ in 0..count {
                         values.push(value.clone());
                     }
@@ -1094,7 +1098,7 @@ fn rw_set_op(op: &LeafOp) -> Result<RWSet<Scalar>, LeafMismatch> {
 
 /// A bag operation as `AWBagLog` spells it: an add is one increment of the
 /// value's own counter, a remove one decrement, a clear the map's clear.
-fn bag_op(op: &LeafOp) -> Result<UWMap<Scalar, Counter<usize>>, LeafMismatch> {
+fn bag_op(op: &LeafOp) -> Result<UWMap<Scalar, Counter<Count>>, LeafMismatch> {
     match op {
         LeafOp::Add(value) => Ok(UWMap::Update(value.clone(), Counter::Inc(1))),
         LeafOp::Remove(value) => Ok(UWMap::Update(value.clone(), Counter::Dec(1))),

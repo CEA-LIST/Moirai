@@ -9,7 +9,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{effect_context::EffectContext, log::IsLog},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     HashMap,
+    bag::{Count, CountLog, counts},
     counter::resettable_counter::Counter,
     map::uw_map::{UWMap, UWMapLog},
 };
@@ -41,7 +42,7 @@ pub enum AWBag<V> {
     ))
 )]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub struct AWBagLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, VecLog<Counter<usize>>>);
+pub struct AWBagLog<V: Clone + Hash + Debug + Eq>(UWMapLog<V, CountLog>);
 
 impl<V> Default for AWBagLog<V>
 where
@@ -105,7 +106,8 @@ where
         &self,
         _q: &Read<HashMap<V, usize>>,
     ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
-        self.0.execute_query(&Read::new())
+        let nets: HashMap<V, Count> = self.0.execute_query(&Read::new());
+        counts(nets)
     }
 }
 
@@ -171,6 +173,105 @@ mod tests {
 
         let mut result = HashMap::default();
         result.insert("a", 2);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// Both replicas see the one copy of `7` and remove it concurrently; both
+    /// removes are enabled. `Remove` is `Dec(1)` on the value's counter, so the
+    /// net is `1 - 1 - 1`. The count is signed now, so the fold reaches `-1`
+    /// instead of panicking with `attempt to subtract with overflow`, and the
+    /// read-out drops the value: a remove that would take a count below zero
+    /// does nothing.
+    ///
+    /// This is `aw_bag_concurrent_removes_of_one_copy_read_without_underflow`
+    /// of `repro/aw-bag-underflow` (`d64340e`), no longer ignored.
+    #[test]
+    fn aw_bag_concurrent_removes_of_one_copy_read_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<usize>>();
+
+        let add = replica_a.send(AWBag::Add(7)).unwrap();
+        replica_b.receive(add);
+
+        let remove_a = replica_a.send(AWBag::Remove(7)).unwrap();
+        let remove_b = replica_b.send(AWBag::Remove(7)).unwrap();
+        replica_a.receive(remove_b);
+        replica_b.receive(remove_a);
+
+        let result: HashMap<usize, usize> = HashMap::default();
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// The same two concurrent removes, then a write on another value from each
+    /// replica, which makes the two removes causally stable. Folding them into
+    /// `CounterStable` used to underflow inside `receive`; the signed count
+    /// holds the net instead.
+    ///
+    /// This is
+    /// `aw_bag_concurrent_removes_of_one_copy_stabilize_without_underflow` of
+    /// `repro/aw-bag-underflow`, no longer ignored.
+    #[test]
+    fn aw_bag_concurrent_removes_of_one_copy_stabilize_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<usize>>();
+
+        let add = replica_a.send(AWBag::Add(7)).unwrap();
+        replica_b.receive(add);
+
+        let remove_a = replica_a.send(AWBag::Remove(7)).unwrap();
+        let remove_b = replica_b.send(AWBag::Remove(7)).unwrap();
+        replica_a.receive(remove_b);
+        replica_b.receive(remove_a);
+
+        let spacer_a = replica_a.send(AWBag::Add(8)).unwrap();
+        let spacer_b = replica_b.send(AWBag::Add(9)).unwrap();
+        replica_a.receive(spacer_b);
+        replica_b.receive(spacer_a);
+
+        let mut result = HashMap::default();
+        result.insert(8, 1);
+        result.insert(9, 1);
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// Removing a value the bag does not hold is enabled and reads as the
+    /// empty bag.
+    ///
+    /// This is `aw_bag_remove_of_an_absent_value_reads_without_underflow` of
+    /// `repro/aw-bag-underflow`, no longer ignored.
+    #[test]
+    fn aw_bag_remove_of_an_absent_value_reads_without_underflow() {
+        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<usize>>();
+
+        let remove = replica_a.send(AWBag::Remove(7)).unwrap();
+        replica_b.receive(remove);
+
+        let result: HashMap<usize, usize> = HashMap::default();
+        assert_eq!(replica_a.query(&Read::new()), result);
+        assert_eq!(replica_b.query(&Read::new()), result);
+    }
+
+    /// The clamp is an aggregate rule and not a per-operation one, and this is
+    /// what that buys: a remove concurrent with the add it does not observe
+    /// reads the same on both replicas, which is the whole point of keeping the
+    /// net exact.
+    ///
+    /// `a` removes a value it does not hold while `b` adds it, so the two
+    /// replicas fold the same two operations in opposite orders. A counter that
+    /// clamped at each subtraction would read `1` on `a` (`0 - 1` clamped, then
+    /// `+ 1`) and `0` on `b` (`0 + 1`, then `- 1`), and the replicas would
+    /// diverge; the exact net is `0` on both.
+    #[test]
+    fn aw_bag_a_remove_concurrent_with_the_add_it_does_not_observe_converges() {
+        let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<usize>>();
+
+        let remove_a = replica_a.send(AWBag::Remove(7)).unwrap();
+        let add_b = replica_b.send(AWBag::Add(7)).unwrap();
+        replica_a.receive(add_b);
+        replica_b.receive(remove_a);
+
+        let result: HashMap<usize, usize> = HashMap::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }
