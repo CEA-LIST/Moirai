@@ -121,6 +121,8 @@ where
         <O as UsesUnstableService<EventGraph<O>>>::is_enabled(op, &self.stable, &self.unstable)
     }
 
+    const STABILIZE_MOVES_OPERATIONS: bool = !<O as ReplicatedDataType>::DISABLE_STABILIZE;
+
     fn stabilize(&mut self, version: &Version) {
         self.unstable.stabilize(version);
     }

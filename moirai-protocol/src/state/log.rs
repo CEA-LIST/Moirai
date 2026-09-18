@@ -42,6 +42,18 @@ pub trait IsLog: Default {
         Self::execute_query(self, q)
     }
 
+    /// Whether [`IsLog::stabilize`] can move an operation out of this log's
+    /// unstable state and into its stable one.
+    ///
+    /// `true` is the safe answer and the default. It is `false` only for a log
+    /// whose operations never become stable, and the one caller that reads it
+    /// is [`CachedLog`](crate::state::cache::CachedLog), which keeps a
+    /// materialised read-out beside the log: stabilization is meant to leave a
+    /// read-out alone, but a log where nothing moves cannot change one even if
+    /// the data type beneath it is wrong, and `stabilize` runs on every
+    /// delivery, so the distinction is worth the constant.
+    const STABILIZE_MOVES_OPERATIONS: bool = true;
+
     /// Stabilize the log at a given version.
     fn stabilize(&mut self, version: &Version);
 

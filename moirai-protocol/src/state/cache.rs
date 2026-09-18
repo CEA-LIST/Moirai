@@ -1,6 +1,5 @@
 use std::{
     cell::OnceCell,
-    cmp::Ordering,
     fmt::{self, Debug},
 };
 
@@ -13,6 +12,7 @@ use crate::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaIdx,
     state::{effect_context::EffectContext, log::IsLog},
 };
 
@@ -134,10 +134,22 @@ impl<V> Clone for CacheCell<V> {
 )]
 pub struct CachedLog<L, V> {
     inner: L,
+    /// The join of every version this log has taken in, and not the version of
+    /// the last event alone.
+    ///
+    /// Replaying an operation onto the materialised value is sound only for an
+    /// event that is after **everything the log holds**, because the index the
+    /// operation carries is the sender's index into the sender's own read-out.
+    /// Testing the incoming event against the event before it is a different
+    /// and weaker claim: causal delivery guarantees each new event is
+    /// greater-than-or-concurrent-with every earlier one, never greater than
+    /// all of them. A frontier is what the invariant the replay already
+    /// intended is actually stated over.
+    ///
     /// Not carried across the wire: a cache is derived from the log, so a
     /// deserialized log starts with an empty one and recomputes on first read.
     #[cfg_attr(feature = "serde", serde(skip))]
-    version: Option<Version>,
+    frontier: Option<Version>,
     #[cfg_attr(feature = "serde", serde(skip, default = "CacheCell::new"))]
     read_cache: CacheCell<V>,
 }
@@ -146,7 +158,7 @@ impl<L, V> CachedLog<L, V> {
     pub fn from_inner(inner: L) -> Self {
         Self {
             inner,
-            version: None,
+            frontier: None,
             read_cache: CacheCell::new(),
         }
     }
@@ -163,6 +175,43 @@ impl<L, V> CachedLog<L, V> {
     pub fn into_inner(self) -> L {
         self.inner
     }
+
+    /// Whether `version` is after every version this log has taken in.
+    ///
+    /// The test is entry-wise and deliberately does not go through
+    /// [`Version`]'s own `partial_cmp`. That comparison shortcuts two versions
+    /// that share an origin to a comparison of the origin's own sequence
+    /// numbers, without looking at what else either of them has seen, so the
+    /// second of two events from one replica answers `Greater` even when the
+    /// log has since taken in an event concurrent with both — which is the
+    /// whole of the defect. A frontier has no meaningful origin of its own
+    /// either, being a join, so the shortcut would fire on it by accident.
+    fn is_after_everything(&self, version: &Version) -> bool {
+        let Some(frontier) = &self.frontier else {
+            // Nothing has been taken in, so the log is empty and holds nothing
+            // the event could be concurrent with.
+            return true;
+        };
+        let members = version.len().max(frontier.len());
+        (0..members).all(|idx| {
+            let idx = ReplicaIdx(idx);
+            version.seq_by_idx(idx) >= frontier.seq_by_idx(idx)
+        })
+    }
+
+    /// Join `version` into the frontier.
+    fn observe(&mut self, version: &Version) {
+        match &mut self.frontier {
+            None => self.frontier = Some(version.clone()),
+            Some(frontier) => {
+                for (idx, seq) in version.iter() {
+                    if frontier.seq_by_idx(idx) < seq {
+                        frontier.set_by_idx(idx, seq);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl<L, V> Default for CachedLog<L, V>
@@ -172,7 +221,7 @@ where
     fn default() -> Self {
         Self {
             inner: L::default(),
-            version: None,
+            frontier: None,
             read_cache: CacheCell::new(),
         }
     }
@@ -196,25 +245,49 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        if let Some(version) = &self.version
-            && event.version().partial_cmp(version) == Some(Ordering::Greater)
-        {
+        // The event is after everything the log holds exactly when the log's
+        // content is the event's causal past, and then the sender's read-out
+        // was this read-out and the index the operation carries is an index
+        // into the cached value. Anything else recomputes.
+        if self.is_after_everything(event.version()) {
             if let Some(cache) = self.read_cache.get_mut() {
                 cache.apply(event.op());
             }
         } else {
             self.read_cache.invalidate();
         }
-        self.version = Some(event.version().clone());
+        self.observe(event.version());
         self.inner.effect(event, ctx);
     }
 
     fn stabilize(&mut self, version: &Version) {
+        // A read-out that is a function of which operations have become stable
+        // would otherwise be served from a cell that predates the
+        // stabilization: `redundant_by_parent` beneath already invalidates for
+        // the same reason, and this used to be the one traversal that did not.
+        //
+        // Moving an operation from the unstable log into the stable state is
+        // meant to leave the read-out alone — that is what makes compaction
+        // sound — but a data type that gets it wrong is exactly the defect
+        // class a remove-wins set and a disable-wins flag were found in, so the
+        // cell is dropped rather than trusted. It is only kept when no
+        // operation can move at all, which is what
+        // [`IsLog::STABILIZE_MOVES_OPERATIONS`] says, because `stabilize` is
+        // called on every delivery and invalidating unconditionally would cost
+        // the whole cache: a receiver reading a 2,000-character slot after each
+        // of 2,000 deliveries goes from 46 ms to 65 s.
+        if L::STABILIZE_MOVES_OPERATIONS {
+            self.read_cache.invalidate();
+        }
         self.inner.stabilize(version);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         self.read_cache.invalidate();
+        // The parent's removal changed what this log reads as, so an event may
+        // only be replayed onto the recomputed value once it has seen the
+        // removal too.
+        self.observe(version);
         self.inner.redundant_by_parent(version, conservative);
     }
 

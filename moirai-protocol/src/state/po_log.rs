@@ -93,6 +93,8 @@ where
         }
     }
 
+    const STABILIZE_MOVES_OPERATIONS: bool = !O::DISABLE_STABILIZE;
+
     fn stabilize(&mut self, version: &Version) {
         if O::DISABLE_STABILIZE {
             return;
