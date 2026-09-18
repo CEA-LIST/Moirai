@@ -133,15 +133,16 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
             let objects: Vec<&ObjectNode> = slot.objects();
             match objects.len() {
                 0 => None,
-                // `union.rs`'s `Value` branch reads whatever is there,
-                // default or not; only its `Conflicts` branch drops the
-                // empty ones. Copied, so a model with one empty object in a
-                // slot reads the same on both paths.
+                // Whatever is there, default or not, and the same for a
+                // conflict below: an object in a slot exists because somebody
+                // instantiated it, and `read_object` gives it at least its
+                // `eClass`. `union!`'s own read counts every child it holds
+                // the same way, so the two paths agree on a slot holding one
+                // written object beside one created and never written into.
                 1 => read_object(sem, objects[0]),
                 _ => {
                     let mut values: Vec<(String, Vec<u8>, Value)> = objects
                         .iter()
-                        .filter(|object| !object_is_empty(object))
                         .filter_map(|object| {
                             let value = read_object(sem, object)?;
                             let name = sem
@@ -182,10 +183,6 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
 }
 
 /// Whether an object holds nothing at all.
-fn object_is_empty(object: &ObjectNode) -> bool {
-    object.fields().values().all(Node::is_default)
-}
-
 /// One object: its class, then every feature its class can see.
 ///
 /// `None` only for a **transparent** class whose one feature reads as no key

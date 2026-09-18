@@ -238,14 +238,32 @@ where
     L: IsLog + EvalNested<Read<V>>,
     V: Clone + Default + PartialEq,
 {
+    /// Every child the ordering still holds, whatever it reads as.
+    ///
+    /// The children are reached one at a time through the map rather than
+    /// through `UWMapLog`'s own `Read`, and that is the whole of the
+    /// existence fix. `UWMapLog::execute_query` keeps a child only when its
+    /// value differs from the default, and it must: `UWMap::Remove` is not a
+    /// tombstone, it leaves the entry in the map with the child's log emptied,
+    /// so reading as the default *is* how a map spells removed. A list does
+    /// not need that reading and never did — `NestedList::Delete` takes the
+    /// position out of the ordering as well as resetting the child, and a
+    /// concurrent update keeps the position alive through the eg-walker's own
+    /// life dots — so the ordering already records removal and the map's
+    /// filter was doing the same work a second time, with the side effect that
+    /// a child created and not yet written into was indistinguishable from a
+    /// removed one.
+    ///
+    /// Asking the ordering separates existence from value: an id in
+    /// `positions` is an element, at whatever value its log holds, including
+    /// the default. `UWMapLog` is untouched, so a keyed map keeps the
+    /// value-based rule it needs.
     fn execute_query(&self, _q: &Read<Vec<V>>) -> <Read<Vec<V>> as QueryOperation>::Response {
         let mut list = Vec::new();
         let positions = self.positions.read_ref();
-        #[allow(clippy::mutable_key_type)]
-        let map = self.children.execute_query(&Read::new());
         for eid in positions {
-            if let Some(child) = map.get(eid) {
-                list.push(child.clone());
+            if let Some(child) = self.children.get_child(eid) {
+                list.push(child.execute_query(&Read::new()));
             }
         }
         list
@@ -403,6 +421,58 @@ mod tests {
 
         let list = replica_a.query(&Read::new());
         assert_eq!(list, Vec::<DuetValue<i32, i32>>::new());
+    }
+
+    /// A record child created with `New` and not yet written into is held at
+    /// position 0, and used to be invisible: the read went through
+    /// `UWMapLog`'s read, which drops every child whose value equals the
+    /// default, the same filter that spells removal. The read asks the
+    /// ordering now, so a created child is an element.
+    ///
+    /// This is `nested_list_reads_a_created_child_that_holds_nothing_yet` of
+    /// `repro/nested-list-hides-empty-child` (`a678390`), no longer ignored.
+    #[test]
+    fn nested_list_reads_a_created_child_that_holds_nothing_yet() {
+        record!(Duet {
+            first: VecLog<Counter<i32>>,
+            second: VecLog<Counter<i32>>,
+        });
+
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<DuetLog>>();
+
+        let event = replica_a.send(NestedList::insert(0, Duet::New)).unwrap();
+        replica_b.receive(event);
+
+        let expected = vec![DuetValue::<i32, i32>::default()];
+        assert_eq!(replica_a.query(&Read::new()), expected);
+        assert_eq!(replica_b.query(&Read::new()), expected);
+    }
+
+    /// A counter child written back to zero is still in the list: `Update` at
+    /// position 0 stays enabled, since `is_enabled` checks the positions, and
+    /// the read no longer drops the child for holding the default.
+    ///
+    /// This is `nested_list_reads_a_child_whose_value_returned_to_default` of
+    /// `repro/nested-list-hides-empty-child`, no longer ignored.
+    #[test]
+    fn nested_list_reads_a_child_whose_value_returned_to_default() {
+        let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+
+        let event = replica_a
+            .send(NestedList::insert(0, Counter::Inc(10)))
+            .unwrap();
+        replica_b.receive(event);
+        let event = replica_a
+            .send(NestedList::update(0, Counter::Dec(10)))
+            .unwrap();
+        replica_b.receive(event);
+
+        assert!(
+            replica_b
+                .send(NestedList::update(0, Counter::Inc(0)))
+                .is_ok()
+        );
+        assert_eq!(replica_a.query(&Read::new()), vec![0]);
     }
 
     #[test]
@@ -625,9 +695,16 @@ mod tests {
         replica_c.receive(event_a_1);
         replica_c.receive(event_b_2);
 
-        assert_eq!(replica_a.query(&Read::new()), vec![1]);
-        assert_eq!(replica_b.query(&Read::new()), vec![1]);
-        assert_eq!(replica_c.query(&Read::new()), vec![1]);
+        // `c` inserted its element with `Counter::Reset`, which leaves the
+        // counter at its default, and this test read `[1]` while a child at
+        // its default was indistinguishable from an absent one. The element
+        // exists — `c` inserted it, nobody deleted it, and it is in the
+        // ordering on all three replicas — so it is an element reading `0`,
+        // ahead of `b`'s element, which `a`'s concurrent update keeps at `1`.
+        // The three replicas still agree, which is what this test is for.
+        assert_eq!(replica_a.query(&Read::new()), vec![0, 1]);
+        assert_eq!(replica_b.query(&Read::new()), vec![0, 1]);
+        assert_eq!(replica_c.query(&Read::new()), vec![0, 1]);
     }
 
     #[test]
