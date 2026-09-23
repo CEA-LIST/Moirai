@@ -153,15 +153,6 @@ pub trait NetworkOp: Serialize + DeserializeOwned + Clone + Debug + Send + 'stat
 
 impl<T> NetworkOp for T where T: Serialize + DeserializeOwned + Clone + Debug + Send + 'static {}
 
-/// How many ids of not-hosted logs one node remembers at once.
-///
-/// A session holds a handful of models, so sixty-four is far past what any
-/// real session reaches; it is a ceiling on a long-lived process, not a
-/// working limit. When the set is full a further new id is simply not
-/// recorded — the ids already there keep being offered, and the frame is
-/// counted in `frames_not_hosted` as it always was.
-const SEEN_NOT_HOSTED_CAP: usize = 64;
-
 // =============================================================================
 // GenericNode — one peer, its hosted logs, one transport, external adapters
 // =============================================================================
@@ -223,11 +214,7 @@ where
     /// An id leaves the set when [`host_log`] starts hosting it, so a model
     /// this node has joined stops being offered as one it could join.
     ///
-    /// Bounded at [`SEEN_NOT_HOSTED_CAP`]: once full, a further *new* id is
-    /// dropped and only the ids already in the set are ever reported. A
-    /// session carries a handful of models, so the cap is never reached in
-    /// practice; what it rules out is a long-lived replica in a churning
-    /// session growing this set for the life of the process.
+    /// Not bounded: every id seen is remembered until it is hosted.
     ///
     /// [`host_log`]: GenericNode::host_log
     seen_not_hosted: BTreeSet<LogId>,
@@ -1030,13 +1017,9 @@ where
     /// Note that an id was seen on a frame for a log this node does not host.
     /// Called beside every `frames_not_hosted` increment. See the field.
     fn note_not_hosted(&mut self, log_id: &LogId) {
-        if self.seen_not_hosted.contains(log_id) {
-            return;
+        if !self.seen_not_hosted.contains(log_id) {
+            self.seen_not_hosted.insert(log_id.clone());
         }
-        if self.seen_not_hosted.len() >= SEEN_NOT_HOSTED_CAP {
-            return;
-        }
-        self.seen_not_hosted.insert(log_id.clone());
     }
 
     /// `true` when this node hosts the log named `log_id`.
@@ -3120,13 +3103,11 @@ mod tests {
         );
     }
 
-    /// The cap is a ceiling on a long-lived process, not a working limit: a
-    /// session has a handful of models. Once full, a further new id is
-    /// dropped and the frame is still counted.
+    /// Every id is remembered: past the old cap of sixty-four the list keeps growing.
     #[test]
-    fn the_seen_list_stops_growing_at_the_cap_and_the_counter_does_not() {
+    fn the_seen_list_keeps_every_id_and_the_counter_counts_every_frame() {
         let mut node = node("n", &[bt()]);
-        let wanted = SEEN_NOT_HOSTED_CAP + 8;
+        let wanted = 72;
         for i in 0..wanted {
             let id = LogId::parse(&format!("{:032x}", i + 1)).expect("32 hex characters");
             let mut writer = peer("writer", id);
@@ -3134,16 +3115,8 @@ mod tests {
             node.handle_transport_message("writer".to_string(), TransportMessage::Event { event });
         }
 
-        assert_eq!(
-            node.seen_not_hosted().count(),
-            SEEN_NOT_HOSTED_CAP,
-            "the seen list grew past its cap"
-        );
-        assert_eq!(
-            node.frames_not_hosted(),
-            wanted as u64,
-            "the counter stopped counting when the seen list filled"
-        );
+        assert_eq!(node.seen_not_hosted().count(), wanted, "an id seen was not remembered");
+        assert_eq!(node.frames_not_hosted(), wanted as u64, "a frame went uncounted");
     }
 
     #[test]
