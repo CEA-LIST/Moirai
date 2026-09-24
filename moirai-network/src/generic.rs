@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Display};
+use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(feature = "test_utils")]
 use std::sync::Mutex;
@@ -62,6 +63,9 @@ pub type RegisterFn<O> = fn(&LogId, &ServedDescriptor) -> Vec<O>;
 /// be a plain function pointer with no state of its own. See
 /// [`GenericNode::enable_op_guard`].
 pub type OpGuardFn<O> = fn(&LogId, &ServedDescriptor, &O) -> Result<(), String>;
+
+/// The guard one log's intake runs, and the descriptor it hands the guard.
+type IntakeGuard<O> = (OpGuardFn<O>, ServedDescriptor);
 
 /// The application's description of one descriptor's text: the key it is
 /// served under, the entry `GET /api/metamodels` lists for it, or the reason
@@ -219,8 +223,16 @@ where
     /// [`host_log`]: GenericNode::host_log
     seen_not_hosted: BTreeSet<LogId>,
     transport: T,
-    adapter_op_rx: Receiver<OpEnvelope<L::Op>>,
-    adapter_op_tx: Sender<OpEnvelope<L::Op>>,
+    adapter_op_rx: Receiver<Intake<L::Op>>,
+    adapter_op_tx: Sender<Intake<L::Op>>,
+    /// Minted once per node process and the first half of every version this
+    /// node serves; see [`version_of`]. A version is a count of deliveries,
+    /// and a count restarts from zero with the process, so without this a
+    /// version read from the previous process could name a different state
+    /// of this one.
+    ///
+    /// [`version_of`]: GenericNode::version_of
+    incarnation: String,
     ctrl_rx: Receiver<ControlCmd>,
     ctrl_tx: Sender<ControlCmd>,
 
@@ -801,12 +813,83 @@ impl<O> OpsByEvent<O> {
     }
 }
 
-/// Envelope for ops submitted, with a oneshot reply channel.
+/// Who settles one submission: the event loop, by taking it before it
+/// applies anything, or the adapter that submitted it, by abandoning it when
+/// its caller can wait no longer. Exactly one of the two wins.
+///
+/// This is what makes a timeout an answer rather than a guess. Without it an
+/// adapter that stopped waiting could only say "no reply yet", while the
+/// submission sat in the channel and was applied afterwards: the caller was
+/// told 504 about an operation the model then held, and abandoned the rest of
+/// its edit. With it, an abandoned submission is never applied, so the 504 is
+/// true, and a submission the loop has taken is always answered with what
+/// the loop did, however long that took.
+#[derive(Debug, Clone, Default)]
+pub struct Claim(Arc<AtomicU8>);
+
+impl Claim {
+    const OPEN: u8 = 0;
+    const TAKEN: u8 = 1;
+    const ABANDONED: u8 = 2;
+
+    /// The event loop's side: `true` when the submission is now the loop's
+    /// to apply, `false` when its adapter abandoned it first.
+    pub fn take(&self) -> bool {
+        self.0
+            .compare_exchange(
+                Self::OPEN,
+                Self::TAKEN,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// The adapter's side: `true` when the submission will now never be
+    /// applied, `false` when the loop has already taken it and will answer.
+    pub fn abandon(&self) -> bool {
+        self.0
+            .compare_exchange(
+                Self::OPEN,
+                Self::ABANDONED,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .is_ok()
+    }
+}
+
+/// One operation submitted by an adapter, with a oneshot reply channel.
 pub struct OpEnvelope<O> {
     pub op: O,
     /// The log to apply to; `None` is the default log.
     pub log_id: Option<LogId>,
+    /// Settles the race between the loop taking this and its adapter giving
+    /// up on it. See [`Claim`].
+    pub claim: Claim,
     pub reply: Sender<OpResult>,
+}
+
+/// A batch of operations submitted by an adapter: the operations one edit
+/// produced, computed against one read of the model, to be applied in one
+/// intake step. See [`GenericNode::submit_batch`].
+pub struct BatchEnvelope<O> {
+    pub ops: Vec<O>,
+    /// The log to apply to; `None` is the default log.
+    pub log_id: Option<LogId>,
+    /// The version of the log the batch was computed against, as the state
+    /// route served it; `None` applies the batch to whatever the log holds.
+    pub base: Option<String>,
+    /// See [`Claim`].
+    pub claim: Claim,
+    pub reply: Sender<BatchResult>,
+}
+
+/// What an adapter hands the event loop: one operation or one batch, on one
+/// channel so that the loop takes them in the order they were submitted.
+pub enum Intake<O> {
+    Op(OpEnvelope<O>),
+    Batch(BatchEnvelope<O>),
 }
 
 /// Control commands sent by external adapters (for example, HTTP).
@@ -828,8 +911,9 @@ pub(crate) enum ControlCmd {
     Peers {
         reply: Sender<serde_json::Value>,
     },
+    /// The default log's state, with the version it was read at.
     Query {
-        reply: Sender<serde_json::Value>,
+        reply: Sender<StateRead>,
     },
     Operations {
         reply: Sender<serde_json::Value>,
@@ -850,10 +934,11 @@ pub(crate) enum ControlCmd {
         metamodel_id: serde_json::Value,
         reply: Sender<Result<Registered, RegisterRefused>>,
     },
-    /// One model's state; `None` when the node does not host it.
+    /// One model's state, with the version it was read at; `None` when the
+    /// node does not host it.
     QueryLog {
         log_id: LogId,
-        reply: Sender<Option<serde_json::Value>>,
+        reply: Sender<Option<StateRead>>,
     },
     /// One model's counters; `None` when the node does not host it.
     LogMetrics {
@@ -910,6 +995,53 @@ pub enum BoundDescriptor {
 pub struct OpResult {
     pub success: bool,
     pub message: String,
+}
+
+/// A log's state as one read served it, and the version it was read at: the
+/// two are taken in the same pass of the event loop, so the version names
+/// exactly the state beside it. See [`GenericNode::version_of`].
+#[derive(Debug, Clone)]
+pub(crate) struct StateRead {
+    pub state: serde_json::Value,
+    pub version: String,
+}
+
+/// What became of a batch. See [`GenericNode::submit_batch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BatchOutcome {
+    /// Every operation was applied, in order, in one intake step.
+    Applied,
+    /// The log moved since the version the batch was computed against, and
+    /// nothing was applied: read the model again and compute the batch
+    /// again.
+    Stale,
+    /// An operation was refused. Those before it were applied — `applied`
+    /// says how many, which is zero when the guard refused, since the guard
+    /// is asked about the whole batch before anything is applied — and
+    /// neither it nor any after it was.
+    Refused,
+    /// This node does not host the log.
+    NotHosted,
+}
+
+/// The answer to one batch.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchResult {
+    pub outcome: BatchOutcome,
+    /// How many of the batch's operations were applied, counted from the
+    /// first: all of them, none, or the prefix before a refusal.
+    pub applied: usize,
+    /// How many operations the batch held.
+    pub of: usize,
+    /// The index of the operation that was refused, when one was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refused_at: Option<usize>,
+    pub message: String,
+    /// The log's version once the intake step is over: after the batch when
+    /// it was applied, as it stood when it was not. `None` for a log this
+    /// node does not host.
+    pub version: Option<String>,
 }
 
 impl<L: IsLog<Command = <L as IsLog>::Op>, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
@@ -973,6 +1105,9 @@ where
             transport,
             adapter_op_rx,
             adapter_op_tx,
+            // Eight hex characters of a freshly minted id: random, and short
+            // enough to read in a version beside the count it qualifies.
+            incarnation: LogId::generate().as_str()[..8].to_string(),
             ctrl_rx,
             ctrl_tx,
             query_fn: None,
@@ -1472,7 +1607,7 @@ where
     }
 
     /// Get a sender that can be used to submit ops from other threads.
-    pub fn op_sender(&self) -> Sender<OpEnvelope<L::Op>> {
+    pub fn op_sender(&self) -> Sender<Intake<L::Op>> {
         self.adapter_op_tx.clone()
     }
 
@@ -1769,39 +1904,222 @@ where
     /// with no binding.
     fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
-        if let Some(guard) = self.op_guard_fn {
-            let key = self
-                .logs
-                .get(&log_id)
-                .and_then(|log| log.binding.as_ref())
-                .map(|binding| binding.key.clone());
-            if let Some(key) = key {
-                // The descriptor `register` matched for this log, looked up
-                // again by its key rather than remembered by index, so the
-                // guard can never be handed another descriptor's text.
-                let held = self
-                    .descriptors()
-                    .iter()
-                    .find(|held| held.key == key)
-                    .cloned();
-                let Some(descriptor) = held else {
-                    return OpResult {
-                        success: false,
-                        message: format!(
-                            "log {log_id} is bound to descriptor {key}, which this node no \
-                             longer holds"
+        let checked = self.intake_guard(&log_id).and_then(|guard| match guard {
+            Some((guard, descriptor)) => guard(&log_id, &descriptor, &op),
+            None => Ok(()),
+        });
+        if let Err(reason) = checked {
+            return OpResult {
+                success: false,
+                message: reason,
+            };
+        }
+        self.apply_op_to(&log_id, op)
+    }
+
+    /// The guard an adapter-submitted operation on `log_id` must pass, with
+    /// the descriptor it is handed: `Ok(None)` when nothing guards that log
+    /// (no guard installed, the default log, a log hosted with no binding),
+    /// and `Err` when the log is bound to a descriptor this node no longer
+    /// holds, which refuses every operation.
+    fn intake_guard(&self, log_id: &LogId) -> Result<Option<IntakeGuard<L::Op>>, String> {
+        let Some(guard) = self.op_guard_fn else {
+            return Ok(None);
+        };
+        let Some(key) = self
+            .logs
+            .get(log_id)
+            .and_then(|log| log.binding.as_ref())
+            .map(|binding| binding.key.clone())
+        else {
+            return Ok(None);
+        };
+        // The descriptor `register` matched for this log, looked up again by
+        // its key rather than remembered by index, so the guard can never be
+        // handed another descriptor's text.
+        let held = self
+            .descriptors()
+            .iter()
+            .find(|held| held.key == key)
+            .cloned();
+        match held {
+            Some(descriptor) => Ok(Some((guard, descriptor))),
+            None => Err(format!(
+                "log {log_id} is bound to descriptor {key}, which this node no longer holds"
+            )),
+        }
+    }
+
+    /// The version of the log `log_id` as this node holds it now, or `None`
+    /// when it does not host that log.
+    ///
+    /// An opaque string for a caller to hand back, not a clock to compare:
+    /// the node's incarnation and the number of events the log has
+    /// delivered, `3f9a0c1e.1742`. Every delivery, local or remote, adds one
+    /// to the count and nothing else changes what the log holds, so two
+    /// reads of one log served under one version served one state. The
+    /// count only grows, and a state transfer is adopted only by a log that
+    /// has delivered nothing, so a version is never served twice for two
+    /// different states by one process; the incarnation keeps it so across
+    /// a restart.
+    ///
+    /// It is what `GET /api/model/{id}/state` serves as its `ETag` and what
+    /// a batch names as its `base`. See [`submit_batch`].
+    ///
+    /// [`submit_batch`]: GenericNode::submit_batch
+    pub fn version_of(&self, log_id: &LogId) -> Option<String> {
+        let log = self.logs.get(log_id)?;
+        Some(format!(
+            "{}.{}",
+            self.incarnation,
+            log.replica.stability().delivered
+        ))
+    }
+
+    /// One log's state and the version it is at, taken together in one pass
+    /// of the event loop; `None` when this node does not host the log.
+    fn state_read(&self, log_id: &LogId) -> Option<StateRead> {
+        let log = self.logs.get(log_id)?;
+        let state = match &self.query_fn {
+            Some(f) => f(&log.replica),
+            None => json!({ "error": "state query not enabled — implement QueryableLog" }),
+        };
+        Some(StateRead {
+            state,
+            version: self.version_of(log_id)?,
+        })
+    }
+
+    /// The intake for a batch: the operations one edit produced, computed
+    /// against one read of the model, applied in one step of the event loop.
+    /// `None` names the default log, as for [`submit_op`].
+    ///
+    /// # Why a batch and not the operations one at a time
+    ///
+    /// An edit is often several operations, and a sequence operation names
+    /// its target by position: a rename is one character per operation, a
+    /// new element and the writes into it are a mint and then writes at its
+    /// position. Submitted one at a time, the event loop may deliver a
+    /// peer's operations between two of them, and when the peer inserted
+    /// into the same list the positions the rest of the edit names now point
+    /// at the peer's element, or at nothing. Measured in `ip10`: two
+    /// replicas appending to one list while connected, 44 of 246 creates
+    /// refused and 52 applied with their characters inside the peer's
+    /// element. This function runs to the end without returning to the
+    /// loop, so nothing is delivered between two of its operations.
+    ///
+    /// # Stale reads
+    ///
+    /// Nothing delivered *during* the batch is only half of it: the batch
+    /// was computed against a read, and the loop may have delivered a peer's
+    /// operation between that read and this step. `base`, when given, is the
+    /// version that read was served at ([`version_of`]); if the log is no
+    /// longer at it, nothing is applied and the answer is
+    /// [`BatchOutcome::Stale`] with the version the log is at. The batch is
+    /// refused rather than rebased because rebasing means moving positions
+    /// over the operations that arrived, and what a position meant is the
+    /// caller's: the caller holds the edit the batch was computed from, and
+    /// computing it again against a fresh read is the rebase that knows what
+    /// the edit meant.
+    ///
+    /// # A refused operation
+    ///
+    /// The guard, when one is installed, is asked about every operation
+    /// before any is applied, so a batch it refuses leaves the log as it
+    /// was. The log's own check is asked at each operation as it is
+    /// applied, against the state the operations before it made, and that
+    /// cannot be asked ahead without applying them: a replica cannot be
+    /// copied to try the batch on. A refusal there stops the batch, and the
+    /// answer says exactly which prefix was applied. With `base` given, the
+    /// log is at the state the batch was computed against, so a refusal
+    /// there is a batch its writer computed wrongly rather than a race.
+    ///
+    /// [`submit_op`]: GenericNode::submit_op
+    /// [`version_of`]: GenericNode::version_of
+    pub fn submit_batch(
+        &mut self,
+        log_id: Option<LogId>,
+        ops: Vec<L::Op>,
+        base: Option<&str>,
+    ) -> BatchResult {
+        let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
+        let of = ops.len();
+        let answer = |outcome, applied, refused_at, message: String, version| BatchResult {
+            outcome,
+            applied,
+            of,
+            refused_at,
+            message,
+            version,
+        };
+        let Some(version) = self.version_of(&log_id) else {
+            return answer(
+                BatchOutcome::NotHosted,
+                0,
+                None,
+                format!("log {log_id} is not hosted here"),
+                None,
+            );
+        };
+        if let Some(base) = base {
+            if base != version {
+                return answer(
+                    BatchOutcome::Stale,
+                    0,
+                    None,
+                    format!(
+                        "the model moved since the read this batch was computed against: it \
+                         was at {base} and is at {version}; nothing was applied"
+                    ),
+                    Some(version),
+                );
+            }
+        }
+        let guard = match self.intake_guard(&log_id) {
+            Ok(guard) => guard,
+            Err(reason) => {
+                return answer(BatchOutcome::Refused, 0, Some(0), reason, Some(version));
+            }
+        };
+        if let Some((guard, descriptor)) = guard {
+            for (index, op) in ops.iter().enumerate() {
+                if let Err(reason) = guard(&log_id, &descriptor, op) {
+                    return answer(
+                        BatchOutcome::Refused,
+                        0,
+                        Some(index),
+                        format!(
+                            "operation {} of {of} refused, so none was applied: {reason}",
+                            index + 1
                         ),
-                    };
-                };
-                if let Err(reason) = guard(&log_id, &descriptor, &op) {
-                    return OpResult {
-                        success: false,
-                        message: reason,
-                    };
+                        Some(version),
+                    );
                 }
             }
         }
-        self.apply_op_to(&log_id, op)
+        for (index, op) in ops.into_iter().enumerate() {
+            let result = self.apply_op_to(&log_id, op);
+            if !result.success {
+                return answer(
+                    BatchOutcome::Refused,
+                    index,
+                    Some(index),
+                    format!(
+                        "operation {} of {of} refused after {index} applied: {}",
+                        index + 1,
+                        result.message
+                    ),
+                    self.version_of(&log_id),
+                );
+            }
+        }
+        answer(
+            BatchOutcome::Applied,
+            of,
+            None,
+            format!("{of} operations applied in one step"),
+            self.version_of(&log_id),
+        )
     }
 
     /// Apply an operation to the log named `log_id`: send to the CRDT, then
@@ -2107,10 +2425,34 @@ where
         }
         eprintln!("[{}] Entering main event loop", self.replica_id);
         loop {
-            // --- Adapter-submitted operations ---
-            while let Ok(OpEnvelope { op, log_id, reply }) = self.adapter_op_rx.try_recv() {
-                let result = self.submit_op(log_id, op);
-                let _ = reply.send(result);
+            // --- Adapter-submitted operations and batches ---
+            //
+            // A submission its adapter abandoned is skipped: its caller has
+            // been told it was not applied, and that must stay true.
+            while let Ok(intake) = self.adapter_op_rx.try_recv() {
+                match intake {
+                    Intake::Op(OpEnvelope {
+                        op,
+                        log_id,
+                        claim,
+                        reply,
+                    }) => {
+                        if claim.take() {
+                            let _ = reply.send(self.submit_op(log_id, op));
+                        }
+                    }
+                    Intake::Batch(BatchEnvelope {
+                        ops,
+                        log_id,
+                        base,
+                        claim,
+                        reply,
+                    }) => {
+                        if claim.take() {
+                            let _ = reply.send(self.submit_batch(log_id, ops, base.as_deref()));
+                        }
+                    }
+                }
             }
 
             // --- Control commands (pause/resume/peers) ---
@@ -2365,11 +2707,12 @@ where
                 let _ = reply.send(json!({ "peers": peers }));
             }
             ControlCmd::Query { reply } => {
-                let serialized = match (&self.query_fn, self.logs.get(&self.default_log)) {
-                    (Some(f), Some(log)) => f(&log.replica),
-                    _ => json!({ "error": "state query not enabled — implement QueryableLog" }),
-                };
-                let _ = reply.send(serialized);
+                let default_log = self.default_log.clone();
+                let read = self.state_read(&default_log).unwrap_or_else(|| StateRead {
+                    state: json!({ "error": "the default log is not hosted" }),
+                    version: String::new(),
+                });
+                let _ = reply.send(read);
             }
             ControlCmd::Operations { reply } => {
                 // Serialize all logged operations of the default log
@@ -2400,11 +2743,7 @@ where
                 let _ = reply.send(self.register(model_id, metamodel_id));
             }
             ControlCmd::QueryLog { log_id, reply } => {
-                let state = self.logs.get(&log_id).map(|log| match &self.query_fn {
-                    Some(f) => f(&log.replica),
-                    None => json!({ "error": "state query not enabled — implement QueryableLog" }),
-                });
-                let _ = reply.send(state);
+                let _ = reply.send(self.state_read(&log_id));
             }
             ControlCmd::LogMetrics { log_id, reply } => {
                 let metrics = self.logs.get(&log_id).map(|log| self.log_metrics(log));
@@ -2624,13 +2963,16 @@ mod tests {
     /// Records everything sent and broadcast, and receives nothing: enough
     /// transport to feed `handle_transport_message` and inspect the node's
     /// answer, or to carry one node's frames to another by hand.
-    struct RecordingTransport {
+    ///
+    /// Generic over the operation so the batch tests can run a list, whose
+    /// operations name positions, beside the set every other test runs.
+    struct RecordingTransport<O: NetworkOp = Op> {
         id: PeerId,
-        sent: Vec<(PeerId, TransportMessage<Op>)>,
-        broadcast: Vec<TransportMessage<Op>>,
+        sent: Vec<(PeerId, TransportMessage<O>)>,
+        broadcast: Vec<TransportMessage<O>>,
     }
 
-    impl RecordingTransport {
+    impl<O: NetworkOp> RecordingTransport<O> {
         fn new(id: &str) -> Self {
             Self {
                 id: id.to_string(),
@@ -2640,24 +2982,24 @@ mod tests {
         }
     }
 
-    impl CrdtTransport for RecordingTransport {
-        type Op = Op;
+    impl<O: NetworkOp> CrdtTransport for RecordingTransport<O> {
+        type Op = O;
 
         fn local_id(&self) -> &PeerId {
             &self.id
         }
 
-        fn send(&mut self, peer: &PeerId, msg: TransportMessage<Op>) -> TransportResult<()> {
+        fn send(&mut self, peer: &PeerId, msg: TransportMessage<O>) -> TransportResult<()> {
             self.sent.push((peer.clone(), msg));
             Ok(())
         }
 
-        fn broadcast(&mut self, msg: TransportMessage<Op>) -> TransportResult<()> {
+        fn broadcast(&mut self, msg: TransportMessage<O>) -> TransportResult<()> {
             self.broadcast.push(msg);
             Ok(())
         }
 
-        fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage<Op>)>> {
+        fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage<O>)>> {
             Ok(None)
         }
 
@@ -3770,5 +4112,331 @@ mod tests {
             status, 404,
             "metrics were served for a log the node does not host: {body}"
         );
+    }
+
+    // ------------------------------------------------------------- batches
+
+    /// The members of a set log as `GET /api/model/{id}/state` would serve
+    /// them in these tests, sorted.
+    fn members_json(replica: &LogReplica<Log>) -> serde_json::Value {
+        let mut members: Vec<String> = replica.query(&Read::new()).into_iter().collect();
+        members.sort();
+        json!(members)
+    }
+
+    #[test]
+    fn a_batch_is_applied_in_one_step_and_moves_the_version_by_its_length() {
+        let mut node = node("n", &[bt()]);
+        let before = node.version_of(&bt()).expect("hosted");
+
+        let result = node.submit_batch(
+            Some(bt()),
+            vec![add("a"), add("b"), add("c")],
+            Some(&before),
+        );
+
+        assert_eq!(result.outcome, BatchOutcome::Applied, "{}", result.message);
+        assert_eq!((result.applied, result.of, result.refused_at), (3, 3, None));
+        assert_eq!(
+            members(&node, &bt()),
+            BTreeSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+        assert_eq!(
+            take_broadcast(&mut node).len(),
+            3,
+            "one frame per operation"
+        );
+        let after = node.version_of(&bt()).expect("hosted");
+        assert_eq!(result.version.as_deref(), Some(after.as_str()));
+        let count =
+            |version: &str| -> usize { version.rsplit('.').next().unwrap().parse().unwrap() };
+        assert_eq!(count(&after), count(&before) + 3);
+        assert_eq!(
+            before.split('.').next(),
+            after.split('.').next(),
+            "one process, one incarnation"
+        );
+    }
+
+    #[test]
+    fn a_batch_computed_before_a_delivery_is_stale_and_applies_nothing() {
+        let mut node = node("n", &[bt()]);
+        let read = node.version_of(&bt()).expect("hosted");
+        // A peer's operation is delivered between the read and the batch.
+        let mut writer = peer("writer", bt());
+        let event = writer.send(add("x")).expect("enabled");
+        node.handle_transport_message("writer".to_string(), TransportMessage::Event { event });
+        let moved = node.version_of(&bt()).expect("hosted");
+        assert_ne!(read, moved, "a delivery must move the version");
+
+        let stale = node.submit_batch(Some(bt()), vec![add("a"), add("b")], Some(&read));
+
+        assert_eq!(stale.outcome, BatchOutcome::Stale, "{}", stale.message);
+        assert_eq!((stale.applied, stale.of), (0, 2));
+        assert_eq!(stale.version.as_deref(), Some(moved.as_str()));
+        assert_eq!(members(&node, &bt()), BTreeSet::from(["x".to_string()]));
+        assert!(
+            take_broadcast(&mut node).is_empty(),
+            "a stale batch sent a frame"
+        );
+
+        // Computed again against the version the refusal named, it applies.
+        let again = node.submit_batch(Some(bt()), vec![add("a"), add("b")], Some(&moved));
+        assert_eq!(again.outcome, BatchOutcome::Applied, "{}", again.message);
+        assert_eq!(members(&node, &bt()).len(), 3);
+    }
+
+    #[test]
+    fn the_guard_is_asked_about_the_whole_batch_before_anything_is_applied() {
+        let mut node = registering("n");
+        node.enable_op_guard(refuse_header_writes);
+        let Registered { model_id, .. } = node.register(None, bt_id()).expect("created");
+        let before = members(&node, &model_id);
+        take_broadcast(&mut node);
+
+        let result = node.submit_batch(
+            Some(model_id.clone()),
+            vec![
+                add("Sequence"),
+                add(&format!("{HEADER_PREFIX}rewritten")),
+                add("Fallback"),
+            ],
+            None,
+        );
+
+        assert_eq!(result.outcome, BatchOutcome::Refused, "{}", result.message);
+        assert_eq!((result.applied, result.refused_at), (0, Some(1)));
+        assert_eq!(
+            members(&node, &model_id),
+            before,
+            "an operation before the refused one was applied"
+        );
+        assert!(take_broadcast(&mut node).is_empty());
+    }
+
+    #[test]
+    fn a_batch_for_a_log_the_node_does_not_host_is_answered_as_such() {
+        let mut node = node("n", &[bt()]);
+        let result = node.submit_batch(Some(uml()), vec![add("a")], None);
+        assert_eq!(result.outcome, BatchOutcome::NotHosted);
+        assert_eq!((result.applied, result.version), (0, None));
+    }
+
+    type ListOp = moirai_crdt::list::eg_walker::List<char>;
+    type ListLog = moirai_protocol::state::graph_log::GraphLog<ListOp>;
+    type ListNode = GenericNode<ListLog, RecordingTransport<ListOp>>;
+
+    fn list_node(id: &str, log_id: LogId) -> ListNode {
+        ListNode::with_transport_and_log_id(
+            id.to_string(),
+            &[id],
+            RecordingTransport::new(id),
+            log_id,
+        )
+    }
+
+    fn insert(ch: char, pos: usize) -> ListOp {
+        ListOp::insert(ch, pos)
+    }
+
+    fn text(replica: &LogReplica<ListLog>) -> String {
+        replica.query(&Read::<String>::new())
+    }
+
+    /// Carry every frame `node` broadcast since the last call to `peer`.
+    fn carry(node: &mut ListNode, peer: &mut LogReplica<ListLog>) {
+        for frame in std::mem::take(&mut node.transport.broadcast) {
+            if let TransportMessage::Event { event } = frame {
+                peer.receive(event);
+            }
+        }
+    }
+
+    #[test]
+    fn a_log_refusal_inside_a_batch_reports_exactly_the_prefix_applied() {
+        let mut node = list_node("n", bt());
+        let result = node.submit_batch(
+            None,
+            vec![
+                insert('a', 0),
+                insert('b', 1),
+                insert('c', 9),
+                insert('d', 3),
+            ],
+            None,
+        );
+
+        assert_eq!(result.outcome, BatchOutcome::Refused, "{}", result.message);
+        assert_eq!(
+            (result.applied, result.of, result.refused_at),
+            (2, 4, Some(2))
+        );
+        assert!(
+            result.message.contains("out of bounds"),
+            "{}",
+            result.message
+        );
+        assert_eq!(text(node.hosted(&bt()).unwrap()), "ab");
+        assert_eq!(std::mem::take(&mut node.transport.broadcast).len(), 2);
+        assert_eq!(result.version, node.version_of(&bt()));
+    }
+
+    /// The ip10 race, at the node: an edit computed against `ab` appends
+    /// `c` then `d`, positions 2 and 3, while a peer puts `X` at the front.
+    ///
+    /// Submitted one operation at a time, the peer's `X` can be delivered
+    /// between the two, and `d` then lands at position 3 of `Xabc`, before
+    /// `c`: the edit is split. As one batch, the delivery is either before
+    /// the batch, which is then stale and applies nothing, or after it; the
+    /// edit is computed again against `Xab` in the first case, and in both
+    /// `cd` arrives whole, on both replicas.
+    #[test]
+    fn a_peer_delivery_cannot_land_inside_a_batch() {
+        // One at a time, the peer's delivery between the two operations.
+        let (mut node, mut writer) = (list_node("n", bt()), peer_list("w"));
+        seed_ab(&mut node, &mut writer);
+        let front = writer.send(insert('X', 0)).expect("enabled");
+        assert!(node.submit_op(None, insert('c', 2)).success);
+        node.handle_transport_message("w".into(), TransportMessage::Event { event: front });
+        assert!(node.submit_op(None, insert('d', 3)).success);
+        assert_eq!(
+            text(node.hosted(&bt()).unwrap()),
+            "Xabdc",
+            "the race this test is about no longer shows one operation at a time"
+        );
+
+        // As a batch, the delivery first: the batch is stale, and computed
+        // again against the new read it applies whole.
+        let (mut node, mut writer) = (list_node("n", bt()), peer_list("w"));
+        seed_ab(&mut node, &mut writer);
+        let read = node.version_of(&bt()).unwrap();
+        let front = writer.send(insert('X', 0)).expect("enabled");
+        node.handle_transport_message("w".into(), TransportMessage::Event { event: front });
+        let stale = node.submit_batch(None, vec![insert('c', 2), insert('d', 3)], Some(&read));
+        assert_eq!(stale.outcome, BatchOutcome::Stale);
+        assert_eq!(
+            text(node.hosted(&bt()).unwrap()),
+            "Xab",
+            "a stale batch wrote"
+        );
+        let reread = node.version_of(&bt()).unwrap();
+        let applied = node.submit_batch(None, vec![insert('c', 3), insert('d', 4)], Some(&reread));
+        assert_eq!(
+            applied.outcome,
+            BatchOutcome::Applied,
+            "{}",
+            applied.message
+        );
+        carry(&mut node, &mut writer);
+        assert_eq!(text(node.hosted(&bt()).unwrap()), "Xabcd");
+        assert_eq!(text(&writer), "Xabcd", "the replicas disagree");
+
+        // As a batch, the delivery after: the batch applies against the
+        // read it was computed from, and the peer's insert merges around it.
+        let (mut node, mut writer) = (list_node("n", bt()), peer_list("w"));
+        seed_ab(&mut node, &mut writer);
+        let read = node.version_of(&bt()).unwrap();
+        let front = writer.send(insert('X', 0)).expect("enabled");
+        let applied = node.submit_batch(None, vec![insert('c', 2), insert('d', 3)], Some(&read));
+        assert_eq!(
+            applied.outcome,
+            BatchOutcome::Applied,
+            "{}",
+            applied.message
+        );
+        node.handle_transport_message("w".into(), TransportMessage::Event { event: front });
+        carry(&mut node, &mut writer);
+        assert_eq!(text(node.hosted(&bt()).unwrap()), "Xabcd");
+        assert_eq!(text(&writer), "Xabcd", "the replicas disagree");
+    }
+
+    fn peer_list(id: &str) -> LogReplica<ListLog> {
+        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], bt())
+    }
+
+    /// `ab`, written on the node and delivered to the peer.
+    fn seed_ab(node: &mut ListNode, writer: &mut LogReplica<ListLog>) {
+        let seeded = node.submit_batch(None, vec![insert('a', 0), insert('b', 1)], None);
+        assert_eq!(seeded.outcome, BatchOutcome::Applied, "{}", seeded.message);
+        carry(node, writer);
+        assert_eq!(text(writer), "ab");
+    }
+
+    /// The route, through the real event loop: a batch names the `ETag` of
+    /// the read it was computed from, is applied against it, and is refused
+    /// whole once the model has moved past it.
+    #[test]
+    fn the_batch_route_applies_against_the_etag_it_was_read_at_and_refuses_it_once_moved() {
+        use crate::http_api::testing::{exchange, free_port, header, request};
+
+        let mut node = node("n", &[bt()]);
+        node.query_fn = Some(members_json);
+        let port = free_port();
+        node.start_http(port);
+        std::thread::spawn(move || node.run());
+        let state = format!("GET /api/model/{}/state", bt());
+        let ops = format!("POST /api/model/{}/ops", bt());
+        let etag = |headers: &str| -> String {
+            header(headers, "ETag")
+                .expect("the state route serves its version")
+                .trim_matches('"')
+                .to_string()
+        };
+        let parse =
+            |body: &str| serde_json::from_str::<serde_json::Value>(body).expect("json body");
+
+        let (status, headers, body) = exchange(port, &state, None);
+        assert_eq!((status, parse(&body)), (200, json!([])));
+        let read = etag(&headers);
+
+        let batch = |base: &str, values: &[&str]| {
+            let ops: Vec<Op> = values.iter().map(|value| add(value)).collect();
+            json!({ "ops": ops, "base": base }).to_string()
+        };
+        let (status, body) = request(port, &ops, Some(&batch(&read, &["a", "b"])));
+        let applied = parse(&body);
+        assert_eq!(
+            (status, applied["applied"].as_u64()),
+            (200, Some(2)),
+            "{body}"
+        );
+        let after = applied["version"].as_str().expect("a version").to_string();
+
+        let (status, body) = request(port, &ops, Some(&batch(&read, &["c"])));
+        let stale = parse(&body);
+        assert_eq!(
+            (status, stale["outcome"].as_str(), stale["applied"].as_u64()),
+            (409, Some("stale"), Some(0)),
+            "{body}"
+        );
+        assert_eq!(stale["version"].as_str(), Some(after.as_str()));
+
+        let (status, headers, body) = exchange(port, &state, None);
+        assert_eq!(
+            (status, parse(&body)),
+            (200, json!(["a", "b"])),
+            "the stale batch wrote"
+        );
+        assert_eq!(
+            etag(&headers),
+            after,
+            "the read and the batch answer disagree"
+        );
+
+        let (status, body) = request(port, &ops, Some(&batch(&after, &["c"])));
+        assert_eq!(status, 200, "{body}");
+
+        // The single-operation route still answers as it always has.
+        let (status, body) = request(
+            port,
+            &format!("POST /api/model/{}/op", bt()),
+            Some(&serde_json::to_string(&add("d")).unwrap()),
+        );
+        assert_eq!(
+            (status, parse(&body)["success"].as_bool()),
+            (200, Some(true))
+        );
+        let (_, body) = request(port, &state, None);
+        assert_eq!(parse(&body), json!(["a", "b", "c", "d"]));
     }
 }

@@ -7,22 +7,31 @@
 
 use std::fmt::Display;
 use std::io::{Cursor, Read};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
 use std::time::Duration;
 
 use moirai_protocol::log_id::LogId;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
-    BoundDescriptor, ControlCmd, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
-    ServedDescriptor,
+    BatchEnvelope, BatchOutcome, BatchResult, BoundDescriptor, Claim, ControlCmd, Intake,
+    NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused, ServedDescriptor, StateRead,
 };
 
-/// How long a request waits for the node's event loop to answer before it
+/// How long a request waits for the node's event loop to take it before it
 /// gives up with a 504.
+///
+/// For an operation or a batch, giving up is settled with the loop through a
+/// [`Claim`]: a 504 is answered only when the loop had not taken the
+/// submission, which it then never applies, and a submission the loop took
+/// in time is answered with what the loop did however long that took. For
+/// every other command a 504 changes nothing, since nothing was to be
+/// applied.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Start the optional HTTP API on the given port.
@@ -43,8 +52,19 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   is the descriptor text, 201 with the listing when the node did not hold
 ///   it, 200 when it did, 422 with the reason the application could not
 ///   describe it, 501 when the node was started without the hook
-/// - `GET  /api/model/{id}/state`     that model's state as JSON
+/// - `GET  /api/model/{id}/state`     that model's state as JSON, with the
+///   version it was read at in the `ETag` header (see
+///   [`crate::generic::GenericNode::version_of`])
 /// - `POST /api/model/{id}/op`        submit an operation to that model
+/// - `POST /api/model/{id}/ops`       submit a batch to that model: the body
+///   is `{"ops": [...], "base": "<version>"}`, `base` optional, and the batch
+///   is applied in one intake step with nothing delivered between two of its
+///   operations (see [`crate::generic::GenericNode::submit_batch`]). The
+///   answer is a [`BatchResult`]: 200 applied, 409 stale (the model moved
+///   since `base`, nothing applied), 422 refused (`applied` says how many
+///   were), 404 not hosted, and 504 `expired` when the event loop did not
+///   take the batch in time, in which case nothing was or ever will be
+///   applied
 /// - `GET  /api/model/{id}/metamodel` the descriptor that model was registered
 ///   under; 404 while the model's own history has not brought it, and 404
 ///   again when that history brought a different one, because a node that
@@ -53,9 +73,11 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Unscoped endpoints, which answer for the node's default log:
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
+/// - `POST /api/ops`             submit a batch, as the model route does
 /// - `GET  /api/health`          health check, names the replica and its log
 /// - `GET  /api/log-id`          the log this replica hosts, on its own
-/// - `GET  /api/state`           query current CRDT state as JSON
+/// - `GET  /api/state`           query current CRDT state as JSON, with its
+///   version in the `ETag` header
 /// - `GET  /api/metamodel`       the first metamodel descriptor the node holds
 ///   (see [`crate::generic::GenericNode::serve_metamodels`]); 404 without one,
 ///   exactly like any unknown path
@@ -73,9 +95,31 @@ pub(crate) fn start_http_api<O: NetworkOp>(
     port: u16,
     replica_id: String,
     log_id: LogId,
-    sender: Sender<OpEnvelope<O>>,
+    sender: Sender<Intake<O>>,
     ctrl: Sender<ControlCmd>,
     metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+) {
+    start_http_api_waiting::<O>(
+        port,
+        replica_id,
+        log_id,
+        sender,
+        ctrl,
+        metamodels,
+        REPLY_TIMEOUT,
+    );
+}
+
+/// [`start_http_api`] with the time a request waits for the event loop as a
+/// parameter, so a test can reach the timeout without waiting five seconds.
+fn start_http_api_waiting<O: NetworkOp>(
+    port: u16,
+    replica_id: String,
+    log_id: LogId,
+    sender: Sender<Intake<O>>,
+    ctrl: Sender<ControlCmd>,
+    metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+    timeout: Duration,
 ) {
     thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
@@ -88,6 +132,7 @@ pub(crate) fn start_http_api<O: NetworkOp>(
             sender,
             ctrl,
             metamodels,
+            timeout,
         };
         for request in server.incoming_requests() {
             api.serve(request);
@@ -103,12 +148,15 @@ pub(crate) fn start_http_api<O: NetworkOp>(
 struct Api<O> {
     replica_id: String,
     default_log: LogId,
-    sender: Sender<OpEnvelope<O>>,
+    sender: Sender<Intake<O>>,
     ctrl: Sender<ControlCmd>,
     /// Shared with the event loop, which is the only writer: a descriptor
     /// posted to a running node is listed by the very next request, and this
     /// thread never mutates the list itself.
     metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+    /// How long a request waits for the event loop; [`REPLY_TIMEOUT`] but in
+    /// tests.
+    timeout: Duration,
 }
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -118,6 +166,7 @@ type Reply = Response<Cursor<Vec<u8>>>;
 enum ModelLeaf {
     State,
     Op,
+    Ops,
     Metamodel,
     Metrics,
 }
@@ -134,6 +183,7 @@ enum Route<'a> {
     Metrics,
     Operations,
     Op,
+    Ops,
     Pause(&'a str),
     Resume(&'a str),
     PauseAll,
@@ -169,6 +219,7 @@ fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
         (&Method::Get, ["api", "metrics"]) => Route::Metrics,
         (&Method::Get, ["api", "operations"]) => Route::Operations,
         (&Method::Post, ["api", "op"]) => Route::Op,
+        (&Method::Post, ["api", "ops"]) => Route::Ops,
         (&Method::Post, ["api", "pause-all"]) => Route::PauseAll,
         (&Method::Post, ["api", "resume-all"]) => Route::ResumeAll,
         (&Method::Post, ["api", "leave"]) => Route::Leave,
@@ -184,6 +235,10 @@ fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
         (&Method::Post, ["api", "model", id, "op"]) => Route::Model {
             id,
             leaf: ModelLeaf::Op,
+        },
+        (&Method::Post, ["api", "model", id, "ops"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Ops,
         },
         (&Method::Get, ["api", "model", id, "metamodel"]) => Route::Model {
             id,
@@ -231,13 +286,109 @@ fn op_result(result: &OpResult) -> Reply {
     }
 }
 
+/// A state read: the state as the body, and the version it was read at as
+/// the `ETag`, which is what a batch computed against this read names as its
+/// `base`. `no-store` because a model's state is never the same resource
+/// twice for long, and a cached copy would come with a version the batch
+/// would then be refused over.
+fn state_reply(read: StateRead) -> Reply {
+    let mut reply = json_text(200, read.state.to_string());
+    if !read.version.is_empty() {
+        if let Ok(etag) = Header::from_bytes(b"ETag", format!("\"{}\"", read.version).as_bytes()) {
+            reply.add_header(etag);
+        }
+    }
+    reply.add_header(Header::from_bytes(b"Cache-Control", b"no-store").unwrap());
+    reply
+}
+
+/// A batch's answer, with the status its outcome maps to.
+fn batch_reply(result: &BatchResult) -> Reply {
+    let status = match result.outcome {
+        BatchOutcome::Applied => 200,
+        BatchOutcome::Stale => 409,
+        BatchOutcome::Refused => 422,
+        BatchOutcome::NotHosted => 404,
+    };
+    match serde_json::to_string(result) {
+        Ok(body) => json_text(status, body),
+        Err(_) => error(500, "serialize"),
+    }
+}
+
+/// The 504 for an operation the event loop did not take in time. The claim
+/// was abandoned, so the loop will skip it: the sentence can say so.
+fn expired_op() -> Reply {
+    json_value(
+        504,
+        &json!({
+            "error": "the node did not take this operation in time; it was not applied and \
+                      never will be",
+            "applied": false,
+        }),
+    )
+}
+
+/// The 504 for a batch the event loop did not take in time, in the shape of
+/// every other batch answer.
+fn expired_batch(of: usize) -> Reply {
+    json_value(
+        504,
+        &json!({
+            "outcome": "expired",
+            "applied": 0,
+            "of": of,
+            "message": "the node did not take this batch in time; none of it was applied, and \
+                        none of it ever will be",
+            "version": null,
+        }),
+    )
+}
+
 fn add_cors(mut resp: Reply) -> Reply {
     resp.add_header(Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap());
     resp.add_header(
         Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS").unwrap(),
     );
     resp.add_header(Header::from_bytes(b"Access-Control-Allow-Headers", b"Content-Type").unwrap());
+    // A page on another origin reads a state's version from here; without
+    // this the browser hides the header from the script.
+    resp.add_header(Header::from_bytes(b"Access-Control-Expose-Headers", b"ETag").unwrap());
     resp
+}
+
+/// The body of a batch: the operations, and the version they were computed
+/// against. Unknown fields are refused, because a misspelled `base` would
+/// otherwise turn the stale check off without a word.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, bound = "O: DeserializeOwned")]
+struct BatchBody<O> {
+    ops: Vec<O>,
+    #[serde(default)]
+    base: Option<String>,
+}
+
+/// Parse a request body that holds operations, with the recursion limit
+/// lifted. See [`Api::submit`] for why.
+fn parse_lifted<T: DeserializeOwned>(body: &str) -> Result<T, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_str(body);
+    deserializer.disable_recursion_limit();
+    let value = T::deserialize(&mut deserializer)?;
+    // `from_str` ends the input for us; a hand-built `Deserializer` does
+    // not, and without this a body with an operation and then trailing
+    // rubbish would be accepted.
+    deserializer.end()?;
+    Ok(value)
+}
+
+/// What became of a submission handed to the event loop.
+enum Settled<R> {
+    /// The loop took it and this is what it did.
+    Answered(R),
+    /// The loop had not taken it when the wait ran out, and never will.
+    Expired,
+    /// The loop dropped the reply without answering: it is gone.
+    Gone,
 }
 
 /// The request body, or the 400 to answer with.
@@ -267,7 +418,10 @@ impl<O: NetworkOp> Api<O> {
                     }),
                 ),
                 Route::LogId => json_value(200, &json!({ "log_id": self.default_log.as_str() })),
-                Route::State => self.query(|reply| ControlCmd::Query { reply }),
+                Route::State => match self.ask(|reply| ControlCmd::Query { reply }) {
+                    Some(read) => state_reply(read),
+                    None => timeout(),
+                },
                 Route::Metamodel => self.first_descriptor(),
                 Route::Metrics => self.query(|reply| ControlCmd::Metrics { reply }),
                 Route::Operations => self.query(|reply| ControlCmd::Operations { reply }),
@@ -276,6 +430,7 @@ impl<O: NetworkOp> Api<O> {
                 Route::Metamodels => self.listing(),
                 Route::AddMetamodel => self.add_metamodel(&mut request),
                 Route::Op => self.submit(&mut request, None),
+                Route::Ops => self.submit_batch(&mut request, None),
                 Route::Register => self.register(&mut request),
                 Route::Model { id, leaf } => self.model(&mut request, id, leaf),
                 Route::Pause(peer) => self.control(|reply| ControlCmd::Pause {
@@ -300,7 +455,26 @@ impl<O: NetworkOp> Api<O> {
     fn ask<R>(&self, make: impl FnOnce(Sender<R>) -> ControlCmd) -> Option<R> {
         let (tx, rx) = mpsc::channel();
         self.ctrl.send(make(tx)).ok()?;
-        rx.recv_timeout(REPLY_TIMEOUT).ok()
+        rx.recv_timeout(self.timeout).ok()
+    }
+
+    /// Wait for the event loop's answer to a submission, and settle the
+    /// deadline with it through `claim`: past the deadline, either this
+    /// thread abandons the submission, which the loop will then skip, or
+    /// the loop has already taken it, and its answer is waited for. So a
+    /// caller told [`Settled::Expired`] was told the truth.
+    fn settle<R>(&self, claim: &Claim, reply: &Receiver<R>) -> Settled<R> {
+        match reply.recv_timeout(self.timeout) {
+            Ok(answer) => Settled::Answered(answer),
+            Err(RecvTimeoutError::Timeout) if claim.abandon() => Settled::Expired,
+            // Taken by the loop just as the wait ran out: it is applying the
+            // submission now and will answer.
+            Err(RecvTimeoutError::Timeout) => match reply.recv() {
+                Ok(answer) => Settled::Answered(answer),
+                Err(_) => Settled::Gone,
+            },
+            Err(RecvTimeoutError::Disconnected) => Settled::Gone,
+        }
     }
 
     /// A command answered with a JSON value, served as it is.
@@ -414,29 +588,64 @@ impl<O: NetworkOp> Api<O> {
             Ok(body) => body,
             Err(reply) => return reply,
         };
-        let mut deserializer = serde_json::Deserializer::from_str(&body);
-        deserializer.disable_recursion_limit();
-        let op = match O::deserialize(&mut deserializer).and_then(|op| {
-            // `from_str` ends the input for us; a hand-built `Deserializer`
-            // does not, and without this a body with an operation and then
-            // trailing rubbish would be accepted.
-            deserializer.end().map(|()| op)
-        }) {
+        let op = match parse_lifted::<O>(&body) {
             Ok(op) => op,
             Err(e) => return error(400, format!("Invalid op JSON: {e}")),
         };
         let (reply_tx, reply_rx) = mpsc::channel();
+        let claim = Claim::default();
         let envelope = OpEnvelope {
             op,
             log_id,
+            claim: claim.clone(),
             reply: reply_tx,
         };
-        if self.sender.send(envelope).is_err() {
+        if self.sender.send(Intake::Op(envelope)).is_err() {
             return error(500, "channel closed");
         }
-        match reply_rx.recv_timeout(REPLY_TIMEOUT) {
-            Ok(result) => op_result(&result),
-            Err(_) => timeout(),
+        match self.settle(&claim, &reply_rx) {
+            Settled::Answered(result) => op_result(&result),
+            Settled::Expired => expired_op(),
+            Settled::Gone => error(500, "the node's event loop stopped before it answered"),
+        }
+    }
+
+    /// `POST /api/ops` and `POST /api/model/{id}/ops`: parse the body as a
+    /// batch and hand it to the event loop as one submission. See
+    /// [`crate::generic::GenericNode::submit_batch`] for what the loop does
+    /// with it, and [`batch_reply`] for the status each outcome is answered
+    /// with.
+    ///
+    /// No round trip to ask whether the node hosts the log first, as the
+    /// single-operation route makes: the loop answers that itself, and one
+    /// pass less between the caller's read and the batch is one pass less in
+    /// which a peer's operation can be delivered and make the batch stale.
+    fn submit_batch(&self, request: &mut Request, log_id: Option<LogId>) -> Reply {
+        let body = match read_body(request) {
+            Ok(body) => body,
+            Err(reply) => return reply,
+        };
+        let BatchBody { ops, base } = match parse_lifted::<BatchBody<O>>(&body) {
+            Ok(batch) => batch,
+            Err(e) => return error(400, format!("Invalid batch JSON: {e}")),
+        };
+        let of = ops.len();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let claim = Claim::default();
+        let envelope = BatchEnvelope {
+            ops,
+            log_id,
+            base,
+            claim: claim.clone(),
+            reply: reply_tx,
+        };
+        if self.sender.send(Intake::Batch(envelope)).is_err() {
+            return error(500, "channel closed");
+        }
+        match self.settle(&claim, &reply_rx) {
+            Settled::Answered(result) => batch_reply(&result),
+            Settled::Expired => expired_batch(of),
+            Settled::Gone => error(500, "the node's event loop stopped before it answered"),
         }
     }
 
@@ -489,7 +698,7 @@ impl<O: NetworkOp> Api<O> {
         };
         match leaf {
             ModelLeaf::State => match self.ask(|reply| ControlCmd::QueryLog { log_id, reply }) {
-                Some(Some(state)) => json_text(200, state.to_string()),
+                Some(Some(read)) => state_reply(read),
                 Some(None) => not_found(),
                 None => timeout(),
             },
@@ -516,8 +725,10 @@ impl<O: NetworkOp> Api<O> {
             }) {
                 Some(true) => self.submit(request, Some(log_id)),
                 Some(false) => not_found(),
-                None => timeout(),
+                // Nothing was submitted yet, so nothing can have been applied.
+                None => expired_op(),
             },
+            ModelLeaf::Ops => self.submit_batch(request, Some(log_id)),
         }
     }
 }
@@ -542,6 +753,12 @@ pub(crate) mod testing {
 
     /// One raw HTTP/1.1 exchange; returns `(status, body)`.
     pub(crate) fn request(port: u16, head: &str, body: Option<&str>) -> (u16, String) {
+        let (status, _, body) = exchange(port, head, body);
+        (status, body)
+    }
+
+    /// One raw HTTP/1.1 exchange; returns `(status, header block, body)`.
+    pub(crate) fn exchange(port: u16, head: &str, body: Option<&str>) -> (u16, String, String) {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut stream = loop {
             match TcpStream::connect(("127.0.0.1", port)) {
@@ -570,11 +787,19 @@ pub(crate) mod testing {
             .nth(1)
             .and_then(|code| code.parse().ok())
             .expect("status line");
-        let body = response
+        let (headers, body) = response
             .split_once("\r\n\r\n")
-            .map(|(_, body)| body.to_string())
+            .map(|(headers, body)| (headers.to_string(), body.to_string()))
             .expect("header/body separator");
-        (status, body)
+        (status, headers, body)
+    }
+
+    /// The value of the header `name` in a header block, case-insensitively.
+    pub(crate) fn header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+        headers.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.trim().eq_ignore_ascii_case(name).then(|| value.trim())
+        })
     }
 }
 
@@ -587,10 +812,13 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
-    use super::testing::{free_port, request};
-    use super::{route, start_http_api, ModelLeaf, Route};
+    use std::time::Duration;
+
+    use super::testing::{exchange, free_port, header, request};
+    use super::{route, start_http_api_waiting, ModelLeaf, Route};
     use crate::generic::{
-        ControlCmd, NetworkOp, OpEnvelope, OpResult, ServeRefused, Served, ServedDescriptor,
+        BatchEnvelope, BatchOutcome, BatchResult, ControlCmd, Intake, NetworkOp, OpEnvelope,
+        OpResult, ServeRefused, Served, ServedDescriptor, StateRead,
     };
 
     /// The log id every spawned API reports, fixed so bodies can be asserted
@@ -613,7 +841,7 @@ mod tests {
     /// changing.
     struct Api<O = TestOp> {
         port: u16,
-        op_rx: mpsc::Receiver<OpEnvelope<O>>,
+        op_rx: mpsc::Receiver<Intake<O>>,
         ctrl_rx: mpsc::Receiver<ControlCmd>,
         /// The list the event loop would own, so a test can play the loop:
         /// take the command, write the list, answer.
@@ -625,6 +853,12 @@ mod tests {
     }
 
     fn spawn_api_for<O: NetworkOp>(metamodel: Option<String>) -> Api<O> {
+        spawn_api_waiting::<O>(metamodel, super::REPLY_TIMEOUT)
+    }
+
+    /// An API whose requests wait `timeout` for the event loop, for the tests
+    /// that reach the deadline.
+    fn spawn_api_waiting<O: NetworkOp>(metamodel: Option<String>, timeout: Duration) -> Api<O> {
         let port = free_port();
         let (op_tx, op_rx) = mpsc::channel();
         let (ctrl_tx, ctrl_rx) = mpsc::channel();
@@ -635,13 +869,14 @@ mod tests {
                 .map(ServedDescriptor::unlisted)
                 .collect::<Vec<_>>(),
         ));
-        start_http_api::<O>(
+        start_http_api_waiting::<O>(
             port,
             "test-replica".into(),
             log_id,
             op_tx,
             ctrl_tx,
             Arc::clone(&metamodels),
+            timeout,
         );
 
         Api {
@@ -709,7 +944,10 @@ mod tests {
         let ctrl_rx = api.ctrl_rx;
         std::thread::spawn(move || {
             if let Ok(ControlCmd::Query { reply }) = ctrl_rx.recv() {
-                let _ = reply.send(answer);
+                let _ = reply.send(StateRead {
+                    state: answer,
+                    version: "v.1".into(),
+                });
             }
         });
 
@@ -724,7 +962,8 @@ mod tests {
         let api = spawn_api(Some("{}".to_string()));
         let op_rx = api.op_rx;
         std::thread::spawn(move || {
-            if let Ok(envelope) = op_rx.recv() {
+            if let Ok(Intake::Op(envelope)) = op_rx.recv() {
+                assert!(envelope.claim.take());
                 let _ = envelope.reply.send(OpResult {
                     success: true,
                     message: format!("applied {:?}", envelope.op),
@@ -780,11 +1019,26 @@ mod tests {
         // The event loop's two answers: every operation applies, and this node
         // hosts the log the model route names.
         std::thread::spawn(move || {
-            while let Ok(envelope) = op_rx.recv() {
-                let _ = envelope.reply.send(OpResult {
-                    success: true,
-                    message: format!("applied at depth {}", depth_of(&envelope.op)),
-                });
+            while let Ok(intake) = op_rx.recv() {
+                match intake {
+                    Intake::Op(envelope) => {
+                        let _ = envelope.reply.send(OpResult {
+                            success: true,
+                            message: format!("applied at depth {}", depth_of(&envelope.op)),
+                        });
+                    }
+                    Intake::Batch(batch) => {
+                        let depth = batch.ops.iter().map(depth_of).max().unwrap_or(0);
+                        let _ = batch.reply.send(BatchResult {
+                            outcome: BatchOutcome::Applied,
+                            applied: batch.ops.len(),
+                            of: batch.ops.len(),
+                            refused_at: None,
+                            message: format!("applied at depth {depth}"),
+                            version: Some("v.2".into()),
+                        });
+                    }
+                }
             }
         });
         std::thread::spawn(move || {
@@ -811,6 +1065,26 @@ mod tests {
                 Some("applied at depth 201"),
                 "`{route}` delivered something other than the operation sent: {answer}"
             );
+        }
+
+        // And the batch routes, whose operations sit one level further in.
+        let batch = format!("{{\"ops\":[{body},{body}]}}");
+        for route in [
+            "POST /api/ops".to_string(),
+            format!("POST /api/model/{TEST_LOG_ID}/ops"),
+        ] {
+            let (status, answer) = request(port, &route, Some(&batch));
+            let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+            assert_eq!(
+                (
+                    status,
+                    parsed["outcome"].as_str(),
+                    parsed["applied"].as_u64()
+                ),
+                (200, Some("applied"), Some(2)),
+                "`{route}` refused a batch of 200-level operations: {answer}"
+            );
+            assert_eq!(parsed["message"].as_str(), Some("applied at depth 201"));
         }
     }
 
@@ -842,6 +1116,15 @@ mod tests {
                 leaf: ModelLeaf::Op
             }
         );
+        assert_eq!(
+            route(&Method::Post, "/api/model/a1/ops"),
+            Route::Model {
+                id: "a1",
+                leaf: ModelLeaf::Ops
+            }
+        );
+        assert_eq!(route(&Method::Post, "/api/ops"), Route::Ops);
+        assert_eq!(route(&Method::Get, "/api/model/a1/ops"), Route::Unknown);
         assert_eq!(route(&Method::Get, "/api/model/a1/op"), Route::Unknown);
         assert_eq!(route(&Method::Get, "/api/model/a1"), Route::Unknown);
         assert_eq!(route(&Method::Get, "/api/models"), Route::Models);
@@ -866,7 +1149,10 @@ mod tests {
             while let Ok(cmd) = ctrl_rx.recv() {
                 match cmd {
                     ControlCmd::Query { reply } => {
-                        let _ = reply.send(json!({ "default": true }));
+                        let _ = reply.send(StateRead {
+                            state: json!({ "default": true }),
+                            version: "v.0".into(),
+                        });
                     }
                     ControlCmd::QueryLog { log_id, reply } => {
                         let state = match log_id.as_str() {
@@ -874,7 +1160,10 @@ mod tests {
                             UML => Some(json!({ "Class": {} })),
                             _ => None,
                         };
-                        let _ = reply.send(state);
+                        let _ = reply.send(state.map(|state| StateRead {
+                            state,
+                            version: format!("v.{}", &log_id.as_str()[..4]),
+                        }));
                     }
                     ControlCmd::Hosts { log_id, reply } => {
                         let _ = reply.send(matches!(log_id.as_str(), BT | UML));
@@ -1035,5 +1324,247 @@ mod tests {
         let (status, _) = request(api.port, "POST /api/metamodels", Some(UML_BODY));
 
         assert_eq!(status, 501);
+    }
+
+    // ------------------------------------------------------ batches and timeouts
+
+    #[test]
+    fn the_state_routes_serve_the_version_they_read_at_as_the_etag() {
+        let api = spawn_api(None);
+        answering_for_two_models(api.ctrl_rx);
+
+        let (status, headers, body) =
+            exchange(api.port, &format!("GET /api/model/{BT}/state"), None);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(header(&headers, "ETag"), Some("\"v.a1b2\""), "{headers}");
+        assert_eq!(header(&headers, "Cache-Control"), Some("no-store"));
+        assert_eq!(
+            header(&headers, "Access-Control-Expose-Headers"),
+            Some("ETag"),
+            "a page on another origin could not read the version"
+        );
+
+        let (status, headers, _) = exchange(api.port, "GET /api/state", None);
+        assert_eq!(status, 200);
+        assert_eq!(header(&headers, "ETag"), Some("\"v.0\""), "{headers}");
+    }
+
+    /// The event loop as a batch route sees it: every batch is taken and
+    /// answered by the rule its `base` spells, `stale`, `refused-at-<k>`, or
+    /// anything else applied. What a real loop does with a batch is tested
+    /// in `generic.rs`; this is the route's half.
+    fn answering_batches(op_rx: mpsc::Receiver<Intake<TestOp>>) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            while let Ok(intake) = op_rx.recv() {
+                let Intake::Batch(BatchEnvelope {
+                    ops,
+                    base,
+                    claim,
+                    reply,
+                    ..
+                }) = intake
+                else {
+                    continue;
+                };
+                assert!(claim.take(), "a batch answered in time was abandoned");
+                let of = ops.len();
+                let (outcome, applied, refused_at) = match base.as_deref() {
+                    Some("stale") => (BatchOutcome::Stale, 0, None),
+                    Some(rule) if rule.starts_with("refused-at-") => {
+                        let k: usize = rule["refused-at-".len()..].parse().unwrap();
+                        (BatchOutcome::Refused, k, Some(k))
+                    }
+                    Some("unhosted") => (BatchOutcome::NotHosted, 0, None),
+                    _ => (BatchOutcome::Applied, of, None),
+                };
+                let _ = reply.send(BatchResult {
+                    outcome,
+                    applied,
+                    of,
+                    refused_at,
+                    message: format!("{outcome:?}"),
+                    version: Some("v.9".into()),
+                });
+            }
+        })
+    }
+
+    #[test]
+    fn a_batch_is_one_submission_and_its_outcome_sets_the_status() {
+        let api = spawn_api(None);
+        let _loop = answering_batches(api.op_rx);
+        let route = format!("POST /api/model/{TEST_LOG_ID}/ops");
+        let ops = r#"[{"value":1},{"value":2},{"value":3}]"#;
+        let post = |base: &str| {
+            let body = format!(r#"{{"ops":{ops},"base":"{base}"}}"#);
+            let (status, answer) = request(api.port, &route, Some(&body));
+            let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+            (status, parsed)
+        };
+
+        let (status, parsed) = post("v.8");
+        assert_eq!(status, 200, "{parsed}");
+        assert_eq!(
+            (
+                parsed["outcome"].as_str(),
+                parsed["applied"].as_u64(),
+                parsed["of"].as_u64()
+            ),
+            (Some("applied"), Some(3), Some(3))
+        );
+        assert_eq!(parsed["version"].as_str(), Some("v.9"));
+
+        let (status, parsed) = post("stale");
+        assert_eq!(
+            (status, parsed["outcome"].as_str()),
+            (409, Some("stale")),
+            "{parsed}"
+        );
+        assert_eq!(parsed["applied"].as_u64(), Some(0));
+
+        let (status, parsed) = post("refused-at-1");
+        assert_eq!(
+            (status, parsed["outcome"].as_str()),
+            (422, Some("refused")),
+            "{parsed}"
+        );
+        assert_eq!(
+            (parsed["applied"].as_u64(), parsed["refused_at"].as_u64()),
+            (Some(1), Some(1)),
+            "the answer must say exactly which prefix was applied"
+        );
+
+        let (status, parsed) = post("unhosted");
+        assert_eq!(
+            (status, parsed["outcome"].as_str()),
+            (404, Some("nothosted"))
+        );
+
+        // With no base at all, the batch is applied to whatever the log holds.
+        let (status, answer) = request(api.port, &route, Some(&format!(r#"{{"ops":{ops}}}"#)));
+        assert_eq!(status, 200, "{answer}");
+    }
+
+    #[test]
+    fn a_batch_body_of_the_wrong_shape_is_400_and_reaches_nothing() {
+        let api = spawn_api(None);
+        let route = format!("POST /api/model/{TEST_LOG_ID}/ops");
+        for body in [
+            r#"[{"value":1}]"#,
+            r#"{"ops":{"value":1}}"#,
+            r#"{"ops":[{"value":"one"}]}"#,
+            // A misspelled `base` would turn the stale check off in silence.
+            r#"{"ops":[{"value":1}],"bsae":"v.1"}"#,
+            r#"{"ops":[{"value":1}]} trailing"#,
+        ] {
+            let (status, answer) = request(api.port, &route, Some(body));
+            assert_eq!(status, 400, "`{body}` was taken: {answer}");
+        }
+        assert!(
+            api.op_rx.try_recv().is_err(),
+            "a malformed batch reached the event loop"
+        );
+    }
+
+    /// The ip10 504: a node answered 504 while the operation still sat in
+    /// its channel, and applied it afterwards. Now a 504 is answered only for
+    /// a submission the loop had not taken, and the loop, when it gets to
+    /// it, finds it abandoned and applies nothing.
+    #[test]
+    fn a_batch_the_loop_did_not_take_in_time_is_expired_and_never_applied() {
+        let api = spawn_api_waiting::<TestOp>(None, Duration::from_millis(200));
+        let op_rx = api.op_rx;
+        let late = std::thread::spawn(move || {
+            // A loop busy delivering a backlog, past the request's deadline.
+            std::thread::sleep(Duration::from_millis(600));
+            match op_rx.recv().expect("the batch was submitted") {
+                Intake::Batch(batch) => batch.claim.take(),
+                Intake::Op(_) => panic!("a batch route submitted a single operation"),
+            }
+        });
+
+        let (status, answer) = request(
+            api.port,
+            &format!("POST /api/model/{TEST_LOG_ID}/ops"),
+            Some(r#"{"ops":[{"value":1},{"value":2}],"base":"v.1"}"#),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+        assert_eq!(status, 504, "{answer}");
+        assert_eq!(
+            (
+                parsed["outcome"].as_str(),
+                parsed["applied"].as_u64(),
+                parsed["of"].as_u64()
+            ),
+            (Some("expired"), Some(0), Some(2))
+        );
+        assert!(
+            !late.join().expect("the late loop"),
+            "the loop took a batch its caller had been told was never applied"
+        );
+    }
+
+    /// The other side of the race: a submission the loop took before the
+    /// deadline is answered with what the loop did, however long that took,
+    /// and not with a 504 that would lie about it.
+    #[test]
+    fn a_batch_the_loop_took_in_time_is_answered_even_past_the_deadline() {
+        let api = spawn_api_waiting::<TestOp>(None, Duration::from_millis(200));
+        let op_rx = api.op_rx;
+        std::thread::spawn(move || {
+            if let Ok(Intake::Batch(batch)) = op_rx.recv() {
+                assert!(batch.claim.take());
+                // Taken, and then slow to apply.
+                std::thread::sleep(Duration::from_millis(600));
+                let _ = batch.reply.send(BatchResult {
+                    outcome: BatchOutcome::Applied,
+                    applied: batch.ops.len(),
+                    of: batch.ops.len(),
+                    refused_at: None,
+                    message: "applied, slowly".into(),
+                    version: Some("v.3".into()),
+                });
+            }
+        });
+
+        let (status, answer) = request(
+            api.port,
+            &format!("POST /api/model/{TEST_LOG_ID}/ops"),
+            Some(r#"{"ops":[{"value":1},{"value":2}]}"#),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+        assert_eq!(
+            (
+                status,
+                parsed["outcome"].as_str(),
+                parsed["applied"].as_u64()
+            ),
+            (200, Some("applied"), Some(2)),
+            "{answer}"
+        );
+    }
+
+    /// The single-operation route settles its deadline the same way, and
+    /// its 504 says the operation was not applied.
+    #[test]
+    fn an_operation_the_loop_did_not_take_in_time_is_expired_and_never_applied() {
+        let api = spawn_api_waiting::<TestOp>(None, Duration::from_millis(200));
+        let op_rx = api.op_rx;
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(600));
+            match op_rx.recv().expect("the operation was submitted") {
+                Intake::Op(OpEnvelope { claim, .. }) => claim.take(),
+                Intake::Batch(_) => panic!("the single route submitted a batch"),
+            }
+        });
+
+        let (status, answer) = request(api.port, "POST /api/op", Some(r#"{"value":3}"#));
+
+        let parsed: serde_json::Value = serde_json::from_str(&answer).expect("json body");
+        assert_eq!(status, 504, "{answer}");
+        assert_eq!(parsed["applied"].as_bool(), Some(false), "{answer}");
+        assert!(!late.join().expect("the late loop"));
     }
 }
