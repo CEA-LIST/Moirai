@@ -21,7 +21,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
 
+use moirai_protocol::broadcast::batch::Batch;
 use moirai_protocol::broadcast::internalizer::{lock_interner, Interner, SharedInterner};
+use moirai_protocol::broadcast::message::{BatchMessage, EventMessage};
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
@@ -2034,6 +2036,13 @@ where
     /// log is at the state the batch was computed against, so a refusal
     /// there is a batch its writer computed wrongly rather than a race.
     ///
+    /// # At the peers
+    ///
+    /// What was applied goes to the peers as one frame, which a peer delivers
+    /// in one step too, so the edit is never seen half applied anywhere (see
+    /// `broadcast_batch` for the one exception, a batch too large for one
+    /// frame).
+    ///
     /// [`submit_op`]: GenericNode::submit_op
     /// [`version_of`]: GenericNode::version_of
     pub fn submit_batch(
@@ -2097,22 +2106,28 @@ where
                 }
             }
         }
+        let mut events = Vec::with_capacity(of);
         for (index, op) in ops.into_iter().enumerate() {
-            let result = self.apply_op_to(&log_id, op);
-            if !result.success {
-                return answer(
-                    BatchOutcome::Refused,
-                    index,
-                    Some(index),
-                    format!(
-                        "operation {} of {of} refused after {index} applied: {}",
-                        index + 1,
-                        result.message
-                    ),
-                    self.version_of(&log_id),
-                );
+            match self.apply_local(&log_id, op) {
+                Ok(event) => events.push(event),
+                Err(reason) => {
+                    // What was applied is this node's history now, and goes
+                    // to the peers like any other.
+                    self.broadcast_batch(events);
+                    return answer(
+                        BatchOutcome::Refused,
+                        index,
+                        Some(index),
+                        format!(
+                            "operation {} of {of} refused after {index} applied: {reason}",
+                            index + 1
+                        ),
+                        self.version_of(&log_id),
+                    );
+                }
             }
         }
+        self.broadcast_batch(events);
         answer(
             BatchOutcome::Applied,
             of,
@@ -2130,11 +2145,27 @@ where
     ///
     /// [`submit_op`]: GenericNode::submit_op
     pub fn apply_op_to(&mut self, log_id: &LogId, op: L::Op) -> OpResult {
-        let Some(log) = self.logs.get_mut(log_id) else {
-            return OpResult {
+        match self.apply_local(log_id, op) {
+            Ok(event_msg) => {
+                self.broadcast(TransportMessage::Event { event: event_msg });
+                OpResult {
+                    success: true,
+                    message: "Applied and broadcasted".to_string(),
+                }
+            }
+            Err(message) => OpResult {
                 success: false,
-                message: format!("log {log_id} is not hosted here"),
-            };
+                message,
+            },
+        }
+    }
+
+    /// Apply an operation to the log named `log_id` and record it, and hand
+    /// back the event it became for the caller to broadcast; or the reason it
+    /// was refused, in which case nothing was applied.
+    fn apply_local(&mut self, log_id: &LogId, op: L::Op) -> Result<EventMessage<L::Op>, String> {
+        let Some(log) = self.logs.get_mut(log_id) else {
+            return Err(format!("log {log_id} is not hosted here"));
         };
         let event_msg = match log.replica.send(op.clone()) {
             Ok(event_msg) => event_msg,
@@ -2148,33 +2179,78 @@ where
                     .as_ref()
                     .filter(|binding| binding.state != BindingState::Held)
                     .map(|binding| binding.key.clone());
-                return OpResult {
-                    success: false,
-                    message: match pending {
-                        Some(key) => format!(
-                            "model {log_id} was joined under metamodel {key}, which this node \
-                             holds no descriptor for: the model's metamodel has not arrived yet, \
-                             and a local write waits for it"
-                        ),
-                        // Moirai v0.6 gives `IsLog` a rejection type, so the
-                        // log now says why rather than only that it refused.
-                        None => format!("Operation not enabled: {rejection}"),
-                    },
-                };
+                return Err(match pending {
+                    Some(key) => format!(
+                        "model {log_id} was joined under metamodel {key}, which this node \
+                         holds no descriptor for: the model's metamodel has not arrived yet, \
+                         and a local write waits for it"
+                    ),
+                    // Moirai v0.6 gives `IsLog` a rejection type, so the
+                    // log now says why rather than only that it refused.
+                    None => format!("Operation not enabled: {rejection}"),
+                });
             }
         };
         // Record the operation
         log.operation_log.push(op);
         log.local_ops += 1;
         self.remember_op(event_msg.event());
+        Ok(event_msg)
+    }
 
-        let transport_msg = TransportMessage::Event { event: event_msg };
-        if let Err(e) = self.transport.broadcast(transport_msg) {
+    fn broadcast(&mut self, msg: TransportMessage<L::Op>) {
+        if let Err(e) = self.transport.broadcast(msg) {
             eprintln!("[{}] Broadcast failed: {}", self.replica_id, e);
         }
-        OpResult {
-            success: true,
-            message: "Applied and broadcasted".to_string(),
+    }
+
+    /// Broadcast the events one batch became, as one frame when it can be.
+    ///
+    /// The batch was applied here in one step, and one `Batch` frame is
+    /// delivered by a peer in one step too — [`handle_transport_message`]
+    /// hands it to the log whole — so no read on a peer sees the edit half
+    /// applied, and no batch a peer's writer computes is computed against
+    /// half of it. The frame is the one a delta sync answers with, so a peer
+    /// needs nothing new to read it.
+    ///
+    /// One frame per event instead when the batch frame would be larger than
+    /// [`MAX_STATE_TRANSFER_BYTES`], which is under what a relay reads as one
+    /// frame (see there): delivered whole, a peer is only exposed again to a
+    /// half-applied edit, while an oversized frame would take the sender off
+    /// the relay.
+    ///
+    /// [`handle_transport_message`]: GenericNode::handle_transport_message
+    fn broadcast_batch(&mut self, mut events: Vec<EventMessage<L::Op>>) {
+        let Some(last) = events.last() else {
+            return;
+        };
+        if events.len() == 1 {
+            let event = events.pop().expect("one event");
+            self.broadcast(TransportMessage::Event { event });
+            return;
+        }
+        // The version a batch carries is its sender's, which is where the
+        // receiver learns whose indices the events are written in; after the
+        // last event it is the sender's version, as a pull would have sent.
+        let version = last.event().version().clone();
+        let resolver = last.resolver().clone();
+        let log_id = last.log_id().clone();
+        let batch = Batch::new(
+            events.iter().map(|event| event.event().clone()).collect(),
+            version,
+        );
+        let frame = TransportMessage::Batch {
+            batch: BatchMessage::new(batch, resolver, log_id),
+        };
+        let fits = serde_json::to_vec(&frame)
+            .map(|bytes| bytes.len() <= MAX_STATE_TRANSFER_BYTES)
+            .unwrap_or(false);
+        if fits {
+            self.broadcast(frame);
+        } else {
+            for event in events {
+                self.broadcast(TransportMessage::Event { event });
+            }
         }
     }
 
@@ -4141,10 +4217,10 @@ mod tests {
             members(&node, &bt()),
             BTreeSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
         );
-        assert_eq!(
-            take_broadcast(&mut node).len(),
-            3,
-            "one frame per operation"
+        let frames = take_broadcast(&mut node);
+        assert!(
+            matches!(frames.as_slice(), [TransportMessage::Batch { batch }] if batch.batch().events().len() == 3),
+            "a batch goes to the peers as one frame holding its three events"
         );
         let after = node.version_of(&bt()).expect("hosted");
         assert_eq!(result.version.as_deref(), Some(after.as_str()));
@@ -4246,8 +4322,10 @@ mod tests {
     /// Carry every frame `node` broadcast since the last call to `peer`.
     fn carry(node: &mut ListNode, peer: &mut LogReplica<ListLog>) {
         for frame in std::mem::take(&mut node.transport.broadcast) {
-            if let TransportMessage::Event { event } = frame {
-                peer.receive(event);
+            match frame {
+                TransportMessage::Event { event } => peer.receive(event),
+                TransportMessage::Batch { batch } => peer.receive_batch(batch),
+                _ => {}
             }
         }
     }
@@ -4277,7 +4355,11 @@ mod tests {
             result.message
         );
         assert_eq!(text(node.hosted(&bt()).unwrap()), "ab");
-        assert_eq!(std::mem::take(&mut node.transport.broadcast).len(), 2);
+        let frames = std::mem::take(&mut node.transport.broadcast);
+        assert!(
+            matches!(frames.as_slice(), [TransportMessage::Batch { batch }] if batch.batch().events().len() == 2),
+            "the applied prefix goes to the peers, and nothing after it"
+        );
         assert_eq!(result.version, node.version_of(&bt()));
     }
 
@@ -4348,6 +4430,55 @@ mod tests {
         carry(&mut node, &mut writer);
         assert_eq!(text(node.hosted(&bt()).unwrap()), "Xabcd");
         assert_eq!(text(&writer), "Xabcd", "the replicas disagree");
+    }
+
+    /// A batch reaches a peer node as one frame, which the peer delivers in
+    /// one step: no read on the peer can land between two of its operations,
+    /// just as none could on the node that applied it.
+    #[test]
+    fn a_batch_reaches_a_peer_as_one_frame_delivered_in_one_step() {
+        let mut node = list_node("n", bt());
+        let mut peer = list_node("p", bt());
+        let applied = node.submit_batch(
+            None,
+            vec![insert('a', 0), insert('b', 1), insert('c', 2)],
+            None,
+        );
+        assert_eq!(
+            applied.outcome,
+            BatchOutcome::Applied,
+            "{}",
+            applied.message
+        );
+        let frames = std::mem::take(&mut node.transport.broadcast);
+        assert_eq!(frames.len(), 1, "one frame for the whole batch");
+        let before = peer.version_of(&bt()).unwrap();
+        for frame in frames {
+            peer.handle_transport_message("n".into(), frame);
+        }
+        assert_eq!(text(peer.hosted(&bt()).unwrap()), "abc");
+        let count =
+            |version: &str| -> usize { version.rsplit('.').next().unwrap().parse().unwrap() };
+        assert_eq!(count(&peer.version_of(&bt()).unwrap()), count(&before) + 3);
+    }
+
+    /// A batch whose frame would be larger than a relay takes in one frame
+    /// goes out one frame per operation, as every operation did before.
+    #[test]
+    fn a_batch_too_large_for_one_frame_goes_out_one_frame_per_operation() {
+        let mut node = node("n", &[bt()]);
+        let big = "x".repeat(MAX_STATE_TRANSFER_BYTES / 2);
+        let result = node.submit_batch(
+            None,
+            vec![add(&format!("a{big}")), add(&format!("b{big}")), add("c")],
+            None,
+        );
+        assert_eq!(result.outcome, BatchOutcome::Applied, "{}", result.message);
+        let frames = take_broadcast(&mut node);
+        assert_eq!(frames.len(), 3);
+        assert!(frames
+            .iter()
+            .all(|frame| matches!(frame, TransportMessage::Event { .. })));
     }
 
     fn peer_list(id: &str) -> LogReplica<ListLog> {
