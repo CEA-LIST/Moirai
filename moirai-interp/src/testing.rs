@@ -273,11 +273,7 @@ impl IsLog for Harness {
             Some(sink) => sink,
             None => &mut discarded,
         };
-        let ctx = Ctx {
-            id: event.id(),
-            lamport: event.lamport(),
-            version: event.version(),
-        };
+        let ctx = Ctx::top(event.id(), event.lamport(), event.version());
         let site = self.site();
         apply(
             &self.sem,

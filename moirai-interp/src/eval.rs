@@ -65,22 +65,62 @@ pub const CONFLICT: &str = "__conflict";
 /// The key a class name is carried under.
 pub const ECLASS: &str = "eClass";
 
+/// The key an element's store identity is carried under, in the identified
+/// form only.
+pub const ID: &str = "__id";
+
+/// Which of the two documents a read builds.
+///
+/// One walker builds both, so that the identified form is the canonical form
+/// with identities added and nothing else: the same keys, the same entries
+/// dropped, the same order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Form {
+    /// The canonical form, with no identity anywhere.
+    Canonical,
+    /// Every element a record carrying `eClass` and its identity under
+    /// [`ID`], a transparent one included.
+    Identified,
+}
+
 /// The whole model, in canonical form.
 ///
 /// `null` for a model whose root has not been written yet, which is the one
 /// state a JSON document cannot otherwise spell.
 pub fn read(sem: &MetamodelSemantics, root: &Node) -> Value {
-    read_node(sem, root, Shaped::Bare(Site::Object(Target::Roots))).unwrap_or(Value::Null)
+    read_root(sem, root, Form::Canonical)
+}
+
+/// The whole model, in identified form: the canonical form in which every
+/// element is a record carrying `eClass` and, under [`ID`], its store
+/// identity ([`ObjectNode::identity`]).
+///
+/// A non-transparent element is its canonical record with the identity
+/// added. A transparent one, which the canonical form spells as the bare
+/// value of its one feature, is `{"eClass": <class>, <feature>: <value>,
+/// "__id": <identity>}`. Removing every identity and giving every transparent
+/// record back as its value gives [`read`]'s document.
+pub fn read_identified(sem: &MetamodelSemantics, root: &Node) -> Value {
+    read_root(sem, root, Form::Identified)
+}
+
+fn read_root(sem: &MetamodelSemantics, root: &Node, form: Form) -> Value {
+    read_in(sem, root, Shaped::Bare(Site::Object(Target::Roots)), form).unwrap_or(Value::Null)
 }
 
 /// What a feature nobody has written reads as: whatever one minted from the
 /// same rule and left alone reads as.
-fn read_absent(sem: &MetamodelSemantics, shape: Shaped) -> Option<Value> {
-    read_node(sem, &Node::for_shaped(shape), shape)
+fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Value> {
+    read_in(sem, &Node::for_shaped(shape), shape, form)
 }
 
 /// One node, or `None` where the canonical form has no key at all.
 pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) -> Option<Value> {
+    read_in(sem, node, shape, Form::Canonical)
+}
+
+/// One node in either form, or `None` where the canonical form has no key.
+fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> Option<Value> {
     match (shape, node) {
         (_, Node::Unbound) => None,
         (Shaped::Sequence(site), Node::Seq(seq)) => {
@@ -89,7 +129,7 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
                 // Only what is there: an id in the ordering with no child
                 // behind it is a hole, and a hole is nothing, not a default.
                 if let Some(child) = seq.children().get(&id)
-                    && let Some(value) = read_node(sem, child, Shaped::Bare(site))
+                    && let Some(value) = read_in(sem, child, Shaped::Bare(site), form)
                 {
                     items.push(value);
                 }
@@ -112,10 +152,15 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
             // generated union does — `JsonKindValue::Value(Number(0))` is not
             // `JsonKindValue::Unset`. Only a leaf-valued map, whose child log
             // really does empty, loses the key.
-            let default = read_absent(sem, Shaped::Bare(site));
+            //
+            // In the identified form the comparison drops exactly the entries
+            // the canonical form drops: an object site's fresh child reads as
+            // nothing in both forms, and a child that reads as nothing in one
+            // reads as nothing in the other.
+            let default = read_absent(sem, Shaped::Bare(site), form);
             let mut entries = Map::new();
             for (key, child) in map.children() {
-                let value = read_node(sem, child, Shaped::Bare(site));
+                let value = read_in(sem, child, Shaped::Bare(site), form);
                 if value == default {
                     continue;
                 }
@@ -127,7 +172,7 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
         }
         (Shaped::Optional(site), Node::Opt(opt)) => opt
             .child()
-            .and_then(|child| read_node(sem, child, Shaped::Bare(site))),
+            .and_then(|child| read_in(sem, child, Shaped::Bare(site), form)),
         (Shaped::Bare(Site::Leaf(_)), Node::Leaf(leaf)) => Some(leaf.read_json(Some(sem))),
         (Shaped::Bare(Site::Object(_)), Node::Slot(slot)) => {
             let objects: Vec<&ObjectNode> = slot.objects();
@@ -139,12 +184,12 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
                 // `eClass`. `union!`'s own read counts every child it holds
                 // the same way, so the two paths agree on a slot holding one
                 // written object beside one created and never written into.
-                1 => read_object(sem, objects[0]),
+                1 => read_object(sem, objects[0], form),
                 _ => {
                     let mut values: Vec<(String, Vec<u8>, Value)> = objects
                         .iter()
                         .filter_map(|object| {
-                            let value = read_object(sem, object)?;
+                            let value = read_object(sem, object, form)?;
                             let name = sem
                                 .classes
                                 .get(object.class().index())
@@ -159,7 +204,9 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
                         _ => {
                             // Ordered by class name and then by canonical
                             // bytes, so two replicas holding the same
-                            // conflict print it identically.
+                            // conflict print it identically. A slot holds one
+                            // object per class, so the class name decides
+                            // and both forms list the members in one order.
                             values.sort_by(|left, right| {
                                 left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1))
                             });
@@ -189,7 +236,7 @@ pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) ->
 /// at all: an instance of such a class *is* that feature's value, so a
 /// feature with nothing to show leaves nothing to show. Every other class
 /// carries at least its `eClass`.
-fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Option<Value> {
+fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Option<Value> {
     let mut out = Map::new();
     let Some(class) = sem.classes.get(object.class().index()) else {
         return Some(Value::Object(out));
@@ -202,16 +249,30 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Option<Value> {
     // an `eClass` to name. The read-out says the same thing.
     if let Some(slot) = class.transparent {
         let (name, _, _) = class.visible.get(slot.index())?;
-        let _ = name;
         let (_, rule) = visible(sem, object.class(), slot)?;
         let shape = shaped(rule).ok()?;
-        return match object.fields().get(&slot) {
-            Some(node) => read_node(sem, node, shape),
-            None => read_absent(sem, shape),
+        let value = match object.fields().get(&slot) {
+            Some(node) => read_in(sem, node, shape, form),
+            None => read_absent(sem, shape, form),
+        };
+        return match form {
+            Form::Canonical => value,
+            // A record around the value, and nothing where the canonical
+            // form has nothing, so the two forms drop the same entries.
+            Form::Identified => value.map(|value| {
+                let mut record = Map::new();
+                record.insert(ECLASS.to_string(), Value::String(class.name.to_string()));
+                record.insert(name.to_string(), value);
+                record.insert(ID.to_string(), Value::String(object.identity()));
+                Value::Object(record)
+            }),
         };
     }
 
     out.insert(ECLASS.to_string(), Value::String(class.name.to_string()));
+    if form == Form::Identified {
+        out.insert(ID.to_string(), Value::String(object.identity()));
+    }
 
     for (slot, (name, _owner, _declared)) in class.visible.iter().enumerate() {
         let slot = moirai_semantics::FeatureSlot(slot as u16);
@@ -224,8 +285,8 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode) -> Option<Value> {
             continue;
         };
         let value = match object.fields().get(&slot) {
-            Some(node) => read_node(sem, node, shape),
-            None => read_absent(sem, shape),
+            Some(node) => read_in(sem, node, shape, form),
+            None => read_absent(sem, shape, form),
         };
         if let Some(value) = value {
             out.insert(name.to_string(), value);

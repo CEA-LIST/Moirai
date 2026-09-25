@@ -20,6 +20,13 @@
 //! equivalence oracle compare, so a scenario driving three replicas over HTTP
 //! and a scenario driving two twins in memory are reading the same thing.
 //! A model whose log has no table yet reads `null`.
+//!
+//! # And what `GET /api/model/{id}/state/identified` answers with
+//!
+//! The same document with every element's store identity under `__id`
+//! ([`crate::eval::read_identified`]). An opt-in read beside the default one,
+//! so a reader that wants a plain document, a JSON model's above all, keeps
+//! getting exactly that.
 
 use moirai_network::query::QueryableLog;
 use moirai_protocol::broadcast::tcsb::Tcsb;
@@ -27,11 +34,23 @@ use moirai_protocol::crdt::query::Read;
 use moirai_protocol::replica::{IsReplica, Replica};
 use serde_json::Value;
 
+use crate::eval::read_identified;
 use crate::log::ModelLog;
 use crate::op::ModelOp;
 
 impl QueryableLog for ModelLog {
     fn query_state_json(replica: &Replica<Self, Tcsb<ModelOp>>) -> Value {
         replica.query(&Read::new())
+    }
+
+    /// The same document with every element's store identity in it, which is
+    /// what `GET /api/model/{id}/state/identified` answers: see
+    /// [`crate::eval::read_identified`].
+    fn query_identified_state_json(replica: &Replica<Self, Tcsb<ModelOp>>) -> Value {
+        let log = replica.state();
+        match log.semantics() {
+            Some(sem) => read_identified(sem, log.root()),
+            None => Value::Null,
+        }
     }
 }

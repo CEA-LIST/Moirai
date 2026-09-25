@@ -222,11 +222,7 @@ impl IsLog for ModelLog {
                     self.unresolved += 1;
                     return;
                 };
-                let ctx = Ctx {
-                    id: event.id(),
-                    lamport: event.lamport(),
-                    version: event.version(),
-                };
+                let ctx = Ctx::top(event.id(), event.lamport(), event.version());
                 // Asked before anything is written, so that an operation this
                 // table cannot route leaves the model exactly as it was.
                 if check(

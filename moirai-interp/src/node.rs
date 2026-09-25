@@ -52,7 +52,11 @@ use moirai_crdt::list::eg_walker::{List, ReadAt};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::query::Read,
-    event::{Event, id::EventId, lamport::Lamport},
+    event::{
+        Event,
+        id::{EventId, ResolvedEventId},
+        lamport::Lamport,
+    },
     state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
 };
 use moirai_semantics::{
@@ -576,9 +580,82 @@ pub struct ObjectNode {
     /// generated path, which has no birth identity at all. It is here first
     /// because it moves the state-transfer format, and a format move is
     /// cheapest before there are consumers and fixtures to move with it.
+    ///
+    /// The identity a client is served is not this but [`ObjectNode::identity`],
+    /// derived beside it from [`ObjectNode::creators`], which converges where
+    /// this does not.
     pub(crate) born: EventId,
+    /// Every operation that created this object, as its own writer saw it.
+    ///
+    /// An operation is a creator when, in the state its writer saw, no
+    /// creation of this object was alive: the object did not exist yet, or
+    /// every creation it knew of had been removed. That is a question about
+    /// the operation's own causal past and nothing else, so every replica
+    /// answers it the same way whatever order it delivers the operations in,
+    /// and so the list, and the identity chosen from it, converge. Two writers
+    /// who put one class in one place at once are both creators, where `born`
+    /// keeps whichever came first.
+    pub(crate) creators: Vec<Creator>,
     /// Keyed by the *visible* slot; minted on first write, from the rule.
     pub(crate) fields: BTreeMap<FeatureSlot, Node>,
+}
+
+/// One operation that created an object, and what removed that creation.
+///
+/// `step` tells apart the objects one operation creates: an operation is one
+/// path, and each class step on it reaches exactly one object, so the pair
+/// `(id, step)` names one creation and never two.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub(crate) struct Creator {
+    id: EventId,
+    step: u32,
+    /// The removals that had seen this creation: a sequence delete, an
+    /// optional unset, a map removal or clear above the object. A removal
+    /// whose own past already holds one listed here adds nothing, so the list
+    /// holds only removals concurrent with one another.
+    retired_by: Vec<EventId>,
+}
+
+impl Creator {
+    fn new(ctx: Ctx<'_>) -> Self {
+        Creator {
+            id: ctx.id.clone(),
+            step: ctx.step,
+            retired_by: Vec::new(),
+        }
+    }
+
+    /// Whether a writer at `version` saw this creation and no removal of it.
+    fn alive_at(&self, version: &Version) -> bool {
+        self.id.is_predecessor_of(version)
+            && !self
+                .retired_by
+                .iter()
+                .any(|removal| removal.is_predecessor_of(version))
+    }
+
+    /// The order identities are chosen in: the same on every replica, since
+    /// it names the replica by its string id and not by a local index.
+    fn key(&self) -> (ResolvedEventId, u32) {
+        (ResolvedEventId::from(&self.id), self.step)
+    }
+
+    /// The served form: `<replica>@<seq>.<step>`, with the event's
+    /// disambiguator after the sequence number when it has one. Read from the
+    /// right it is one creation and no other.
+    fn render(&self) -> String {
+        match self.id.disambiguator() {
+            Some(extra) => format!(
+                "{}@{}:{}.{}",
+                self.id.origin_id(),
+                self.id.seq(),
+                extra,
+                self.step
+            ),
+            None => format!("{}@{}.{}", self.id.origin_id(), self.id.seq(), self.step),
+        }
+    }
 }
 
 /// A containment, as `union!`'s three states.
@@ -654,6 +731,19 @@ mod children_serde {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptNode {
     pub(crate) child: Option<Box<Node>>,
+    /// The object child a write or an unset left empty, and which was taken
+    /// out of `child` for that reason, kept here so that its creators are not
+    /// lost with it.
+    ///
+    /// Whether a child empties depends on what else a replica has delivered,
+    /// so dropping it would make the identity of the next object here depend
+    /// on delivery order. It is read by nothing and brought back only for a
+    /// write of its own class.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub(crate) ghost: Option<Box<Node>>,
 }
 
 /// A keyed collection: `UWMapLog`'s mapping half, minting by rule.
@@ -726,12 +816,33 @@ pub(crate) struct Ctx<'a> {
     pub id: &'a EventId,
     pub lamport: &'a Lamport,
     pub version: &'a Version,
+    /// How many class steps of the operation lie above this level: `0` at
+    /// the top of a model. See [`Creator`].
+    pub step: u32,
 }
 
-impl Ctx<'_> {
+impl<'a> Ctx<'a> {
+    /// The context at the top of a model, for one event.
+    pub(crate) fn top(id: &'a EventId, lamport: &'a Lamport, version: &'a Version) -> Self {
+        Ctx {
+            id,
+            lamport,
+            version,
+            step: 0,
+        }
+    }
+
     /// The event this operation would be, at this level.
     pub(crate) fn event<O>(&self, op: O) -> Event<O> {
         Event::new(self.id.clone(), *self.lamport, op, self.version.clone())
+    }
+
+    /// The context below one more class step.
+    fn below_class(self) -> Self {
+        Ctx {
+            step: self.step + 1,
+            ..self
+        }
     }
 }
 
@@ -743,11 +854,47 @@ impl ObjectNode {
     /// *that* is [`apply`], and `apply` holds a [`Ctx`]. An object that could
     /// be minted without an event in hand would have no identity to give, and
     /// the compiler is what says so.
-    pub(crate) fn new(class: ClassSlot, born: EventId) -> Self {
+    pub(crate) fn new(class: ClassSlot, ctx: Ctx<'_>) -> Self {
         ObjectNode {
             class,
-            born,
+            born: ctx.id.clone(),
+            creators: vec![Creator::new(ctx)],
             fields: BTreeMap::new(),
+        }
+    }
+
+    /// The store identity this object is served with: a non-empty string,
+    /// the same on every replica that delivered the same operations.
+    ///
+    /// The least of the creations no removal has seen, and the least of all
+    /// of them when every one has been removed (an element still read, as a
+    /// JSON string at a removed key reads `""`). A creation belongs to one
+    /// object only, so no two objects of one model share an identity, and one
+    /// created again after a removal carries a creation nothing carried
+    /// before.
+    pub fn identity(&self) -> String {
+        let live = self
+            .creators
+            .iter()
+            .filter(|creator| creator.retired_by.is_empty())
+            .min_by_key(|creator| creator.key());
+        match live.or_else(|| self.creators.iter().min_by_key(|creator| creator.key())) {
+            Some(creator) => creator.render(),
+            // Not reachable from an operation: every object is minted with
+            // its creator. Named from `born` rather than left empty.
+            None => format!("{}@{}", self.born.origin_id(), self.born.seq()),
+        }
+    }
+
+    /// A write reached this object: if its writer saw no live creation of
+    /// it, the write is one more creation.
+    fn written_by(&mut self, ctx: Ctx<'_>) {
+        if !self
+            .creators
+            .iter()
+            .any(|creator| creator.alive_at(ctx.version))
+        {
+            self.creators.push(Creator::new(ctx));
         }
     }
 
@@ -759,8 +906,8 @@ impl ObjectNode {
     /// The id of the operation that created this object.
     ///
     /// Stable for the object's whole life: [`apply_object`] writes fields and
-    /// never this. Nothing in this crate reads it yet — see the field's own
-    /// note for why it is here before it has a consumer.
+    /// never this. Nothing in this crate reads it — see the field's own note
+    /// for why it is here, and [`ObjectNode::identity`] for what is served.
     pub fn born(&self) -> &EventId {
         &self.born
     }
@@ -869,7 +1016,7 @@ impl Node {
                 seq.positions.stabilize(version);
             }
             Node::Opt(opt) => {
-                if let Some(child) = opt.child.as_mut() {
+                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
                     child.stabilize(version);
                 }
             }
@@ -896,7 +1043,7 @@ impl Node {
                 seq.positions.redundant_by_parent(version, conservative);
             }
             Node::Opt(opt) => {
-                if let Some(child) = opt.child.as_mut() {
+                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
                     child.redundant_by_parent(version, conservative);
                 }
             }
@@ -906,6 +1053,32 @@ impl Node {
                 }
             }
             Node::Leaf(leaf) => leaf.redundant_by_parent(version, conservative),
+        }
+    }
+
+    /// The removal `removal`, at `version`, took away this subtree: every
+    /// creation of an object below it that the removal had seen is marked
+    /// removed by it. What was created concurrently with the removal is not
+    /// below its version and stays alive.
+    fn retire(&mut self, removal: &EventId, version: &Version) {
+        match self {
+            Node::Unbound | Node::Leaf(_) => {}
+            Node::Slot(slot) => slot.for_each_mut(|object| object.retire(removal, version)),
+            Node::Seq(seq) => {
+                for child in seq.children.values_mut() {
+                    child.retire(removal, version);
+                }
+            }
+            Node::Opt(opt) => {
+                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
+                    child.retire(removal, version);
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values_mut() {
+                    child.retire(removal, version);
+                }
+            }
         }
     }
 
@@ -989,6 +1162,24 @@ impl ObjectNode {
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         for field in self.fields.values_mut() {
             field.redundant_by_parent(version, conservative);
+        }
+    }
+
+    fn retire(&mut self, removal: &EventId, version: &Version) {
+        for creator in &mut self.creators {
+            // A removal already in this one's past says the same thing to
+            // every later writer, so it is not listed twice.
+            if creator.id.is_predecessor_of(version)
+                && !creator
+                    .retired_by
+                    .iter()
+                    .any(|earlier| earlier.is_predecessor_of(version))
+            {
+                creator.retired_by.push(removal.clone());
+            }
+        }
+        for field in self.fields.values_mut() {
+            field.retire(removal, version);
         }
     }
 
@@ -1441,6 +1632,7 @@ pub(crate) fn apply(
                     // so a concurrent update to it survives its removal.
                     if let Some(child) = seq.children.get_mut(&target) {
                         child.redundant_by_parent(ctx.version, true);
+                        child.retire(ctx.id, ctx.version);
                     }
                     Ok(())
                 }
@@ -1478,6 +1670,7 @@ pub(crate) fn apply(
                     emit.map_key(&key.to_key(Some(sem))).delete();
                     if let Some(child) = map.children.get_mut(&key) {
                         child.redundant_by_parent(ctx.version, true);
+                        child.retire(ctx.id, ctx.version);
                     }
                     Ok(())
                 }
@@ -1486,6 +1679,7 @@ pub(crate) fn apply(
                     emit.delete();
                     for child in map.children.values_mut() {
                         child.redundant_by_parent(ctx.version, true);
+                        child.retire(ctx.id, ctx.version);
                     }
                     Ok(())
                 }
@@ -1507,15 +1701,20 @@ pub(crate) fn apply(
                     } else {
                         emit.create();
                     }
-                    let child = opt
-                        .child
-                        .get_or_insert_with(|| Box::new(Node::for_site(site)));
+                    let revived = if opt.child.is_none() {
+                        revive(&mut opt.ghost, &inner)
+                    } else {
+                        None
+                    };
+                    let child = opt.child.get_or_insert_with(|| {
+                        revived.unwrap_or_else(|| Box::new(Node::for_site(site)))
+                    });
                     let outcome = apply(sem, child, Shaped::Bare(site), ctx, *inner, at, emit);
                     // `option/mod.rs:110`: a write that left the child empty
                     // leaves the optional unset, which is what makes an unset
                     // optional an absent key rather than an empty object.
                     if opt.child.as_ref().is_some_and(|child| child.is_default()) {
-                        opt.child = None;
+                        opt.ghost = ghost_of(opt.child.take());
                     }
                     outcome
                 }
@@ -1523,8 +1722,9 @@ pub(crate) fn apply(
                     emit.delete();
                     if let Some(child) = opt.child.as_mut() {
                         child.redundant_by_parent(ctx.version, true);
+                        child.retire(ctx.id, ctx.version);
                         if child.is_default() {
-                            opt.child = None;
+                            opt.ghost = ghost_of(opt.child.take());
                         }
                     }
                     Ok(())
@@ -1566,12 +1766,16 @@ pub(crate) fn apply(
             // added beside what it holds, never refused. The operation doing
             // the adding is the one whose id the new object is born with; an
             // operation that finds its class already here mints nothing and
-            // changes no identity.
-            ensure_variant(slot, class, ctx.id);
+            // changes no `born`; it may still be one more creator, which
+            // `written_by` decides from what its writer saw.
+            let minted = ensure_variant(slot, class, ctx);
             let object = slot
                 .find_mut(class)
                 .expect("`ensure_variant` put one of this class here");
-            apply_object(sem, object, ctx, *inner, emit)
+            if !minted {
+                object.written_by(ctx);
+            }
+            apply_object(sem, object, ctx.below_class(), *inner, emit)
         }
     }
 }
@@ -1649,25 +1853,61 @@ fn target_at(seq: &SeqNode, ctx: Ctx<'_>, pos: usize, at: &At) -> Result<EventId
 /// finds its class already here has not created anything, so it leaves the
 /// birth identity of what it found alone. That is what makes the second
 /// writer of a conflict the parent of *its* object and not of the other one.
-fn ensure_variant(slot: &mut SlotNode, class: ClassSlot, born: &EventId) {
+/// Answers whether it minted one.
+fn ensure_variant(slot: &mut SlotNode, class: ClassSlot, ctx: Ctx<'_>) -> bool {
     match slot {
         SlotNode::Unset => {
-            *slot = SlotNode::Value(Box::new(ObjectNode::new(class, born.clone())));
+            *slot = SlotNode::Value(Box::new(ObjectNode::new(class, ctx)));
+            true
         }
         SlotNode::Value(object) => {
-            if object.class != class {
-                let SlotNode::Value(existing) = std::mem::replace(slot, SlotNode::Unset) else {
-                    unreachable!("matched a moment ago");
-                };
-                *slot = SlotNode::Conflicts(vec![*existing, ObjectNode::new(class, born.clone())]);
+            if object.class == class {
+                return false;
             }
+            let SlotNode::Value(existing) = std::mem::replace(slot, SlotNode::Unset) else {
+                unreachable!("matched a moment ago");
+            };
+            *slot = SlotNode::Conflicts(vec![*existing, ObjectNode::new(class, ctx)]);
+            true
         }
         SlotNode::Conflicts(objects) => {
-            if !objects.iter().any(|object| object.class == class) {
-                objects.push(ObjectNode::new(class, born.clone()));
+            if objects.iter().any(|object| object.class == class) {
+                return false;
             }
+            objects.push(ObjectNode::new(class, ctx));
+            true
         }
     }
+}
+
+/// What an optional keeps of a child it takes out: the child when it holds
+/// objects, whose creators are worth keeping, and nothing when it is a leaf.
+fn ghost_of(child: Option<Box<Node>>) -> Option<Box<Node>> {
+    child.filter(|child| matches!(child.as_ref(), Node::Slot(_)))
+}
+
+/// The ghost's object of the class `inner` writes, alone in a slot of its
+/// own, and nothing when there is none.
+///
+/// Only that object, because the ghost's other objects were never read and
+/// bringing them back would open a conflict no writer asked for. The ghost is
+/// spent either way: the next child is whatever this write makes.
+fn revive(ghost: &mut Option<Box<Node>>, inner: &InstanceOp) -> Option<Box<Node>> {
+    let InstanceOp::Variant(class, _) = inner else {
+        return None;
+    };
+    let Node::Slot(slot) = *ghost.take()? else {
+        return None;
+    };
+    let object = match slot {
+        SlotNode::Unset => None,
+        SlotNode::Value(object) => (object.class == *class).then_some(object),
+        SlotNode::Conflicts(objects) => objects
+            .into_iter()
+            .find(|object| object.class == *class)
+            .map(Box::new),
+    }?;
+    Some(Box::new(Node::Slot(SlotNode::Value(object))))
 }
 
 #[cfg(test)]

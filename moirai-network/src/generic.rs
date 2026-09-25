@@ -241,6 +241,9 @@ where
     /// Optional callback to query a log's state as JSON.
     /// Set by `enable_state_query()` when `L: QueryableLog`.
     query_fn: Option<fn(&LogReplica<L>) -> serde_json::Value>,
+    /// The same for the identified read, `GET /api/model/{id}/state/identified`;
+    /// set beside `query_fn` by `enable_state_query()`.
+    identified_query_fn: Option<fn(&LogReplica<L>) -> serde_json::Value>,
     /// The application's hook for lifting a descriptor out of a log that
     /// arrived with one, installed by [`Self::enable_descriptor_adoption`].
     ///
@@ -942,6 +945,12 @@ pub(crate) enum ControlCmd {
         log_id: LogId,
         reply: Sender<Option<StateRead>>,
     },
+    /// One model's identified state (`QueryableLog::query_identified_state_json`),
+    /// with the version it was read at; `None` when the node does not host it.
+    QueryLogIdentified {
+        log_id: LogId,
+        reply: Sender<Option<StateRead>>,
+    },
     /// One model's counters; `None` when the node does not host it.
     LogMetrics {
         log_id: LogId,
@@ -1113,6 +1122,7 @@ where
             ctrl_rx,
             ctrl_tx,
             query_fn: None,
+            identified_query_fn: None,
             adopt_fn: None,
             discovery: None,
             export_log: None,
@@ -1981,8 +1991,22 @@ where
     /// One log's state and the version it is at, taken together in one pass
     /// of the event loop; `None` when this node does not host the log.
     fn state_read(&self, log_id: &LogId) -> Option<StateRead> {
+        self.read_with(log_id, self.query_fn)
+    }
+
+    /// The identified read of one log, taken as [`Self::state_read`] takes
+    /// the default one.
+    fn identified_state_read(&self, log_id: &LogId) -> Option<StateRead> {
+        self.read_with(log_id, self.identified_query_fn)
+    }
+
+    fn read_with(
+        &self,
+        log_id: &LogId,
+        query: Option<fn(&LogReplica<L>) -> serde_json::Value>,
+    ) -> Option<StateRead> {
         let log = self.logs.get(log_id)?;
-        let state = match &self.query_fn {
+        let state = match &query {
             Some(f) => f(&log.replica),
             None => json!({ "error": "state query not enabled — implement QueryableLog" }),
         };
@@ -2821,6 +2845,9 @@ where
             ControlCmd::QueryLog { log_id, reply } => {
                 let _ = reply.send(self.state_read(&log_id));
             }
+            ControlCmd::QueryLogIdentified { log_id, reply } => {
+                let _ = reply.send(self.identified_state_read(&log_id));
+            }
             ControlCmd::LogMetrics { log_id, reply } => {
                 let metrics = self.logs.get(&log_id).map(|log| self.log_metrics(log));
                 let _ = reply.send(metrics);
@@ -2998,6 +3025,7 @@ where
     /// Call this after `new()` and before `run()`.
     pub fn enable_state_query(&mut self) {
         self.query_fn = Some(L::query_state_json);
+        self.identified_query_fn = Some(L::query_identified_state_json);
     }
 }
 

@@ -55,6 +55,10 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// - `GET  /api/model/{id}/state`     that model's state as JSON, with the
 ///   version it was read at in the `ETag` header (see
 ///   [`crate::generic::GenericNode::version_of`])
+/// - `GET  /api/model/{id}/state/identified` the same state with every
+///   element's identity in it, as the log's
+///   [`crate::query::QueryableLog::query_identified_state_json`] answers,
+///   with the version in the `ETag` header as above
 /// - `POST /api/model/{id}/op`        submit an operation to that model
 /// - `POST /api/model/{id}/ops`       submit a batch to that model: the body
 ///   is `{"ops": [...], "base": "<version>"}`, `base` optional, and the batch
@@ -165,6 +169,8 @@ type Reply = Response<Cursor<Vec<u8>>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModelLeaf {
     State,
+    /// `state/identified`: the state with every element's identity in it.
+    IdentifiedState,
     Op,
     Ops,
     Metamodel,
@@ -231,6 +237,10 @@ fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
         (&Method::Get, ["api", "model", id, "state"]) => Route::Model {
             id,
             leaf: ModelLeaf::State,
+        },
+        (&Method::Get, ["api", "model", id, "state", "identified"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::IdentifiedState,
         },
         (&Method::Post, ["api", "model", id, "op"]) => Route::Model {
             id,
@@ -702,6 +712,13 @@ impl<O: NetworkOp> Api<O> {
                 Some(None) => not_found(),
                 None => timeout(),
             },
+            ModelLeaf::IdentifiedState => {
+                match self.ask(|reply| ControlCmd::QueryLogIdentified { log_id, reply }) {
+                    Some(Some(read)) => state_reply(read),
+                    Some(None) => not_found(),
+                    None => timeout(),
+                }
+            }
             ModelLeaf::Metrics => {
                 match self.ask(|reply| ControlCmd::LogMetrics { log_id, reply }) {
                     Some(Some(metrics)) => json_text(200, metrics.to_string()),
