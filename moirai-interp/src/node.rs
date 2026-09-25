@@ -57,6 +57,7 @@ use moirai_protocol::{
         id::{EventId, ResolvedEventId},
         lamport::Lamport,
     },
+    replica::ReplicaIdx,
     state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
 };
 use moirai_semantics::{
@@ -585,22 +586,41 @@ pub struct ObjectNode {
     /// derived beside it from [`ObjectNode::creators`], which converges where
     /// this does not.
     pub(crate) born: EventId,
-    /// Every operation that created this object, as its own writer saw it.
+    /// The creations this object is served by: the operations that created
+    /// it, as their own writers saw it, less those a later creation saw.
     ///
-    /// An operation is a creator when, in the state its writer saw, no
-    /// creation of this object was alive: the object did not exist yet, or
-    /// every creation it knew of had been removed. That is a question about
-    /// the operation's own causal past and nothing else, so every replica
-    /// answers it the same way whatever order it delivers the operations in,
-    /// and so the list, and the identity chosen from it, converge. Two writers
-    /// who put one class in one place at once are both creators, where `born`
-    /// keeps whichever came first.
+    /// An operation is a creation when, in the state its writer saw, the
+    /// object was not alive (see [`ObjectNode::touches`]): it did not exist
+    /// yet, or a removal had taken away everything written into it. That is a
+    /// question about the operation's own causal past and nothing else, so
+    /// every replica answers it the same way whatever order it delivers the
+    /// operations in. Two writers who put one class in one place at once are
+    /// both creations, where `born` keeps whichever came first. A creation
+    /// that saw an earlier one takes its place, since the earlier one had
+    /// been removed; so the list holds creations concurrent with one another,
+    /// and an identity it has stopped serving it never serves again.
+    ///
+    /// Kept in the order of [`Creator::key`], so that two replicas holding
+    /// one state serialize it to the same bytes.
     pub(crate) creators: Vec<Creator>,
+    /// The operations that reached this object, each with the removals that
+    /// had seen it: what decides whether the object is alive for a writer.
+    ///
+    /// A writer at a version sees the object alive when some operation in
+    /// that version reached it and no removal in that version had seen that
+    /// operation. That is update-wins, the rule the containers themselves
+    /// follow: a write concurrent with a removal survives it, and so does the
+    /// object it wrote into, whose identity the next writer then keeps.
+    ///
+    /// Pruned as operations stabilize ([`ObjectNode::stabilize`]), and kept
+    /// in the order of the resolved id for the same reason as `creators`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) touches: Vec<Touch>,
     /// Keyed by the *visible* slot; minted on first write, from the rule.
     pub(crate) fields: BTreeMap<FeatureSlot, Node>,
 }
 
-/// One operation that created an object, and what removed that creation.
+/// One operation that created an object.
 ///
 /// `step` tells apart the objects one operation creates: an operation is one
 /// path, and each class step on it reaches exactly one object, so the pair
@@ -610,11 +630,6 @@ pub struct ObjectNode {
 pub(crate) struct Creator {
     id: EventId,
     step: u32,
-    /// The removals that had seen this creation: a sequence delete, an
-    /// optional unset, a map removal or clear above the object. A removal
-    /// whose own past already holds one listed here adds nothing, so the list
-    /// holds only removals concurrent with one another.
-    retired_by: Vec<EventId>,
 }
 
 impl Creator {
@@ -622,17 +637,7 @@ impl Creator {
         Creator {
             id: ctx.id.clone(),
             step: ctx.step,
-            retired_by: Vec::new(),
         }
-    }
-
-    /// Whether a writer at `version` saw this creation and no removal of it.
-    fn alive_at(&self, version: &Version) -> bool {
-        self.id.is_predecessor_of(version)
-            && !self
-                .retired_by
-                .iter()
-                .any(|removal| removal.is_predecessor_of(version))
     }
 
     /// The order identities are chosen in: the same on every replica, since
@@ -656,6 +661,39 @@ impl Creator {
             None => format!("{}@{}.{}", self.id.origin_id(), self.id.seq(), self.step),
         }
     }
+}
+
+/// One operation that reached an object, and the removals that had seen it.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub(crate) struct Touch {
+    id: EventId,
+    /// A sequence delete, an optional unset, a map removal or clear above the
+    /// object, that had this operation in its past. A removal whose own past
+    /// already holds one listed here adds nothing, so the list holds only
+    /// removals concurrent with one another, in resolved-id order.
+    covered_by: Vec<EventId>,
+}
+
+impl Touch {
+    /// Whether a writer at `version` saw this operation and no removal of it.
+    fn alive_at(&self, version: &Version) -> bool {
+        self.id.is_predecessor_of(version) && !covered_at(&self.covered_by, version)
+    }
+}
+
+/// Whether one of `removals` is in `version`.
+fn covered_at(removals: &[EventId], version: &Version) -> bool {
+    removals
+        .iter()
+        .any(|removal| removal.is_predecessor_of(version))
+}
+
+/// Put `item` into a list kept in the resolved-id order of what `id` reads.
+fn insert_resolved<T>(list: &mut Vec<T>, item: T, id: impl Fn(&T) -> &EventId) {
+    let key = ResolvedEventId::from(id(&item));
+    let at = list.partition_point(|other| ResolvedEventId::from(id(other)) < key);
+    list.insert(at, item);
 }
 
 /// A containment, as `union!`'s three states.
@@ -731,19 +769,22 @@ mod children_serde {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptNode {
     pub(crate) child: Option<Box<Node>>,
-    /// The object child a write or an unset left empty, and which was taken
-    /// out of `child` for that reason, kept here so that its creators are not
-    /// lost with it.
+    /// The objects a write or an unset left empty, taken out of `child` for
+    /// that reason and kept here, one per class, so that their creations and
+    /// touches are not lost with them.
     ///
     /// Whether a child empties depends on what else a replica has delivered,
-    /// so dropping it would make the identity of the next object here depend
-    /// on delivery order. It is read by nothing and brought back only for a
-    /// write of its own class.
+    /// so dropping its objects would make the identity of the next object of
+    /// their class here depend on delivery order. Read by nothing. A write of
+    /// a class the child does not hold takes that class's object back from
+    /// here instead of minting one, which reads the same, since an object
+    /// here is at its default. Every class here is one the child does not
+    /// hold, and the list is kept in class order.
     #[cfg_attr(
         feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
+        serde(default, skip_serializing_if = "Vec::is_empty")
     )]
-    pub(crate) ghost: Option<Box<Node>>,
+    pub(crate) ghost: Vec<ObjectNode>,
 }
 
 /// A keyed collection: `UWMapLog`'s mapping half, minting by rule.
@@ -859,6 +900,10 @@ impl ObjectNode {
             class,
             born: ctx.id.clone(),
             creators: vec![Creator::new(ctx)],
+            touches: vec![Touch {
+                id: ctx.id.clone(),
+                covered_by: Vec::new(),
+            }],
             fields: BTreeMap::new(),
         }
     }
@@ -866,19 +911,13 @@ impl ObjectNode {
     /// The store identity this object is served with: a non-empty string,
     /// the same on every replica that delivered the same operations.
     ///
-    /// The least of the creations no removal has seen, and the least of all
-    /// of them when every one has been removed (an element still read, as a
-    /// JSON string at a removed key reads `""`). A creation belongs to one
-    /// object only, so no two objects of one model share an identity, and one
-    /// created again after a removal carries a creation nothing carried
-    /// before.
+    /// The least of its creations ([`ObjectNode::creators`]). A creation
+    /// belongs to one object only, so no two objects of one model share an
+    /// identity; and one created again after a removal carries a creation
+    /// that saw every earlier one, so it serves an identity nothing carried
+    /// before and none of the old ones again.
     pub fn identity(&self) -> String {
-        let live = self
-            .creators
-            .iter()
-            .filter(|creator| creator.retired_by.is_empty())
-            .min_by_key(|creator| creator.key());
-        match live.or_else(|| self.creators.iter().min_by_key(|creator| creator.key())) {
+        match self.creators.iter().min_by_key(|creator| creator.key()) {
             Some(creator) => creator.render(),
             // Not reachable from an operation: every object is minted with
             // its creator. Named from `born` rather than left empty.
@@ -886,16 +925,23 @@ impl ObjectNode {
         }
     }
 
-    /// A write reached this object: if its writer saw no live creation of
-    /// it, the write is one more creation.
+    /// An operation reached this object, which was already here: if its
+    /// writer saw the object not alive, the operation is one more creation,
+    /// and the creations its writer saw give way to it.
     fn written_by(&mut self, ctx: Ctx<'_>) {
-        if !self
-            .creators
-            .iter()
-            .any(|creator| creator.alive_at(ctx.version))
-        {
-            self.creators.push(Creator::new(ctx));
+        if !self.touches.iter().any(|touch| touch.alive_at(ctx.version)) {
+            self.creators
+                .retain(|creator| !creator.id.is_predecessor_of(ctx.version));
+            insert_resolved(&mut self.creators, Creator::new(ctx), |creator| &creator.id);
         }
+        insert_resolved(
+            &mut self.touches,
+            Touch {
+                id: ctx.id.clone(),
+                covered_by: Vec::new(),
+            },
+            |touch| &touch.id,
+        );
     }
 
     /// The class this is an instance of.
@@ -1016,8 +1062,11 @@ impl Node {
                 seq.positions.stabilize(version);
             }
             Node::Opt(opt) => {
-                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
+                if let Some(child) = opt.child.as_mut() {
                     child.stabilize(version);
+                }
+                for object in &mut opt.ghost {
+                    object.stabilize(version);
                 }
             }
             Node::Map(map) => {
@@ -1043,8 +1092,11 @@ impl Node {
                 seq.positions.redundant_by_parent(version, conservative);
             }
             Node::Opt(opt) => {
-                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
+                if let Some(child) = opt.child.as_mut() {
                     child.redundant_by_parent(version, conservative);
+                }
+                for object in &mut opt.ghost {
+                    object.redundant_by_parent(version, conservative);
                 }
             }
             Node::Map(map) => {
@@ -1070,8 +1122,11 @@ impl Node {
                 }
             }
             Node::Opt(opt) => {
-                for child in opt.child.iter_mut().chain(opt.ghost.iter_mut()) {
+                if let Some(child) = opt.child.as_mut() {
                     child.retire(removal, version);
+                }
+                for object in &mut opt.ghost {
+                    object.retire(removal, version);
                 }
             }
             Node::Map(map) => {
@@ -1154,9 +1209,34 @@ impl SlotNode {
 
 impl ObjectNode {
     fn stabilize(&mut self, version: &Version) {
+        self.forget_stable_touches(version);
         for field in self.fields.values_mut() {
             field.stabilize(version);
         }
+    }
+
+    /// Drop the touches no writer still to come can tell apart.
+    ///
+    /// Every operation still to be delivered has `stable` in its past. So a
+    /// stable touch that a stable removal had seen is dead for all of them,
+    /// and of the stable touches from one replica the latest says all that
+    /// the earlier ones do: whatever removal had seen the latest had seen
+    /// them too.
+    fn forget_stable_touches(&mut self, stable: &Version) {
+        self.touches.retain(|touch| {
+            !(touch.id.is_predecessor_of(stable) && covered_at(&touch.covered_by, stable))
+        });
+        let mut latest: HashMap<ReplicaIdx, usize> = HashMap::new();
+        for touch in &self.touches {
+            if touch.id.is_predecessor_of(stable) {
+                let seq = latest.entry(touch.id.idx()).or_default();
+                *seq = (*seq).max(touch.id.seq());
+            }
+        }
+        self.touches.retain(|touch| {
+            !touch.id.is_predecessor_of(stable)
+                || latest.get(&touch.id.idx()) == Some(&touch.id.seq())
+        });
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -1166,16 +1246,11 @@ impl ObjectNode {
     }
 
     fn retire(&mut self, removal: &EventId, version: &Version) {
-        for creator in &mut self.creators {
+        for touch in &mut self.touches {
             // A removal already in this one's past says the same thing to
             // every later writer, so it is not listed twice.
-            if creator.id.is_predecessor_of(version)
-                && !creator
-                    .retired_by
-                    .iter()
-                    .any(|earlier| earlier.is_predecessor_of(version))
-            {
-                creator.retired_by.push(removal.clone());
+            if touch.id.is_predecessor_of(version) && !covered_at(&touch.covered_by, version) {
+                insert_resolved(&mut touch.covered_by, removal.clone(), |id| id);
             }
         }
         for field in self.fields.values_mut() {
@@ -1701,20 +1776,16 @@ pub(crate) fn apply(
                     } else {
                         emit.create();
                     }
-                    let revived = if opt.child.is_none() {
-                        revive(&mut opt.ghost, &inner)
-                    } else {
-                        None
-                    };
-                    let child = opt.child.get_or_insert_with(|| {
-                        revived.unwrap_or_else(|| Box::new(Node::for_site(site)))
-                    });
+                    let child = opt
+                        .child
+                        .get_or_insert_with(|| Box::new(Node::for_site(site)));
+                    revive(&mut opt.ghost, child, &inner);
                     let outcome = apply(sem, child, Shaped::Bare(site), ctx, *inner, at, emit);
                     // `option/mod.rs:110`: a write that left the child empty
                     // leaves the optional unset, which is what makes an unset
                     // optional an absent key rather than an empty object.
                     if opt.child.as_ref().is_some_and(|child| child.is_default()) {
-                        opt.ghost = ghost_of(opt.child.take());
+                        bury(&mut opt.ghost, opt.child.take());
                     }
                     outcome
                 }
@@ -1724,8 +1795,17 @@ pub(crate) fn apply(
                         child.redundant_by_parent(ctx.version, true);
                         child.retire(ctx.id, ctx.version);
                         if child.is_default() {
-                            opt.ghost = ghost_of(opt.child.take());
+                            bury(&mut opt.ghost, opt.child.take());
                         }
+                    }
+                    // What the ghost holds was here as much as the child was,
+                    // only empty: the unset removes it the same way, or a
+                    // write concurrent with the unset would find it alive on
+                    // a replica that delivered the unset first and removed on
+                    // one that delivered it second.
+                    for object in &mut opt.ghost {
+                        object.redundant_by_parent(ctx.version, true);
+                        object.retire(ctx.id, ctx.version);
                     }
                     Ok(())
                 }
@@ -1880,34 +1960,60 @@ fn ensure_variant(slot: &mut SlotNode, class: ClassSlot, ctx: Ctx<'_>) -> bool {
     }
 }
 
-/// What an optional keeps of a child it takes out: the child when it holds
-/// objects, whose creators are worth keeping, and nothing when it is a leaf.
-fn ghost_of(child: Option<Box<Node>>) -> Option<Box<Node>> {
-    child.filter(|child| matches!(child.as_ref(), Node::Slot(_)))
+/// Keep the objects of a child an optional takes out, in its ghost.
+///
+/// A leaf child holds no object, so nothing of it is kept. The ghost holds no
+/// class the child held (see [`revive`]), so each object goes in beside what
+/// is there, in class order.
+fn bury(ghost: &mut Vec<ObjectNode>, child: Option<Box<Node>>) {
+    let Some(child) = child else {
+        return;
+    };
+    let Node::Slot(slot) = *child else {
+        return;
+    };
+    let objects = match slot {
+        SlotNode::Unset => Vec::new(),
+        SlotNode::Value(object) => vec![*object],
+        SlotNode::Conflicts(objects) => objects,
+    };
+    for object in objects {
+        let at = ghost.partition_point(|other| other.class < object.class);
+        ghost.insert(at, object);
+    }
 }
 
-/// The ghost's object of the class `inner` writes, alone in a slot of its
-/// own, and nothing when there is none.
+/// Before a write of a class the child does not hold, take that class's
+/// object out of the ghost and put it into the child, where the write would
+/// otherwise have minted a fresh one.
 ///
-/// Only that object, because the ghost's other objects were never read and
-/// bringing them back would open a conflict no writer asked for. The ghost is
-/// spent either way: the next child is whatever this write makes.
-fn revive(ghost: &mut Option<Box<Node>>, inner: &InstanceOp) -> Option<Box<Node>> {
+/// Only the object of the class written: the ghost's other objects stay
+/// where they are, since bringing them back would open a conflict no writer
+/// asked for. It joins the child the way [`ensure_variant`] would have added
+/// a fresh one, after what the child holds, so the child reads as it would
+/// have: an object in the ghost is at its default.
+fn revive(ghost: &mut Vec<ObjectNode>, child: &mut Node, inner: &InstanceOp) {
     let InstanceOp::Variant(class, _) = inner else {
-        return None;
+        return;
     };
-    let Node::Slot(slot) = *ghost.take()? else {
-        return None;
+    let Node::Slot(slot) = child else {
+        return;
     };
-    let object = match slot {
-        SlotNode::Unset => None,
-        SlotNode::Value(object) => (object.class == *class).then_some(object),
-        SlotNode::Conflicts(objects) => objects
-            .into_iter()
-            .find(|object| object.class == *class)
-            .map(Box::new),
-    }?;
-    Some(Box::new(Node::Slot(SlotNode::Value(object))))
+    if slot.find(*class).is_some() {
+        return;
+    }
+    let Some(at) = ghost.iter().position(|object| object.class == *class) else {
+        return;
+    };
+    let object = ghost.remove(at);
+    match std::mem::take(slot) {
+        SlotNode::Unset => *slot = SlotNode::Value(Box::new(object)),
+        SlotNode::Value(existing) => *slot = SlotNode::Conflicts(vec![*existing, object]),
+        SlotNode::Conflicts(mut objects) => {
+            objects.push(object);
+            *slot = SlotNode::Conflicts(objects);
+        }
+    }
 }
 
 #[cfg(test)]
