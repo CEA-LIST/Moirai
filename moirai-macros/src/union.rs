@@ -372,6 +372,30 @@ macro_rules! union {
                 }
 
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
+                    // Asked before descending, so that a union of this type
+                    // further down is not taken for the optional's child.
+                    let held_by_optional = $crate::union::held_by_optional::claim::<Self>();
+                    self.reset_children(version, conservative);
+                    if held_by_optional {
+                        self.drop_emptied_children();
+                    }
+                }
+
+                // TODO: structurally its Unset, semantically not necessarily, so we may want to split this into two methods
+                fn is_default(&self) -> ::std::primitive::bool {
+                    match &self.child {
+                        [<$union Container>]::Unset => true,
+                        [<$union Container>]::Value(child) => Self::child_is_default(child.as_ref()),
+                        [<$union Container>]::Conflicts(children) => children
+                            .iter()
+                            .all(Self::child_is_default),
+                    }
+                }
+            }
+
+            impl [<$union Log>] {
+                /// Hand a parent's removal to every child held.
+                fn reset_children(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
                     match &mut self.child {
                         [<$union Container>]::Unset => {}
                         [<$union Container>]::Value(union_child) => match union_child.as_mut() {
@@ -403,15 +427,38 @@ macro_rules! union {
                     }
                 }
 
-                // TODO: structurally its Unset, semantically not necessarily, so we may want to split this into two methods
-                fn is_default(&self) -> ::std::primitive::bool {
-                    match &self.child {
-                        [<$union Container>]::Unset => true,
-                        [<$union Container>]::Value(child) => Self::child_is_default(child.as_ref()),
-                        [<$union Container>]::Conflicts(children) => children
-                            .iter()
-                            .all(Self::child_is_default),
-                    }
+                /// Drop every child a removal left at its default, keeping
+                /// those a concurrent write kept.
+                ///
+                /// Only under an optional (`moirai_macros::union::held_by_optional`):
+                /// an emptied child leaves an optional, and so, one at a
+                /// time, does an emptied member of a conflict, whichever of
+                /// the removal and a concurrent write to the other member a
+                /// replica delivers first. A keyed collection keeps its
+                /// emptied members, so this is not part of the union's own
+                /// reset.
+                fn drop_emptied_children(&mut self) {
+                    self.child = match ::std::mem::take(&mut self.child) {
+                        [<$union Container>]::Unset => [<$union Container>]::Unset,
+                        [<$union Container>]::Value(child) => {
+                            if Self::child_is_default(&child) {
+                                [<$union Container>]::Unset
+                            } else {
+                                [<$union Container>]::Value(child)
+                            }
+                        }
+                        [<$union Container>]::Conflicts(children) => {
+                            let mut kept: ::std::vec::Vec<[<$union Child>]> = children
+                                .into_iter()
+                                .filter(|child| !Self::child_is_default(child))
+                                .collect();
+                            match kept.len() {
+                                0 => [<$union Container>]::Unset,
+                                1 => [<$union Container>]::Value(::std::boxed::Box::new(kept.remove(0))),
+                                _ => [<$union Container>]::Conflicts(kept),
+                            }
+                        }
+                    };
                 }
             }
 
@@ -555,4 +602,61 @@ macro_rules! union {
             }
         }
     };
+}
+
+/// Whether a union is being reset as the child an optional holds.
+///
+/// An optional drops a child a removal emptied, and a union under an
+/// optional drops, for the same reason, each member a removal emptied (the
+/// value ST.01 fixes: an optional holding the conflict `[A, B]`, unset while a
+/// write reaches `B`, serves `B` alone on every replica). A keyed collection
+/// keeps the members of a removed key, so the union cannot decide this from
+/// its own reset: it has to know its owner. `IsLog::redundant_by_parent`
+/// does not say who is asking, and `OptionLog` knows its child only as an
+/// `IsLog`, so the optional says it here, for the length of the one call,
+/// and the union of that type (directly, or behind `Box` or `BoxedLog`)
+/// claims it before handing the removal further down. Nothing is stored in
+/// either log, so the state they serialize is unchanged.
+#[doc(hidden)]
+pub mod held_by_optional {
+    use std::{any::TypeId, cell::Cell};
+
+    use moirai_protocol::state::log::{BoxedLog, IsLog};
+
+    thread_local! {
+        /// The type of the child an optional is resetting, until claimed.
+        static RESETTING: Cell<Option<TypeId>> = const { Cell::new(None) };
+    }
+
+    /// Puts back what was marked before, however `reset` returns.
+    struct Restore(Option<TypeId>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RESETTING.with(|marked| marked.set(self.0));
+        }
+    }
+
+    /// Run `reset`, an optional handing a removal to its child of type `L`,
+    /// with that child marked as held by an optional.
+    pub fn resetting<L: 'static, R>(reset: impl FnOnce() -> R) -> R {
+        let _restore = Restore(RESETTING.with(|marked| marked.replace(Some(TypeId::of::<L>()))));
+        reset()
+    }
+
+    /// Whether the union `U` is the child an optional is resetting; the mark
+    /// is taken, so no union below it answers yes for the same call.
+    pub fn claim<U: IsLog + 'static>() -> bool {
+        RESETTING.with(|marked| {
+            let held = marked.get().is_some_and(|child| {
+                child == TypeId::of::<U>()
+                    || child == TypeId::of::<Box<U>>()
+                    || child == TypeId::of::<BoxedLog<U>>()
+            });
+            if held {
+                marked.set(None);
+            }
+            held
+        })
+    }
 }

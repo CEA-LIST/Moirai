@@ -2,6 +2,7 @@ use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::op_generator::CommandGenerator;
+use moirai_macros::union::held_by_optional;
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -41,7 +42,7 @@ where
 
 impl<L> IsLog for OptionLog<L>
 where
-    L: IsLog,
+    L: IsLog + 'static,
 {
     type Command = Optional<L::Op>;
     type Op = Optional<L::Op>;
@@ -76,7 +77,12 @@ where
                     ctx.delete();
                 }
                 if let Some(child) = self.child.as_mut() {
-                    child.redundant_by_parent(event.version(), true);
+                    // Held by an optional: a `union!` child drops each member
+                    // the unset emptied, as the optional drops an emptied
+                    // child just below.
+                    held_by_optional::resetting::<L, _>(|| {
+                        child.redundant_by_parent(event.version(), true);
+                    });
                     if child.is_default() {
                         self.child = None;
                     }
@@ -93,7 +99,11 @@ where
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         if let Some(ref mut child) = self.child {
-            child.redundant_by_parent(version, conservative);
+            // A removal above this optional empties its child as an unset
+            // does, so a `union!` child drops its emptied members here too.
+            held_by_optional::resetting::<L, _>(|| {
+                child.redundant_by_parent(version, conservative);
+            });
         }
     }
 
@@ -108,7 +118,7 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> CommandGenerator for OptionLog<L>
 where
-    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op> + 'static,
 {
     fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         match &self.child {
@@ -129,7 +139,7 @@ where
 
 impl<L, V> EvalNested<Read<Option<V>>> for OptionLog<L>
 where
-    L: IsLog + EvalNested<Read<V>>,
+    L: IsLog + EvalNested<Read<V>> + 'static,
     V: Clone + Default + PartialEq,
 {
     fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {

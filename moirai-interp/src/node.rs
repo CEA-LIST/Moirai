@@ -1098,6 +1098,9 @@ impl Node {
                 for object in &mut opt.ghost {
                     object.redundant_by_parent(version, conservative);
                 }
+                // A removal above the optional empties what it had seen here
+                // as much as an unset of the optional itself does.
+                shed(opt);
             }
             Node::Map(map) => {
                 for child in map.children.values_mut() {
@@ -1807,6 +1810,9 @@ pub(crate) fn apply(
                         object.redundant_by_parent(ctx.version, true);
                         object.retire(ctx.id, ctx.version);
                     }
+                    // After the ghost's own reset, so that what joins it now
+                    // is not reset twice.
+                    shed(opt);
                     Ok(())
                 }
             }
@@ -1978,8 +1984,45 @@ fn bury(ghost: &mut Vec<ObjectNode>, child: Option<Box<Node>>) {
         SlotNode::Conflicts(objects) => objects,
     };
     for object in objects {
-        let at = ghost.partition_point(|other| other.class < object.class);
-        ghost.insert(at, object);
+        lay(ghost, object);
+    }
+}
+
+/// Put one object in the ghost, in class order.
+fn lay(ghost: &mut Vec<ObjectNode>, object: ObjectNode) {
+    let at = ghost.partition_point(|other| other.class < object.class);
+    ghost.insert(at, object);
+}
+
+/// Take out of an optional's child every object a removal left empty, into
+/// the ghost, and keep the objects that still hold something.
+///
+/// An emptied child leaves the optional ([`bury`]); this is the same rule one
+/// object at a time, so a conflict whose other member a concurrent write kept
+/// serves that member alone, whichever of the removal and the write a replica
+/// delivered first: an unset that arrives after the write finds the emptied
+/// member here, one that arrives before it has already taken the whole child
+/// out, and the write brings back only its own class ([`revive`]).
+/// `union!` drops the same members under `OptionLog`, so both runtimes serve
+/// one document. A leaf child holds no object and is left to its optional.
+fn shed(opt: &mut OptNode) {
+    let Some(Node::Slot(slot)) = opt.child.as_deref_mut() else {
+        return;
+    };
+    let objects = match std::mem::take(slot) {
+        SlotNode::Unset => Vec::new(),
+        SlotNode::Value(object) => vec![*object],
+        SlotNode::Conflicts(objects) => objects,
+    };
+    let (emptied, mut kept): (Vec<ObjectNode>, Vec<ObjectNode>) =
+        objects.into_iter().partition(ObjectNode::is_default);
+    *slot = match kept.len() {
+        0 => SlotNode::Unset,
+        1 => SlotNode::Value(Box::new(kept.remove(0))),
+        _ => SlotNode::Conflicts(kept),
+    };
+    for object in emptied {
+        lay(&mut opt.ghost, object);
     }
 }
 
