@@ -99,10 +99,10 @@ where
         if let Some(ref mut child) = self.child {
             // A removal above this optional empties its child as an unset
             // does, so a `union!` child drops its emptied members here too,
-            // and an object (`record!`, `union!`) it emptied leaves, as on
-            // an unset. An emptied leaf value stays.
+            // and a child it emptied, object or leaf value, leaves, as on an
+            // unset.
             child.redundant_by_optional(version, conservative);
-            if L::IS_OBJECT && child.is_default() {
+            if child.is_default() {
                 self.child = None;
             }
         }

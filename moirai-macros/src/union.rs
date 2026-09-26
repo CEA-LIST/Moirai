@@ -390,8 +390,6 @@ macro_rules! union {
             }
 
             impl $crate::union::held_by_optional::OptionalContent for [<$union Log>] {
-                const IS_OBJECT: ::std::primitive::bool = true;
-
                 fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
                     self.reset_children(version, conservative);
                     self.drop_emptied_children();
@@ -612,12 +610,13 @@ macro_rules! union {
 /// What an optional asks of the log it holds.
 ///
 /// An optional drops a child a removal emptied, whether the removal is its
-/// own unset or one above it, when that child is an object (a `record!` or a
-/// `union!`); an emptied leaf value is left to it. A union under an optional
-/// also drops, one at a time, each member a removal emptied (the value ST.01
-/// fixes: an optional holding the conflict `[A, B]`, unset while a write
-/// reaches `B`, serves `B` alone on every replica), where a keyed collection
-/// keeps the members of a removed key. `IsLog::redundant_by_parent` does not
+/// own unset or one above it, and whether that child is an object (a
+/// `record!` or a `union!`) or a leaf value: emptied means its log holds
+/// nothing, so a text, whose reset records the deletion, stays. A union
+/// under an optional also drops, one at a time, each member a removal
+/// emptied (the value ST.01 fixes: an optional holding the conflict
+/// `[A, B]`, unset while a write reaches `B`, serves `B` alone on every
+/// replica), where a keyed collection keeps the members of a removed key. `IsLog::redundant_by_parent` does not
 /// say who is asking, so `OptionLog` hands its removals down through this
 /// trait instead, and what the content does with them is decided by its
 /// type: nothing outside the logs carries it, and nothing is stored in
@@ -641,11 +640,6 @@ pub mod held_by_optional {
 
     /// The content of an optional: see [the module](self).
     pub trait OptionalContent: IsLog {
-        /// Whether a value of this log is an object, which leaves the
-        /// optional holding it once a removal above empties it. A leaf
-        /// value stays.
-        const IS_OBJECT: bool = false;
-
         /// A removal handed down by the optional that holds this log, its
         /// own unset or one above it. By default, as from any other parent.
         fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
@@ -654,16 +648,12 @@ pub mod held_by_optional {
     }
 
     impl<L: OptionalContent> OptionalContent for Box<L> {
-        const IS_OBJECT: bool = L::IS_OBJECT;
-
         fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
             (**self).redundant_by_optional(version, conservative);
         }
     }
 
     impl<L: OptionalContent> OptionalContent for BoxedLog<L> {
-        const IS_OBJECT: bool = L::IS_OBJECT;
-
         fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
             self.inner_mut()
                 .redundant_by_optional(version, conservative);

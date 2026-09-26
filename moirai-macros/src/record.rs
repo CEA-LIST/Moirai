@@ -222,13 +222,11 @@ macro_rules! record {
 
             }
 
-            /// A record is an object: once a removal empties it, it leaves the
-            /// optional that holds it. Its fields take the removal as from
-            /// any other parent, and an optional among them decides for its
-            /// own content first.
-            impl $crate::union::held_by_optional::OptionalContent for [<$name Log>] {
-                const IS_OBJECT: ::std::primitive::bool = true;
-            }
+            /// Once a removal empties a record, it leaves the optional that
+            /// holds it. Its fields take the removal as from any other
+            /// parent, and an optional among them decides for its own
+            /// content first.
+            impl $crate::union::held_by_optional::OptionalContent for [<$name Log>] {}
 
             /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
             /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.
