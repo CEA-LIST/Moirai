@@ -21,9 +21,12 @@
 //! - an unset optional is an absent key;
 //! - a sequence is an array in read order;
 //! - a keyed collection is a JSON object, its keys the map's own keys in key
-//!   order, and an entry whose value reads as its default is absent, which is
-//!   `UWMapLog::execute_query`'s rule (`uw_map.rs:199-210`) and therefore how
-//!   both paths spell an entry that has been removed;
+//!   order, and an entry that reads as a freshly minted value of the
+//!   collection would is absent, which is `UWMapLog::execute_query`'s rule
+//!   (`uw_map.rs:184-190`) and therefore how both paths spell an entry that
+//!   has been removed: at a key of a class with no subclass (a `record!`) an
+//!   emptied object is absent, at a key of a class with subclasses (a
+//!   `union!`, JSON's `Object` included) it stays, emptied;
 //! - an instance of a **transparent** class is the value of the one feature
 //!   the class is represented by, with no `eClass` key and no object around
 //!   it: `json.ecore`'s `Array` is the array itself and its `Object` is the
@@ -52,8 +55,10 @@
 //! allocation on a path that runs per read rather than per operation, and
 //! which cannot drift from what a minted-and-emptied feature reads.
 
+use std::collections::BTreeMap;
+
 use moirai_protocol::crdt::{eval::EvalNested, query::Read};
-use moirai_semantics::MetamodelSemantics;
+use moirai_semantics::{ClassSlot, FeatureSlot, MetamodelSemantics};
 use serde_json::{Map, Value};
 
 use crate::log::ModelLog;
@@ -114,6 +119,33 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
     read_in(sem, &Node::for_shaped(shape), shape, form)
 }
 
+/// What a freshly minted entry of a keyed collection at `site` reads as, in
+/// canonical form: the value [`read_in`]'s keyed arm leaves out.
+///
+/// It depends on how the generated runtime composes the collection's value,
+/// since `UWMapLog` compares with `V::default()` and a value log is minted
+/// with `or_default()` (`uw_map.rs:111-114`). A class with no subclass is a
+/// `record!` there (`has_codegen_polymorphic_family`, false for an
+/// instantiable class whose concrete closure is itself), and a fresh record
+/// is the object at its default: every feature unwritten, the optionals and
+/// keyed collections inside it read by their own rules. So an object a
+/// removal emptied, with nothing written after, is left out at such a key.
+/// A class with subclasses, an abstract one included, is a `union!`, which
+/// mints `Unset` and reads a held member, emptied or not, as a value: no
+/// object at all is fresh there, so an emptied member stays at its key
+/// (ST.01's keyed guard, and a JSON `Object`'s removed keys, whose value
+/// class `Json` is abstract). A leaf site's fresh child is its own log.
+fn fresh_entry(sem: &MetamodelSemantics, site: Site) -> Option<Value> {
+    if let Site::Object(Target::Class(target)) = site
+        && let Some(class) = sem.classes.get(target.index())
+        && class.instantiable
+        && class.concrete.as_ref() == [target]
+    {
+        return read_class(sem, target, &BTreeMap::new(), None, Form::Canonical);
+    }
+    read_absent(sem, Shaped::Bare(site), Form::Canonical)
+}
+
 /// One node, or `None` where the canonical form has no key at all.
 pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) -> Option<Value> {
     read_in(sem, node, shape, Form::Canonical)
@@ -137,33 +169,36 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
             Some(Value::Array(items))
         }
         (Shaped::Keyed(site), Node::Map(map)) => {
-            // `uw_map.rs:199-210`: a child is rendered only when its value
+            // `uw_map.rs:184-190`: a child is rendered only when its value
             // differs from the default of its own log, and it must be, because
             // `UWMap::Remove` is not a tombstone — it leaves the child in the
-            // map and resets it, so reading as the default *is* how a keyed
-            // collection spells removed. The comparison is against what a
-            // freshly minted child at this site reads, computed once.
+            // map and resets it, so reading as a freshly minted child *is* how
+            // a keyed collection spells removed. The comparison is against
+            // what a freshly minted child of the collection's composition
+            // reads, computed once ([`fresh_entry`]).
             //
-            // It is deliberately not `Node::is_default`. A `String` at a key,
-            // removed, reads `""` on both paths: `redundant_by_parent` on an
-            // `EventGraph` leaves the reset behind, so neither log is at its
-            // default and neither read-out drops the key. A `Number` at a key,
-            // removed, reads `0` on both paths for the same reason the
-            // generated union does — `JsonKindValue::Value(Number(0))` is not
-            // `JsonKindValue::Unset`. Only a leaf-valued map, whose child log
-            // really does empty, loses the key.
+            // It is deliberately not `Node::is_default`: emptiness here is
+            // read, not structural. A `String` at a key, removed, reads `""`
+            // on both paths: `redundant_by_parent` on an `EventGraph` leaves
+            // the reset behind, so neither log is at its default and neither
+            // read-out drops the key. An object of a class with no subclass,
+            // whose record still holds an emptied key of its own, reads as a
+            // fresh one does and is dropped, as `UWMapLog` drops a `record!`
+            // whose own map still holds a key but reads `{}`.
             //
-            // In the identified form the comparison drops exactly the entries
-            // the canonical form drops: an object site's fresh child reads as
-            // nothing in both forms, and a child that reads as nothing in one
-            // reads as nothing in the other.
-            let default = read_absent(sem, Shaped::Bare(site), form);
+            // In the identified form the comparison is made on the canonical
+            // read, so both forms drop exactly the same entries.
+            let fresh = fresh_entry(sem, site);
             let mut entries = Map::new();
             for (key, child) in map.children() {
-                let value = read_in(sem, child, Shaped::Bare(site), form);
-                if value == default {
+                let canonical = read_in(sem, child, Shaped::Bare(site), Form::Canonical);
+                if canonical == fresh {
                     continue;
                 }
+                let value = match form {
+                    Form::Canonical => canonical,
+                    Form::Identified => read_in(sem, child, Shaped::Bare(site), form),
+                };
                 if let Some(value) = value {
                     entries.insert(key.to_key(Some(sem)), value);
                 }
@@ -237,8 +272,21 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
 /// feature with nothing to show leaves nothing to show. Every other class
 /// carries at least its `eClass`.
 fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Option<Value> {
+    let identity = (form == Form::Identified).then(|| object.identity());
+    read_class(sem, object.class(), object.fields(), identity, form)
+}
+
+/// An object of `class` holding `fields`, as [`read_object`] reads it;
+/// `identity` is carried in the identified form only.
+fn read_class(
+    sem: &MetamodelSemantics,
+    class_slot: ClassSlot,
+    fields: &BTreeMap<FeatureSlot, Node>,
+    identity: Option<String>,
+    form: Form,
+) -> Option<Value> {
     let mut out = Map::new();
-    let Some(class) = sem.classes.get(object.class().index()) else {
+    let Some(class) = sem.classes.get(class_slot.index()) else {
         return Some(Value::Object(out));
     };
 
@@ -249,9 +297,9 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Opt
     // an `eClass` to name. The read-out says the same thing.
     if let Some(slot) = class.transparent {
         let (name, _, _) = class.visible.get(slot.index())?;
-        let (_, rule) = visible(sem, object.class(), slot)?;
+        let (_, rule) = visible(sem, class_slot, slot)?;
         let shape = shaped(rule).ok()?;
-        let value = match object.fields().get(&slot) {
+        let value = match fields.get(&slot) {
             Some(node) => read_in(sem, node, shape, form),
             None => read_absent(sem, shape, form),
         };
@@ -263,20 +311,24 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Opt
                 let mut record = Map::new();
                 record.insert(ECLASS.to_string(), Value::String(class.name.to_string()));
                 record.insert(name.to_string(), value);
-                record.insert(ID.to_string(), Value::String(object.identity()));
+                if let Some(identity) = identity {
+                    record.insert(ID.to_string(), Value::String(identity));
+                }
                 Value::Object(record)
             }),
         };
     }
 
     out.insert(ECLASS.to_string(), Value::String(class.name.to_string()));
-    if form == Form::Identified {
-        out.insert(ID.to_string(), Value::String(object.identity()));
+    if form == Form::Identified
+        && let Some(identity) = identity
+    {
+        out.insert(ID.to_string(), Value::String(identity));
     }
 
     for (slot, (name, _owner, _declared)) in class.visible.iter().enumerate() {
-        let slot = moirai_semantics::FeatureSlot(slot as u16);
-        let Some((_, rule)) = visible(sem, object.class(), slot) else {
+        let slot = FeatureSlot(slot as u16);
+        let Some((_, rule)) = visible(sem, class_slot, slot) else {
             continue;
         };
         // A feature the interpreted path does not merge carries no value and
@@ -284,7 +336,7 @@ fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Opt
         let Ok(shape) = shaped(rule) else {
             continue;
         };
-        let value = match object.fields().get(&slot) {
+        let value = match fields.get(&slot) {
             Some(node) => read_in(sem, node, shape, form),
             None => read_absent(sem, shape, form),
         };
