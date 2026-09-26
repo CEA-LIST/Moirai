@@ -371,14 +371,10 @@ macro_rules! union {
                     }
                 }
 
+                // Under an optional the union also drops the members the
+                // removal emptied: `OptionalContent::redundant_by_optional`.
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
-                    // Asked before descending, so that a union of this type
-                    // further down is not taken for the optional's child.
-                    let held_by_optional = $crate::union::held_by_optional::claim::<Self>();
                     self.reset_children(version, conservative);
-                    if held_by_optional {
-                        self.drop_emptied_children();
-                    }
                 }
 
                 // TODO: structurally its Unset, semantically not necessarily, so we may want to split this into two methods
@@ -390,6 +386,15 @@ macro_rules! union {
                             .iter()
                             .all(Self::child_is_default),
                     }
+                }
+            }
+
+            impl $crate::union::held_by_optional::OptionalContent for [<$union Log>] {
+                const IS_OBJECT: ::std::primitive::bool = true;
+
+                fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
+                    self.reset_children(version, conservative);
+                    self.drop_emptied_children();
                 }
             }
 
@@ -430,7 +435,7 @@ macro_rules! union {
                 /// Drop every child a removal left at its default, keeping
                 /// those a concurrent write kept.
                 ///
-                /// Only under an optional (`moirai_macros::union::held_by_optional`):
+                /// Only under an optional ([`OptionalContent`](moirai_macros::union::held_by_optional::OptionalContent)):
                 /// an emptied child leaves an optional, and so, one at a
                 /// time, does an emptied member of a conflict, whichever of
                 /// the removal and a concurrent write to the other member a
@@ -604,59 +609,78 @@ macro_rules! union {
     };
 }
 
-/// Whether a union is being reset as the child an optional holds.
+/// What an optional asks of the log it holds.
 ///
-/// An optional drops a child a removal emptied, and a union under an
-/// optional drops, for the same reason, each member a removal emptied (the
-/// value ST.01 fixes: an optional holding the conflict `[A, B]`, unset while a
-/// write reaches `B`, serves `B` alone on every replica). A keyed collection
-/// keeps the members of a removed key, so the union cannot decide this from
-/// its own reset: it has to know its owner. `IsLog::redundant_by_parent`
-/// does not say who is asking, and `OptionLog` knows its child only as an
-/// `IsLog`, so the optional says it here, for the length of the one call,
-/// and the union of that type (directly, or behind `Box` or `BoxedLog`)
-/// claims it before handing the removal further down. Nothing is stored in
+/// An optional drops a child a removal emptied, whether the removal is its
+/// own unset or one above it, when that child is an object (a `record!` or a
+/// `union!`); an emptied leaf value is left to it. A union under an optional
+/// also drops, one at a time, each member a removal emptied (the value ST.01
+/// fixes: an optional holding the conflict `[A, B]`, unset while a write
+/// reaches `B`, serves `B` alone on every replica), where a keyed collection
+/// keeps the members of a removed key. `IsLog::redundant_by_parent` does not
+/// say who is asking, so `OptionLog` hands its removals down through this
+/// trait instead, and what the content does with them is decided by its
+/// type: nothing outside the logs carries it, and nothing is stored in
 /// either log, so the state they serialize is unchanged.
-#[doc(hidden)]
+///
+/// `record!` and `union!` implement it, `Box` and `BoxedLog` forward it to
+/// what they hold, and the leaf logs take the defaults. `OptionLog` holds
+/// only a log that implements it, so a wrapper between an optional and its
+/// content either forwards it too or does not compile; it cannot silently
+/// lose the rule.
 pub mod held_by_optional {
-    use std::{any::TypeId, cell::Cell};
+    use moirai_protocol::{
+        clock::version_vector::Version,
+        crdt::replicated_data_type::ReplicatedDataType,
+        state::{
+            graph_log::GraphLog,
+            log::{BoxedLog, IsLog},
+            po_log::POLog,
+        },
+    };
 
-    use moirai_protocol::state::log::{BoxedLog, IsLog};
+    /// The content of an optional: see [the module](self).
+    pub trait OptionalContent: IsLog {
+        /// Whether a value of this log is an object, which leaves the
+        /// optional holding it once a removal above empties it. A leaf
+        /// value stays.
+        const IS_OBJECT: bool = false;
 
-    thread_local! {
-        /// The type of the child an optional is resetting, until claimed.
-        static RESETTING: Cell<Option<TypeId>> = const { Cell::new(None) };
-    }
-
-    /// Puts back what was marked before, however `reset` returns.
-    struct Restore(Option<TypeId>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            RESETTING.with(|marked| marked.set(self.0));
+        /// A removal handed down by the optional that holds this log, its
+        /// own unset or one above it. By default, as from any other parent.
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            self.redundant_by_parent(version, conservative);
         }
     }
 
-    /// Run `reset`, an optional handing a removal to its child of type `L`,
-    /// with that child marked as held by an optional.
-    pub fn resetting<L: 'static, R>(reset: impl FnOnce() -> R) -> R {
-        let _restore = Restore(RESETTING.with(|marked| marked.replace(Some(TypeId::of::<L>()))));
-        reset()
+    impl<L: OptionalContent> OptionalContent for Box<L> {
+        const IS_OBJECT: bool = L::IS_OBJECT;
+
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            (**self).redundant_by_optional(version, conservative);
+        }
     }
 
-    /// Whether the union `U` is the child an optional is resetting; the mark
-    /// is taken, so no union below it answers yes for the same call.
-    pub fn claim<U: IsLog + 'static>() -> bool {
-        RESETTING.with(|marked| {
-            let held = marked.get().is_some_and(|child| {
-                child == TypeId::of::<U>()
-                    || child == TypeId::of::<Box<U>>()
-                    || child == TypeId::of::<BoxedLog<U>>()
-            });
-            if held {
-                marked.set(None);
-            }
-            held
-        })
+    impl<L: OptionalContent> OptionalContent for BoxedLog<L> {
+        const IS_OBJECT: bool = L::IS_OBJECT;
+
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            self.inner_mut()
+                .redundant_by_optional(version, conservative);
+        }
+    }
+
+    impl<O, U> OptionalContent for POLog<O, U>
+    where
+        O: ReplicatedDataType,
+        POLog<O, U>: IsLog,
+    {
+    }
+
+    impl<O> OptionalContent for GraphLog<O>
+    where
+        O: ReplicatedDataType,
+        GraphLog<O>: IsLog,
+    {
     }
 }
