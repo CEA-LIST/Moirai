@@ -2003,8 +2003,14 @@ fn lay(ghost: &mut Vec<ObjectNode>, object: ObjectNode) {
 /// delivered first: an unset that arrives after the write finds the emptied
 /// member here, one that arrives before it has already taken the whole child
 /// out, and the write brings back only its own class ([`revive`]).
-/// `union!` drops the same members under `OptionLog`, so both runtimes serve
-/// one document. A leaf child holds no object and is left to its optional.
+/// The generated runtime drops the same objects through `OptionalContent`: a
+/// `union!` under `OptionLog` its emptied members (an optional containment of
+/// an abstract class, which ST.01's twin compares), and `OptionLog` an
+/// emptied `record!` child after a removal above it (one of a concrete
+/// class, which ST.02's twin compares). Those twins are where both runtimes
+/// are held to one document. A leaf child holds no object and is left to its
+/// optional; an optional attribute emptied by a removal above is not held to
+/// the generated runtime's document.
 fn shed(opt: &mut OptNode) {
     let Some(Node::Slot(slot)) = opt.child.as_deref_mut() else {
         return;
