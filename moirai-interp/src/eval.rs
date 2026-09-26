@@ -22,11 +22,11 @@
 //! - a sequence is an array in read order;
 //! - a keyed collection is a JSON object, its keys the map's own keys in key
 //!   order, and an entry that reads as a freshly minted value of the
-//!   collection would is absent, which is `UWMapLog::execute_query`'s rule
+//!   collection is absent, which is `UWMapLog::execute_query`'s rule
 //!   (`uw_map.rs:184-190`) and therefore how both paths spell an entry that
 //!   has been removed: at a key of a class with no subclass (a `record!`) an
 //!   emptied object is absent, at a key of a class with subclasses (a
-//!   `union!`, JSON's `Object` included) it stays, emptied;
+//!   `union!`, the values of JSON's `Object` included) it stays, emptied;
 //! - an instance of a **transparent** class is the value of the one feature
 //!   the class is represented by, with no `eClass` key and no object around
 //!   it: `json.ecore`'s `Array` is the array itself and its `Object` is the
@@ -119,8 +119,8 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
     read_in(sem, &Node::for_shaped(shape), shape, form)
 }
 
-/// What a freshly minted entry of a keyed collection at `site` reads as, in
-/// canonical form: the value [`read_in`]'s keyed arm leaves out.
+/// What a freshly minted entry of a keyed collection at `site` reads as in
+/// `form`, with no identity: the value [`read_in`]'s keyed arm leaves out.
 ///
 /// It depends on how the generated runtime composes the collection's value,
 /// since `UWMapLog` compares with `V::default()` and a value log is minted
@@ -135,15 +135,48 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
 /// object at all is fresh there, so an emptied member stays at its key
 /// (ST.01's keyed guard, and a JSON `Object`'s removed keys, whose value
 /// class `Json` is abstract). A leaf site's fresh child is its own log.
-fn fresh_entry(sem: &MetamodelSemantics, site: Site) -> Option<Value> {
+///
+/// The fresh object holds no object and no entry anywhere below it: its
+/// slots and optionals are empty, its sequences and keyed collections too.
+/// Reading it therefore never asks for another fresh entry, as long as the
+/// keyed arm asks only for a collection that holds a child, which is what
+/// ends the recursion through a class whose keyed collection holds its own
+/// class (`Dir.children` of `Dir`). It also carries no identity in either
+/// form, which is what [`reads_as_fresh`] relies on.
+fn fresh_entry(sem: &MetamodelSemantics, site: Site, form: Form) -> Option<Value> {
     if let Site::Object(Target::Class(target)) = site
         && let Some(class) = sem.classes.get(target.index())
         && class.instantiable
         && class.concrete.as_ref() == [target]
     {
-        return read_class(sem, target, &BTreeMap::new(), None, Form::Canonical);
+        return read_class(sem, target, &BTreeMap::new(), None, form);
     }
-    read_absent(sem, Shaped::Bare(site), Form::Canonical)
+    read_absent(sem, Shaped::Bare(site), form)
+}
+
+/// Whether a keyed entry read in `form` is `fresh` ([`fresh_entry`] in the
+/// same form), which is whether its canonical read is the canonical fresh
+/// entry.
+///
+/// In the canonical form that is equality. In the identified form it is
+/// equality once the entry's own identity is set aside: the fresh entry is
+/// the record of its class with no identity, and below it holds nothing an
+/// identity or a transparent record could be added to (an absent key, `[]`,
+/// `{}` or a leaf, each of which reads the same in both forms). So the
+/// identified form decides on the one read it builds anyway, instead of
+/// reading every kept entry's subtree a second time in canonical form at
+/// every keyed level.
+fn reads_as_fresh(value: &Option<Value>, fresh: &Option<Value>, form: Form) -> bool {
+    match (form, value, fresh) {
+        (Form::Identified, Some(Value::Object(entry)), Some(Value::Object(fresh))) => {
+            let own = usize::from(entry.contains_key(ID));
+            entry.len() == fresh.len() + own
+                && fresh
+                    .iter()
+                    .all(|(name, value)| entry.get(name) == Some(value))
+        }
+        _ => value == fresh,
+    }
 }
 
 /// One node, or `None` where the canonical form has no key at all.
@@ -175,30 +208,31 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
             // map and resets it, so reading as a freshly minted child *is* how
             // a keyed collection spells removed. The comparison is against
             // what a freshly minted child of the collection's composition
-            // reads, computed once ([`fresh_entry`]).
+            // reads ([`fresh_entry`]).
             //
             // It is deliberately not `Node::is_default`: emptiness here is
-            // read, not structural. A `String` at a key, removed, reads `""`
-            // on both paths: `redundant_by_parent` on an `EventGraph` leaves
-            // the reset behind, so neither log is at its default and neither
-            // read-out drops the key. An object of a class with no subclass,
+            // read, not structural. An object of a class with no subclass,
             // whose record still holds an emptied key of its own, reads as a
             // fresh one does and is dropped, as `UWMapLog` drops a `record!`
-            // whose own map still holds a key but reads `{}`.
+            // whose own map still holds a key but reads `{}`. A removed key
+            // of a JSON `Object` stays whatever its emptied value reads, `""`
+            // for a JSON string included, because its value class `Json` has
+            // subclasses and no object at all is fresh there. A text
+            // attribute at the key of a leaf-valued map is a leaf log of its
+            // own, and a removed one that reads `""` is dropped.
             //
-            // In the identified form the comparison is made on the canonical
-            // read, so both forms drop exactly the same entries.
-            let fresh = fresh_entry(sem, site);
+            // The fresh entry is computed once, and only for a collection
+            // that holds a child: an empty one has nothing to compare, and
+            // asking for it there would recurse without end through a class
+            // whose keyed collection holds its own class.
+            let mut fresh: Option<Option<Value>> = None;
             let mut entries = Map::new();
             for (key, child) in map.children() {
-                let canonical = read_in(sem, child, Shaped::Bare(site), Form::Canonical);
-                if canonical == fresh {
+                let value = read_in(sem, child, Shaped::Bare(site), form);
+                let fresh = fresh.get_or_insert_with(|| fresh_entry(sem, site, form));
+                if reads_as_fresh(&value, fresh, form) {
                     continue;
                 }
-                let value = match form {
-                    Form::Canonical => canonical,
-                    Form::Identified => read_in(sem, child, Shaped::Bare(site), form),
-                };
                 if let Some(value) = value {
                     entries.insert(key.to_key(Some(sem)), value);
                 }
