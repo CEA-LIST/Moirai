@@ -1995,7 +1995,8 @@ fn lay(ghost: &mut Vec<ObjectNode>, object: ObjectNode) {
 }
 
 /// Take out of an optional's child every object a removal left empty, into
-/// the ghost, and keep the objects that still hold something.
+/// the ghost, and keep the objects that still hold something; take out a
+/// leaf child the removal left empty.
 ///
 /// An emptied child leaves the optional ([`bury`]); this is the same rule one
 /// object at a time, so a conflict whose other member a concurrent write kept
@@ -2007,12 +2008,20 @@ fn lay(ghost: &mut Vec<ObjectNode>, object: ObjectNode) {
 /// `union!` under `OptionLog` its emptied members (an optional containment of
 /// an abstract class, which ST.01's twin compares), and `OptionLog` an
 /// emptied `record!` child after a removal above it (one of a concrete
-/// class, which ST.02's twin compares). Those twins are where both runtimes
-/// are held to one document. A leaf child holds no object and is left to its
-/// optional; an optional attribute emptied by a removal above is not held to
-/// the generated runtime's document.
+/// class, which ST.02's twin compares), and `OptionLog` an emptied leaf
+/// child after a removal above it (an optional attribute, which ST.04's twin
+/// compares for every leaf kind). Those twins are where both runtimes are
+/// held to one document. A leaf child holds no object, so nothing of it goes
+/// to the ghost; it is emptied when its log holds nothing, which a text's
+/// reset, recording the deletion, never leaves.
 fn shed(opt: &mut OptNode) {
-    let Some(Node::Slot(slot)) = opt.child.as_deref_mut() else {
+    let Some(child) = opt.child.as_deref_mut() else {
+        return;
+    };
+    let Node::Slot(slot) = child else {
+        if child.is_default() {
+            opt.child = None;
+        }
         return;
     };
     let objects = match std::mem::take(slot) {
