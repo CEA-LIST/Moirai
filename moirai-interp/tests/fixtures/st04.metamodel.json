@@ -1,0 +1,1330 @@
+{
+  "classes": {
+    "Box": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "single"
+            }
+          },
+          "name": "k",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "declared",
+            "unique": "notApplicable"
+          },
+          "required": true
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "text"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "text",
+          "provenance": {
+            "leaf": "declared",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i8",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "byte",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i16",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "short",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "int",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i64",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "long",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "float",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "f32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "float",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "float",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "f64",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "double",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "bool",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "flag",
+              "wins": "enable"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "ew",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "dw-flag",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "bool",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "flag",
+              "wins": "disable"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "dw",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "ch",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "mv-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "mv",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "lww-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "lww"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "lww",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "fair-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "fair"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "fair",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "po-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "po"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "po",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "to-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "to"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "to",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "emv",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "lww-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "lww"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "elww",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "fair-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "fair"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "efair",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "po-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "po"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "epo",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "to-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "to"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "eto",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        }
+      ],
+      "containments": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "containment",
+            "shape": {
+              "kind": "optional"
+            },
+            "target": "Mid"
+          },
+          "name": "mid",
+          "ordered": true,
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "Mid"
+        }
+      ],
+      "references": [],
+      "superTypes": []
+    },
+    "Holder": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "single"
+            }
+          },
+          "name": "tick",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "declared",
+            "unique": "notApplicable"
+          },
+          "required": true
+        }
+      ],
+      "containments": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "containment",
+            "shape": {
+              "kind": "optional"
+            },
+            "target": "Box"
+          },
+          "name": "inner",
+          "ordered": true,
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "Box"
+        }
+      ],
+      "references": [],
+      "superTypes": []
+    },
+    "Mid": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "single"
+            }
+          },
+          "name": "k",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "declared",
+            "unique": "notApplicable"
+          },
+          "required": true
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "text"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "text",
+          "provenance": {
+            "leaf": "declared",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i8",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "byte",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i16",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "short",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "int",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "int",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "i64",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "long",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "float",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "f32",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "float",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "float",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "counter",
+              "num": "f64",
+              "resettable": true
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "double",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "bool",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "flag",
+              "wins": "enable"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "ew",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "dw-flag",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "bool",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "flag",
+              "wins": "disable"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "dw",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "ch",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "mv-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "mv",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "lww-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "lww"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "lww",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "fair-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "fair"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "fair",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "po-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "po"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "po",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "to-register",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "register",
+              "tie": "to"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "to",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": null,
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "emv",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "lww-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "lww"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "elww",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "fair-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "fair"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "efair",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "po-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "po"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "epo",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        },
+        {
+          "annotation": "to-register",
+          "enum": "Color",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Color",
+              "kind": "enum",
+              "tie": "to"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "eto",
+          "provenance": {
+            "leaf": "annotation",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        }
+      ],
+      "containments": [],
+      "references": [],
+      "superTypes": []
+    }
+  },
+  "enums": {
+    "Color": [
+      "red",
+      "green",
+      "blue"
+    ]
+  },
+  "formatVersion": 2,
+  "nsURI": "http://www.example.org/st04",
+  "package": "st04",
+  "rootClasses": [
+    "Holder"
+  ]
+}
