@@ -388,19 +388,22 @@ fn main() {
     // Parse PEERS=id:host:port,..., or the same text from PEERS_FILE, which
     // the harness writes once every node of its session has reported.
     let peers_str = match &peers_file {
-        Some(path) => await_peers_file(path).unwrap_or_else(|| {
-            eprintln!(
-                "[{replica_id}] PEERS_FILE `{}` did not appear within {} s",
-                path.display(),
-                PEERS_FILE_TIMEOUT.as_secs()
-            );
-            std::process::exit(1);
-        }),
+        Some(path) => match await_peers_file(path) {
+            Some(text) => text.trim().to_string(),
+            None => {
+                eprintln!(
+                    "[{replica_id}] PEERS_FILE `{}` did not appear within {} s",
+                    path.display(),
+                    PEERS_FILE_TIMEOUT.as_secs()
+                );
+                std::process::exit(1);
+            }
+        },
         None => env::var("PEERS").unwrap_or_default(),
     };
     let mut peer_addresses: HashMap<String, String> = HashMap::default();
     let mut all_members: Vec<String> = vec![replica_id.clone()];
-    for spec in peers_str.trim().split(',').filter(|s| !s.is_empty()) {
+    for spec in peers_str.split(',').filter(|s| !s.is_empty()) {
         let parts: Vec<&str> = spec.split(':').collect();
         if parts.len() >= 3 {
             let peer_id = parts[0].to_string();
