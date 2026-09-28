@@ -30,9 +30,8 @@ mod si01;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -42,6 +41,10 @@ use moirai_semantics::metamodel_digest;
 use serde_json::{Value, json};
 
 use si01::*;
+
+// NW.02: nodes are started on ports they bind themselves and report.
+#[path = "nw02/launch.rs"]
+mod launch;
 
 // ---------------------------------------------------------------------------
 // The oracle's own helper
@@ -249,14 +252,6 @@ fn node_binary() -> Result<PathBuf, String> {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .expect("an ephemeral port")
-        .local_addr()
-        .expect("a bound address")
-        .port()
-}
-
 struct Node {
     id: String,
     http: u16,
@@ -309,39 +304,31 @@ impl Cluster {
             fs::write(metamodels.join(format!("{name}.json")), text)
                 .map_err(|err| err.to_string())?;
         }
-        let ports: Vec<(u16, u16)> = ids.iter().map(|_| (free_port(), free_port())).collect();
-        let mut nodes = Vec::new();
-        for (index, id) in ids.iter().enumerate() {
-            let peers: Vec<String> = ids
-                .iter()
-                .enumerate()
-                .filter(|(other, _)| *other != index)
-                .map(|(other, peer)| format!("{peer}:127.0.0.1:{}", ports[other].0))
-                .collect();
-            let log = scratch.join(format!("{id}.log"));
-            let out = fs::File::create(&log).map_err(|err| err.to_string())?;
-            let err_out = out.try_clone().map_err(|err| err.to_string())?;
-            let child = Command::new(binary)
-                .env("REPLICA_ID", id)
-                .env("LISTEN_PORT", ports[index].0.to_string())
-                .env("HTTP_PORT", ports[index].1.to_string())
-                .env("PEERS", peers.join(","))
-                .env("LOG_ID", "5101de7a5101de7a5101de7a5101de7a")
-                .env("METAMODEL_DIR", &metamodels)
-                .env_remove("BOOTNODE_URL")
-                .env_remove("DASHBOARD_URL")
-                .env_remove("METAMODEL_PATH")
-                .stdout(Stdio::from(out))
-                .stderr(Stdio::from(err_out))
-                .spawn()
-                .map_err(|err| format!("spawning {id}: {err}"))?;
-            nodes.push(Node {
-                id: id.to_string(),
-                http: ports[index].1,
-                child,
-                log,
-            });
-        }
+        // NW.02: no port is chosen here. Each node binds what the kernel
+        // gives it and reports it; its peers are then written in the order
+        // and the text `PEERS` had before.
+        let metamodels = metamodels.to_string_lossy().into_owned();
+        let specs: Vec<launch::NodeSpec> = ids
+            .iter()
+            .map(|id| {
+                launch::NodeSpec::new(
+                    id,
+                    &[
+                        ("LOG_ID", "5101de7a5101de7a5101de7a5101de7a"),
+                        ("METAMODEL_DIR", metamodels.as_str()),
+                    ],
+                )
+            })
+            .collect();
+        let nodes: Vec<Node> = launch::launch(binary, &scratch, &specs)?
+            .into_iter()
+            .map(|node| Node {
+                id: node.id,
+                http: node.http,
+                child: node.child,
+                log: node.log,
+            })
+            .collect();
         let cluster = Cluster {
             nodes,
             _scratch: scratch,
@@ -399,11 +386,23 @@ impl Cluster {
     fn await_health(&self) -> Result<(), String> {
         for (index, node) in self.nodes.iter().enumerate() {
             let deadline = Instant::now() + HEALTH_TIMEOUT;
-            while !matches!(self.get(index, "/api/health"), Ok((200, _))) {
+            loop {
+                // NW.02: the answer must come from the node this port was
+                // reported by, never from whichever process holds the port.
+                if let Ok((200, body)) = self.get(index, "/api/health") {
+                    if body["replica_id"] == json!(node.id) {
+                        break;
+                    }
+                    return Err(format!(
+                        "the HTTP port {} reported by {} answered as {body}",
+                        node.http, node.id
+                    ));
+                }
                 if Instant::now() > deadline {
                     return Err(format!(
-                        "{} never answered /api/health:\n{}",
+                        "{} never answered /api/health; start-up alarms:\n{}\nlast log lines:\n{}",
                         node.id,
+                        launch::alarms(&node.log),
                         node.tail()
                     ));
                 }

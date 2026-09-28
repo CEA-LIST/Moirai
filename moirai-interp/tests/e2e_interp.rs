@@ -70,9 +70,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -83,6 +82,10 @@ use moirai_semantics::{
     MergeRule, MetamodelSemantics, Shape, from_descriptor, metamodel_digest,
 };
 use serde_json::{Value, json};
+
+// NW.02: nodes are started on ports they bind themselves and report.
+#[path = "nw02/launch.rs"]
+mod launch;
 
 /// The two descriptors, `formatVersion` 2, byte-identical to
 /// `arachne/examples/`. Checked in beside this crate for the same reason
@@ -136,14 +139,6 @@ fn node_binary() -> Result<PathBuf, String> {
 /// so and returns green; a suite that skipped silently is worse than a red one.
 fn skip(scenario: &str, why: &str) {
     eprintln!("\nE2E-SKIP {scenario}: {why}");
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .expect("an ephemeral port")
-        .local_addr()
-        .expect("a bound address")
-        .port()
 }
 
 /// One replica process and how to reach it.
@@ -212,42 +207,35 @@ impl Cluster {
             }
         }
 
-        let ports: Vec<(u16, u16)> = ids.iter().map(|_| (free_port(), free_port())).collect();
-        let mut replicas = Vec::new();
-        for (index, id) in ids.iter().enumerate() {
-            let peers: Vec<String> = ids
-                .iter()
-                .enumerate()
-                .filter(|(other, _)| *other != index)
-                .map(|(other, peer)| format!("{peer}:127.0.0.1:{}", ports[other].0))
-                .collect();
-            let log = scratch.join(format!("{id}.log"));
-            let out = fs::File::create(&log).map_err(|err| err.to_string())?;
-            let err_out = out.try_clone().map_err(|err| err.to_string())?;
-            let child = Command::new(binary)
-                .env("REPLICA_ID", id)
-                .env("LISTEN_PORT", ports[index].0.to_string())
-                .env("HTTP_PORT", ports[index].1.to_string())
-                .env("PEERS", peers.join(","))
-                // One default log for the session: replicas minting their own
-                // would host different logs and refuse each other's events.
-                .env("LOG_ID", "de7a17de7a17de7a17de7a17de7a17de")
-                .env("METAMODEL_DIR", scratch.join(format!("metamodels-{id}")))
-                // Unset on purpose: no bootnode, no dashboard, no discovery.
-                .env_remove("BOOTNODE_URL")
-                .env_remove("DASHBOARD_URL")
-                .env_remove("METAMODEL_PATH")
-                .stdout(Stdio::from(out))
-                .stderr(Stdio::from(err_out))
-                .spawn()
-                .map_err(|err| format!("spawning {id}: {err}"))?;
-            replicas.push(Replica {
-                id: id.to_string(),
-                http: ports[index].1,
-                child,
-                log,
-            });
-        }
+        // NW.02: no port is chosen here. Each replica binds what the kernel
+        // gives it and reports it; its peers are then written in the order
+        // and the text `PEERS` had before.
+        let specs: Vec<launch::NodeSpec> = ids
+            .iter()
+            .map(|id| {
+                let metamodels = scratch.join(format!("metamodels-{id}"));
+                let metamodels = metamodels.to_string_lossy().into_owned();
+                launch::NodeSpec::new(
+                    id,
+                    &[
+                        // One default log for the session: replicas minting
+                        // their own would host different logs and refuse
+                        // each other's events.
+                        ("LOG_ID", "de7a17de7a17de7a17de7a17de7a17de"),
+                        ("METAMODEL_DIR", metamodels.as_str()),
+                    ],
+                )
+            })
+            .collect();
+        let replicas: Vec<Replica> = launch::launch(binary, &scratch, &specs)?
+            .into_iter()
+            .map(|node| Replica {
+                id: node.id,
+                http: node.http,
+                child: node.child,
+                log: node.log,
+            })
+            .collect();
 
         let cluster = Cluster {
             replicas,
@@ -292,13 +280,22 @@ impl Cluster {
         for (index, replica) in self.replicas.iter().enumerate() {
             let deadline = Instant::now() + HEALTH_TIMEOUT;
             loop {
-                if matches!(self.get(index, "/api/health"), Ok((200, _))) {
-                    break;
+                // NW.02: the answer must come from the replica this port was
+                // reported by, never from whichever process holds the port.
+                if let Ok((200, body)) = self.get(index, "/api/health") {
+                    if body["replica_id"] == json!(replica.id) {
+                        break;
+                    }
+                    return Err(format!(
+                        "the HTTP port {} reported by {} answered as {body}",
+                        replica.http, replica.id
+                    ));
                 }
                 if Instant::now() > deadline {
                     return Err(format!(
-                        "{} never answered /api/health; last log lines:\n{}",
+                        "{} never answered /api/health; start-up alarms:\n{}\nlast log lines:\n{}",
                         replica.id,
+                        launch::alarms(&replica.log),
                         replica.tail()
                     ));
                 }
