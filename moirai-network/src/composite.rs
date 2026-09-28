@@ -65,6 +65,7 @@
 //! [`DirectTransport`]: crate::direct_transport::DirectTransport
 //! [`RelayTransport`]: crate::relay_transport::RelayTransport
 
+use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -174,6 +175,23 @@ where
     ) -> TransportResult<Self> {
         Ok(Self {
             direct: DirectTransport::new(local_id, listen_port, peer_addresses)?,
+            relay: None,
+            relay_endpoint: None,
+            dials: HashMap::default(),
+        })
+    }
+
+    /// [`new`], over a replication listener the caller has already bound:
+    /// the arguments are [`DirectTransport::with_listener`]'s.
+    ///
+    /// [`new`]: CompositeTransport::new
+    pub fn with_listener(
+        local_id: PeerId,
+        listener: TcpListener,
+        peer_addresses: HashMap<PeerId, String>,
+    ) -> TransportResult<Self> {
+        Ok(Self {
+            direct: DirectTransport::with_listener(local_id, listener, peer_addresses)?,
             relay: None,
             relay_endpoint: None,
             dials: HashMap::default(),

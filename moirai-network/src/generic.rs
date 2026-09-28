@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Display};
+use std::net::TcpListener;
 use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(feature = "test_utils")]
@@ -1638,6 +1639,25 @@ where
         );
     }
 
+    /// [`start_http`], on a listener the caller has already bound.
+    ///
+    /// For a node started on port 0 (NW.02): the kernel chooses the port in
+    /// the bind that keeps it, so the caller can say which before the API
+    /// serves, and nobody can take the port in between. A request that
+    /// arrives before this is called waits in the listener's backlog.
+    ///
+    /// [`start_http`]: GenericNode::start_http
+    pub fn start_http_on(&self, listener: TcpListener) {
+        crate::http_api::start_http_api_on::<L::Op>(
+            listener,
+            self.replica_id.clone(),
+            self.default_log.clone(),
+            self.adapter_op_tx.clone(),
+            self.ctrl_tx.clone(),
+            Arc::clone(&self.descriptors),
+        );
+    }
+
     /// Ask `peer` for everything this node has not seen yet, log by log.
     ///
     /// The single place that turns "we have a link to `peer`" into a history
@@ -3013,6 +3033,30 @@ where
     ) -> Self {
         let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
             .expect("Failed to create TCP transport");
+        Self::with_transport_and_log_id(replica_id, members, transport, log_id)
+    }
+
+    /// [`new_with_log_id`], over a replication listener the caller has
+    /// already bound (convenience wrapper around
+    /// [`with_transport_and_log_id`]).
+    ///
+    /// For a node started on port 0 (NW.02): the caller binds, reads the port
+    /// the kernel chose, reports it, and only then learns its peers and
+    /// builds the node, so the members are the peers it was given, exactly
+    /// as with [`new_with_log_id`].
+    ///
+    /// [`new_with_log_id`]: GenericNode::new_with_log_id
+    /// [`with_transport_and_log_id`]: GenericNode::with_transport_and_log_id
+    pub fn with_listener_and_log_id(
+        replica_id: String,
+        members: &[&str],
+        listener: TcpListener,
+        peer_addresses: HashMap<String, String>,
+        log_id: LogId,
+    ) -> Self {
+        let transport =
+            CompositeTransport::with_listener(replica_id.clone(), listener, peer_addresses)
+                .expect("Failed to create TCP transport");
         Self::with_transport_and_log_id(replica_id, members, transport, log_id)
     }
 }

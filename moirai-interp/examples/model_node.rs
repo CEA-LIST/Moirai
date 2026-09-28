@@ -21,6 +21,24 @@
 //!     cargo run -p moirai-interp --features network --example model_node &
 //! ```
 //!
+//! # Ports chosen by the kernel, for test harnesses
+//!
+//! `LISTEN_PORT=0` and `HTTP_PORT=0` bind whatever port the kernel gives, in
+//! the bind that keeps it, so no other process can take it in between (NW.02).
+//! Two variables let a harness learn those ports and mesh the nodes; the
+//! docker stack sets neither, and a node with fixed ports and neither set
+//! behaves exactly as it always has.
+//!
+//! - `PORTS_FILE` — once the replication listener and, with `HTTP_PORT`, the
+//!   HTTP API are bound, and before any peer is read or dialled, the node
+//!   writes `{"replica_id", "pid", "listen_port", "http_port"}` there (the
+//!   ports it holds; `http_port` null without `HTTP_PORT`), beside the path
+//!   and renamed onto it so it appears whole
+//! - `PEERS_FILE` — the node takes its peers from that file instead of
+//!   `PEERS`, which it then ignores: the same `id:host:port,...` text,
+//!   surrounding whitespace ignored. It waits up to 60 s for the file to
+//!   appear and exits non-zero naming the path if it does not
+//!
 //! # Peer discovery
 //!
 //! Set `BOOTNODE_URL` to have the replica register with a bootnode session
@@ -30,7 +48,8 @@
 //!
 //! - `BOOTNODE_URL`   — unset means no discovery at all
 //! - `SESSION_ID`     — session to join, default `default`
-//! - `ADVERTISE_ADDR` — `host:port` peers dial, default `$HOSTNAME:$LISTEN_PORT`
+//! - `ADVERTISE_ADDR` — `host:port` peers dial, default `$HOSTNAME:<the port
+//!   the replication listener holds>`, which is `LISTEN_PORT` unless that is 0
 //! - `RECONCILE_SECS` — re-register interval, default `5`
 //!
 //! # Monitoring
@@ -139,15 +158,18 @@
 
 use std::collections::BTreeSet;
 use std::env;
+use std::ffi::OsString;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
 use moirai_network::dashboard::DashboardConfig;
 use moirai_network::discovery::DiscoveryConfig;
 use moirai_network::generic::{LogReplica, Node, ServedDescriptor};
+use moirai_network::transport::TransportError;
 use moirai_protocol::log_id::LogId;
 use moirai_semantics::{from_descriptor, metamodel_digest};
 use serde_json::{Value, json};
@@ -252,6 +274,59 @@ fn install_ops(model_id: &LogId, descriptor: &ServedDescriptor) -> Vec<ModelOp> 
     }]
 }
 
+/// How long a node told `PEERS_FILE` waits for the file to appear.
+const PEERS_FILE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A path-valued variable, unset when absent or empty.
+fn path_var(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The port a bound listener holds.
+fn bound_port(listener: &TcpListener) -> u16 {
+    listener
+        .local_addr()
+        .expect("a bound listener has a local address")
+        .port()
+}
+
+/// Write the ports report to `path`, beside it first and renamed onto it,
+/// so a reader never sees half of it.
+fn write_ports_file(
+    path: &Path,
+    replica_id: &str,
+    listen_port: u16,
+    http_port: Option<u16>,
+) -> std::io::Result<()> {
+    let report = json!({
+        "replica_id": replica_id,
+        "pid": std::process::id(),
+        "listen_port": listen_port,
+        "http_port": http_port,
+    });
+    let mut staging = OsString::from(path.as_os_str());
+    staging.push(".staging");
+    std::fs::write(&staging, report.to_string())?;
+    std::fs::rename(&staging, path)
+}
+
+/// The text of `PEERS_FILE`, once it has appeared; `None` after
+/// [`PEERS_FILE_TIMEOUT`].
+fn await_peers_file(path: &Path) -> Option<String> {
+    let deadline = Instant::now() + PEERS_FILE_TIMEOUT;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            return Some(text);
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn main() {
     let replica_id = env::var("REPLICA_ID").unwrap_or_else(|_| "replica-a".to_string());
     let listen_port: u16 = env::var("LISTEN_PORT")
@@ -259,22 +334,8 @@ fn main() {
         .parse()
         .expect("Invalid LISTEN_PORT");
     let http_port: Option<u16> = env::var("HTTP_PORT").ok().and_then(|p| p.parse().ok());
-    let peers_str = env::var("PEERS").unwrap_or_default();
-
-    // Parse PEERS=id:host:port,...
-    let mut peer_addresses: HashMap<String, String> = HashMap::default();
-    let mut all_members: Vec<String> = vec![replica_id.clone()];
-    for spec in peers_str.split(',').filter(|s| !s.is_empty()) {
-        let parts: Vec<&str> = spec.split(':').collect();
-        if parts.len() >= 3 {
-            let peer_id = parts[0].to_string();
-            let addr = format!("{}:{}", parts[1], parts[2]);
-            all_members.push(peer_id.clone());
-            peer_addresses.insert(peer_id, addr);
-        }
-    }
-
-    let member_refs: Vec<&str> = all_members.iter().map(|s| s.as_str()).collect();
+    let ports_file = path_var("PORTS_FILE");
+    let peers_file = path_var("PEERS_FILE");
 
     // The default log this replica hosts. Set, `LOG_ID` means join that log;
     // unset, a fresh id is minted and printed, which is right only for the
@@ -292,10 +353,69 @@ fn main() {
         }
     };
 
-    let mut node = Node::<ModelLog>::new_with_log_id(
+    // The replication listener, and the HTTP one when its port must be known
+    // before the API serves, are bound here, so that a port of 0 is chosen by
+    // the kernel in the bind that keeps it. A fixed HTTP port without
+    // `PORTS_FILE` is bound inside the API's thread, as it always was.
+    let listener = TcpListener::bind(format!("0.0.0.0:{listen_port}"))
+        .map_err(TransportError::from)
+        .expect("Failed to create TCP transport");
+    let listen_port = bound_port(&listener);
+    let http_listener = match http_port {
+        Some(port) if port == 0 || ports_file.is_some() => {
+            match TcpListener::bind(format!("0.0.0.0:{port}")) {
+                Ok(listener) => Some(listener),
+                Err(err) => {
+                    eprintln!("[{replica_id}] Failed to start HTTP server on port {port}: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => None,
+    };
+    let http_port = http_listener.as_ref().map(bound_port).or(http_port);
+
+    if let Some(path) = &ports_file
+        && let Err(err) = write_ports_file(path, &replica_id, listen_port, http_port)
+    {
+        eprintln!(
+            "[{replica_id}] cannot write PORTS_FILE `{}`: {err}",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Parse PEERS=id:host:port,..., or the same text from PEERS_FILE, which
+    // the harness writes once every node of its session has reported.
+    let peers_str = match &peers_file {
+        Some(path) => await_peers_file(path).unwrap_or_else(|| {
+            eprintln!(
+                "[{replica_id}] PEERS_FILE `{}` did not appear within {} s",
+                path.display(),
+                PEERS_FILE_TIMEOUT.as_secs()
+            );
+            std::process::exit(1);
+        }),
+        None => env::var("PEERS").unwrap_or_default(),
+    };
+    let mut peer_addresses: HashMap<String, String> = HashMap::default();
+    let mut all_members: Vec<String> = vec![replica_id.clone()];
+    for spec in peers_str.trim().split(',').filter(|s| !s.is_empty()) {
+        let parts: Vec<&str> = spec.split(':').collect();
+        if parts.len() >= 3 {
+            let peer_id = parts[0].to_string();
+            let addr = format!("{}:{}", parts[1], parts[2]);
+            all_members.push(peer_id.clone());
+            peer_addresses.insert(peer_id, addr);
+        }
+    }
+
+    let member_refs: Vec<&str> = all_members.iter().map(|s| s.as_str()).collect();
+
+    let mut node = Node::<ModelLog>::with_listener_and_log_id(
         replica_id.clone(),
         &member_refs,
-        listen_port,
+        listener,
         peer_addresses,
         log_id,
     );
@@ -381,8 +501,10 @@ fn main() {
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 
-    if let Some(port) = http_port {
-        node.start_http(port);
+    match (http_listener, http_port) {
+        (Some(listener), _) => node.start_http_on(listener),
+        (None, Some(port)) => node.start_http(port),
+        (None, None) => {}
     }
 
     // Discovery is opt-in. Unset `BOOTNODE_URL` and everything below behaves

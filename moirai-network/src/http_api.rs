@@ -7,6 +7,7 @@
 
 use std::fmt::Display;
 use std::io::{Cursor, Read};
+use std::net::TcpListener;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
@@ -125,9 +126,72 @@ fn start_http_api_waiting<O: NetworkOp>(
     metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
     timeout: Duration,
 ) {
+    spawn_http_api::<O>(
+        HttpBind::Port(port),
+        replica_id,
+        log_id,
+        sender,
+        ctrl,
+        metamodels,
+        timeout,
+    );
+}
+
+/// [`start_http_api`] on a listener the caller has already bound, for a node
+/// started on port 0: the kernel chose the port in the bind that keeps it, so
+/// the caller could name it before the API serves (NW.02). The start-up line
+/// names the port the listener holds.
+pub(crate) fn start_http_api_on<O: NetworkOp>(
+    listener: TcpListener,
+    replica_id: String,
+    log_id: LogId,
+    sender: Sender<Intake<O>>,
+    ctrl: Sender<ControlCmd>,
+    metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+) {
+    spawn_http_api::<O>(
+        HttpBind::Listener(listener),
+        replica_id,
+        log_id,
+        sender,
+        ctrl,
+        metamodels,
+        REPLY_TIMEOUT,
+    );
+}
+
+/// Where the API's server comes from: a port bound inside the API's thread,
+/// as it always was, or a listener bound before it.
+enum HttpBind {
+    Port(u16),
+    Listener(TcpListener),
+}
+
+fn spawn_http_api<O: NetworkOp>(
+    bind: HttpBind,
+    replica_id: String,
+    log_id: LogId,
+    sender: Sender<Intake<O>>,
+    ctrl: Sender<ControlCmd>,
+    metamodels: Arc<RwLock<Vec<ServedDescriptor>>>,
+    timeout: Duration,
+) {
     thread::spawn(move || {
-        let addr = format!("0.0.0.0:{}", port);
-        let server = Server::http(&addr).expect("Failed to start HTTP server");
+        let (server, addr) = match bind {
+            HttpBind::Port(port) => {
+                let addr = format!("0.0.0.0:{}", port);
+                let server = Server::http(&addr).expect("Failed to start HTTP server");
+                (server, addr)
+            }
+            HttpBind::Listener(listener) => {
+                let addr = listener
+                    .local_addr()
+                    .map_or_else(|err| format!("<unknown: {err}>"), |addr| addr.to_string());
+                let server =
+                    Server::from_listener(listener, None).expect("Failed to start HTTP server");
+                (server, addr)
+            }
+        };
         eprintln!("[{}] HTTP API listening on {}", replica_id, addr);
 
         let api = Api {

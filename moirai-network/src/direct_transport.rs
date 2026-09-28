@@ -87,11 +87,28 @@ where
         listen_port: u16,
         peer_addresses: HashMap<PeerId, String>,
     ) -> TransportResult<Self> {
+        let listener = TcpListener::bind(format!("0.0.0.0:{}", listen_port))?;
+        Self::with_listener(local_id, listener, peer_addresses)
+    }
+
+    /// [`new`], over a listener the caller has already bound.
+    ///
+    /// For a replica bound to port 0: the kernel chooses the port in the bind
+    /// that keeps it, the caller can read it back before building the node
+    /// (NW.02), and the port this transport announces, in its start-up line
+    /// and in every `Hello`, is the one the listener holds, never the 0 that
+    /// was asked for.
+    ///
+    /// [`new`]: DirectTransport::new
+    pub fn with_listener(
+        local_id: PeerId,
+        listener: TcpListener,
+        peer_addresses: HashMap<PeerId, String>,
+    ) -> TransportResult<Self> {
         let (incoming_tx, incoming_rx) = mpsc::channel();
 
-        // Create listener
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", listen_port))?;
         listener.set_nonblocking(true)?;
+        let listen_port = listener.local_addr()?.port();
 
         eprintln!(
             "[{}] TCP transport listening on port {}",
