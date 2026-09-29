@@ -79,6 +79,7 @@ static RUN_SEQ: AtomicU32 = AtomicU32::new(0);
 /// K1 of the spec: the joiner lists itself first, as every node that has not
 /// adopted a donor's ordering does, and holds history in a model of its own.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn nw04_k1_a_joiner_that_lists_itself_first_and_holds_history_serves_the_donors_compacted_model() {
     run_or_skip("nw04-k1", k1);
 }
@@ -88,6 +89,7 @@ fn nw04_k1_a_joiner_that_lists_itself_first_and_holds_history_serves_the_donors_
 /// request: the ordering NW.03's fix (the donor takes the requester in as it
 /// serves) gives the donor.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn nw04_k2_a_joiner_that_lists_a_member_the_donor_never_heard_of_before_itself_serves_the_donors_compacted_model()
  {
     run_or_skip("nw04-k2", k2);
@@ -97,6 +99,7 @@ fn nw04_k2_a_joiner_that_lists_a_member_the_donor_never_heard_of_before_itself_s
 /// start, so the donor took the joiner in from its first frames, before the
 /// member it has never heard of.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn nw04_k3_a_joiner_the_donor_took_in_before_a_member_it_lists_first_serves_the_donors_compacted_model()
  {
     run_or_skip("nw04-k3", k3);

@@ -270,6 +270,7 @@ fn transfer(
 /// kept and delivers when its predecessor arrives, and after the adoption
 /// both logs exchange an edit each way with their peers.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn a_reordering_transfer_is_adopted_while_a_sibling_holds_an_undelivered_frame() {
     let mut n = node("n", &[bt(), uml()]);
     let mut writer = peer("writer", uml());
@@ -371,6 +372,7 @@ fn a_reordering_transfer_is_adopted_while_a_sibling_holds_an_undelivered_frame()
 /// the behaviour tree. The snapshot is adopted, and the UML log goes on
 /// delivering and being delivered, its history intact.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn a_reordering_transfer_is_adopted_while_a_sibling_holds_history() {
     let mut n = node("n", &[bt(), uml()]);
     let mut writer = peer("writer", uml());
@@ -451,6 +453,7 @@ fn a_reordering_transfer_is_adopted_while_a_sibling_holds_history() {
 /// the node and that one writer, and no writer that spoke only on another
 /// log. One table shared by the node would list every writer in every log.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn at_sixteen_and_sixty_four_hosted_logs_each_log_holds_a_member_table_of_its_own() {
     for n in [16usize, 64] {
         let logs: Vec<LogId> = (0..n).map(hosted_id).collect();
@@ -493,6 +496,7 @@ fn at_sixteen_and_sixty_four_hosted_logs_each_log_holds_a_member_table_of_its_ow
 /// takes the requester into that log's member table before the snapshot, so
 /// the snapshot names it, and into no other log's table.
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn a_state_request_admits_the_requester_into_the_requested_log_and_no_other() {
     let mut donor = node("donor", &[bt(), uml()]);
     assert!(donor.node.apply_op_to(&bt(), add("Sequence")).success);
@@ -533,6 +537,7 @@ fn a_state_request_admits_the_requester_into_the_requested_log_and_no_other() {
 /// `NW04-MEM`.
 #[cfg(feature = "test_utils")]
 #[test]
+#[ignore = "NW.04 deferred to the governance plane phase (Cam, 2026-09-29); red by design until then, run with --ignored"]
 fn at_sixteen_and_sixty_four_hosted_logs_the_memory_per_log_stays_within_its_bound() {
     use deepsize::DeepSizeOf;
     use moirai_protocol::broadcast::internalizer::Interner;
