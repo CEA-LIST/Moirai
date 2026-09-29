@@ -1812,6 +1812,21 @@ where
             "[{}] serving a state transfer to {} for log {}: {} bytes",
             self.replica_id, requester, ours, log_bytes
         );
+        // Admit the requester before taking the snapshot. A `StateRequest` is
+        // not a protocol message and interns nothing, so without this the
+        // donor would go on stabilising, and naming in every message it sends,
+        // a member list without the joiner. Another writer that learnt the
+        // joiner only from the joiner's first edit would then have let its
+        // stable version pass what the joiner adopted, and drop that edit as
+        // stale. Interned here, the joiner is in the snapshot's member list,
+        // its row of zeros holds this node's stable version at what it adopted,
+        // and every later message of this node names it, so any writer takes
+        // it in before it can deliver an edit made after the snapshot.
+        //
+        // The table is the node's, so every hosted log grows the row on its
+        // next touch. A requester that never adopts this answer stays a silent
+        // member and holds stability for good, as any silent member does.
+        lock_interner(&self.interner).intern(requester);
         TransportMessage::StateResponse {
             snapshot: log.replica.snapshot(),
             log: LogPayload::encode(exported, &raw),
