@@ -45,8 +45,11 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   node does not host but has seen traffic for since it connected
 /// - `POST /api/models`               register a model: `{metamodel_id}` creates
 ///   one and the node mints its id; `{model_id, metamodel_id}` joins one by
-///   id and writes nothing. 409 for an id already hosted, 422 for a
-///   `metamodel_id` naming no descriptor the node holds
+///   id and writes nothing; `{model_id}` alone (or with a `null`
+///   `metamodel_id`) joins one by id and binds it to the metamodel its own
+///   history carries, listing it with a `null` `metamodel_id` until then.
+///   409 for an id already hosted, 422 for a `metamodel_id` naming no
+///   descriptor the node holds on a create, or one the node cannot read
 /// - `GET  /api/metamodels`           the descriptors the node holds, as the
 ///   application listed them
 /// - `POST /api/metamodels`           serve one more descriptor, now: the body
@@ -733,9 +736,6 @@ impl<O: NetworkOp> Api<O> {
             Ok(body) => body,
             Err(e) => return error(400, format!("Invalid JSON: {e}")),
         };
-        let Some(metamodel_id) = body.get("metamodel_id").cloned() else {
-            return error(400, "`metamodel_id` is required");
-        };
         let model_id = match body.get("model_id") {
             None | Some(serde_json::Value::Null) => None,
             Some(serde_json::Value::String(id)) => match LogId::parse(id) {
@@ -743,6 +743,14 @@ impl<O: NetworkOp> Api<O> {
                 Err(e) => return error(400, format!("`model_id`: {e}")),
             },
             Some(_) => return error(400, "`model_id` must be a string"),
+        };
+        // A join may name no metamodel: the model's own history names it.
+        // A create may not, since its opening operations are written from
+        // the descriptor.
+        let metamodel_id = match (body.get("metamodel_id").cloned(), &model_id) {
+            (Some(metamodel_id), _) => metamodel_id,
+            (None, Some(_)) => serde_json::Value::Null,
+            (None, None) => return error(400, "`metamodel_id` is required"),
         };
         match self.ask(|reply| ControlCmd::Register {
             model_id,
@@ -797,7 +805,11 @@ impl<O: NetworkOp> Api<O> {
                 // written in, which is the honest answer when the binding
                 // and the model disagree: the key would resolve, and to the
                 // wrong descriptor.
-                Some(Some(BoundDescriptor::Disputed)) | Some(None) => not_found(),
+                // Joined by id alone, and the model's history has not named
+                // its metamodel yet: nothing to serve, and no guess either.
+                Some(Some(BoundDescriptor::Disputed | BoundDescriptor::Awaiting)) | Some(None) => {
+                    not_found()
+                }
                 None => timeout(),
             },
             ModelLeaf::Op => match self.ask(|reply| ControlCmd::Hosts {

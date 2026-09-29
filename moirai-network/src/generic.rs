@@ -336,9 +336,19 @@ struct HostedLog<L: IsLog> {
 /// The metamodel a hosted log was registered under, as the application named
 /// it. Opaque here: the key is whatever `descriptor_key_fn` answered and the
 /// id is echoed back on `GET /api/models` verbatim.
+///
+/// A join by id alone names no metamodel, and its binding starts with no key
+/// and a `metamodel_id` of `null`. It is still a binding, never the absence
+/// of one: a log hosted with no binding is the default log's treatment and is
+/// answered the node's first descriptor, which for a model is a guess (the
+/// 2026-09-14 incident). The key is taken, once, from the descriptor the
+/// model's own history carries, and `metamodel_id` becomes that descriptor's
+/// listing entry; see [`GenericNode::resolve_bindings`].
 #[derive(Debug, Clone)]
 struct Binding {
-    key: String,
+    /// `None` only for a join by id alone whose history has not brought its
+    /// descriptor yet: nothing was claimed, and nothing is known.
+    key: Option<String>,
     metamodel_id: serde_json::Value,
     /// Whether this node holds the descriptor `key` names.
     state: BindingState,
@@ -387,6 +397,11 @@ enum BindingState {
     /// A *create* is never pending. A new model's opening operations are
     /// written from the descriptor, so there is nothing to write them from,
     /// and `register` refuses it as it always has.
+    ///
+    /// A join by id alone is pending with no key at all: it claimed nothing,
+    /// so the descriptor its history brings is not compared with anything and
+    /// becomes its binding. It never becomes `Foreign`; a descriptor the
+    /// application cannot describe leaves it here.
     Pending,
     /// The model brought a descriptor and it is not the one the log was
     /// joined under, or it is one the application will not serve.
@@ -1000,6 +1015,13 @@ pub enum BoundDescriptor {
     /// the binding came to be held in the first place — and looking it up
     /// would answer a descriptor for a language the model is not written in.
     Disputed,
+    /// The log was joined by id alone and its history has not brought its
+    /// descriptor yet, so this node knows no metamodel for it and says so
+    /// with a 404.
+    ///
+    /// Its own answer rather than [`Self::Unbound`], because the default
+    /// log's answer, the node's first descriptor, is a guess for a model.
+    Awaiting,
 }
 
 /// Result sent back to HTTP callers.
@@ -1321,12 +1343,15 @@ where
         let Some(adopt) = self.adopt_fn else {
             return;
         };
-        let arrived: Vec<(LogId, String, BindingState, String)> = self
+        let arrived: Vec<(LogId, Option<String>, BindingState, String)> = self
             .logs
             .iter()
             .filter_map(|(log_id, log)| {
                 let binding = log.binding.as_ref().filter(|binding| match binding.state {
-                    BindingState::Pending => true,
+                    // A keyed pending binding is never confirmed and stays
+                    // pending; a keyless one is confirmed, still pending,
+                    // only when the descriptor it brought cannot be served.
+                    BindingState::Pending => !binding.confirmed,
                     // Held is a claim until the model is heard from, and
                     // this is the hearing. Once.
                     BindingState::Held => !binding.confirmed,
@@ -1338,6 +1363,10 @@ where
             .collect();
         for (log_id, key, was, text) in arrived {
             let outcome = self.add_metamodel(text);
+            let Some(key) = key else {
+                self.bind_to_history(&log_id, outcome);
+                continue;
+            };
             let state = match &outcome {
                 Ok(served) if served.key == key => BindingState::Held,
                 _ => BindingState::Foreign,
@@ -1378,6 +1407,47 @@ where
         }
     }
 
+    /// Bind a log joined by id alone to the descriptor its own history
+    /// brought, as `add_metamodel` described it: the key is the one the
+    /// application derived from the bytes, and the listing entry becomes
+    /// what `GET /api/models` names for the model. Nothing was claimed, so
+    /// there is nothing to contradict. A descriptor that cannot be served
+    /// leaves the binding pending, reported once.
+    fn bind_to_history(&mut self, log_id: &LogId, outcome: Result<Served, ServeRefused>) {
+        let Some(binding) = self
+            .logs
+            .get_mut(log_id)
+            .and_then(|log| log.binding.as_mut())
+        else {
+            return;
+        };
+        binding.confirmed = true;
+        match outcome {
+            Ok(served) => {
+                binding.key = Some(served.key.clone());
+                binding.metamodel_id = served.listing;
+                binding.state = BindingState::Held;
+                eprintln!(
+                    "[{}] model {} was joined by its id alone and brought its own metamodel {}: \
+                     bound to it{}",
+                    self.replica_id,
+                    log_id,
+                    served.key,
+                    if served.added {
+                        ", now served here"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            Err(refused) => eprintln!(
+                "[{}] model {} was joined by its id alone and carries a descriptor that cannot \
+                 be served here, so it stays unbound: {}",
+                self.replica_id, log_id, refused
+            ),
+        }
+    }
+
     /// What `GET /api/model/{id}/metamodel` is to answer for one log:
     /// `None` when this node does not host it.
     fn bound_descriptor(&self, log_id: &LogId) -> Option<BoundDescriptor> {
@@ -1387,7 +1457,10 @@ where
             // is how it came to be held — and serving it is the whole of
             // what this state exists to prevent.
             Some(binding) if binding.state == BindingState::Foreign => BoundDescriptor::Disputed,
-            Some(binding) => BoundDescriptor::Key(binding.key.clone()),
+            Some(binding) => match &binding.key {
+                Some(key) => BoundDescriptor::Key(key.clone()),
+                None => BoundDescriptor::Awaiting,
+            },
         })
     }
 
@@ -1491,6 +1564,15 @@ where
     /// not in what it knows. The check is
     /// [`resolve_bindings`](GenericNode::resolve_bindings), which runs when
     /// the model's own history brings the descriptor it was opened with.
+    ///
+    /// # A join by id alone
+    ///
+    /// A join whose `metamodel_id` is `null` names no metamodel, and the
+    /// node picks none: the log is hosted with a keyless pending binding,
+    /// and `resolve_bindings` binds it to the descriptor its own history
+    /// carries, by delta or inside a donor's state transfer. Until then the
+    /// listing names no metamodel for it and its metamodel route answers
+    /// 404. A *create* with a `null` `metamodel_id` is refused as before.
     pub fn register(
         &mut self,
         model_id: Option<LogId>,
@@ -1500,6 +1582,9 @@ where
         else {
             return Err(RegisterRefused::NotEnabled);
         };
+        if let (Some(log_id), serde_json::Value::Null) = (&model_id, &metamodel_id) {
+            return self.join_by_id_alone(log_id.clone());
+        }
         let unknown = || RegisterRefused::UnknownMetamodel(metamodel_id.clone());
         let key = descriptor_key(&metamodel_id).ok_or_else(unknown)?;
         let held = self
@@ -1519,7 +1604,7 @@ where
         };
         self.host_log(log_id.clone())?;
         let binding = Binding {
-            key: key.clone(),
+            key: Some(key),
             metamodel_id: metamodel_id.clone(),
             state: if descriptor.is_some() {
                 BindingState::Held
@@ -1566,8 +1651,33 @@ where
         })
     }
 
+    /// Host `log_id` with a pending binding that names no metamodel; see
+    /// [`Self::register`]. Writes nothing.
+    fn join_by_id_alone(&mut self, log_id: LogId) -> Result<Registered, RegisterRefused> {
+        self.host_log(log_id.clone())?;
+        if let Some(log) = self.logs.get_mut(&log_id) {
+            log.binding = Some(Binding {
+                key: None,
+                metamodel_id: serde_json::Value::Null,
+                state: BindingState::Pending,
+                confirmed: false,
+            });
+        }
+        eprintln!(
+            "[{}] joined model {} by its id alone: waiting for its own history to name its \
+             metamodel",
+            self.replica_id, log_id
+        );
+        Ok(Registered {
+            model_id: log_id,
+            created: false,
+        })
+    }
+
     /// The hosted models as `GET /api/models` lists them: every log, with the
     /// `metamodel_id` it was registered under or `null` for the default log.
+    /// A model joined by its id alone is listed with `null` until its history
+    /// names its metamodel, and with that descriptor's listing entry after.
     ///
     /// Beside them, under `seen`, the ids of logs this node does *not* host
     /// but has seen traffic for — an added key on an object that was already
@@ -1981,6 +2091,14 @@ where
         else {
             return Ok(None);
         };
+        // Joined by id alone and not bound yet: there is no descriptor to
+        // guard with, and the node picks none.
+        let Some(key) = key else {
+            return Err(format!(
+                "model {log_id} was joined by its id alone and its metamodel has not arrived \
+                 yet: a local write waits for it"
+            ));
+        };
         // The descriptor `register` matched for this log, looked up again by
         // its key rather than remembered by index, so the guard can never be
         // handed another descriptor's text.
@@ -2239,7 +2357,11 @@ where
                     .filter(|binding| binding.state != BindingState::Held)
                     .map(|binding| binding.key.clone());
                 return Err(match pending {
-                    Some(key) => format!(
+                    Some(None) => format!(
+                        "model {log_id} was joined by its id alone and its metamodel has not \
+                         arrived yet: a local write waits for it"
+                    ),
+                    Some(Some(key)) => format!(
                         "model {log_id} was joined under metamodel {key}, which this node \
                          holds no descriptor for: the model's metamodel has not arrived yet, \
                          and a local write waits for it"

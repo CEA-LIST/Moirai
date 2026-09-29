@@ -137,7 +137,8 @@
 //! # HTTP API
 //!
 //! - `GET  /api/models`               — the hosted models
-//! - `POST /api/models`               — register a model: create, or join by id
+//! - `POST /api/models`               — register a model: create, or join by id,
+//!   with a digest or with none (the model's own history then names it)
 //! - `GET  /api/metamodels`           — the descriptors this node holds
 //! - `POST /api/metamodels`           — serve one more, now
 //! - `GET  /api/model/<id>/state`     — that model's state, in canonical form
