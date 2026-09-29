@@ -375,6 +375,8 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
 {
     let js = Json::new();
     let (mut a, mut b, mut c) = three(&json_descriptor());
+    // Every identity any replica serves at the end of steps 1 to 7, which P's
+    // must be none of (SI.01 round 6).
     let mut ever: BTreeSet<String> = BTreeSet::new();
 
     // X_k, X_j and X_g, from b, delivered everywhere.
@@ -401,8 +403,10 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
     let r_k = send!(a, js.remove("k"));
     let r_j = send!(a, js.remove("j"));
     let r_g = send!(a, js.remove("g"));
+    ever.extend(all_ids(&served(&a)));
     let l = send!(b, js.put("k", js.number(inc_float(10.0))));
     let on_b = served(&b);
+    ever.extend(all_ids(&on_b));
     assert_eq!(
         member(&on_b, "k")["value"],
         json!(11.0),
@@ -415,11 +419,14 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
     );
     a.receive(l.clone());
     c.receive(l.clone());
+    ever.extend(all_ids(&served(&c)));
 
     // T, from c, which has delivered b's four operations and no removal. On
     // a, it makes b's four stable and no removal.
     let t = send!(c, js.put("t", js.number(inc_float(1.0))));
+    ever.extend(all_ids(&served(&c)));
     let before = served(&a);
+    ever.extend(all_ids(&before));
     a.receive(t.clone());
     assert!(
         stable_through(&a, "b") >= seq(&l) && stable_through(&a, "a") < seq(&r_k),
@@ -462,6 +469,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
         &[("a", &a), ("d", &d)],
         "joiner, d after adopting a's state",
     );
+    ever.extend(all_ids(&joined));
     assert_eq!(
         joined, pruned,
         "joiner: what a serves moved across the transfer"
@@ -470,6 +478,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
     // W2: c increments j, having seen no removal; d delivers it, then a.
     let w2 = send!(c, js.put("j", js.number(inc_float(5.0))));
     let on_c = served(&c);
+    ever.extend(all_ids(&on_c));
     assert_eq!(
         member(&on_c, "j")["value"],
         json!(7.0),
@@ -482,6 +491,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
     );
     d.receive(w2.clone());
     let on_d = served(&d);
+    ever.extend(all_ids(&on_d));
     assert_eq!(
         member(&on_d, "j")["value"],
         json!(5.0),
@@ -496,11 +506,15 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
          is not in, moved its identity"
     );
     a.receive(w2.clone());
-    agreed(&[("a", &a), ("d", &d)], "joiner, after W2");
+    ever.extend(all_ids(&agreed(
+        &[("a", &a), ("d", &d)],
+        "joiner, after W2",
+    )));
 
     // Z: d increments k, having adopted R_k and L.
     let z = send!(d, js.put("k", js.number(inc_float(100.0))));
     let on_d = served(&d);
+    ever.extend(all_ids(&on_d));
     assert_eq!(
         member(&on_d, "k")["value"],
         json!(110.0),
@@ -513,7 +527,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
          keeps alive, moved its identity"
     );
     a.receive(z.clone());
-    agreed(&[("a", &a), ("d", &d)], "joiner, after Z");
+    ever.extend(all_ids(&agreed(&[("a", &a), ("d", &d)], "joiner, after Z")));
 
     // P: d puts a number under g, having adopted R_g.
     let p = send!(d, js.put("g", js.number(inc_float(9.0))));
