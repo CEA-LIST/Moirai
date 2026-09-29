@@ -82,6 +82,15 @@ type IntakeGuard<O> = (OpGuardFn<O>, ServedDescriptor);
 /// identity.
 pub type DescribeFn = fn(&str) -> Result<ServedDescriptor, String>;
 
+/// The application's name for the models created under a descriptor, or
+/// `None` for none: a create mints `<hex>_<name>` from it through
+/// [`LogId::generate_named`], and the bare `<hex>` without it. See
+/// [`GenericNode::enable_model_naming`].
+///
+/// As with [`DescribeFn`], the node reads nothing inside the descriptor: the
+/// name is whatever the application reads out of it.
+pub type NameFn = fn(&ServedDescriptor) -> Option<String>;
+
 /// The application's look inside a bound log: the descriptor's text, once
 /// the log carries one, or `None` while it does not.
 ///
@@ -292,6 +301,10 @@ where
     /// log, and the creator writes it exactly once.
     descriptor_key_fn: Option<fn(&serde_json::Value) -> Option<String>>,
     register_fn: Option<RegisterFn<L::Op>>,
+    /// The application's naming hook, installed by
+    /// [`Self::enable_model_naming`]: the name a create gives the id it
+    /// mints. `None` mints the bare form.
+    name_fn: Option<NameFn>,
     /// The application's intake guard, installed by [`Self::enable_op_guard`]:
     /// consulted for every operation an adapter submits to a *registered*
     /// log, never for the default log and never for the opening operations
@@ -1154,6 +1167,7 @@ where
             describe_fn: None,
             descriptor_key_fn: None,
             register_fn: None,
+            name_fn: None,
             op_guard_fn: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
@@ -1510,6 +1524,20 @@ where
         self.register_fn = Some(register_fn);
     }
 
+    /// Install the application's naming hook: a create under a held
+    /// descriptor mints its model's id as `<hex>_<name>`, where the name is
+    /// what `name` answers for that descriptor, filtered by
+    /// [`LogId::from_bytes_named`]. See [`NameFn`].
+    ///
+    /// Purely additive, like [`enable_registration`]: without it, or when it
+    /// answers `None`, a create mints the bare id as before. A join is never
+    /// named here: its id is the caller's, whole.
+    ///
+    /// [`enable_registration`]: GenericNode::enable_registration
+    pub fn enable_model_naming(&mut self, name: NameFn) {
+        self.name_fn = Some(name);
+    }
+
     /// Install the application's intake guard: `Err(reason)` from `guard`
     /// refuses an adapter-submitted operation on a registered log, and the
     /// caller is answered with a failed [`OpResult`] carrying the reason.
@@ -1592,16 +1620,13 @@ where
             .iter()
             .find(|held| held.key == key)
             .cloned();
-        let (log_id, created) = match model_id {
-            Some(log_id) => (log_id, false),
-            None => (LogId::generate(), true),
-        };
-        let descriptor = match &held {
-            Some(descriptor) => Some(descriptor.clone()),
+        let (log_id, created) = match (model_id, &held) {
+            (Some(log_id), _) => (log_id, false),
+            (None, Some(held)) => (self.mint_model_id(held), true),
             // A create needs the descriptor in hand; a join does not.
-            None if created => return Err(unknown()),
-            None => None,
+            (None, None) => return Err(unknown()),
         };
+        let descriptor = held;
         self.host_log(log_id.clone())?;
         let binding = Binding {
             key: Some(key),
@@ -1649,6 +1674,15 @@ where
             model_id: log_id,
             created,
         })
+    }
+
+    /// A fresh id for a model created under `descriptor`: named by the
+    /// application's naming hook when it gives a name, bare otherwise.
+    fn mint_model_id(&self, descriptor: &ServedDescriptor) -> LogId {
+        match self.name_fn.and_then(|name| name(descriptor)) {
+            Some(name) => LogId::generate_named(&name),
+            None => LogId::generate(),
+        }
     }
 
     /// Host `log_id` with a pending binding that names no metamodel; see

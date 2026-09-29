@@ -38,10 +38,11 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Start the optional HTTP API on the given port.
 ///
 /// Model-scoped endpoints, where `{id}` is a [`LogId`] — 32 lowercase hex
-/// characters, answered 400 with the parse error otherwise, and 404 when the
-/// node hosts no log by that id:
+/// characters, bare or followed by `_` and a name of 1 to 32 ASCII letters
+/// and digits, answered 400 with the parse error otherwise, and 404 when the
+/// node hosts no log by that whole id:
 /// - `GET  /api/models`               the hosted models as `{model_id, metamodel_id}`
-///   under `models`, and beside them under `seen` the bare ids of logs this
+///   under `models`, and beside them under `seen` the ids of logs this
 ///   node does not host but has seen traffic for since it connected
 /// - `POST /api/models`               register a model: `{metamodel_id}` creates
 ///   one and the node mints its id; `{model_id, metamodel_id}` joins one by

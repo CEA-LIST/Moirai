@@ -106,6 +106,11 @@
 //! wrote, and a joiner by state transfer gets the parsed table inside the
 //! serialized log.
 //!
+//! A created model's id is `<32 hex>_<package>`, the package being the
+//! descriptor's top-level `package` with everything but ASCII letters and
+//! digits dropped (`<hex>_simpleuml`), or the bare `<32 hex>` when nothing is
+//! left; the whole string is the model's identity.
+//!
 //! # Conformance: there is no guard here
 //!
 //! The second difference. The generated node installs an intake guard
@@ -265,6 +270,19 @@ fn descriptor_key(metamodel_id: &Value) -> Option<String> {
 /// serve a descriptor under a digest it does not hash to.
 fn adopt_descriptor(replica: &LogReplica<ModelLog>) -> Option<String> {
     replica.state().descriptor().map(str::to_string)
+}
+
+/// The name a created model's id carries: the top-level `package` of the
+/// descriptor text it is created under, as the descriptor declares it (the
+/// field the listing shows). `moirai-network` keeps its ASCII letters and
+/// digits, the first thirty-two, and mints the bare id when none is kept.
+/// Never read from the caller's `metamodel_id`.
+fn model_name(descriptor: &ServedDescriptor) -> Option<String> {
+    let parsed: Value = serde_json::from_str(&descriptor.text).ok()?;
+    parsed
+        .get("package")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn install_ops(model_id: &LogId, descriptor: &ServedDescriptor) -> Vec<ModelOp> {
@@ -493,6 +511,8 @@ fn main() {
     }
     node.serve_metamodels(descriptors);
     node.enable_registration(descriptor_key, install_ops);
+    // A created model's id carries its metamodel's package: `<hex>_simpleuml`.
+    node.enable_model_naming(model_name);
     // Decision D8: a descriptor this node was never started with is described
     // by the same function that read the ones on disk, and served from the
     // moment the event loop takes the command.

@@ -21,6 +21,15 @@
 //!
 //! Two logs with the same id are the same log. Two logs with different ids
 //! never merge, whatever their contents.
+//!
+//! # The two forms
+//!
+//! An id is either the bare `<h>`, where `h` is the 32 lowercase hex
+//! characters of its random bytes, or the named `<h>_<name>`, where `name` is
+//! one to thirty-two ASCII letters and digits. The name is there for people
+//! reading an id (a model's id carries its metamodel's package), and it is
+//! part of the identity all the same: the whole string is the id, so
+//! `<h>`, `<h>_simpleuml` and `<h>_SimpleUML` are three logs.
 
 use core::fmt;
 use std::sync::Arc;
@@ -33,8 +42,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// The number of random bytes behind an id.
 const LOG_ID_BYTES: usize = 16;
 
-/// The length of an id's canonical text form, two hex characters per byte.
+/// The length of an id's hex part, two hex characters per byte: the whole of
+/// a bare id, and the part before the `_` of a named one.
 pub const LOG_ID_LEN: usize = LOG_ID_BYTES * 2;
+
+/// The most characters a named id's name keeps.
+pub const LOG_ID_NAME_MAX: usize = 32;
 
 /// A universally unique identity for one replicated log.
 ///
@@ -68,24 +81,68 @@ impl LogId {
         Self(Arc::from(text.as_str()))
     }
 
-    /// Parse the canonical text form: exactly 32 lowercase hex characters.
+    /// Mint a new named id: a fresh hex part and the name `name` gives; see
+    /// [`Self::from_bytes_named`].
+    pub fn generate_named(name: &str) -> Self {
+        Self::from_bytes_named(random_bytes(), name)
+    }
+
+    /// Build a named id from 16 bytes of entropy and a name.
     ///
-    /// Rejects anything else, uppercase included, so that one log has exactly
-    /// one spelling and two ids compare equal only when they are the same id.
+    /// The name kept is the ASCII letters and digits of `name`, in order and
+    /// in their case, then the first [`LOG_ID_NAME_MAX`] of them. When
+    /// nothing is kept the id is the bare one of the same bytes.
+    pub fn from_bytes_named(bytes: [u8; LOG_ID_BYTES], name: &str) -> Self {
+        let bare = Self::from_bytes(bytes);
+        let kept: String = name
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(LOG_ID_NAME_MAX)
+            .collect();
+        if kept.is_empty() {
+            return bare;
+        }
+        Self(Arc::from(format!("{bare}_{kept}").as_str()))
+    }
+
+    /// Parse either form: 32 lowercase hex characters, optionally followed
+    /// by `_` and a name of one to 32 ASCII letters and digits.
+    ///
+    /// Keeps the text exactly as given and rejects anything else, uppercase
+    /// hex included, so that two ids compare equal only when they are the
+    /// same string.
     pub fn parse(text: &str) -> Result<Self, LogIdError> {
-        if text.len() != LOG_ID_LEN {
+        if text.len() < LOG_ID_LEN {
             return Err(LogIdError::Length {
                 found: text.len(),
                 expected: LOG_ID_LEN,
             });
         }
-        match text.chars().find(|c| !matches!(c, '0'..='9' | 'a'..='f')) {
-            Some(bad) => Err(LogIdError::Character(bad)),
-            None => Ok(Self(Arc::from(text))),
+        if let Some(bad) = text
+            .chars()
+            .take(LOG_ID_LEN)
+            .find(|c| !matches!(c, '0'..='9' | 'a'..='f'))
+        {
+            return Err(LogIdError::Character(bad));
         }
+        // The first LOG_ID_LEN characters are ASCII, so this is a boundary.
+        let rest = &text[LOG_ID_LEN..];
+        if !rest.is_empty() {
+            let Some(name) = rest.strip_prefix('_') else {
+                let found = rest.chars().next().unwrap_or('_');
+                return Err(LogIdError::Separator(found));
+            };
+            if let Some(bad) = name.chars().find(|c| !c.is_ascii_alphanumeric()) {
+                return Err(LogIdError::NameCharacter(bad));
+            }
+            if name.is_empty() || name.len() > LOG_ID_NAME_MAX {
+                return Err(LogIdError::NameLength { found: name.len() });
+            }
+        }
+        Ok(Self(Arc::from(text)))
     }
 
-    /// The canonical text form.
+    /// The id's text, whole, in the form it was minted or parsed in.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -108,20 +165,55 @@ impl fmt::Debug for LogId {
 /// Why a string is not a [`LogId`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogIdError {
-    /// Wrong number of characters.
+    /// Too few characters for the hex part.
     Length { found: usize, expected: usize },
-    /// A character outside `[0-9a-f]`.
+    /// A character outside `[0-9a-f]` in the hex part.
     Character(char),
+    /// Something other than `_` right after the hex part.
+    Separator(char),
+    /// A name of no character, or of more than [`LOG_ID_NAME_MAX`].
+    NameLength { found: usize },
+    /// A character of the name outside `[A-Za-z0-9]`.
+    NameCharacter(char),
 }
 
 impl fmt::Display for LogIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Length { found, expected } => {
-                write!(f, "log id must be {expected} characters, found {found}")
+                write!(
+                    f,
+                    "log id must be {expected} lowercase hex characters, optionally followed \
+                     by `_` and a name, found {found} characters"
+                )
             }
             Self::Character(c) => {
-                write!(f, "log id must be lowercase hex, found `{c}`")
+                write!(
+                    f,
+                    "log id must start with {LOG_ID_LEN} lowercase hex characters, found `{}`",
+                    c.escape_debug()
+                )
+            }
+            Self::Separator(c) => {
+                write!(
+                    f,
+                    "log id must end after its {LOG_ID_LEN} hex characters or continue with \
+                     `_`, found `{}`",
+                    c.escape_debug()
+                )
+            }
+            Self::NameLength { found } => {
+                write!(
+                    f,
+                    "log id name must be 1 to {LOG_ID_NAME_MAX} characters, found {found}"
+                )
+            }
+            Self::NameCharacter(c) => {
+                write!(
+                    f,
+                    "log id name must be ASCII letters and digits, found `{}`",
+                    c.escape_debug()
+                )
             }
         }
     }
