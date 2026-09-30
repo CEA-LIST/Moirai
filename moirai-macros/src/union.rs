@@ -616,17 +616,24 @@ macro_rules! union {
 /// under an optional also drops, one at a time, each member a removal
 /// emptied (the value ST.01 fixes: an optional holding the conflict
 /// `[A, B]`, unset while a write reaches `B`, serves `B` alone on every
-/// replica), where a keyed collection keeps the members of a removed key. `IsLog::redundant_by_parent` does not
-/// say who is asking, so `OptionLog` hands its removals down through this
-/// trait instead, and what the content does with them is decided by its
-/// type: nothing outside the logs carries it, and nothing is stored in
-/// either log, so the state they serialize is unchanged.
+/// replica), where a keyed collection keeps the members of a removed key.
+/// `IsLog::redundant_by_parent` does not say who is asking, so `OptionLog`
+/// hands its removals down through this trait instead, and what the content
+/// does with them is decided by its type: nothing outside the logs carries
+/// it, and nothing is stored in either log, so the state they serialize is
+/// unchanged.
 ///
-/// `record!` and `union!` implement it, `Box` and `BoxedLog` forward it to
-/// what they hold, and the leaf logs take the defaults. `OptionLog` holds
-/// only a log that implements it, so a wrapper between an optional and its
-/// content either forwards it too or does not compile; it cannot silently
-/// lose the rule.
+/// The trait's one method has no default body, so every impl states what
+/// its log does with a removal an optional hands down, and an impl that
+/// does not state it does not compile. `record!` hands the removal to its
+/// fields as from any other parent; `union!` hands it to its members as
+/// from any other parent and then drops each member it emptied; `Box` and
+/// `BoxedLog` forward it to what they hold; `POLog`, `GraphLog` and
+/// `OptionLog` take it as from any other parent. `OptionLog` holds only a
+/// log that implements the trait, so a wrapper between an optional and its
+/// content must state in its impl what it does with the removal, whether
+/// it forwards it or not: it cannot lose the rule silently by taking a
+/// default.
 pub mod held_by_optional {
     use moirai_protocol::{
         clock::version_vector::Version,
@@ -641,10 +648,9 @@ pub mod held_by_optional {
     /// The content of an optional: see [the module](self).
     pub trait OptionalContent: IsLog {
         /// A removal handed down by the optional that holds this log, its
-        /// own unset or one above it. By default, as from any other parent.
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            self.redundant_by_parent(version, conservative);
-        }
+        /// own unset or one above it. There is no default: every impl states
+        /// what its log does with it.
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool);
     }
 
     impl<L: OptionalContent> OptionalContent for Box<L> {
@@ -665,6 +671,10 @@ pub mod held_by_optional {
         O: ReplicatedDataType,
         POLog<O, U>: IsLog,
     {
+        /// As from any other parent.
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            IsLog::redundant_by_parent(self, version, conservative);
+        }
     }
 
     impl<O> OptionalContent for GraphLog<O>
@@ -672,5 +682,9 @@ pub mod held_by_optional {
         O: ReplicatedDataType,
         GraphLog<O>: IsLog,
     {
+        /// As from any other parent.
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            IsLog::redundant_by_parent(self, version, conservative);
+        }
     }
 }

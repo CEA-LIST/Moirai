@@ -203,10 +203,11 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
         }
         (Shaped::Keyed(site), Node::Map(map)) => {
             // `uw_map.rs:184-190`: a child is rendered only when its value
-            // differs from the default of its own log, and it must be, because
-            // `UWMap::Remove` is not a tombstone — it leaves the child in the
-            // map and resets it, so reading as a freshly minted child *is* how
-            // a keyed collection spells removed. The comparison is against
+            // differs from `V::default()`, the default of the value type
+            // (`uw_map.rs:186`), and it must be, because `UWMap::Remove` is
+            // not a tombstone — it leaves the child in the map and resets
+            // it, so reading as a freshly minted child *is* how a keyed
+            // collection spells removed. The comparison here is against
             // what a freshly minted child of the collection's composition
             // reads ([`fresh_entry`]).
             //

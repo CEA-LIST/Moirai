@@ -226,7 +226,15 @@ macro_rules! record {
             /// holds it. Its fields take the removal as from any other
             /// parent, and an optional among them decides for its own
             /// content first.
-            impl $crate::union::held_by_optional::OptionalContent for [<$name Log>] {}
+            impl $crate::union::held_by_optional::OptionalContent for [<$name Log>] {
+                fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
+                    <Self as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
+                        self,
+                        version,
+                        conservative,
+                    );
+                }
+            }
 
             /// Possible rejections when trying to apply an operation to the record, containing the rejections of all fields
             /// or an "AlreadyInitialized" rejection if trying to apply a "New" operation to an initialized record.

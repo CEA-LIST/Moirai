@@ -2009,11 +2009,14 @@ fn lay(ghost: &mut Vec<ObjectNode>, object: ObjectNode) {
 /// an abstract class, which ST.01's twin compares), and `OptionLog` an
 /// emptied `record!` child after a removal above it (one of a concrete
 /// class, which ST.02's twin compares), and `OptionLog` an emptied leaf
-/// child after a removal above it (an optional attribute, which ST.04's twin
-/// compares for every leaf kind). Those twins are where both runtimes are
-/// held to one document. A leaf child holds no object, so nothing of it goes
-/// to the ghost; it is emptied when its log holds nothing, which a text's
-/// reset, recording the deletion, never leaves.
+/// child after a removal above it (an optional attribute: ST.04's twin
+/// compares, for every leaf kind, one emptied by the unset of an optional
+/// containment one or two levels above it and one emptied by its own unset;
+/// a sequence delete or a keyed removal above it is outside that twin).
+/// Those twins are where both runtimes are held to one document. A leaf
+/// child holds no object, so nothing of it goes to the ghost; it is emptied
+/// when its log holds nothing, which a text's reset, recording the
+/// deletion, never leaves.
 fn shed(opt: &mut OptNode) {
     let Some(child) = opt.child.as_deref_mut() else {
         return;

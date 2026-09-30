@@ -23,6 +23,21 @@ pub enum Optional<O> {
     Unset,
 }
 
+/// An optional: a log that holds one content log or nothing.
+///
+/// It is a log only over content that implements [`OptionalContent`]: the
+/// logs `record!` and `union!` generate, `POLog`, `GraphLog`, `OptionLog`,
+/// and `Box` and `BoxedLog` of any of them. Over a log that does not implement
+/// it, a keyed map (`UWMapLog`, `RWMapLog`), a list (`NestedListLog`) or a
+/// user log, a composition that uses it as a log does not compile; that
+/// composition is unsupported.
+///
+/// On its own unset and on a removal above it, it hands the removal to its
+/// content through [`OptionalContent::redundant_by_optional`] and drops the
+/// content when the removal left it at its default
+/// ([`IsLog::is_default`]), whatever the content is, an `OptionLog`
+/// included. Nesting an `OptionLog` in an `OptionLog` is unsupported: no
+/// generator composes it, and no twin holds it to the interpreter.
 #[derive(Clone, Debug)]
 #[cfg_attr(
     feature = "serde",
@@ -151,8 +166,18 @@ where
     }
 }
 
-/// An optional held by an optional is a leaf value to it.
-impl<L> OptionalContent for OptionLog<L> where L: OptionalContent {}
+/// An optional held by an optional takes a removal it hands down as from any
+/// other parent: it hands the removal on to its own content and drops that
+/// content if the removal left it at its default. Unsupported as a
+/// composition: see [`OptionLog`].
+impl<L> OptionalContent for OptionLog<L>
+where
+    L: OptionalContent,
+{
+    fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+        IsLog::redundant_by_parent(self, version, conservative);
+    }
+}
 
 impl<L> OptionLog<L>
 where
