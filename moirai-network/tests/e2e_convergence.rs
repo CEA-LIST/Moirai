@@ -101,7 +101,7 @@ use moirai_network::state_transfer::LogPayload;
 // the dashboard's `--random` driver needs exactly the same ones and a second
 // copy would drift. `ops` is re-exported under its old name so the scenarios
 // below read as they did.
-use moirai_network::workload::{ops, state_digest, Workload};
+use moirai_network::workload::{ops, state_digest, Step, Workload};
 
 /// How long a mesh may take to form. Generous: the node sleeps 2 s before its
 /// single dial attempt, and a debug-profile binary starts slowly under load.
@@ -3609,9 +3609,10 @@ fn r1_seeded_random_operations_converge() {
         return;
     };
     let nodes = cluster.nodes();
-    let mut workload = Workload::new(seed, nodes.len());
+    let steps = Workload::new(seed, nodes.len()).take(OPERATIONS);
+    let issued = issued_per_replica(&nodes, &steps);
 
-    for (n, step) in workload.take(OPERATIONS).into_iter().enumerate() {
+    for (n, step) in steps.iter().enumerate() {
         let node = nodes[step.replica];
         apply(node, &step.op).unwrap_or_else(|e| {
             panic!(
@@ -3642,23 +3643,401 @@ fn r1_seeded_random_operations_converge() {
          nothing; state: {state}\nreproduce with:\n  {reproduce}"
     );
 
-    // Every replica must also account for the same number of deliveries.
+    // Every replica must also account for the history the scenario issued.
     // Agreeing on a rendered value while holding different histories is the
-    // failure mode E2 had to be strengthened against.
+    // failure mode E2 had to be strengthened against. What is read, and when,
+    // is `r1_account_for_history`'s; the NW.08 scenarios below question it.
+    if let Err(why) = r1_account_for_history(&nodes, &issued, CONVERGE_TIMEOUT) {
+        panic!("R1 seed {seed}: {why}\nreproduce with:\n  {reproduce}");
+    }
+}
+
+/// How many of `steps` each replica of `nodes` was asked to apply, by id.
+fn issued_per_replica(nodes: &[&dyn Node], steps: &[Step]) -> BTreeMap<String, u64> {
+    let mut issued: BTreeMap<String, u64> = nodes.iter().map(|n| (n.id().to_string(), 0)).collect();
+    for step in steps {
+        *issued
+            .entry(nodes[step.replica].id().to_string())
+            .or_default() += 1;
+    }
+    issued
+}
+
+/// R1's history accounting: whether every replica of `nodes` holds the
+/// history the scenario issued, `issued` naming how many operations were
+/// issued at each replica and `timeout` how long a replica may take to
+/// deliver what it has not delivered yet. `Err` carries the report.
+///
+/// One read of each replica's `delivered_ops`, compared across the replicas
+/// and with the total issued; `timeout` is not used.
+fn r1_account_for_history(
+    nodes: &[&dyn Node],
+    issued: &BTreeMap<String, u64>,
+    timeout: Duration,
+) -> std::result::Result<(), String> {
+    let _ = timeout;
+    let total: u64 = issued.values().sum();
     let delivered: Vec<(String, u64)> = nodes
         .iter()
         .map(|n| (n.id().to_string(), metric(*n, "delivered_ops").unwrap_or(0)))
         .collect();
+    if !delivered.windows(2).all(|w| w[0].1 == w[1].1) {
+        return Err(format!(
+            "the replicas render the same state but do not account \
+             for the same history: {delivered:?}"
+        ));
+    }
+    if delivered[0].1 != total {
+        return Err(format!(
+            "{} of {total} operations were delivered",
+            delivered[0].1
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// NW.08 — what R1's history accounting must and must not report
+// ---------------------------------------------------------------------------
+//
+// An operation that changes nothing a replica renders (a second `enable` of a
+// flag, a `remove` of a key already at its default) leaves the rendered states
+// agreeing before it has reached every replica, so "the states agree" is not
+// "the histories are in". These scenarios hold deliveries back with the
+// in-process pause flag, which buffers at the pausing replica what the paused
+// peer sends and hands it over on resume, and put R1's question to
+// `r1_account_for_history` at a moment whose answer the schedule fixes. The
+// spec is `cea-cdrt-knowledge/spec/items/NW.08.md`.
+
+/// How long the accounting may wait in D2 and D3, where the hold outlasts it.
+const NW08_DEADLINE: Duration = Duration::from_secs(10);
+
+/// One replica's history counters: `(delivered_ops, pending_ops, ops_applied)`.
+type History = (u64, u64, u64);
+
+/// Reads one replica's [`History`].
+fn history_of(node: &dyn Node) -> Result<History> {
+    let metrics = metrics_of(node)?;
+    let field = |name: &str| {
+        metrics
+            .get(name)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow!("`{}` has no `{name}` in {metrics}", node.id()))
+    };
+    Ok((
+        field("delivered_ops")?,
+        field("pending_ops")?,
+        field("ops_applied")?,
+    ))
+}
+
+/// Every replica's history counters, by id, for a report.
+fn histories(nodes: &[&dyn Node]) -> Vec<(String, Option<History>)> {
+    nodes
+        .iter()
+        .map(|n| (n.id().to_string(), history_of(*n).ok()))
+        .collect()
+}
+
+/// Waits until each replica of `nodes` has delivered exactly the count at the
+/// same position of `expected`.
+fn await_delivered(nodes: &[&dyn Node], expected: &[u64], timeout: Duration) -> Result<()> {
+    poll_until(timeout, || {
+        for (node, want) in nodes.iter().zip(expected) {
+            if metric(*node, "delivered_ops")? != *want {
+                return Ok(None);
+            }
+        }
+        Ok(Some(()))
+    })
+    .map_err(|e| {
+        anyhow!(
+            "the replicas did not reach delivered_ops {expected:?} within {timeout:?}{}: {:?}",
+            e.map(|e| format!(" ({e:#})")).unwrap_or_default(),
+            histories(nodes)
+        )
+    })
+}
+
+/// Posts a pause or resume `path` to `node`, and fails unless the node says it
+/// did. While `node` pauses a peer it buffers what that peer sends and sends
+/// it nothing; on resume it hands the buffer over and asks the peer for a sync.
+fn post_control(node: &dyn Node, path: &str) -> Result<()> {
+    let reply = post_json(node, path, None)?;
+    if reply.get("success").and_then(Value::as_bool) != Some(true) {
+        bail!("`{}` refused {path}: {reply}", node.id());
+    }
+    Ok(())
+}
+
+/// How many frames from `peer` `node` holds in its pause buffer.
+fn buffered_from(node: &dyn Node, peer: &str) -> Result<u64> {
+    let peers = get_json(node, "/api/peers")?;
+    peers
+        .get("peers")
+        .and_then(Value::as_array)
+        .and_then(|list| {
+            list.iter()
+                .find(|p| p.get("id").and_then(Value::as_str) == Some(peer))
+        })
+        .and_then(|p| p.get("buffered"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("`{}` lists no peer `{peer}`: {peers}", node.id()))
+}
+
+/// Resumes `peer` at `node` after `after`, from another thread, as a slow
+/// link would deliver: the caller goes on meanwhile.
+fn release_after(
+    node: &dyn Node,
+    peer: &str,
+    after: Duration,
+) -> std::thread::JoinHandle<Result<Value>> {
+    let url = format!("{}/api/resume/{peer}", node.http_base());
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        let text = client()
+            .post(&url)
+            .send()
+            .with_context(|| format!("POST {url}"))?
+            .error_for_status()
+            .with_context(|| format!("POST {url}"))?
+            .text()?;
+        let reply: Value = serde_json::from_str(&text)?;
+        if reply.get("success").and_then(Value::as_bool) != Some(true) {
+            bail!("POST {url} was refused: {reply}");
+        }
+        Ok(reply)
+    })
+}
+
+/// A three-replica container cluster that has applied and delivered one
+/// operation from each replica, `epsilon` among them, so that a later
+/// `enable epsilon` changes nothing any replica renders. Returns the cluster,
+/// what was issued where, and the agreed state.
+fn nw08_settled_cluster(scenario: &str) -> Option<(Cluster, BTreeMap<String, u64>, Value)> {
+    let cluster = started_container_cluster(scenario, &["a", "b", "c"])?;
+    let prefix = [
+        ("a", ops::object_update("epsilon", ops::bool_enable())),
+        ("b", ops::object_update("alpha", ops::string_insert('x', 0))),
+        ("c", ops::object_update("gamma", ops::number_inc(1.0))),
+    ];
+    let mut issued = BTreeMap::new();
+    for (id, op) in prefix {
+        apply_ok(cluster.node(id), op);
+        *issued.entry(id.to_string()).or_insert(0) += 1;
+    }
+    await_delivered(&cluster.nodes(), &[3, 3, 3], CONVERGE_TIMEOUT)
+        .unwrap_or_else(|e| panic!("{scenario}: {e:#}"));
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    Some((cluster, issued, state))
+}
+
+/// **NW.08 D1** — NW.07's failure, on purpose. R1 at seed
+/// 1790716918410599065 ends with `c`'s second `enable epsilon`, which changes
+/// nothing any replica renders. Here `a` holds that last operation back while
+/// the accounting reads, so the states agree with `a` at 179 deliveries and
+/// `b` and `c` at 180, the counts NW.07 saw; the hold is released five seconds
+/// after the accounting starts, and every replica then reads back 180
+/// delivered, none pending, and the operations issued at it. Nothing was lost,
+/// and the accounting must accept the run.
+#[test]
+fn nw08_d1_a_held_last_operation_that_renders_nothing_is_not_a_lost_one() {
+    const SEED: u64 = 1_790_716_918_410_599_065;
+    const OPERATIONS: usize = 180;
+    const RELEASE_AFTER: Duration = Duration::from_secs(5);
+
+    let Some(cluster) = started_container_cluster("NW08-D1", &["a", "b", "c"]) else {
+        return;
+    };
+    let nodes = cluster.nodes();
+    let (a, c) = (cluster.node("a"), cluster.node("c"));
+    let steps = Workload::new(SEED, nodes.len()).take(OPERATIONS);
+    let issued = issued_per_replica(&nodes, &steps);
+    let (last, prefix) = steps.split_last().expect("NW.08 D1: no steps");
+    assert_eq!(
+        (nodes[last.replica].id(), last.label.as_str()),
+        ("c", "enable epsilon"),
+        "NW.08 D1: seed {SEED} no longer ends with c's `enable epsilon`, so the \
+         workload generator changed and D1 no longer replays NW.07's run"
+    );
+
+    for (n, step) in prefix.iter().enumerate() {
+        let node = nodes[step.replica];
+        apply(node, &step.op).unwrap_or_else(|e| {
+            panic!(
+                "NW.08 D1: step {n} (`{}` on `{}`) was refused: {e:#}",
+                step.label,
+                node.id()
+            )
+        });
+    }
+    let (held, full) = (OPERATIONS as u64 - 1, OPERATIONS as u64);
+    await_delivered(&nodes, &[held, held, held], CONVERGE_TIMEOUT)
+        .unwrap_or_else(|e| panic!("NW.08 D1: {e:#}"));
+    let before = assert_converged(&nodes, CONVERGE_TIMEOUT);
+
+    post_control(a, "/api/pause/c").unwrap_or_else(|e| panic!("NW.08 D1: {e:#}"));
+    apply(c, &last.op).unwrap_or_else(|e| panic!("NW.08 D1: the last step was refused: {e:#}"));
+    await_delivered(&nodes, &[held, full, full], CONVERGE_TIMEOUT)
+        .unwrap_or_else(|e| panic!("NW.08 D1: {e:#}"));
     assert!(
-        delivered.windows(2).all(|w| w[0].1 == w[1].1),
-        "R1 seed {seed}: the replicas render the same state but do not account \
-         for the same history: {delivered:?}\nreproduce with:\n  {reproduce}"
+        buffered_from(a, "c").unwrap_or_else(|e| panic!("NW.08 D1: {e:#}")) >= 1,
+        "NW.08 D1: `a` holds nothing from `c`, so the schedule is not the registered one"
+    );
+    let agreed = assert_converged(&nodes, CONVERGE_TIMEOUT);
+    assert_eq!(
+        agreed, before,
+        "NW.08 D1: the held operation changed the rendered state, so it is not \
+         the operation that renders nothing"
     );
     assert_eq!(
-        delivered[0].1, OPERATIONS as u64,
-        "R1 seed {seed}: {} of {OPERATIONS} operations were delivered\n\
-         reproduce with:\n  {reproduce}",
-        delivered[0].1
+        metric(a, "delivered_ops").unwrap_or_else(|e| panic!("NW.08 D1: {e:#}")),
+        held,
+        "NW.08 D1: `a` delivered the held operation before the accounting started"
+    );
+
+    let release = release_after(a, "c", RELEASE_AFTER);
+    let verdict = r1_account_for_history(&nodes, &issued, CONVERGE_TIMEOUT);
+    release
+        .join()
+        .expect("NW.08 D1: the release thread panicked")
+        .unwrap_or_else(|e| panic!("NW.08 D1: releasing the hold failed: {e:#}"));
+
+    // What each replica holds once the hold is gone: the ground truth the
+    // verdict is judged against.
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok(nodes
+            .iter()
+            .all(|n| history_of(*n).ok() == Some((full, 0, issued[n.id()])))
+            .then_some(()))
+    })
+    .unwrap_or_else(|_| {
+        panic!(
+            "NW.08 D1: the schedule is broken, not the accounting: after the hold \
+             was released the replicas did not all read back ({full}, 0, issued) \
+             with issued {issued:?}: {:?}",
+            histories(&nodes)
+        )
+    });
+    assert_eq!(
+        assert_converged(&nodes, CONVERGE_TIMEOUT),
+        before,
+        "NW.08 D1: the rendered state moved once the held operation was delivered"
+    );
+
+    if let Err(why) = verdict {
+        panic!(
+            "NW.08 D1: every replica delivers all {OPERATIONS} issued operations, \
+             none pending and each its own issued count (read back once the hold was \
+             released: {:?}), yet R1's accounting reported: {why}",
+            histories(&nodes)
+        );
+    }
+}
+
+/// **NW.08 D2** — the other side of D1. A hold that outlasts the accounting's
+/// deadline leaves a replica without an operation the scenario issued for as
+/// long as the accounting may wait, and the accounting must report it. The
+/// hold is released only after the accounting has returned, and the held
+/// operation then arrives, so what is judged is the deadline and not a loss the
+/// harness made.
+#[test]
+fn nw08_d2_a_hold_past_the_deadline_is_reported() {
+    let Some((cluster, mut issued, before)) = nw08_settled_cluster("NW08-D2") else {
+        return;
+    };
+    let nodes = cluster.nodes();
+    let (a, c) = (cluster.node("a"), cluster.node("c"));
+
+    post_control(a, "/api/pause/c").unwrap_or_else(|e| panic!("NW.08 D2: {e:#}"));
+    apply_ok(c, ops::object_update("epsilon", ops::bool_enable()));
+    *issued.get_mut("c").expect("c") += 1;
+    await_delivered(&nodes, &[3, 4, 4], CONVERGE_TIMEOUT)
+        .unwrap_or_else(|e| panic!("NW.08 D2: {e:#}"));
+    assert!(
+        buffered_from(a, "c").unwrap_or_else(|e| panic!("NW.08 D2: {e:#}")) >= 1,
+        "NW.08 D2: `a` holds nothing from `c`, so the schedule is not the registered one"
+    );
+    assert_eq!(assert_converged(&nodes, CONVERGE_TIMEOUT), before);
+
+    let verdict = r1_account_for_history(&nodes, &issued, NW08_DEADLINE);
+    let during = histories(&nodes);
+    assert_eq!(
+        metric(a, "delivered_ops").unwrap_or_else(|e| panic!("NW.08 D2: {e:#}")),
+        3,
+        "NW.08 D2: `a` delivered the held operation while the hold was in place"
+    );
+    post_control(a, "/api/resume/c").unwrap_or_else(|e| panic!("NW.08 D2: {e:#}"));
+    poll_until(CONVERGE_TIMEOUT, || {
+        Ok(nodes
+            .iter()
+            .all(|n| history_of(*n).ok() == Some((4, 0, issued[n.id()])))
+            .then_some(()))
+    })
+    .unwrap_or_else(|_| {
+        panic!(
+            "NW.08 D2: the schedule is broken: the held operation never arrived: {:?}",
+            histories(&nodes)
+        )
+    });
+
+    assert!(
+        verdict.is_err(),
+        "NW.08 D2: `a` lacked c's issued operation for the whole of the accounting's \
+         {NW08_DEADLINE:?} ((delivered_ops, pending_ops, ops_applied) when it \
+         returned: {during:?}), yet R1's accounting accepted the run"
+    );
+}
+
+/// **NW.08 D3** — the same count is not the same history. `a` is cut off from
+/// both peers; the scenario then issues `enable epsilon` at `c`, and `a`
+/// applies an `enable epsilon` of its own that the scenario never issued (a
+/// request applied twice, another writer). Every replica has delivered four
+/// operations, the number the scenario issued, and the states agree, but `a`'s
+/// four are not the issued four: it lacks c's operation and holds one nobody
+/// issued. The accounting must report it.
+#[test]
+fn nw08_d3_the_same_count_of_different_operations_is_reported() {
+    let Some((cluster, mut issued, before)) = nw08_settled_cluster("NW08-D3") else {
+        return;
+    };
+    let nodes = cluster.nodes();
+    let (a, c) = (cluster.node("a"), cluster.node("c"));
+
+    post_control(a, "/api/pause-all").unwrap_or_else(|e| panic!("NW.08 D3: {e:#}"));
+    apply_ok(c, ops::object_update("epsilon", ops::bool_enable()));
+    *issued.get_mut("c").expect("c") += 1;
+    // Not in `issued`: the write the scenario never made.
+    apply_ok(a, ops::object_update("epsilon", ops::bool_enable()));
+    await_delivered(&nodes, &[4, 4, 4], CONVERGE_TIMEOUT)
+        .unwrap_or_else(|e| panic!("NW.08 D3: {e:#}"));
+    assert!(
+        buffered_from(a, "c").unwrap_or_else(|e| panic!("NW.08 D3: {e:#}")) >= 1,
+        "NW.08 D3: `a` holds nothing from `c`, so the schedule is not the registered one"
+    );
+    let during = histories(&nodes);
+    assert_eq!(
+        during
+            .iter()
+            .map(|(id, h)| (id.as_str(), *h))
+            .collect::<Vec<_>>(),
+        vec![
+            ("a", Some((4, 0, 2))),
+            ("b", Some((4, 0, 1))),
+            ("c", Some((4, 0, 2))),
+        ],
+        "NW.08 D3: the schedule is not the registered one"
+    );
+    assert_eq!(assert_converged(&nodes, CONVERGE_TIMEOUT), before);
+    assert_eq!(issued.values().sum::<u64>(), 4);
+
+    let verdict = r1_account_for_history(&nodes, &issued, NW08_DEADLINE);
+    assert!(
+        verdict.is_err(),
+        "NW.08 D3: every replica counted 4 deliveries, the number the scenario \
+         issued ({issued:?}), but `a` held its own unissued write and lacked c's \
+         operation, which it still held in its pause buffer ((delivered_ops, \
+         pending_ops, ops_applied): {during:?}); R1's accounting accepted the run"
     );
 }
 
