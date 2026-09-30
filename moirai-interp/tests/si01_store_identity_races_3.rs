@@ -284,20 +284,30 @@ fn without(doc: &Value, key: &str) -> Value {
     out
 }
 
-/// A state transfer from `donor` to `joiner`, through the serialization a
-/// `model_node` applies to one (`GenericNode::state_response_for` and
-/// `GenericNode::adopt_state`, `moirai-network/src/generic.rs`): the donor's
-/// log exported with `TransferableLog::export_log`, serialized, and encoded as
-/// the `LogPayload` of a `StateResponse` beside the donor's causal snapshot;
-/// the frame written as one line of JSON, as a transport sends it, and read
-/// back; the payload decoded, the log imported with
-/// `TransferableLog::import_log`, and both adopted. Then the joiner's delta
-/// sync with its donor, which `adopt_state` asks for right after adopting:
-/// the donor answers from its outbox, and takes the joiner into its member
-/// table as it does. Only the socket is left out.
+/// A state transfer from `donor` to `joiner`, run as a `model_node` runs one
+/// (`GenericNode::state_response_for` and `GenericNode::adopt_state`,
+/// `moirai-network/src/generic.rs`). The donor exports its log with
+/// `TransferableLog::export_log` and serializes it; takes the joiner into its
+/// member table before it takes its causal snapshot, as `state_response_for`
+/// does since Moirai `c10ece5`, so that the snapshot names the joiner among
+/// its members; and sends the log, encoded as a `LogPayload`, beside the
+/// snapshot in a `StateResponse`. The frame is written as one line of JSON, as
+/// a transport sends it, and read back; the payload is decoded, the log
+/// imported with `TransferableLog::import_log`, and both are adopted. Then the
+/// joiner's delta sync with its donor, which `adopt_state` asks for right
+/// after adopting, answered from the donor's outbox. Left out: the socket,
+/// the choice of a donor among connected peers, the donor's refusals (a log
+/// it does not host, no history, a returning member, transfer not enabled, a
+/// log above the size ceiling) and the joiner's guards around adoption (a
+/// second donor's answer, a sibling log with history), none of which this
+/// schedule meets.
 fn transfer(donor: &mut Rep, joiner: &mut Rep) {
+    use moirai_protocol::broadcast::internalizer::lock_interner;
+    use moirai_protocol::broadcast::tcsb::IsTcsbTest;
+
     let exported = <ModelLog as TransferableLog>::export_log(donor.log());
     let raw = serde_json::to_vec(&exported).expect("set-up: the donor's log serializes");
+    lock_interner(donor.tcsb().interner()).intern(joiner.id());
     let frame = TransportMessage::<ModelOp>::StateResponse {
         snapshot: donor.snapshot(),
         log: LogPayload::encode(exported, &raw),
@@ -316,6 +326,12 @@ fn transfer(donor: &mut Rep, joiner: &mut Rep) {
     assert!(
         &log_id == donor.log_id(),
         "set-up: the state response is for another log"
+    );
+    assert!(
+        snapshot.resolver().get(joiner.id()).is_some(),
+        "set-up: the snapshot the donor serves does not name the joiner among its members, as \
+         GenericNode::state_response_for's does; it names {:?}",
+        snapshot.resolver().into_vec()
     );
     let state = log
         .decode()
