@@ -3776,8 +3776,16 @@ mod tests {
             node.handle_transport_message("writer".to_string(), TransportMessage::Event { event });
         }
 
-        assert_eq!(node.seen_not_hosted().count(), wanted, "an id seen was not remembered");
-        assert_eq!(node.frames_not_hosted(), wanted as u64, "a frame went uncounted");
+        assert_eq!(
+            node.seen_not_hosted().count(),
+            wanted,
+            "an id seen was not remembered"
+        );
+        assert_eq!(
+            node.frames_not_hosted(),
+            wanted as u64,
+            "a frame went uncounted"
+        );
     }
 
     #[test]
