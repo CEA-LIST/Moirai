@@ -592,4 +592,3 @@ fn fuzz_list() {
 
     fuzzer::<GraphLog<List<char>>, Read<String>>(config);
 }
-

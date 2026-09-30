@@ -135,7 +135,15 @@ fn n1(binary: &Path, name: &str) -> Result<Checks, String> {
     let js = Json::new();
 
     // ---- 1. writers a and c, each the other's only peer ----
-    let (a, c) = pair(binary, &scratch, &writers_env, &writers_env, "a", "c", &http)?;
+    let (a, c) = pair(
+        binary,
+        &scratch,
+        &writers_env,
+        &writers_env,
+        "a",
+        "c",
+        &http,
+    )?;
 
     // ---- 2. M1, in `lacked`, written by both and compacted by both ----
     let m1 = http.register(&a, None, &langs.lacked.digest)?;
@@ -156,9 +164,11 @@ fn n1(binary: &Path, name: &str) -> Result<Checks, String> {
         let column = |id: &str| metrics["stable_version"][id].as_u64().unwrap_or(0);
         Ok(column("a") >= 2 && column("c") >= 1)
     };
-    wait_until("a and c to compact M1's prefix (premise)", STEP_TIMEOUT, || {
-        Ok((compacted(&a)? && compacted(&c)?).then_some(()))
-    })
+    wait_until(
+        "a and c to compact M1's prefix (premise)",
+        STEP_TIMEOUT,
+        || Ok((compacted(&a)? && compacted(&c)?).then_some(())),
+    )
     .map_err(|why| {
         let of = |node: &Node| {
             http.metrics(node, &m1)
@@ -200,7 +210,10 @@ fn n1(binary: &Path, name: &str) -> Result<Checks, String> {
     http.resume_all(&b)?;
     if accepted {
         let watch = watch_binding(&http, &b, &m1, &langs.lacked.digest, &m1_doc, &langs);
-        checks.check("n1.m1.bound_to_the_language_its_history_carries", watch.bound());
+        checks.check(
+            "n1.m1.bound_to_the_language_its_history_carries",
+            watch.bound(),
+        );
         checks.check("n1.m1.serves_the_donors_document", watch.served());
         checks.check("n1.m1.never_names_another_metamodel", watch.guard());
         eprintln!("{} M1 path on b: {}", checks.tag, path_taken(&b, &m1));
@@ -208,7 +221,11 @@ fn n1(binary: &Path, name: &str) -> Result<Checks, String> {
         let follows = http
             .submit(&a, &m1, &js.put("a2", 'e'))
             .and_then(|()| {
-                http.until_serves(&b, &m1, &json!({"a0": "a", "c0": "c", "a1": "d", "a2": "e"}))
+                http.until_serves(
+                    &b,
+                    &m1,
+                    &json!({"a0": "a", "c0": "c", "a1": "d", "a2": "e"}),
+                )
             })
             .map(|()| "b serves a's next edit".to_string());
         checks.check("n1.m1.follows_the_donor", follows);
@@ -232,7 +249,10 @@ fn n1(binary: &Path, name: &str) -> Result<Checks, String> {
     let joined = http.join_by_id_alone(&b, &m2);
     if checks.check("n1.m2.join_by_id_alone_accepted", joined) {
         let watch = watch_binding(&http, &b, &m2, &langs.held.digest, &m2_doc, &langs);
-        checks.check("n1.m2.bound_to_the_language_its_history_carries", watch.bound());
+        checks.check(
+            "n1.m2.bound_to_the_language_its_history_carries",
+            watch.bound(),
+        );
         checks.check("n1.m2.serves_the_donors_document", watch.served());
         checks.check("n1.m2.never_names_another_metamodel", watch.guard());
         eprintln!("{} M2 path on b: {}", checks.tag, path_taken(&b, &m2));
@@ -288,7 +308,10 @@ fn n2(binary: &Path, name: &str) -> Result<Checks, String> {
     let joined = http.join_by_id_alone(&d, &m3);
     if checks.check("n2.m3.join_by_id_alone_accepted", joined) {
         let watch = watch_binding(&http, &d, &m3, &langs.lacked.digest, &m3_doc, &langs);
-        checks.check("n2.m3.bound_to_the_language_its_history_carries", watch.bound());
+        checks.check(
+            "n2.m3.bound_to_the_language_its_history_carries",
+            watch.bound(),
+        );
         checks.check("n2.m3.serves_the_donors_document", watch.served());
         checks.check("n2.m3.never_names_another_metamodel", watch.guard());
         eprintln!("{} M3 path on d: {}", checks.tag, path_taken(&d, &m3));
@@ -311,7 +334,9 @@ fn n2(binary: &Path, name: &str) -> Result<Checks, String> {
     eprintln!(
         "{} d's own model after the join: {}",
         checks.tag,
-        http.state(&d, &own).map(|v| v.to_string()).unwrap_or_else(|why| why)
+        http.state(&d, &own)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|why| why)
     );
     checks.log_tail(&d);
     Ok(checks)
@@ -376,11 +401,17 @@ fn n3(binary: &Path, name: &str) -> Result<Checks, String> {
     let m5_doc = json!({"y0": "y"});
     http.until_serves(&a, &m5, &m5_doc)?;
     let c3 = http.join_naming(&b, &m5, &json!(langs.held.digest));
-    if checks.check("n3.c3.join_naming_a_held_wrong_digest_answered_as_today", c3) {
+    if checks.check(
+        "n3.c3.join_naming_a_held_wrong_digest_answered_as_today",
+        c3,
+    ) {
         let disputed = http
             .until_serves(&b, &m5, &m5_doc)
             .and_then(|()| disputed_route(&http, &b, &m5));
-        checks.check("n3.c3.metamodel_route_answers_404_once_the_history_disagrees", disputed);
+        checks.check(
+            "n3.c3.metamodel_route_answers_404_once_the_history_disagrees",
+            disputed,
+        );
     } else {
         checks.not_reached("n3.c3.metamodel_route_answers_404_once_the_history_disagrees");
     }
@@ -392,11 +423,17 @@ fn n3(binary: &Path, name: &str) -> Result<Checks, String> {
     http.until_serves(&a, &m6, &m6_doc)?;
     let nobody = "ab".repeat(32);
     let c4 = http.join_naming(&b, &m6, &json!(nobody));
-    if checks.check("n3.c4.join_naming_an_unheld_wrong_digest_answered_as_today", c4) {
+    if checks.check(
+        "n3.c4.join_naming_an_unheld_wrong_digest_answered_as_today",
+        c4,
+    ) {
         let disputed = http
             .until_serves(&b, &m6, &m6_doc)
             .and_then(|()| disputed_route(&http, &b, &m6));
-        checks.check("n3.c4.metamodel_route_answers_404_once_the_history_disagrees", disputed);
+        checks.check(
+            "n3.c4.metamodel_route_answers_404_once_the_history_disagrees",
+            disputed,
+        );
     } else {
         checks.not_reached("n3.c4.metamodel_route_answers_404_once_the_history_disagrees");
     }
@@ -407,14 +444,18 @@ fn n3(binary: &Path, name: &str) -> Result<Checks, String> {
     let c5 = if (400..500).contains(&status) {
         http.hosted(&b).and_then(|hosted| {
             if hosted.contains(&unseen) {
-                Err(format!("refused with {status} ({answer}) but hosted anyway"))
+                Err(format!(
+                    "refused with {status} ({answer}) but hosted anyway"
+                ))
             } else {
                 Ok(format!("refused: {status} {answer}"))
             }
         })
     } else if status == 200 || status == 202 {
         match digest_named(&answer["metamodel_id"]) {
-            Some(named) => Err(format!("the join's answer names metamodel {named}: {answer}")),
+            Some(named) => Err(format!(
+                "the join's answer names metamodel {named}: {answer}"
+            )),
             None => watch_pending(&http, &b, &unseen)
                 .map(|detail| format!("hosted ({status}) with no metamodel named: {detail}")),
         }
@@ -602,9 +643,15 @@ fn watch_binding(
                 }
                 watch.last = format!(
                     "listed {:?}, route {:?}, state {}",
-                    seen.listed.as_ref().map(|l| l.as_deref().map(|d| langs.name(d))),
-                    seen.route.as_ref().map(|r| r.as_deref().map(|d| langs.name(d))),
-                    seen.state.map(|s| s.to_string()).unwrap_or_else(|| "none".into())
+                    seen.listed
+                        .as_ref()
+                        .map(|l| l.as_deref().map(|d| langs.name(d))),
+                    seen.route
+                        .as_ref()
+                        .map(|r| r.as_deref().map(|d| langs.name(d))),
+                    seen.state
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "none".into())
                 );
                 if watch.bound_after.is_some() && watch.served_after.is_some() {
                     break;
@@ -768,7 +815,10 @@ impl Checks {
     }
 
     fn not_reached(&mut self, name: &str) {
-        eprintln!("{} FAIL {name}: not reached, the join was not accepted", self.tag);
+        eprintln!(
+            "{} FAIL {name}: not reached, the join was not accepted",
+            self.tag
+        );
         self.failed.push(format!("{name}: not reached"));
     }
 
@@ -1166,8 +1216,11 @@ impl Http {
     /// or 202 that echoes the id, says nothing was created, and names no
     /// metamodel, since the node cannot know one yet.
     fn join_by_id_alone(&self, node: &Node, model: &str) -> Result<String, String> {
-        let (status, answer) =
-            self.post(node, "/api/models", json!({ "model_id": model }).to_string())?;
+        let (status, answer) = self.post(
+            node,
+            "/api/models",
+            json!({ "model_id": model }).to_string(),
+        )?;
         if status != 200 && status != 202 {
             return Err(format!("answered {status}: {answer}"));
         }
@@ -1175,7 +1228,9 @@ impl Http {
             return Err(format!("answered {status} for another id: {answer}"));
         }
         if answer["created"] != json!(false) {
-            return Err(format!("answered {status} without `created: false`: {answer}"));
+            return Err(format!(
+                "answered {status} without `created: false`: {answer}"
+            ));
         }
         if let Some(named) = digest_named(&answer["metamodel_id"]) {
             return Err(format!(
@@ -1187,7 +1242,12 @@ impl Http {
 
     /// A join that names a digest, as today: 200, `created: false`, and the
     /// `metamodel_id` echoed back.
-    fn join_naming(&self, node: &Node, model: &str, metamodel_id: &Value) -> Result<String, String> {
+    fn join_naming(
+        &self,
+        node: &Node,
+        model: &str,
+        metamodel_id: &Value,
+    ) -> Result<String, String> {
         let (status, answer) = self.post(
             node,
             "/api/models",

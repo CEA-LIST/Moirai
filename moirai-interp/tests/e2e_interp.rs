@@ -78,9 +78,7 @@ use std::time::{Duration, Instant};
 use moirai_interp::leaf::LeafOp;
 use moirai_interp::testing::{class_slot, feature_slot};
 use moirai_interp::{InstanceOp, ModelOp};
-use moirai_semantics::{
-    MergeRule, MetamodelSemantics, Shape, from_descriptor, metamodel_digest,
-};
+use moirai_semantics::{MergeRule, MetamodelSemantics, Shape, from_descriptor, metamodel_digest};
 use serde_json::{Value, json};
 
 // NW.02: nodes are started on ports they bind themselves and report.
@@ -609,8 +607,7 @@ fn named_child(
             } else {
                 leaf
             };
-            let write =
-                InstanceOp::variant(child_slot, InstanceOp::field(attribute_slot, leaf));
+            let write = InstanceOp::variant(child_slot, InstanceOp::field(attribute_slot, leaf));
             let step = if index == 0 {
                 InstanceOp::insert(pos, write)
             } else {
