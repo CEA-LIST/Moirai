@@ -1,0 +1,438 @@
+{
+  "eClass": "Package",
+  "name": "OrderSystem",
+  "ownedComment": [
+    {
+      "eClass": "Comment",
+      "ownedComment": [],
+      "body": "Totals are in EUR",
+      "annotatedElement": ["Order"]
+    }
+  ],
+  "packagedElement": [
+    {
+      "eClass": "PrimitiveType",
+      "name": "String",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "PrimitiveType",
+      "name": "Integer",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "PrimitiveType",
+      "name": "Float",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "PrimitiveType",
+      "name": "Boolean",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "Person",
+      "ownedComment": [],
+      "isAbstract": true,
+      "generalization": [],
+      "interfaceRealization": [],
+      "ownedAttribute": [
+        {
+          "eClass": "Property",
+          "name": "email",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "String",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        }
+      ],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "Customer",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [
+        {
+          "eClass": "Generalization",
+          "ownedComment": [],
+          "general": "Person",
+          "specific": "Customer"
+        }
+      ],
+      "interfaceRealization": [],
+      "ownedAttribute": [
+        {
+          "eClass": "Property",
+          "name": "fullName",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "String",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "loyaltyPoints",
+          "visibility": "private",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Integer",
+          "lower": 0,
+          "upper": 1,
+          "default": "0",
+          "isDerived": false
+        }
+      ],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "Order",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "interfaceRealization": [
+        {
+          "eClass": "InterfaceRealization",
+          "ownedComment": [],
+          "client": ["Order"],
+          "supplier": ["Payable"],
+          "contract": "Payable",
+          "implementingClassifier": "Order"
+        }
+      ],
+      "ownedAttribute": [
+        {
+          "eClass": "Property",
+          "name": "total",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Float",
+          "lower": 1,
+          "upper": 1,
+          "default": "0.0",
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "status",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "OrderStatus",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "itemCount",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Integer",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": true
+        }
+      ],
+      "ownedOperation": [
+        {
+          "eClass": "Operation",
+          "name": "place",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "ownedParameter": [
+            {
+              "eClass": "Parameter",
+              "ownedComment": [],
+              "type": "Boolean",
+              "direction": "return"
+            }
+          ]
+        },
+        {
+          "eClass": "Operation",
+          "name": "cancel",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "ownedParameter": [
+            {
+              "eClass": "Parameter",
+              "name": "reason",
+              "ownedComment": [],
+              "type": "String",
+              "direction": "in"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "eClass": "Class",
+      "name": "OrderLine",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "interfaceRealization": [],
+      "ownedAttribute": [
+        {
+          "eClass": "Property",
+          "name": "quantity",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Integer",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        }
+      ],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "Product",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "interfaceRealization": [],
+      "ownedAttribute": [
+        {
+          "eClass": "Property",
+          "name": "name",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "String",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        }
+      ],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "Catalog",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "interfaceRealization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Class",
+      "name": "PaymentService",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "interfaceRealization": [],
+      "ownedAttribute": [],
+      "ownedOperation": []
+    },
+    {
+      "eClass": "Enumeration",
+      "name": "OrderStatus",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": [],
+      "ownedLiteral": [
+        { "eClass": "EnumerationLiteral", "name": "NEW", "ownedComment": [] },
+        { "eClass": "EnumerationLiteral", "name": "PAID", "ownedComment": [] },
+        { "eClass": "EnumerationLiteral", "name": "SHIPPED", "ownedComment": [] }
+      ]
+    },
+    {
+      "eClass": "Interface",
+      "name": "Payable",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "ownedAttribute": [],
+      "ownedOperation": [
+        {
+          "eClass": "Operation",
+          "name": "pay",
+          "visibility": "public",
+          "ownedComment": [],
+          "isStatic": false,
+          "ownedParameter": [
+            {
+              "eClass": "Parameter",
+              "name": "amount",
+              "ownedComment": [],
+              "type": "Float",
+              "direction": "in"
+            },
+            {
+              "eClass": "Parameter",
+              "ownedComment": [],
+              "type": "Boolean",
+              "direction": "return"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "eClass": "Association",
+      "name": "places",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "memberEnd": ["buyer", "orders"],
+      "ownedEnd": [
+        {
+          "eClass": "Property",
+          "name": "buyer",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Customer",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "orders",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Order",
+          "lower": 0,
+          "upper": -1,
+          "isDerived": false
+        }
+      ],
+      "navigableOwnedEnd": ["orders"]
+    },
+    {
+      "eClass": "Association",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "memberEnd": ["lines", "order"],
+      "ownedEnd": [
+        {
+          "eClass": "Property",
+          "name": "lines",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "OrderLine",
+          "lower": 1,
+          "upper": -1,
+          "aggregation": "composite",
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "order",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Order",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        }
+      ],
+      "navigableOwnedEnd": ["lines"]
+    },
+    {
+      "eClass": "Association",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "memberEnd": ["orderLine", "product"],
+      "ownedEnd": [
+        {
+          "eClass": "Property",
+          "name": "product",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Product",
+          "lower": 1,
+          "upper": 1,
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "orderLine",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "OrderLine",
+          "lower": 0,
+          "upper": -1,
+          "isDerived": false
+        }
+      ],
+      "navigableOwnedEnd": ["product"]
+    },
+    {
+      "eClass": "Association",
+      "ownedComment": [],
+      "isAbstract": false,
+      "generalization": [],
+      "memberEnd": ["catalog", "products"],
+      "ownedEnd": [
+        {
+          "eClass": "Property",
+          "name": "products",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Product",
+          "lower": 0,
+          "upper": -1,
+          "aggregation": "shared",
+          "isDerived": false
+        },
+        {
+          "eClass": "Property",
+          "name": "catalog",
+          "ownedComment": [],
+          "isStatic": false,
+          "type": "Catalog",
+          "lower": 0,
+          "upper": -1,
+          "isDerived": false
+        }
+      ],
+      "navigableOwnedEnd": ["products"]
+    },
+    {
+      "eClass": "Usage",
+      "ownedComment": [],
+      "client": ["Order"],
+      "supplier": ["PaymentService"]
+    }
+  ]
+}
