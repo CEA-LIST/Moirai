@@ -1,5 +1,5 @@
 use std::{
-    fmt::Display,
+    fmt::{Display, Formatter, Result},
     hash::{Hash, Hasher},
 };
 
@@ -9,7 +9,7 @@ use deepsize::DeepSizeOf;
 use crate::{
     broadcast::internalizer::{Interner, Resolver},
     clock::version_vector::{Seq, Version},
-    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
+    replica::{ReplicaId, ReplicaIdx},
 };
 
 /// Represents the unique identifier for an event.
@@ -84,22 +84,27 @@ impl EventId {
 /// instead, so it can safely be embedded in operation payloads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ResolvedEventId {
     /// Plain string identifier of the issuing replica.
-    origin_id: ReplicaIdOwned,
+    origin_id: ReplicaId,
     /// Sequence number.
     seq: Seq,
     /// Distinguishes deterministic derived events emitted from the same source event.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     disambiguator: Option<u32>,
 }
 
 impl ResolvedEventId {
-    pub fn new(origin_id: ReplicaIdOwned, seq: Seq) -> Self {
+    pub fn new(origin_id: ReplicaId, seq: Seq) -> Self {
         Self::new_with_disambiguator(origin_id, seq, None)
     }
 
     pub fn new_with_disambiguator(
-        origin_id: ReplicaIdOwned,
+        origin_id: ReplicaId,
         seq: Seq,
         disambiguator: Option<u32>,
     ) -> Self {
@@ -126,7 +131,7 @@ impl ResolvedEventId {
 impl From<&EventId> for ResolvedEventId {
     fn from(event_id: &EventId) -> Self {
         Self::new_with_disambiguator(
-            event_id.origin_id().to_string(),
+            event_id.origin_id().clone(),
             event_id.seq(),
             event_id.disambiguator(),
         )
@@ -191,7 +196,7 @@ impl PartialEq for EventId {
 impl Eq for EventId {}
 
 impl Display for ResolvedEventId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         if let Some(disambiguator) = self.disambiguator {
             write!(f, "({}:{}#{})", self.origin_id, self.seq, disambiguator)
         } else {
@@ -203,6 +208,51 @@ impl Display for ResolvedEventId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn resolved_event_id_json_round_trip_without_disambiguator() {
+        let id = ResolvedEventId::new(ReplicaId::from("replica-a"), 7);
+        let json = serde_json::to_value(&id).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "origin_id": "replica-a", "seq": 7 })
+        );
+        assert_eq!(serde_json::from_value::<ResolvedEventId>(json).unwrap(), id);
+
+        // Older exports omitted this field; an explicit null is also accepted.
+        assert_eq!(
+            serde_json::from_value::<ResolvedEventId>(serde_json::json!({
+                "origin_id": "replica-a",
+                "seq": 7,
+                "disambiguator": null
+            }))
+            .unwrap(),
+            id
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn resolved_event_id_json_preserves_disambiguator() {
+        for disambiguator in [0, 42, u32::MAX] {
+            let id = ResolvedEventId::new_with_disambiguator(
+                ReplicaId::from("réplica/\"a\""),
+                7,
+                Some(disambiguator),
+            );
+            let json = serde_json::to_value(&id).unwrap();
+            assert_eq!(
+                json,
+                serde_json::json!({
+                    "origin_id": "réplica/\"a\"",
+                    "seq": 7,
+                    "disambiguator": disambiguator
+                })
+            );
+            assert_eq!(serde_json::from_value::<ResolvedEventId>(json).unwrap(), id);
+        }
+    }
 
     #[cfg(feature = "test_utils")]
     #[test]
@@ -222,12 +272,12 @@ mod tests {
             "resolver size after creation: {}",
             interner.resolver().deep_size_of()
         );
-        let (idx_a, _) = interner.intern(&"A".to_string());
+        let (idx_a, _) = interner.intern(&ReplicaId("A".to_string()));
         println!(
             "resolver size after adding a: {}",
             interner.resolver().deep_size_of()
         );
-        let (idx_b, _) = interner.intern(&"B".to_string());
+        let (idx_b, _) = interner.intern(&ReplicaId("B".to_string()));
         println!(
             "resolver size after adding b: {}",
             interner.resolver().deep_size_of()
@@ -247,7 +297,7 @@ mod tests {
 
         let mut interner = Interner::new();
         for i in 0..100 {
-            let id = format!("{}", i);
+            let id = ReplicaId(format!("{}", i));
             interner.intern(&id);
         }
         println!(

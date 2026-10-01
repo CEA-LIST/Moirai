@@ -1,7 +1,9 @@
 use std::{cmp::Ordering, convert::Infallible, fmt::Debug, marker::PhantomData};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -118,8 +120,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V, P> OpGenerator for Register<V, P>
+impl<V, P, U> OpGenerator<U> for Register<V, P>
 where
+    U: IsUnstableCore<Self>,
     P: Policy,
     V: ValueGenerator + Debug + Clone,
 {
@@ -129,7 +132,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &Self::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
+        _unstable: &U,
     ) -> Self {
         if rng.random_ratio(1, 5) {
             Self::Clear
@@ -268,19 +271,23 @@ mod tests {
     #[ignore]
     fn fuzz_lww_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<Register<i32, LwwPolicy>>;
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<Log, Read<Option<i32>>>::new(
             "lww_register",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
         fuzzer::<Log, Read<Option<i32>>>(config);
     }
@@ -290,19 +297,23 @@ mod tests {
     #[ignore]
     fn fuzz_fair_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
         type Log = VecLog<Register<i32, FairPolicy>>;
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<Log, Read<Option<i32>>>::new(
             "fair_register",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
         fuzzer::<Log, Read<Option<i32>>>(config);
     }

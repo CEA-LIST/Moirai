@@ -9,14 +9,37 @@ use crate::utils::membership::{triplet_log, twins_log};
 
 type ListReplica = Replica<GraphLog<List<char>>, Tcsb<List<char>>>;
 
+#[test]
+fn cached_list_replays_when_next_event_does_not_include_all_cached_events() {
+    type Log = CachedLog<GraphLog<List<char>>, Vec<char>>;
+    let (mut a, mut b) = twins_log::<Log>();
+
+    let a_insert = a.send(List::insert('a', 0)).unwrap();
+    let b_insert = b.send(List::insert('b', 0)).unwrap();
+    a.receive(b_insert);
+
+    assert_eq!(a.query(&Read::<Vec<char>>::new()), vec!['a', 'b']);
+
+    let b_delete = b.send(List::delete(0)).unwrap();
+
+    a.receive(b_delete);
+    b.receive(a_insert);
+
+    assert_eq!(a.query(&Read::<Vec<char>>::new()), vec!['a']);
+    assert_eq!(
+        a.query(&Read::<Vec<char>>::new()),
+        b.query(&Read::<Vec<char>>::new())
+    );
+}
+
 fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
     let replica_a = Replica::bootstrap_with_state(
-        "a".to_string(),
+        "a".to_string().into(),
         &["a", "b"],
         GraphLog::<List<char>>::from_stable(stable.clone()),
     );
     let replica_b = Replica::bootstrap_with_state(
-        "b".to_string(),
+        "b".to_string().into(),
         &["a", "b"],
         GraphLog::<List<char>>::from_stable(stable),
     );
@@ -448,8 +471,11 @@ fn regression_2() {
 }
 
 /// Simulate a long sequence of operations to test caching and performance.
+#[cfg(feature = "test_utils")]
 #[test]
 fn caching() {
+    use moirai_protocol::state::cache::CachedLog;
+
     let (mut replica_a, mut replica_b) = twins_log::<CachedLog<GraphLog<List<char>>, Vec<char>>>();
 
     let alphabet = "abcdefghijklmnopqrstuvwxyz".chars().collect::<Vec<char>>();
@@ -520,19 +546,17 @@ fn caching() {
 #[ignore]
 fn fuzz_list() {
     use moirai_fuzz::{
-        config::{FuzzerConfig, Predicate, RunConfig},
+        config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
         fuzzer::fuzzer,
     };
 
-    let run = RunConfig::new(0.5, 8, 1_000, None, None, true, false);
+    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 3_000, None, None).without_stability();
     let runs = vec![run; 1];
 
     let config = FuzzerConfig::<GraphLog<List<char>>, Read<String>>::new(
         "list",
         runs,
-        true,
         Predicate::new(Read::new(), |a, b| a == b),
-        false,
     );
 
     fuzzer::<GraphLog<List<char>>, Read<String>>(config);

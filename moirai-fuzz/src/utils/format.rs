@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+/// Format a value with an optional character limit, adding ellipsis if the limit is exceeded.
 pub fn format_string_ellipsis<V>(value: &V, limit: Option<usize>) -> String
 where
     V: Debug,

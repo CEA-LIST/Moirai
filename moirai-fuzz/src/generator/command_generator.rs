@@ -8,64 +8,28 @@ use moirai_protocol::{
         graph_log::GraphLog,
         log::{BoxedLog, IsLog},
         po_log::POLog,
-        unstable_state::{CausalReplay, IsUnstableCore, IsUnstablePrune, event_graph::EventGraph},
+        unstable_state::{IsUnstablePrune, event_graph::EventGraph},
     },
 };
 use rand::Rng;
 
-pub trait OpGenerator: ReplicatedDataType {
-    type Config: Default;
-
-    fn generate(
-        rng: &mut impl Rng,
-        config: &Self::Config,
-        stable: &Self::StableState,
-        unstable: &impl IsUnstableCore<Self>,
-    ) -> Self;
-}
-
-// TODO: Find a way to get rid of this trait and just use OpGenerator instead
-
-pub trait CausalOpGenerator: ReplicatedDataType {
-    type Config: Default;
-
-    fn generate_causal(
-        rng: &mut impl Rng,
-        config: &Self::Config,
-        stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
-    ) -> Self;
-}
-
-impl<O> CausalOpGenerator for O
-where
-    O: OpGenerator,
-{
-    type Config = <O as OpGenerator>::Config;
-
-    fn generate_causal(
-        rng: &mut impl Rng,
-        config: &Self::Config,
-        stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
-    ) -> Self {
-        O::generate(rng, config, stable, unstable)
-    }
-}
+use crate::generator::op_generator::OpGenerator;
 
 /// Generates client commands from the current state of a log.
 pub trait CommandGenerator: IsLog {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
 }
 
+//* Default implementations of CommandGenerator for some common log types.
+
 impl<O> CommandGenerator for GraphLog<O>
 where
-    O: ReplicatedDataType + Clone + CausalOpGenerator + UsesUnstableService<EventGraph<O>>,
+    O: ReplicatedDataType + Clone + OpGenerator<EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        O::generate_causal(
+        O::generate(
             rng,
-            &<O as CausalOpGenerator>::Config::default(),
+            &<O as OpGenerator<EventGraph<O>>>::Config::default(),
             self.stable(),
             self.unstable(),
         )
@@ -74,13 +38,13 @@ where
 
 impl<O, U> CommandGenerator for POLog<O, U>
 where
-    O: ReplicatedDataType + Clone + OpGenerator + UsesUnstableService<U>,
+    O: ReplicatedDataType + Clone + OpGenerator<U> + UsesUnstableService<U>,
     U: IsUnstablePrune<O> + Default + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         O::generate(
             rng,
-            &<O as OpGenerator>::Config::default(),
+            &<O as OpGenerator<U>>::Config::default(),
             self.stable(),
             self.unstable(),
         )

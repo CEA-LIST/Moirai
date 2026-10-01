@@ -14,7 +14,7 @@ fn empty_record() {
     type Log = EmptyLog;
     type Tcb = Tcsb<Empty>;
 
-    let mut replica = Replica::<Log, Tcb>::bootstrap(String::from("a"), &[&String::from("a")]);
+    let mut replica = Replica::<Log, Tcb>::bootstrap("a".into(), &["a"]);
 
     replica.send(Empty::New).unwrap();
 
@@ -45,7 +45,7 @@ fn recursive_record_with_generic_value_type() {
     type Log = TreeNodeLog;
     type Tcb = Tcsb<TreeNode>;
 
-    let mut replica = Replica::<Log, Tcb>::bootstrap(String::from("a"), &[&String::from("a")]);
+    let mut replica = Replica::<Log, Tcb>::bootstrap("a".into(), &["a"]);
 
     replica.send(TreeNode::New).unwrap();
 
@@ -63,7 +63,7 @@ fn recursive_record_with_explicit_value_types() {
     type Log = TreeNodeLog;
     type Tcb = Tcsb<TreeNode>;
 
-    let mut replica = Replica::<Log, Tcb>::bootstrap(String::from("a"), &[&String::from("a")]);
+    let mut replica = Replica::<Log, Tcb>::bootstrap("a".into(), &["a"]);
 
     replica.send(TreeNode::New).unwrap();
 
@@ -85,7 +85,7 @@ fn mutually_recursive_records_with_explicit_value_types() {
     type Log = LeftLog;
     type Tcb = Tcsb<Left>;
 
-    let mut replica = Replica::<Log, Tcb>::bootstrap(String::from("a"), &[&String::from("a")]);
+    let mut replica = Replica::<Log, Tcb>::bootstrap("a".into(), &["a"]);
 
     replica.send(Left::New).unwrap();
 

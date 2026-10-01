@@ -3,7 +3,9 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -149,8 +151,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for AWSet<V>
+impl<V, U> OpGenerator<U> for AWSet<V>
 where
+    U: IsUnstableCore<Self>,
     V: ValueGenerator + Clone + Hash + Debug + Eq,
 {
     type Config = ();
@@ -159,7 +162,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as ReplicatedDataType>::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
+        _unstable: &U,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -182,16 +185,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use moirai_protocol::{
+        commitment::{commit_log::CommitmentLog, commit_op::CommitOp},
+        crdt::query::{Contains, Read},
+        replica::IsReplica,
+        state::po_log::VecLog,
+    };
+
     use crate::{
         HashSet,
         set::aw_set::AWSet,
         utils::{membership::twins_log, set_from_slice},
-    };
-    use moirai_protocol::commitment::{commit_log::CommitmentLog, commit_op::CommitOp};
-    use moirai_protocol::{
-        crdt::query::{Contains, Read},
-        replica::IsReplica,
-        state::po_log::VecLog,
     };
 
     #[test]
@@ -374,7 +378,6 @@ mod tests {
     #[test]
     #[cfg(feature = "test_utils")]
     pub fn commitment() {
-        use moirai_protocol::broadcast::tcsb::IsTcsbTest;
         use moirai_protocol::{broadcast::tcsb::Tcsb, replica::Replica};
 
         type Log<'a> = CommitmentLog<VecLog<AWSet<&'a str>>>;
@@ -382,10 +385,10 @@ mod tests {
 
         let members = ["a", "b", "c"];
 
-        let mut replica_a = Replica::<Log, Tcb>::bootstrap("a".to_string(), &members);
-        let mut replica_b = Replica::<Log, Tcb>::bootstrap("b".to_string(), &members);
+        let mut replica_a = Replica::<Log, Tcb>::bootstrap("a".into(), &members);
+        let mut replica_b = Replica::<Log, Tcb>::bootstrap("b".into(), &members);
         // Let replica c be faulty
-        let mut _replica_c = Replica::<Log, Tcb>::bootstrap("c".to_string(), &members);
+        let mut _replica_c = Replica::<Log, Tcb>::bootstrap("c".into(), &members);
 
         // Replica a and b are well-connected
         replica_a.state_mut().oracle_mut().set_leader("a");
@@ -418,19 +421,29 @@ mod tests {
     #[ignore]
     fn fuzz_aw_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{
+                CallSampling, ChurnConfig, FuzzerConfig, MetricsSampling, Predicate,
+                ReplicaSampling, RunConfig, SaveMode,
+            },
             fuzzer::fuzzer,
         };
-        let run = RunConfig::new(0.4, 8, 10_000, None, None, false, true).with_memory_sampling(1);
+        let replica_zero =
+            MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 100_000, None, None)
+            .with_response_time(replica_zero.clone())
+            .with_effect_time(replica_zero.clone())
+            .with_query_time(replica_zero.clone())
+            .with_log_size(replica_zero.clone())
+            .with_replica_size(replica_zero)
+            .with_track_stability(ReplicaSampling::Indices(vec![0]));
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>::new(
             "aw_set",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
-        );
+        )
+        .save(SaveMode::Full);
 
         fuzzer::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>(config);
     }
@@ -440,19 +453,23 @@ mod tests {
     #[ignore]
     fn fuzz_commitment_aw_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         type Log = CommitmentLog<VecLog<AWSet<usize>>>;
 
-        let runs = vec![RunConfig::new(0.4, 8, 10_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            10_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<Log, Read<HashSet<usize>>>::new(
             "aw_set_commitment",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         )
         .with_omega_oracle();
 

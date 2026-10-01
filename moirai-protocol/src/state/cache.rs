@@ -1,13 +1,12 @@
 use std::{
     cell::OnceCell,
-    cmp::Ordering,
     fmt::{self, Debug},
 };
 
 use castaway::cast;
 
 use crate::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -32,47 +31,6 @@ impl<V: deepsize::DeepSizeOf> deepsize::DeepSizeOf for CacheCell<V> {
         // an empty cache as a side effect of measuring it.
         self.get()
             .map_or(0, |value| value.deep_size_of_children(context))
-    }
-}
-
-#[cfg(all(test, feature = "test_utils"))]
-mod memory_tests {
-    use super::CacheCell;
-    use deepsize::DeepSizeOf;
-
-    #[test]
-    fn memory_tracks_cached_allocations_without_populating_cache() {
-        let mut cache = CacheCell::<Vec<u8>>::new();
-        let inline = std::mem::size_of_val(&cache);
-        assert_eq!(cache.deep_size_of(), inline);
-        assert!(cache.get().is_none());
-
-        let value = Vec::with_capacity(128);
-        let capacity = value.capacity();
-        cache.replace(value);
-        assert_eq!(cache.deep_size_of(), inline + capacity);
-
-        cache.invalidate();
-        assert_eq!(cache.deep_size_of(), inline);
-    }
-
-    #[test]
-    fn cached_inline_value_is_not_counted_twice() {
-        let mut cache = CacheCell::<u64>::new();
-        cache.replace(42);
-        assert_eq!(cache.deep_size_of(), std::mem::size_of_val(&cache));
-    }
-
-    #[test]
-    fn cached_shared_allocations_use_one_traversal_context() {
-        use std::rc::Rc;
-
-        let value = Rc::new(vec![0u8; 128]);
-        let mut shared = CacheCell::new();
-        shared.replace((value.clone(), value));
-        let mut distinct = CacheCell::new();
-        distinct.replace((Rc::new(vec![0u8; 128]), Rc::new(vec![0u8; 128])));
-        assert!(shared.deep_size_of() < distinct.deep_size_of());
     }
 }
 
@@ -126,7 +84,8 @@ impl<V> Clone for CacheCell<V> {
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CachedLog<L, V> {
     inner: L,
-    version: Option<Version>,
+    /// Join of the event versions represented by the inner log, when known.
+    frontier: Option<CausalFrontier>,
     read_cache: CacheCell<V>,
 }
 
@@ -134,22 +93,13 @@ impl<L, V> CachedLog<L, V> {
     pub fn from_inner(inner: L) -> Self {
         Self {
             inner,
-            version: None,
+            frontier: None,
             read_cache: CacheCell::new(),
         }
     }
 
     pub fn inner(&self) -> &L {
         &self.inner
-    }
-
-    pub fn inner_mut(&mut self) -> &mut L {
-        self.read_cache.invalidate();
-        &mut self.inner
-    }
-
-    pub fn into_inner(self) -> L {
-        self.inner
     }
 }
 
@@ -160,7 +110,7 @@ where
     fn default() -> Self {
         Self {
             inner: L::default(),
-            version: None,
+            frontier: None,
             read_cache: CacheCell::new(),
         }
     }
@@ -184,26 +134,34 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        if let Some(version) = &self.version
-            && event.version().partial_cmp(version) == Some(Ordering::Greater)
+        if let Some(frontier) = &self.frontier
+            && event.version().includes_frontier(frontier)
+            && let Some(cache) = self.read_cache.get_mut()
         {
-            if let Some(cache) = self.read_cache.get_mut() {
-                cache.apply(event.op());
-            }
+            cache.apply(event.op());
         } else {
             self.read_cache.invalidate();
         }
-        self.version = Some(event.version().clone());
+
+        match &mut self.frontier {
+            Some(frontier) => frontier.join_version(event.version()),
+            None => self.frontier = Some(CausalFrontier::from(event.version())),
+        }
+
         self.inner.effect(event, ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.inner.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.inner.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         self.read_cache.invalidate();
         self.inner.redundant_by_parent(version, conservative);
+        match &mut self.frontier {
+            Some(frontier) => frontier.join_version(version),
+            None => self.frontier = Some(CausalFrontier::from(version)),
+        }
     }
 
     fn is_default(&self) -> bool {

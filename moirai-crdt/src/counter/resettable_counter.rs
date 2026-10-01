@@ -7,7 +7,9 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -103,8 +105,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for Counter<V>
+impl<V, U> OpGenerator<U> for Counter<V>
 where
+    U: IsUnstableCore<Self>,
     V: Add<Output = V>
         + AddAssign
         + SubAssign
@@ -120,7 +123,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as ReplicatedDataType>::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
+        _unstable: &U,
     ) -> Self {
         enum Choice {
             Inc,
@@ -222,20 +225,18 @@ mod tests {
     #[ignore]
     fn fuzz_resettable_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 1_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Counter<i32>>, Read<i32>>::new(
             "resettable_counter",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<VecLog<Counter<i32>>, Read<i32>>(config);

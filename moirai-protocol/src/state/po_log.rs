@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use crate::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::{Eval, EvalNested},
         query::QueryOperation,
@@ -88,7 +88,7 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         if O::DISABLE_STABILIZE {
             return;
         }
@@ -98,8 +98,8 @@ where
 
         let candidates = self
             .unstable
-            .predecessors(version)
-            .into_iter()
+            .iter()
+            .filter(|tagged_op| frontier.contains(tagged_op.id()))
             .cloned()
             .collect::<Vec<_>>();
 

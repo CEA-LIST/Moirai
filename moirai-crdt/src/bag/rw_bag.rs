@@ -1,9 +1,14 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::CommandGenerator, value_generator::ValueGenerator};
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    FootprintNode, LogFootprint,
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -73,8 +78,8 @@ where
         self.0.effect(event, &mut silent_ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.0.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.0.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -120,6 +125,16 @@ where
             Choice::Remove => RWBag::Remove(value),
             Choice::Clear => RWBag::Clear,
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> LogFootprint for RWBagLog<V>
+where
+    V: Clone + Hash + Debug + Eq + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        self.0.footprint()
     }
 }
 
@@ -169,17 +184,21 @@ mod tests {
     #[ignore]
     fn fuzz_rw_bag() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<RWBagLog<usize>, Read<HashMap<usize, usize>>>::new(
             "rw_bag",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<RWBagLog<usize>, Read<HashMap<usize, usize>>>(config);

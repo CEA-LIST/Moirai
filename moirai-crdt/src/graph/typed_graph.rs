@@ -46,6 +46,8 @@ typed_graph! {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "fuzz")]
+    use moirai_fuzz::generator::op_generator::OpGenerator;
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
     use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableCore};
@@ -694,8 +696,9 @@ mod tests {
     }
 
     #[cfg(feature = "fuzz")]
-    impl<P> moirai_fuzz::command_generator::OpGenerator for MyTypedGraph<P>
+    impl<P, U> OpGenerator<U> for MyTypedGraph<P>
     where
+        U: IsUnstableCore<Self>,
         P: Policy,
     {
         type Config = ();
@@ -704,7 +707,7 @@ mod tests {
             rng: &mut impl rand::Rng,
             _config: &Self::Config,
             stable: &Self::StableState,
-            unstable: &impl IsUnstableCore<Self>,
+            unstable: &U,
         ) -> Self {
             use moirai_protocol::crdt::{eval::Eval, query::Read};
             use rand::{
@@ -754,7 +757,7 @@ mod tests {
 
             match choice {
                 Choice::AddVertex => MyTypedGraph::AddVertex {
-                    id: <MyVertex as moirai_fuzz::value_generator::ValueGenerator>::generate(
+                    id: <MyVertex as moirai_fuzz::generator::value_generator::ValueGenerator>::generate(
                         rng,
                         &(),
                     ),
@@ -776,7 +779,7 @@ mod tests {
     // TODO: implement ValueGenerator for each vertex type, not just the wrapper enum
 
     #[cfg(feature = "fuzz")]
-    impl moirai_fuzz::value_generator::ValueGenerator for MyVertex {
+    impl moirai_fuzz::generator::value_generator::ValueGenerator for MyVertex {
         type Config = ();
 
         fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
@@ -802,19 +805,18 @@ mod tests {
     #[ignore]
     fn fuzz_typed_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
+        let run = RunConfig::new(ChurnConfig::new(0.6, 0.4), 8, 100, None, None);
         let runs = vec![run.clone(); 1_000];
 
         let config =
             FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>::new(
                 "typed_graph",
                 runs,
-                true,
                 Predicate::new(Read::new(), |a, b| {
                     let node = a.node_count() == b.node_count();
                     let edge = a.edge_count() == b.edge_count();
@@ -830,7 +832,7 @@ mod tests {
                                 {
                                     true
                                 } else {
-                                    // println!("Schema violations: {:?}", violations);
+                                    println!("Schema violations: {:?}", violations);
                                     false
                                 }
                             }
@@ -840,7 +842,6 @@ mod tests {
 
                     node && edge && is_valid(a) && is_valid(b)
                 }),
-                false,
             );
 
         fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>(config);

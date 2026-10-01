@@ -23,8 +23,8 @@ pub fn twins<O>() -> Twins<O, VecLog<O>>
 where
     O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
-    let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b"]);
-    let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b"]);
+    let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".into(), &["a", "b"]);
+    let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".into(), &["a", "b"]);
     (replica_a, replica_b)
 }
 
@@ -32,8 +32,8 @@ pub fn twins_log<L>() -> Twins<L::Op, L>
 where
     L: IsLog,
 {
-    let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), &["a", "b"]);
-    let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), &["a", "b"]);
+    let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".into(), &["a", "b"]);
+    let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".into(), &["a", "b"]);
     (replica_a, replica_b)
 }
 
@@ -41,9 +41,9 @@ pub fn triplet<O>() -> Triplet<O, VecLog<O>>
 where
     O: ReplicatedDataType + Clone + UsesUnstableService<Vec<TaggedOp<O>>>,
 {
-    let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".to_string(), &["a", "b", "c"]);
-    let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".to_string(), &["a", "b", "c"]);
-    let replica_c = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("c".to_string(), &["a", "b", "c"]);
+    let replica_a = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("a".into(), &["a", "b", "c"]);
+    let replica_b = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("b".into(), &["a", "b", "c"]);
+    let replica_c = Replica::<VecLog<O>, Tcsb<O>>::bootstrap("c".into(), &["a", "b", "c"]);
     (replica_a, replica_b, replica_c)
 }
 
@@ -51,8 +51,8 @@ pub fn triplet_log<L>() -> Triplet<L::Op, L>
 where
     L: IsLog,
 {
-    let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".to_string(), &["a", "b", "c"]);
-    let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".to_string(), &["a", "b", "c"]);
-    let replica_c = Replica::<L, Tcsb<L::Op>>::bootstrap("c".to_string(), &["a", "b", "c"]);
+    let replica_a = Replica::<L, Tcsb<L::Op>>::bootstrap("a".into(), &["a", "b", "c"]);
+    let replica_b = Replica::<L, Tcsb<L::Op>>::bootstrap("b".into(), &["a", "b", "c"]);
+    let replica_c = Replica::<L, Tcsb<L::Op>>::bootstrap("c".into(), &["a", "b", "c"]);
     (replica_a, replica_b, replica_c)
 }

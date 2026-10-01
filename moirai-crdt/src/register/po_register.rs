@@ -3,7 +3,9 @@ use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -96,8 +98,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for PORegister<V>
+impl<V, U> OpGenerator<U> for PORegister<V>
 where
+    U: IsUnstableCore<Self>,
     V: Clone + Debug + Eq + Hash + ValueGenerator + PartialEq + PartialOrd,
 {
     type Config = ();
@@ -106,7 +109,7 @@ where
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &Self::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
+        _unstable: &U,
     ) -> Self {
         if rng.random_ratio(1, 5) {
             Self::Clear
@@ -132,7 +135,7 @@ mod tests {
     #[ignore]
     fn fuzz_po_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
@@ -140,13 +143,17 @@ mod tests {
         use crate::HashSet;
 
         type Log = VecLog<PORegister<i32>>;
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
             "po_register",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
         fuzzer::<Log, Read<HashSet<i32>>>(config);
     }

@@ -4,9 +4,14 @@ use std::{
 };
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::CommandGenerator, value_generator::ValueGenerator};
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    FootprintNode, LogFootprint,
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -165,13 +170,13 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         for v in self.arcs.values_mut() {
-            v.stabilize(version);
+            v.stabilize(frontier);
         }
 
         for v in self.vertices.values_mut() {
-            v.stabilize(version);
+            v.stabilize(frontier);
         }
     }
 
@@ -438,10 +443,21 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<V, E, Vl, El> LogFootprint for UWGraphLog<V, E, Vl, El>
+where
+    V: Clone + Hash + Debug + Eq + DeepSizeOf,
+    E: Clone + Hash + Debug + Eq + DeepSizeOf,
+    Vl: IsLog + LogFootprint + DeepSizeOf,
+    El: IsLog + LogFootprint + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "fuzz")]
-    use crate::graph::uw_multidigraph::LabeledMultidigraph;
     #[cfg(feature = "fuzz")]
     use moirai_fuzz::config::Predicate;
     use moirai_protocol::{
@@ -451,6 +467,8 @@ mod tests {
     };
     use petgraph::graph::DiGraph;
 
+    #[cfg(feature = "fuzz")]
+    use crate::graph::uw_multidigraph::LabeledMultidigraph;
     use crate::{
         counter::resettable_counter::Counter,
         graph::uw_multidigraph::{UWGraph, UWGraphLog},
@@ -868,22 +886,26 @@ mod tests {
     #[ignore]
     fn fuzz_uw_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<
             UWGraphLog<usize, usize, Lww, Cntr>,
             Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
         >::new(
             "uw_graph",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| {
                 a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
             }),
-            false,
         );
         fuzzer::<
             UWGraphLog<usize, usize, Lww, Cntr>,

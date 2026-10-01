@@ -1,6 +1,6 @@
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{
         leader_vote::SupportDelta,
         oracle::{IsOracle, Omega},
@@ -23,10 +23,9 @@ where
     /// The resolver that maps replica indices to replica IDs, but also provides the members of the system.
     /// It is used to determine the quorum of votes for a candidate leader.
     resolver: Resolver,
-    /// The last committed anchor, which is either the greatest version
-    /// that has been committed by a quorum of replicas
-    /// or the last stable version (LSV) from the TCSB
-    last_committed: Option<Version>,
+    /// The committed causal cut, advanced by quorum-backed anchors or the
+    /// stable frontier from TCSB.
+    last_committed: Option<CausalFrontier>,
     /// Incrementally maintained positive support relationships for each candidate.
     /// Map key = supported event
     support: HashMap<EventId, HashSet<ReplicaIdx>>,
@@ -61,12 +60,12 @@ where
         self.resolver = resolver;
     }
 
-    pub fn last_committed(&self) -> Option<&Version> {
+    pub fn last_committed(&self) -> Option<&CausalFrontier> {
         self.last_committed.as_ref()
     }
 
-    pub fn update_last_committed(&mut self, version: Version) {
-        self.last_committed = Some(version);
+    pub fn update_last_committed(&mut self, frontier: CausalFrontier) {
+        self.last_committed = Some(frontier);
     }
 
     /// Applies newly decided support relationships and returns the anchors reached while
@@ -103,13 +102,16 @@ where
     }
 
     pub fn advance_commitment(&mut self, candidate: &Version) -> bool {
+        let candidate_frontier = CausalFrontier::from(candidate);
         let advances = match &self.last_committed {
-            Some(last_committed) => EventId::from(last_committed).is_predecessor_of(candidate),
+            Some(last_committed) => {
+                candidate_frontier.partial_cmp(last_committed) == Some(std::cmp::Ordering::Greater)
+            }
             None => true,
         };
 
         if advances {
-            self.last_committed = Some(candidate.clone());
+            self.last_committed = Some(candidate_frontier);
             return true;
         }
 

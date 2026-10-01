@@ -1,9 +1,11 @@
 use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::CommandGenerator;
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{FootprintNode, LogFootprint, generator::command_generator::CommandGenerator};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -76,9 +78,9 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         if let Some(ref mut child) = self.child {
-            child.stabilize(version);
+            child.stabilize(frontier);
         }
     }
 
@@ -153,6 +155,16 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<L> LogFootprint for OptionLog<L>
+where
+    L: LogFootprint + IsLog + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
@@ -216,19 +228,23 @@ mod tests {
     #[ignore]
     fn fuzz_optional_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         type OptionalCounter = OptionLog<VecLog<Counter<i32>>>;
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<OptionalCounter, Read<Option<i32>>>::new(
             "optional_counter",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<OptionalCounter, Read<Option<i32>>>(config);

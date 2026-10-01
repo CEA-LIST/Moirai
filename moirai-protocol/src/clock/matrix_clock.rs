@@ -5,7 +5,10 @@ use deepsize::DeepSizeOf;
 
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::version_vector::{Seq, Version},
+    clock::{
+        causal_frontier::CausalFrontier,
+        version_vector::{Seq, Version},
+    },
     replica::ReplicaIdx,
 };
 
@@ -91,12 +94,12 @@ impl MatrixClock {
     /// # Complexity
     /// Runs in `O(n^2)` time complexity
     #[deprecated]
-    pub fn column_wise_min(&self) -> Version {
+    pub fn column_wise_min(&self) -> CausalFrontier {
         let mut iter = self.entries.0.iter();
-        let mut min_clock = iter.next().unwrap().clone();
+        let mut min_clock = CausalFrontier::from(iter.next().unwrap());
 
         for ver in iter {
-            min_clock.meet(ver);
+            min_clock.meet(&CausalFrontier::from(ver));
         }
 
         min_clock
@@ -107,9 +110,9 @@ impl MatrixClock {
     /// less than or equal to the previous minimum is found, since the minimum then cannot grow.
     pub fn column_wise_min_incremental(
         &self,
-        last_svv: &Version,
+        last_svv: &CausalFrontier,
         updated_columns: &[ReplicaIdx],
-    ) -> Version {
+    ) -> CausalFrontier {
         let mut svv = last_svv.clone();
 
         for col_idx in updated_columns {
@@ -210,17 +213,19 @@ impl Display for MatrixClock {
 mod tests {
     use crate::{
         broadcast::internalizer::Interner,
-        clock::{matrix_clock::MatrixClock, version_vector::Version},
-        replica::ReplicaIdx,
+        clock::{
+            causal_frontier::CausalFrontier, matrix_clock::MatrixClock, version_vector::Version,
+        },
+        replica::{ReplicaId, ReplicaIdx},
     };
 
     #[test]
     #[allow(deprecated)]
     fn column_wise_min() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -231,7 +236,7 @@ mod tests {
         );
         assert_eq!(
             mc.column_wise_min(),
-            Version::build(resolver.clone(), ReplicaIdx(0), &[8, 4, 3])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[8, 4, 3]))
         );
     }
 
@@ -239,9 +244,9 @@ mod tests {
     #[allow(deprecated)]
     fn column_wise_min_incremental_advances_only_changed_columns() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -254,7 +259,7 @@ mod tests {
         let baseline_svv = baseline_mc.column_wise_min();
         assert_eq!(
             baseline_svv,
-            Version::build(resolver.clone(), ReplicaIdx(0), &[1, 8, 0])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[1, 8, 0]))
         );
 
         // Row 2 is updated
@@ -272,7 +277,7 @@ mod tests {
         assert_eq!(incremental, full);
         assert_eq!(
             incremental,
-            Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0]))
         );
     }
 }

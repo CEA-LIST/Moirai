@@ -11,7 +11,9 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::CausalOpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     clock::version_vector::Version,
     crdt::{
@@ -414,6 +416,16 @@ impl<V> ReadAt<V> {
 
 impl<V> QueryOperation for ReadAt<V> {
     type Response = V;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "ReadAt"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![format!("version={}", self.version)]
+    }
 }
 
 impl<V, U> Eval<ReadAt<Vec<V>>, U> for List<V>
@@ -468,17 +480,18 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> CausalOpGenerator for List<V>
+impl<V, U> OpGenerator<U> for List<V>
 where
+    U: CausalReplay<Self>,
     V: ValueGenerator + Debug + Clone,
 {
     type Config = ();
 
-    fn generate_causal(
+    fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
+        unstable: &U,
     ) -> Self {
         // Fuzzing generates only user operations that are enabled in the current
         // visible document, because out-of-bounds operations are rejected before
@@ -505,7 +518,7 @@ where
 
         match choice {
             Choice::Insert => {
-                use moirai_fuzz::value_generator::ValueGenerator;
+                use moirai_fuzz::generator::value_generator::ValueGenerator;
 
                 let pos = rng.random_range(0..=list.len());
                 let c = V::generate(rng, &<V as ValueGenerator>::Config::default());

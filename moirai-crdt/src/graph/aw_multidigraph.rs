@@ -7,9 +7,9 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::OpGenerator;
+use moirai_fuzz::generator::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::value_generator::ValueGenerator;
+use moirai_fuzz::generator::value_generator::ValueGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -229,8 +229,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V, E> OpGenerator for Graph<V, E>
+impl<V, E, U> OpGenerator<U> for Graph<V, E>
 where
+    U: IsUnstableCore<Self>,
     V: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
     E: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
 {
@@ -240,7 +241,7 @@ where
         rng: &mut impl rand::Rng,
         _config: &Self::Config,
         stable: &Self::StableState,
-        unstable: &impl IsUnstableCore<Self>,
+        unstable: &U,
     ) -> Self {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
@@ -270,7 +271,7 @@ where
 
         match choice {
             Choice::AddVertex => {
-                use moirai_fuzz::value_generator::ValueGenerator;
+                use moirai_fuzz::generator::value_generator::ValueGenerator;
 
                 let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
                 Graph::AddVertex(v)
@@ -523,24 +524,22 @@ mod tests {
     #[ignore]
     fn fuzz_aw_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
         use petgraph::graph::DiGraph;
 
-        let run = RunConfig::new(0.4, 8, 100, None, None, false, false);
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 1_000, None, None);
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>::new(
             "aw_graph",
             runs,
-            true,
             // |a, b| vf2::isomorphisms(a, b).first().is_some(),
             Predicate::new(Read::new(), |a, b| {
                 a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
             }),
-            false,
         );
 
         fuzzer::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>(config);

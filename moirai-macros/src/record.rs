@@ -164,11 +164,11 @@ macro_rules! record {
                     }
                 }
 
-                fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                fn stabilize(&mut self, frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier) {
                     $(
                         <$T as $crate::moirai_protocol::state::log::IsLog>::stabilize(
                             &mut self.$field,
-                            version,
+                            frontier,
                         );
                     )*
                 }

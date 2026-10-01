@@ -324,7 +324,7 @@ macro_rules! union {
                     }
                 }
 
-                fn stabilize(&mut self, _version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                fn stabilize(&mut self, frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier) {
                     match &mut self.child {
                         [<$union Container>]::Unset => {}
                         [<$union Container>]::Value(union_child) => {
@@ -333,7 +333,7 @@ macro_rules! union {
                                     [<$union Child>]::$variant(log) => {
                                         <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(
                                             log,
-                                            _version,
+                                            frontier,
                                         );
                                     }
                                 )*
@@ -346,7 +346,7 @@ macro_rules! union {
                                         [<$union Child>]::$variant(log) => {
                                             <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(
                                                 log,
-                                                _version,
+                                                frontier,
                                             );
                                         }
                                     )*

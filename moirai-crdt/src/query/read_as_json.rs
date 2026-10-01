@@ -15,6 +15,16 @@ pub struct ReadAsJson;
 
 impl QueryOperation for ReadAsJson {
     type Response = Value;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "ReadAsJson"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 impl ReadAsJson {

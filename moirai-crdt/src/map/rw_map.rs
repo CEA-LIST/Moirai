@@ -6,9 +6,12 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{command_generator::CommandGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    FootprintNode, LogFootprint,
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{Contains, Get, QueryOperation, Read},
@@ -162,10 +165,10 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.set.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.set.stabilize(frontier);
         for child in self.children.values_mut() {
-            child.stabilize(version);
+            child.stabilize(frontier);
         }
     }
 
@@ -245,7 +248,7 @@ where
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        use moirai_fuzz::value_generator::ValueGenerator;
+        use moirai_fuzz::generator::value_generator::ValueGenerator;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -282,6 +285,23 @@ where
             write!(f, "{} => {}", k, v)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<K, L> LogFootprint for RWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash + DeepSizeOf,
+    L: IsLog + LogFootprint + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        FootprintNode::parent(
+            self,
+            self.children()
+                .iter()
+                .map(|(k, v)| FootprintNode::parent(k, vec![v.footprint()]))
+                .collect(),
+        )
     }
 }
 
@@ -554,19 +574,18 @@ mod tests {
     #[ignore]
     fn fuzz_rw_map() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.6, 2, 8, None, None, true, false);
+        let run =
+            RunConfig::new(ChurnConfig::new(0.6, 0.4), 2, 8, None, None).with_execution_graph();
         let runs = vec![run.clone(); 10_000];
 
         let config = FuzzerConfig::<ListMap, Read<HashMap<String, String>>>::new(
             "rw_map",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<ListMap, Read<HashMap<String, String>>>(config);
@@ -577,7 +596,7 @@ mod tests {
     #[ignore]
     fn fuzz_rw_map_aw_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
@@ -586,15 +605,13 @@ mod tests {
         type RWMapNested = RWMapLog<String, VecLog<AWSet<i32>>>;
         type Value = Read<HashMap<String, HashSet<i32>>>;
 
-        let run = RunConfig::new(0.4, 8, 50, None, None, false, false);
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 50, None, None);
         let runs = vec![run.clone(); 1_000];
 
         let config = FuzzerConfig::<RWMapNested, Value>::new(
             "rw_map_aw_set",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<RWMapNested, Value>(config);

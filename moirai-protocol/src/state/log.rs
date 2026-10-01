@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use crate::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -42,8 +42,8 @@ pub trait IsLog: Default {
         Self::execute_query(self, q)
     }
 
-    /// Stabilize the log at a given version.
-    fn stabilize(&mut self, version: &Version);
+    /// Stabilize the log at a component-wise causal frontier.
+    fn stabilize(&mut self, frontier: &CausalFrontier);
 
     /// Prune the log by removing events that are redundant.
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
@@ -88,8 +88,8 @@ impl<L: IsLog> IsLog for Box<L> {
         (**self).effect(inner_event, ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        (**self).stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        (**self).stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -152,8 +152,8 @@ impl<L: IsLog> IsLog for BoxedLog<L> {
         self.0.as_mut().effect(inner_event, ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.0.as_mut().stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.0.as_mut().stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {

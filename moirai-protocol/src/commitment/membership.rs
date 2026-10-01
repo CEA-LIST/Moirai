@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 
 use crate::{
     crdt::{
@@ -8,7 +8,7 @@ use crate::{
         replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::tagged_op::TaggedOp,
-    replica::ReplicaIdOwned,
+    replica::ReplicaId,
     state::{
         stable_state::IsStableState,
         unstable_state::{IsUnstableCore, IsUnstablePrune},
@@ -18,18 +18,18 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Membership {
-    Join(ReplicaIdOwned),
-    Leave(ReplicaIdOwned),
+    Join(ReplicaId),
+    Leave(ReplicaId),
 }
 
 #[derive(Debug, Clone)]
 pub enum MembershipRejection {
-    AlreadyJoined(ReplicaIdOwned),
-    NotJoined(ReplicaIdOwned),
+    AlreadyJoined(ReplicaId),
+    NotJoined(ReplicaId),
 }
 
 impl Display for MembershipRejection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             MembershipRejection::AlreadyJoined(id) => write!(f, "{} is already joined", id),
             MembershipRejection::NotJoined(id) => write!(f, "{} is not joined", id),
@@ -38,7 +38,7 @@ impl Display for MembershipRejection {
 }
 
 impl ReplicatedDataType for Membership {
-    type StableState = HashSet<ReplicaIdOwned>;
+    type StableState = HashSet<ReplicaId>;
     type Rejection = MembershipRejection;
 
     const DISABLE_R_WHEN_R: bool = false;
@@ -99,7 +99,7 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> Result<(), Self::Rejection> {
-        let members: HashSet<ReplicaIdOwned> = Self::execute_query(&Read::new(), stable, unstable);
+        let members: HashSet<ReplicaId> = Self::execute_query(&Read::new(), stable, unstable);
 
         match op {
             Membership::Join(id) if members.contains(id) => {
@@ -113,7 +113,7 @@ where
     }
 }
 
-impl IsStableState<Membership> for HashSet<ReplicaIdOwned> {
+impl IsStableState<Membership> for HashSet<ReplicaId> {
     fn is_default(&self) -> bool {
         self == &HashSet::default()
     }
@@ -141,15 +141,15 @@ impl IsStableState<Membership> for HashSet<ReplicaIdOwned> {
     }
 }
 
-impl<U> Eval<Read<HashSet<ReplicaIdOwned>>, U> for Membership
+impl<U> Eval<Read<HashSet<ReplicaId>>, U> for Membership
 where
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<ReplicaIdOwned>>,
+        _q: &Read<HashSet<ReplicaId>>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<ReplicaIdOwned>> as QueryOperation>::Response {
+    ) -> <Read<HashSet<ReplicaId>> as QueryOperation>::Response {
         let mut members = stable.clone();
 
         for tagged_op in unstable.iter() {

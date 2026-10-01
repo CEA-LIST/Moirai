@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug};
+use std::{collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -10,9 +10,9 @@ use crate::{
         message::{BatchMessage, EventMessage, SinceMessage},
         since::Since,
     },
-    clock::{matrix_clock::MatrixClock, version_vector::Version},
+    clock::{causal_frontier::CausalFrontier, matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
-    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
+    replica::{ReplicaId, ReplicaIdx},
     utils::hashmap::{HashMap, HashSet},
 };
 
@@ -32,10 +32,10 @@ pub trait IsTcsb<O> {
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O>;
     /// Return the next causally ready event to be delivered, if any.
     fn next_causally_ready(&mut self) -> Option<Event<O>>;
-    /// Return the new stable version if it has advanced
-    fn is_stable(&mut self) -> Option<&Version>;
+    /// Return the new stable causal frontier if it has advanced.
+    fn is_stable(&mut self) -> Option<&CausalFrontier>;
     /// Return the replica IDs of all members in the system
-    fn members(&self) -> Vec<ReplicaIdOwned>;
+    fn members(&self) -> Vec<ReplicaId>;
     /// Return the number of members in the system.
     fn members_len(&self) -> usize;
 }
@@ -53,17 +53,12 @@ pub struct Tcsb<O> {
     outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
     /// The matrix clock tracks the latest known version of each replica, including the local one.
     matrix_clock: MatrixClock,
-    /// The last stable version is the greatest version such that all events causally preceding this version
-    /// have been delivered by all replicas.
-    last_stable_version: Version,
+    /// Component-wise cut containing every event delivered by all replicas.
+    last_stable_version: CausalFrontier,
     /// Local mapping between remote replica IDs and local replica indices, and resolver for translating between them.
     interner: Interner,
     /// The indices of the columns that were updated in the last matrix clock update, used for efficient stable version computation.
     last_updated_columns: Vec<ReplicaIdx>,
-    /// Snapshots of every version at which causal stability advanced.
-    /// The initial zero version is excluded.
-    #[cfg(feature = "test_utils")]
-    lsv_history: Vec<Version>,
 }
 
 impl<O> IsTcsb<O> for Tcsb<O>
@@ -76,12 +71,10 @@ where
             inbox: HashMap::default(),
             outbox: HashMap::default(),
             matrix_clock: MatrixClock::new(replica_idx, resolver.clone()),
-            last_stable_version: Version::new(replica_idx, resolver.clone()),
+            last_stable_version: CausalFrontier::new(resolver.clone()),
             interner,
             replica_idx,
             last_updated_columns: Vec::new(),
-            #[cfg(feature = "test_utils")]
-            lsv_history: Vec::new(),
         }
     }
 
@@ -128,7 +121,7 @@ where
         None
     }
 
-    fn is_stable(&mut self) -> Option<&Version> {
+    fn is_stable(&mut self) -> Option<&CausalFrontier> {
         let lsv = self
             .matrix_clock
             .column_wise_min_incremental(&self.last_stable_version, &self.last_updated_columns);
@@ -138,15 +131,12 @@ where
             self.prune_outbox(&lsv);
             self.last_stable_version = lsv;
 
-            #[cfg(feature = "test_utils")]
-            self.lsv_history.push(self.last_stable_version.clone());
-
             Some(&self.last_stable_version)
         }
     }
 
     /// # Complexity
-    /// `O(m log m + k log k)` where `m` is the number of replicas and `k` is the number of events returned.
+    /// `O(n log n + k log k)` where `n` is the number of replicas and `k` is the number of events returned.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<O> {
         let since = self.internalize_since(since);
         let mut events = Vec::new();
@@ -180,7 +170,7 @@ where
         SinceMessage::new(since, self.interner.resolver().clone())
     }
 
-    fn members(&self) -> Vec<ReplicaIdOwned> {
+    fn members(&self) -> Vec<ReplicaId> {
         self.interner.resolver().into_vec()
     }
 
@@ -255,14 +245,12 @@ where
     /// Return `true` if the event is not greater than the last stable version
     /// i.e., if the sending replica needs a state transfer.
     fn is_stale(&self, event: &Event<O>) -> bool {
-        match event.version().partial_cmp(&self.last_stable_version) {
-            Some(Ordering::Less) | Some(Ordering::Equal) | None => true,
-            Some(Ordering::Greater) => false,
-        }
+        self.last_stable_version.contains(event.id())
+            || !event.version().includes_frontier(&self.last_stable_version)
     }
 
     /// Remove events from the outbox that have been delivered by every replica.
-    fn prune_outbox(&mut self, lsv: &Version) {
+    fn prune_outbox(&mut self, lsv: &CausalFrontier) {
         // For each replica, retain only events with sequence greater than the replica's last stable seq
         for (replica_idx, events_by_seq) in self.outbox.iter_mut() {
             let lsv_seq = lsv.seq_by_idx(*replica_idx);
@@ -385,57 +373,36 @@ where
 }
 
 #[cfg(feature = "test_utils")]
-pub trait IsTcsbTest<O>: IsTcsb<O> {
-    fn matrix_clock(&self) -> &MatrixClock;
-    fn last_stable_version(&self) -> &Version;
-    fn lsv_history(&self) -> &[Version];
-    fn causally_stable_events_count(&self) -> usize;
-    fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
-    where
-        O: 'a;
-    fn inbox_len(&self) -> usize;
-    fn outbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
-    where
-        O: 'a;
-    fn outbox_len(&self) -> usize;
-    fn interner(&self) -> &Interner;
-}
-
-#[cfg(feature = "test_utils")]
-impl<O> IsTcsbTest<O> for Tcsb<O>
+impl<O> Tcsb<O>
 where
     O: Debug + Clone,
 {
-    fn matrix_clock(&self) -> &MatrixClock {
+    pub fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
     }
 
-    fn last_stable_version(&self) -> &Version {
+    pub fn last_stable_version(&self) -> &CausalFrontier {
         &self.last_stable_version
-    }
-
-    fn lsv_history(&self) -> &[Version] {
-        &self.lsv_history
     }
 
     /// The number of causally stable events is the number of events that have been delivered and are causally stable.
     /// It is the sum of the components of the LSV.
-    fn causally_stable_events_count(&self) -> usize {
+    pub fn causally_stable_events_count(&self) -> usize {
         self.last_stable_version.sum()
     }
 
-    fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
+    pub fn inbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
         Self: 'a,
     {
         self.inbox.values()
     }
 
-    fn inbox_len(&self) -> usize {
+    pub fn inbox_len(&self) -> usize {
         self.inbox.len()
     }
 
-    fn outbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
+    pub fn outbox<'a>(&'a self) -> impl Iterator<Item = &'a Event<O>>
     where
         Self: 'a,
     {
@@ -444,14 +411,14 @@ where
             .flat_map(|events_by_seq| events_by_seq.values())
     }
 
-    fn outbox_len(&self) -> usize {
+    pub fn outbox_len(&self) -> usize {
         self.outbox
             .values()
             .map(|events_by_seq| events_by_seq.len())
             .sum()
     }
 
-    fn interner(&self) -> &Interner {
+    pub fn interner(&self) -> &Interner {
         &self.interner
     }
 }

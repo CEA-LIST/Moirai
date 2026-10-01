@@ -3,7 +3,7 @@ use std::{convert::Infallible, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::OpGenerator;
+use moirai_fuzz::generator::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
@@ -107,14 +107,17 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for EWFlag {
+impl<U> OpGenerator<U> for EWFlag
+where
+    U: IsUnstableCore<Self>,
+{
     type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
         _stable: &<Self as ReplicatedDataType>::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
+        _unstable: &U,
     ) -> Self {
         let choice = rand::seq::IteratorRandom::choose(
             [EWFlag::Enable, EWFlag::Disable, EWFlag::Clear].iter(),
@@ -167,20 +170,19 @@ mod tests {
     #[ignore]
     fn fuzz_ew_flag() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.95, 4, 10_000, None, None, true, false);
+        let run = RunConfig::new(ChurnConfig::new(0.95, 0.05), 4, 10_000, None, None)
+            .with_execution_graph();
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<EWFlag>, Read<bool>>::new(
             "ew_flag",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<VecLog<EWFlag>, Read<bool>>(config);

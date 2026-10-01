@@ -2,6 +2,18 @@ use std::fmt::Debug;
 
 pub trait QueryOperation {
     type Response;
+
+    /// Optional observation metadata. Defaults keep query implementations valid
+    /// when another dependency enables `test_utils` through feature unification.
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug)]
@@ -9,6 +21,16 @@ pub struct Read<V>(std::marker::PhantomData<V>);
 
 impl<V> QueryOperation for Read<V> {
     type Response = V;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "Read"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 impl<V> Read<V> {
@@ -28,6 +50,16 @@ pub struct ReadStable<V>(std::marker::PhantomData<V>);
 
 impl<V> QueryOperation for ReadStable<V> {
     type Response = V;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "ReadStable"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 impl<V> ReadStable<V> {
@@ -50,19 +82,17 @@ where
     V: Debug + Clone,
 {
     type Response = bool;
-}
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Size;
-
-impl Size {
-    pub fn new() -> Self {
-        Self
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "Contains"
     }
-}
 
-impl QueryOperation for Size {
-    type Response = usize;
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        let args = format!("{:?}", self.0);
+        vec![args]
+    }
 }
 
 pub struct Get<K, Q> {
@@ -85,6 +115,47 @@ where
 impl<K, Q> QueryOperation for Get<K, Q>
 where
     Q: QueryOperation,
+    K: Debug,
 {
     type Response = Option<Q::Response>;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "Get"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        let key = format!("{:?}", self.key);
+        vec![
+            key,
+            format!("{}({:?})", Q::name(), self.nested_query.args()),
+        ]
+    }
+}
+
+#[cfg(all(test, feature = "test_utils"))]
+mod tests {
+    use super::*;
+
+    struct PlainQuery;
+
+    // A consumer without its own test-utils feature implements only the
+    // semantic contract, even when this crate's test-utils feature is enabled.
+    impl QueryOperation for PlainQuery {
+        type Response = usize;
+    }
+
+    #[test]
+    fn metadata_defaults_do_not_require_consumer_feature_alignment() {
+        assert_eq!(PlainQuery::name(), std::any::type_name::<PlainQuery>());
+        assert!(PlainQuery.args().is_empty());
+    }
+
+    #[test]
+    fn explicit_query_metadata_overrides_defaults() {
+        let query = Contains(7);
+        assert_eq!(Contains::<i32>::name(), "Contains");
+        assert_eq!(query.args(), vec!["7"]);
+    }
 }

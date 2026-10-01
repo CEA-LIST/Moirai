@@ -17,7 +17,10 @@ use petgraph::{
 };
 
 use crate::{
-    clock::version_vector::{Seq, Version},
+    clock::{
+        causal_frontier::CausalFrontier,
+        version_vector::{Seq, Version},
+    },
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{
@@ -317,8 +320,8 @@ where
         parents
     }
 
-    pub fn stabilize(&mut self, version: &Version) {
-        self.cutter.remove(version);
+    pub fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.cutter.remove(frontier);
     }
 
     pub fn graph(&self) -> &StableDiGraph<TaggedOp<O>, ()> {
@@ -409,8 +412,8 @@ impl Cutter {
     }
 
     /// Remove all entries in the cutter that are strictly lower than the given version.
-    fn remove(&mut self, version: &Version) {
-        for (idx, stable_seq) in version.iter() {
+    fn remove(&mut self, frontier: &CausalFrontier) {
+        for (idx, stable_seq) in frontier.iter() {
             let Some(seq_map) = self.0.get_mut(&idx) else {
                 continue;
             };

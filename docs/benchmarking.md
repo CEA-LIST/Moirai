@@ -103,4 +103,5 @@ RUST_LOG=debug cargo test <name> -- --nocapture
 
 ```sh
 cargo +nightly fmt -- --unstable-features --config imports_granularity=Crate,group_imports=StdExternalCrate
+cargo hack check --workspace --feature-powerset
 ```

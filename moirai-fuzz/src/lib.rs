@@ -1,11 +1,21 @@
-pub mod command_generator;
 pub mod config;
-mod display;
-pub mod execution_graph;
+pub mod display;
+mod execution_graph;
 pub mod fuzzer;
-pub mod memory;
+pub mod generator;
 pub mod metrics;
+mod observers;
 mod runner;
 mod serialize;
 mod utils;
-pub mod value_generator;
+
+pub use fuzzer::{
+    ExecutionMetadata, ExecutionReport, ExecutionSummary, ReplicaStats, RunReport, RunStats,
+};
+pub use observers::{
+    footprint::{FootprintNode, LogFootprint},
+    recorder::{
+        EffectRecorder, LogSizeRecorder, QueryRecorder, ReplicaRecorders, ReplicaSizeRecorder,
+        ResponseRecorder, StabilityRecorder,
+    },
+};

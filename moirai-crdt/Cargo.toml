@@ -30,7 +30,7 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
 [features]
 default = ["fuzz"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
-sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz/sink"]
+sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz?/sink"]
 test_utils = [
     "dep:deepsize",
     "moirai-protocol/test_utils",

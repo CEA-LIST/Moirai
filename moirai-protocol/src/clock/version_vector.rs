@@ -9,6 +9,7 @@ use deepsize::DeepSizeOf;
 
 use crate::{
     broadcast::internalizer::Resolver,
+    clock::causal_frontier::CausalFrontier,
     event::id::EventId,
     replica::{ReplicaId, ReplicaIdx},
 };
@@ -17,15 +18,15 @@ use crate::{
 pub type Seq = usize;
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-#[derive(Debug, Clone, PartialEq)]
-struct VersionEntries(Vec<Seq>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionEntries(pub(super) Vec<Seq>);
 
 impl VersionEntries {
-    fn get(&self, idx: ReplicaIdx) -> Seq {
+    pub(super) fn get(&self, idx: ReplicaIdx) -> Seq {
         *self.0.get(idx.0).unwrap_or(&0)
     }
 
-    fn get_mut(&mut self, idx: ReplicaIdx) -> &mut Seq {
+    pub(super) fn get_mut(&mut self, idx: ReplicaIdx) -> &mut Seq {
         self.fill_to(idx.0 + 1);
         self.0.get_mut(idx.0).unwrap()
     }
@@ -38,7 +39,7 @@ impl VersionEntries {
 
     /// # Complexity
     /// Runs in `O(n)` time complexity with `n` being the number of members in the view
-    fn join(&mut self, other: &Self) {
+    pub(super) fn join(&mut self, other: &Self) {
         self.fill_to(other.0.len());
         self.0
             .iter_mut()
@@ -52,7 +53,7 @@ impl VersionEntries {
 
     /// # Complexity
     /// Runs in `O(n)` time complexity with `n` being the number of members in the view
-    fn meet(&mut self, other: &Self) {
+    pub(super) fn meet(&mut self, other: &Self) {
         self.fill_to(other.0.len());
         self.0
             .iter_mut()
@@ -72,9 +73,9 @@ impl VersionEntries {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Version {
-    entries: VersionEntries,
-    origin_idx: ReplicaIdx,
-    resolver: Resolver,
+    pub(super) entries: VersionEntries,
+    pub(super) origin_idx: ReplicaIdx,
+    pub(super) resolver: Resolver,
 }
 
 impl Hash for Version {
@@ -143,6 +144,18 @@ impl Version {
 
     pub fn seq_by_idx(&self, idx: ReplicaIdx) -> Seq {
         self.entries.get(idx)
+    }
+
+    /// Whether this version contains every event represented by `frontier`.
+    /// Unlike `partial_cmp`, this compares all components, including the origin's.
+    pub fn includes_frontier(&self, frontier: &CausalFrontier) -> bool {
+        debug_assert!(
+            self.resolver == *frontier.resolver(),
+            "Comparing clocks with different views"
+        );
+        frontier
+            .iter()
+            .all(|(idx, seq)| self.seq_by_idx(idx) >= seq)
     }
 
     pub fn sum(&self) -> usize {
@@ -304,7 +317,7 @@ impl PartialOrd for Version {
         }
 
         // Optimisation 2: Vérification rapide basée sur les séquences d'origine
-        // Propriété clé: si v1[v2.origin] >= v2[v2.origin], alors v1 >= v2 (jamais v1 < v2)
+        // Si v1[v2.origin] >= v2[v2.origin], alors v1 >= v2 (jamais v1 < v2)
         let self_at_other_origin = self.seq_by_idx(other.origin_idx);
         let other_at_other_origin = other.origin_seq();
         let other_at_self_origin = other.seq_by_idx(self.origin_idx);
@@ -348,8 +361,8 @@ mod tests {
     #[test]
     fn concurrent_clock() {
         let mut interner = Interner::new();
-        let a_idx = interner.intern("a");
-        let b_idx = interner.intern("b");
+        let a_idx = interner.intern(&ReplicaId("a".to_string()));
+        let b_idx = interner.intern(&ReplicaId("b".to_string()));
 
         let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
         let mut v2 = Version::new(b_idx.0, interner.resolver().clone());
@@ -363,8 +376,8 @@ mod tests {
     #[test]
     fn shortcut_clock() {
         let mut interner = Interner::new();
-        let a_idx = interner.intern("a");
-        let b_idx = interner.intern("b");
+        let a_idx = interner.intern(&ReplicaId("a".to_string()));
+        let b_idx = interner.intern(&ReplicaId("b".to_string()));
 
         let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
         let mut v2 = Version::new(b_idx.0, interner.resolver().clone());
@@ -383,7 +396,7 @@ mod tests {
     #[test]
     fn same_clock() {
         let mut interner = Interner::new();
-        let a_idx = interner.intern("a");
+        let a_idx = interner.intern(&ReplicaId("a".to_string()));
 
         let mut v1 = Version::new(a_idx.0, interner.resolver().clone());
         let mut v2 = Version::new(a_idx.0, interner.resolver().clone());

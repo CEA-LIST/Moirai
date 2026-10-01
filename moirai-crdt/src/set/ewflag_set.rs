@@ -1,9 +1,14 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::CommandGenerator;
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    FootprintNode, LogFootprint,
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -77,8 +82,8 @@ where
         self.inner.effect(event, &mut silent_ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.inner.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.inner.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -110,14 +115,27 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl CommandGenerator for EWFlagSetLog<usize> {
+impl<V> CommandGenerator for EWFlagSetLog<V>
+where
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
+{
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        let value = rng.random_range(0..16);
+        let value = <V as ValueGenerator>::generate(rng, &V::Config::default());
         match rng.random_range(0..8) {
             0 => EWFlagSet::Clear,
             1 | 2 => EWFlagSet::Remove(value),
             _ => EWFlagSet::Add(value),
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V> LogFootprint for EWFlagSetLog<V>
+where
+    V: Clone + Hash + Debug + Eq + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
     }
 }
 
@@ -177,17 +195,21 @@ mod tests {
     #[ignore]
     fn fuzz_ewflag_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<HashSet<usize>>>::new(
             "ewflag_set",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<EWFlagSetLog<usize>, Read<HashSet<usize>>>(config);

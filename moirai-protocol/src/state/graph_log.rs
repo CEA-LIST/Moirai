@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use crate::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::{Eval, EvalNested},
         query::QueryOperation,
@@ -107,8 +107,8 @@ where
         <O as UsesUnstableService<EventGraph<O>>>::is_enabled(op, &self.stable, &self.unstable)
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.unstable.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.unstable.stabilize(frontier);
     }
 }
 

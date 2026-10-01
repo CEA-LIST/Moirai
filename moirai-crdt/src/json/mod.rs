@@ -1,5 +1,5 @@
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::CommandGenerator;
+use moirai_fuzz::{FootprintNode, LogFootprint, generator::command_generator::CommandGenerator};
 use moirai_macros::union;
 use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
 #[cfg(feature = "fuzz")]
@@ -191,6 +191,13 @@ impl CommandGenerator for JsonLog {
                 _ => unreachable!(),
             },
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl LogFootprint for JsonLog {
+    fn footprint(&self) -> FootprintNode {
+        todo!()
     }
 }
 
@@ -517,21 +524,21 @@ mod tests {
     #[test]
     #[ignore]
     fn fuzz_json() {
-        use crate::json::JsonValue;
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.6, 4, 100, None, None, true, false);
+        use crate::json::JsonValue;
+
+        let run =
+            RunConfig::new(ChurnConfig::new(0.6, 0.4), 4, 100, None, None).with_execution_graph();
         let runs = vec![run.clone(); 1_000];
 
         let config = FuzzerConfig::<JsonLog, Read<JsonValue>>::new(
             "json",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<JsonLog, Read<JsonValue>>(config);

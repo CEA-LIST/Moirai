@@ -1,8 +1,6 @@
-use std::cmp::Ordering;
-
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{
         commit_op::CommitOp,
         leader_vote::{LeaderVote, NewSupports},
@@ -92,20 +90,24 @@ where
         if let Some(candidate) = greatest_candidate
             && self.protocol.advance_commitment(&candidate)
         {
-            self.child.stabilize(&candidate);
-            self.leader_log.stabilize(&candidate);
+            let frontier = CausalFrontier::from(&candidate);
+            self.child.stabilize(&frontier);
+            self.leader_log.stabilize(&frontier);
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        let advances = match &self.protocol.last_committed() {
-            Some(last_committed) => version.partial_cmp(last_committed) == Some(Ordering::Greater),
-            None => true,
-        };
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        let mut committed = self
+            .protocol
+            .last_committed()
+            .cloned()
+            .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
+        let previous = committed.clone();
+        committed.join(frontier);
 
-        if advances {
-            self.protocol.update_last_committed(version.clone());
-            self.child.stabilize(version);
+        if committed != previous {
+            self.protocol.update_last_committed(committed.clone());
+            self.child.stabilize(&committed);
         }
     }
 

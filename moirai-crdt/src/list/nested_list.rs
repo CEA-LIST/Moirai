@@ -3,9 +3,9 @@ use std::fmt::{Debug, Display};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::command_generator::CommandGenerator;
+use moirai_fuzz::{FootprintNode, LogFootprint, generator::command_generator::CommandGenerator};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -161,9 +161,9 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.children.stabilize(version);
-        self.positions.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.children.stabilize(frontier);
+        self.positions.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -289,6 +289,19 @@ where
         };
         assert!(self.is_enabled(&op).is_ok());
         op
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> LogFootprint for NestedListLog<L>
+where
+    L: IsLog + LogFootprint + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        FootprintNode::parent(
+            &self,
+            vec![self.positions().footprint(), self.children().footprint()],
+        )
     }
 }
 
@@ -640,19 +653,18 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let run = RunConfig::new(0.6, 6, 20, None, None, true, false);
+        let run =
+            RunConfig::new(ChurnConfig::new(0.6, 0.4), 6, 20, None, None).with_execution_graph();
         let runs = vec![run.clone(); 10];
 
         let config = FuzzerConfig::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>::new(
             "nested_list_counter",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<NestedListLog<VecLog<Counter<i32>>>, Read<Vec<i32>>>(config);
@@ -663,22 +675,21 @@ mod tests {
     #[ignore]
     fn fuzz_nested_list_string() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::graph_log::GraphLog;
 
         use crate::list::eg_walker::List;
 
-        let run = RunConfig::new(0.6, 4, 25, None, None, true, false);
+        let run =
+            RunConfig::new(ChurnConfig::new(0.6, 0.4), 4, 25, None, None).with_execution_graph();
         let runs = vec![run.clone(); 10_000];
 
         let config = FuzzerConfig::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>::new(
             "nested_list_string",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<NestedListLog<GraphLog<List<char>>>, Read<Vec<Vec<char>>>>(config);

@@ -8,7 +8,7 @@ use crate::{
         replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     },
     event::{id::EventId, tagged_op::TaggedOp},
-    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
+    replica::{ReplicaId, ReplicaIdx},
     state::{
         stable_state::IsStableState,
         unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
@@ -18,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub enum LeaderVote {
-    Vote(ReplicaIdOwned),
+    Vote(ReplicaId),
 }
 
 impl ReplicatedDataType for LeaderVote {
@@ -146,6 +146,16 @@ impl NewSupports {
 
 impl QueryOperation for NewSupports {
     type Response = Vec<SupportDelta>;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "NewSupports"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![format!("observer={:?}", self.observer)]
+    }
 }
 
 impl<U> Eval<NewSupports, U> for LeaderVote

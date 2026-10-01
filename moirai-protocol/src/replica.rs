@@ -1,10 +1,10 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
 #[cfg(feature = "test_utils")]
-use crate::{broadcast::tcsb::IsTcsbTest, clock::version_vector::Version};
+use crate::broadcast::tcsb::Tcsb;
 use crate::{
     broadcast::{
         internalizer::Interner,
@@ -16,12 +16,16 @@ use crate::{
     state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
 };
 
-pub type ReplicaId = str;
-pub type ReplicaIdOwned = String;
+/// Replica identifier
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct ReplicaId(pub String);
 
 /// Local index of the replica. It is an alias for its string ID.
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ReplicaIdx(pub usize);
 
 /// A replica in the system, which maintains a local state and communicates with other replicas via messages.
@@ -50,8 +54,9 @@ where
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
     // TODO: add a method for state transfer
     /// Query the current state of the replica with the given query operation.
-    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
+    fn query<Q>(&self, q: &Q) -> Q::Response
     where
+        Q: QueryOperation,
         L: EvalNested<Q>;
     /// Update the state of the replica with the given operation.
     fn update(&mut self, cmd: Self::Command) -> Result<(), L::Rejection> {
@@ -61,10 +66,9 @@ where
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Replica<L, T> {
     /// Replica ID (must be unique across all replicas in the system)
-    id: ReplicaIdOwned,
+    id: ReplicaId,
     /// Communication-layer
     tcsb: T,
     /// Replica state
@@ -91,9 +95,14 @@ where
     }
 
     fn receive_batch(&mut self, message: BatchMessage<Self::Payload>) {
+        let is_empty = message.batch().events().is_empty();
+
         self.tcsb.receive_batch(message);
-        while let Some(e) = self.tcsb.next_causally_ready() {
-            self.deliver(e);
+
+        if !is_empty {
+            while let Some(e) = self.tcsb.next_causally_ready() {
+                self.deliver(e);
+            }
         }
     }
 
@@ -109,8 +118,9 @@ where
         self.tcsb.pull(since)
     }
 
-    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
+    fn query<Q>(&self, q: &Q) -> Q::Response
     where
+        Q: QueryOperation,
         L: EvalNested<Q>,
     {
         self.state.eval(q)
@@ -137,15 +147,23 @@ where
 
         self.state.effect(event, &mut ctx);
 
-        let maybe_version = self.tcsb.is_stable();
-        if let Some(version) = maybe_version {
-            self.state.stabilize(version);
+        if let Some(frontier) = self.tcsb.is_stable() {
+            self.state.stabilize(frontier);
         }
     }
+}
 
-    pub fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self {
+impl<L, T> Replica<L, T>
+where
+    L: IsLog,
+    T: IsTcsb<L::Op> + Debug,
+{
+    pub fn bootstrap<M>(id: ReplicaId, members: &[M]) -> Self
+    where
+        M: AsRef<str> + Debug,
+    {
         assert!(
-            members.contains(&&(*id)),
+            members.iter().any(|member| member.as_ref() == id.as_ref()),
             "Bootstrap replica ID {} must be included in members list {:?}",
             id,
             members
@@ -153,7 +171,7 @@ where
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(&id);
         for member in members {
-            interner.intern(member);
+            interner.intern(&ReplicaId::from(member.as_ref()));
         }
         Self {
             id,
@@ -162,9 +180,12 @@ where
         }
     }
 
-    pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
+    pub fn bootstrap_with_state<M>(id: ReplicaId, members: &[M], state: L) -> Self
+    where
+        M: AsRef<str> + Debug,
+    {
         assert!(
-            members.contains(&&(*id)),
+            members.iter().any(|member| member.as_ref() == id.as_ref()),
             "Bootstrap replica ID {} must be included in members list {:?}",
             id,
             members
@@ -172,7 +193,7 @@ where
         let mut interner = Interner::new();
         let (idx, _) = interner.intern(&id);
         for member in members {
-            interner.intern(member);
+            interner.intern(&ReplicaId::from(member.as_ref()));
         }
         Self {
             id,
@@ -183,23 +204,24 @@ where
 }
 
 #[cfg(feature = "test_utils")]
-impl<L, T> Replica<L, T>
+impl<L> Replica<L, Tcsb<L::Op>>
 where
-    L: IsLog,             // + DeepSizeOf,
-    T: IsTcsbTest<L::Op>, // + DeepSizeOf,
+    L: IsLog,
 {
-    pub fn tcsb(&self) -> &T {
+    pub fn new(id: ReplicaId, tcsb: Tcsb<L::Op>, state: L) -> Self {
+        Self { id, tcsb, state }
+    }
+
+    pub fn tcsb(&self) -> &Tcsb<L::Op> {
         &self.tcsb
     }
 
-    pub fn num_delivered_events(&self) -> usize {
+    pub fn delivered_count(&self) -> usize {
         self.tcsb.matrix_clock().origin_version().sum()
     }
 
-    /// Versions at which the communication layer advanced causal stability.
-    /// The initial zero version is not included.
-    pub fn stable_version_history(&self) -> &[Version] {
-        self.tcsb.lsv_history()
+    pub fn into_state(self) -> L {
+        self.state
     }
 
     pub fn state(&self) -> &L {
@@ -208,5 +230,29 @@ where
 
     pub fn state_mut(&mut self) -> &mut L {
         &mut self.state
+    }
+}
+
+impl Display for ReplicaId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for ReplicaId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ReplicaId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
+impl From<&str> for ReplicaId {
+    fn from(id: &str) -> Self {
+        Self(id.to_owned())
     }
 }
