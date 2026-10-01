@@ -48,12 +48,14 @@ where
         let replica = ReplicaObserver::<LogObserver<L>>::bootstrap(
             id,
             &members,
-            ResponseRecorder::new(config.response_time),
-            QueryRecorder::new(config.query_time),
-            ReplicaSizeRecorder::new(config.replica_size),
-            EffectRecorder::new(config.effect_time),
-            StabilityRecorder::new(config.track_stability),
-            LogSizeRecorder::new(config.log_size),
+            (
+                ResponseRecorder::new(config.response_time),
+                QueryRecorder::new(config.query_time),
+                ReplicaSizeRecorder::new(config.replica_size),
+                EffectRecorder::new(config.effect_time),
+                StabilityRecorder::new(config.track_stability),
+                LogSizeRecorder::new(config.log_size),
+            ),
             with_stability,
         );
         replicas.push(replica);

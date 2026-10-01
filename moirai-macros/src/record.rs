@@ -3,7 +3,6 @@
 /// The generic form lets callers choose the value projection for each field when querying the
 /// record. The explicit form uses `Log => Value` fields and generates a concrete, nominal value
 /// type, which also supports recursive records through [`BoxedLog`](crate::moirai_protocol::state::log::BoxedLog).
-
 #[macro_export]
 macro_rules! record {
     // Explicit field values produce a concrete record value type.

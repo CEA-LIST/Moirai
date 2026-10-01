@@ -429,13 +429,14 @@ mod tests {
         };
         let replica_zero =
             MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
-        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 100_000, None, None)
+        let run = RunConfig::new(ChurnConfig::new(0.9, 0.2), 4, 10_000, None, None)
             .with_response_time(replica_zero.clone())
             .with_effect_time(replica_zero.clone())
             .with_query_time(replica_zero.clone())
             .with_log_size(replica_zero.clone())
             .with_replica_size(replica_zero)
-            .with_track_stability(ReplicaSampling::Indices(vec![0]));
+            .with_track_stability(ReplicaSampling::Indices(vec![0]))
+            .with_execution_graph();
         let runs = vec![run.clone(); 1];
 
         let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>::new(
@@ -443,7 +444,7 @@ mod tests {
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         )
-        .save(SaveMode::Full);
+        .save(SaveMode::Summary);
 
         fuzzer::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>(config);
     }

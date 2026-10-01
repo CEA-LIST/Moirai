@@ -16,7 +16,7 @@ use crate::{
 fn should_record(sampling: &CallSampling, counter: usize) -> bool {
     match sampling {
         CallSampling::All => true,
-        CallSampling::Every { interval } => counter % interval.get() == 0,
+        CallSampling::Every { interval } => counter.is_multiple_of(interval.get()),
     }
 }
 

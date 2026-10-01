@@ -58,9 +58,9 @@ impl Display for FootprintNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} ({} bytes)", self.name, self.inclusive_bytes)?;
         if !self.children.is_empty() {
-            write!(f, " {{\n")?;
+            writeln!(f, " {{")?;
             for child in &self.children {
-                write!(f, "  {}\n", child)?;
+                writeln!(f, "  {}", child)?;
             }
             write!(f, "}}")?;
         }

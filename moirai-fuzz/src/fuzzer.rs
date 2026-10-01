@@ -73,7 +73,7 @@ where
             display,
         );
 
-        let results = run_report(run_data);
+        let results = run_report(run_data, display);
 
         debug!("Run {} completed", run_idx + 1);
 
@@ -444,6 +444,12 @@ impl ReplicaStats {
     }
 }
 
+impl Default for ReplicaStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn is_exhaustive(config: &Option<CallSampling>) -> bool {
     config.as_ref().is_some_and(CallSampling::is_exhaustive)
 }
@@ -488,6 +494,13 @@ pub struct RunStats {
 }
 
 impl RunStats {
+    /// No cross-replica aggregation exists unless a time metric has samples
+    /// from at least two replicas. Keep these stats available in memory, but
+    /// omit redundant single-replica (or empty) summaries from presentation.
+    pub fn is_redundant(&self) -> bool {
+        self.response_replica_count <= 1 && self.effect_replica_count <= 1
+    }
+
     pub fn from_recorders(replica_recorders: &[ReplicaRecorders]) -> Self {
         let response_sample_count = replica_recorders
             .iter()
@@ -566,6 +579,7 @@ pub struct RunReport {
     /// This assume that all replicas have converged to the same state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_value: Option<String>,
+    #[serde(default, skip_serializing_if = "RunStats::is_redundant")]
     pub run_stats: RunStats,
     pub measurements: Vec<ReplicaStats>,
     /// Raw captures are available to the caller regardless of saving.
@@ -584,9 +598,14 @@ pub struct RunReport {
     /// fraction. The result is zero when there are no cross-origin pairs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inter_replica_concurrency_ratio: Option<f64>,
+    /// Whole-execution mean of concurrent partners per update: 2 * P / N,
+    /// where P is the number of unordered concurrent pairs and N the number
+    /// of issued updates. Independent of replica metric sampling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_concurrent_updates: Option<f64>,
 }
 
-fn run_report<O>(mut capture: RunCapture<O>) -> RunReport
+fn run_report<O>(mut capture: RunCapture<O>, display: bool) -> RunReport
 where
     O: Debug + Clone,
 {
@@ -597,13 +616,15 @@ where
         .map(ReplicaStats::from_recorders)
         .collect();
 
-    let (execution_graph_dot, inter_replica_concurrency_ratio) =
-        if let Some(graph) = capture.execution_graph.take() {
+    let (execution_graph_dot, inter_replica_concurrency_ratio, avg_concurrent_updates) =
+        if let Some(mut graph) = capture.execution_graph.take() {
             let ratio = graph.inter_replica_concurrency_ratio().clamp(0.0, 1.0);
+            let avg_concurrent_updates = graph.avg_concurrent_updates();
+            graph.reduce(display);
             let dot = clean_dot_output(&graph.to_dot());
-            (Some(dot), Some(ratio))
+            (Some(dot), Some(ratio), avg_concurrent_updates)
         } else {
-            (None, None)
+            (None, None, None)
         };
 
     let mut config = capture.config;
@@ -619,6 +640,7 @@ where
         recorders: Some(capture.measurements),
         execution_graph_dot,
         inter_replica_concurrency_ratio,
+        avg_concurrent_updates,
     }
 }
 
@@ -637,4 +659,68 @@ fn execution_summary(run_results_list: &[RunRecord]) -> Option<ExecutionSummary>
     let total_runs = run_results_list.len();
 
     Some(ExecutionSummary { total_runs })
+}
+
+#[cfg(test)]
+mod tests {
+    use moirai_protocol::{
+        broadcast::internalizer::Interner,
+        clock::version_vector::Version,
+        event::{Event, id::EventId, lamport::Lamport},
+        replica::ReplicaId,
+    };
+
+    use super::*;
+    use crate::{config::ChurnConfig, execution_graph::ExecutionGraph};
+
+    #[test]
+    fn run_report_contains_global_concurrency_and_transitively_reduced_dot() {
+        let mut interner = Interner::new();
+        let indices: Vec<_> = (0..3)
+            .map(|origin| interner.intern(&ReplicaId(origin.to_string())).0)
+            .collect();
+        let mut graph = ExecutionGraph::new();
+        for (origin, clock) in [
+            (0, [1, 0, 0]),
+            (1, [0, 1, 0]),
+            (2, [1, 1, 1]),
+            (0, [2, 1, 1]),
+        ] {
+            let mut version = Version::new(indices[origin], interner.resolver().clone());
+            for (&idx, seq) in indices.iter().zip(clock) {
+                version.set_by_idx(idx, seq);
+            }
+            let event = Event::new(
+                EventId::new(indices[origin], clock[origin], interner.resolver().clone()),
+                Lamport::from(&version),
+                (),
+                version,
+            );
+            graph.append(&event);
+        }
+        let report = run_report(
+            RunCapture {
+                config: RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 4, None, None),
+                seed: [0; 32],
+                final_value: None,
+                measurements: vec![ReplicaRecorders::default(); 3],
+                execution_graph: Some(graph),
+            },
+            false,
+        );
+        assert_eq!(report.avg_concurrent_updates, Some(0.5));
+        assert_eq!(report.inter_replica_concurrency_ratio, Some(0.2));
+        assert_eq!(
+            report
+                .execution_graph_dot
+                .as_ref()
+                .unwrap()
+                .matches(" -> ")
+                .count(),
+            3
+        );
+        let json = serde_json::to_value(report).unwrap();
+        assert!(json.get("run_stats").is_none());
+        assert_eq!(json["avg_concurrent_updates"], serde_json::json!(0.5));
+    }
 }

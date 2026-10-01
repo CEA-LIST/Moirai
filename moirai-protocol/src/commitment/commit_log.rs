@@ -96,19 +96,20 @@ where
         }
     }
 
-    fn stabilize(&mut self, frontier: &CausalFrontier) {
-        let mut committed = self
-            .protocol
-            .last_committed()
-            .cloned()
-            .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
-        let previous = committed.clone();
-        committed.join(frontier);
+    fn stabilize(&mut self, _frontier: &CausalFrontier) {
+        // TODO: check this is correct
+        // let mut committed = self
+        //     .protocol
+        //     .last_committed()
+        //     .cloned()
+        //     .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
+        // let previous = committed.clone();
+        // committed.join(frontier);
 
-        if committed != previous {
-            self.protocol.update_last_committed(committed.clone());
-            self.child.stabilize(&committed);
-        }
+        // if committed != previous {
+        //     self.protocol.update_last_committed(committed.clone());
+        //     self.child.stabilize(&committed);
+        // }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {

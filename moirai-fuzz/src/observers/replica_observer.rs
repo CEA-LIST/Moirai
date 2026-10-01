@@ -13,7 +13,7 @@ use moirai_protocol::{
 };
 
 use crate::{
-    metrics::{Phase, QuerySample, ReplicaSizeSample, ResponseSample},
+    metrics::{Phase, ReplicaSizeSample, ResponseSample},
     observers::{
         footprint::LogFootprint,
         observer_log::LogObserver,
@@ -142,12 +142,14 @@ where
     pub fn bootstrap<M>(
         id: ReplicaId,
         members: &[M],
-        response_recorder: ResponseRecorder,
-        query_recorder: QueryRecorder,
-        replica_size_recorder: ReplicaSizeRecorder,
-        effect_recorder: EffectRecorder,
-        stability_recorder: StabilityRecorder,
-        log_size_recorder: LogSizeRecorder,
+        recorders: (
+            ResponseRecorder,
+            QueryRecorder,
+            ReplicaSizeRecorder,
+            EffectRecorder,
+            StabilityRecorder,
+            LogSizeRecorder,
+        ),
         with_stability: bool,
     ) -> Self
     where
@@ -172,38 +174,16 @@ where
                 Tcsb::new(idx, interner),
                 LogObserver::new(
                     L::default(),
-                    stability_recorder,
-                    effect_recorder,
-                    log_size_recorder,
+                    recorders.4,
+                    recorders.3,
+                    recorders.5,
                     with_stability,
                 ),
             ),
-            response_recorder,
-            query_recorder,
-            replica_size_recorder,
+            response_recorder: recorders.0,
+            query_recorder: recorders.1,
+            replica_size_recorder: recorders.2,
         }
-    }
-
-    pub fn observed_query<Q>(&mut self, query: &Q) -> Q::Response
-    where
-        Q: QueryOperation,
-        L: EvalNested<Q>,
-    {
-        let (cnt, should_record) = self.query_recorder.next_call();
-
-        if should_record {
-            let name = Q::name();
-            let args = query.args();
-            let (d, response) = time(|| self.replica.query(query));
-
-            self.query_recorder
-                .time
-                .push(QuerySample::new(cnt, d, name, args).with_phase(self.query_recorder.phase));
-
-            return response;
-        }
-
-        self.replica.query(query)
     }
 
     pub fn state(&self) -> &L {

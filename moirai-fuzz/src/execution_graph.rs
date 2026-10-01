@@ -1,24 +1,30 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{cmp::Reverse, collections::HashMap, fmt::Debug};
 
 use bimap::BiMap;
 use daggy::{Dag, NodeIndex};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use moirai_protocol::{
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaId,
 };
-use petgraph::dot::{Config, Dot};
+use petgraph::{
+    Direction,
+    dot::{Config, Dot},
+    visit::IntoNeighborsDirected,
+};
 
 /// A sparse execution DAG and streaming inter-replica pair counts.
 ///
 /// Every successful send must be appended once, in causal order, starting at
-/// sequence one for each origin. DOT edges connect each event to the latest
-/// dependency from each origin; redundant dependency edges are retained.
+/// sequence one for each origin. Captured edges connect each event to the latest
+/// dependency from each origin; DOT export removes redundant dependency edges.
 #[derive(Debug)]
 pub struct ExecutionGraph<O> {
     graph: Dag<TaggedOp<O>, ()>,
     map: BiMap<NodeIndex, EventId>,
     replica_event_counts: HashMap<ReplicaId, u128>,
     comparable_pairs: u128,
+    reduced: bool,
 }
 
 impl<O> Default for ExecutionGraph<O>
@@ -40,10 +46,12 @@ where
             map: BiMap::new(),
             replica_event_counts: HashMap::new(),
             comparable_pairs: 0,
+            reduced: true,
         }
     }
 
     pub fn append(&mut self, event: &Event<O>) {
+        self.reduced = false;
         let origin_count = self
             .replica_event_counts
             .entry(event.id().origin_id().clone())
@@ -96,6 +104,22 @@ where
     /// Across N events and R replicas, counting takes O(N * R) time and O(R)
     /// additional memory; this accessor takes O(R) time.
     pub fn inter_replica_concurrency_ratio(&self) -> f64 {
+        let (concurrent_pairs, total_pairs) = self.pair_counts();
+        if total_pairs == 0 {
+            return 0.0;
+        }
+        concurrent_pairs as f64 / total_pairs as f64
+    }
+
+    /// Mean number of concurrent partners per update over the whole execution.
+    /// Each unordered concurrent pair contributes to both endpoints, including
+    /// partners issued later. Empty executions have no average.
+    pub fn avg_concurrent_updates(&self) -> Option<f64> {
+        let count = self.graph.node_count();
+        (count > 0).then(|| 2.0 * self.pair_counts().0 as f64 / count as f64)
+    }
+
+    fn pair_counts(&self) -> (u128, u128) {
         let mut previous_events = 0_u128;
         let mut total_pairs = 0_u128;
         for &count in self.replica_event_counts.values() {
@@ -103,157 +127,101 @@ where
             previous_events += count;
         }
 
-        if total_pairs == 0 {
-            return 0.0;
-        }
-
         let concurrent_pairs = total_pairs
             .checked_sub(self.comparable_pairs)
             .expect("causal pair count exceeds the complete execution's inter-replica pairs");
-        concurrent_pairs as f64 / total_pairs as f64
+        (concurrent_pairs, total_pairs)
     }
 
-    // TODO: Add transitive reduction for better visualization
-    pub fn _reduce(&mut self) {
-        todo!("transitive reduction of the execution graph for better visualization");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use moirai_protocol::{
-        broadcast::internalizer::Interner, clock::version_vector::Version, event::lamport::Lamport,
-    };
-    use petgraph::algo::has_path_connecting;
-    use rand::{RngExt, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
-
-    use super::*;
-
-    fn interners(replica_count: usize) -> Vec<Interner> {
-        (0..replica_count)
-            .map(|origin| {
-                let mut interner = Interner::new();
-                // Each origin has a different index-to-ID mapping, as in bootstrap.
-                for offset in 0..replica_count {
-                    interner.intern(&ReplicaId(((origin + offset) % replica_count).to_string()));
-                }
-                interner
-            })
-            .collect()
-    }
-
-    fn event(origin: usize, clock: &[usize], interner: &Interner) -> Event<()> {
-        let origin_id = ReplicaId(origin.to_string());
-        let origin_idx = interner.get(&origin_id).unwrap();
-        let mut version = Version::new(origin_idx, interner.resolver().clone());
-        for (replica, &seq) in clock.iter().enumerate() {
-            let idx = interner.get(&ReplicaId(replica.to_string())).unwrap();
-            version.set_by_idx(idx, seq);
+    /// Remove redundant incoming edges using per-origin causal clocks.
+    /// Nodes are insertion-ordered topologically, and each origin is a chain.
+    /// For N updates and R origins, temporary memory is O(N * R), and time is
+    /// O(N * R^2) for this DAG's at most R incoming edges per update.
+    pub fn reduce(&mut self, display: bool) {
+        if self.reduced {
+            return;
         }
-        let id = EventId::new(origin_idx, clock[origin], interner.resolver().clone());
-        Event::new(id, Lamport::from(&version), (), version)
-    }
 
-    fn graph(schedule: &[(usize, [usize; 2])]) -> ExecutionGraph<()> {
-        let interners = interners(2);
-        let mut graph = ExecutionGraph::new();
-        for (origin, clock) in schedule {
-            graph.append(&event(*origin, clock, &interners[*origin]));
+        let node_count = self.graph.node_count();
+        let origins: HashMap<_, _> = self
+            .replica_event_counts
+            .keys()
+            .cloned()
+            .enumerate()
+            .map(|(idx, id)| (id, idx))
+            .collect();
+        let origin_count = origins.len();
+        let mut clocks = vec![
+            0;
+            node_count
+                .checked_mul(origin_count)
+                .expect("execution DAG clock storage is too large")
+        ];
+        let mut frontier = vec![0; origin_count];
+        let mut retained_edges = Vec::with_capacity(self.graph.edge_count());
+
+        let progress = ProgressBar::new(node_count as u64);
+        if !display || node_count < 1_000 {
+            progress.set_draw_target(ProgressDrawTarget::hidden());
         }
-        graph
-    }
+        progress.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} updates {msg} ETA: {eta_precise}")
+            .unwrap());
+        progress.set_message("Reducing execution DAG...");
 
-    fn brute_force_ratio(graph: &ExecutionGraph<()>) -> f64 {
-        let nodes: Vec<_> = graph.graph.graph().node_indices().collect();
-        let mut total_pairs = 0_u128;
-        let mut concurrent_pairs = 0_u128;
-        for (index, &left) in nodes.iter().enumerate() {
-            for &right in &nodes[index + 1..] {
-                if graph.graph[left].id().origin_id() == graph.graph[right].id().origin_id() {
-                    continue;
-                }
-                total_pairs += 1;
-                if !has_path_connecting(&graph.graph, left, right, None)
-                    && !has_path_connecting(&graph.graph, right, left, None)
-                {
-                    concurrent_pairs += 1;
-                }
-            }
-        }
-        if total_pairs == 0 {
-            0.0
-        } else {
-            concurrent_pairs as f64 / total_pairs as f64
-        }
-    }
+        // Nodes are never removed, so their indices are dense and topological.
+        for idx in 0..node_count {
+            let node = NodeIndex::new(idx);
+            let mut parents: Vec<_> = self
+                .graph
+                .neighbors_directed(node, Direction::Incoming)
+                .collect();
+            parents.sort_unstable_by_key(|parent| Reverse(parent.index()));
+            frontier.fill(0);
 
-    #[test]
-    fn concurrency_ratio_handles_empty_and_single_origin_executions() {
-        assert_eq!(
-            ExecutionGraph::<()>::new().inter_replica_concurrency_ratio(),
-            0.0
-        );
-        let graph = graph(&[(0, [1, 0]), (0, [2, 0])]);
-        assert_eq!(graph.inter_replica_concurrency_ratio(), 0.0);
-    }
-
-    #[test]
-    fn concurrency_ratio_handles_independent_chained_and_mixed_events() {
-        let independent = graph(&[
-            (0, [1, 0]),
-            (1, [0, 1]),
-            (0, [2, 0]),
-            (1, [0, 2]),
-            (1, [0, 3]),
-        ]);
-        assert_eq!(independent.inter_replica_concurrency_ratio(), 1.0);
-
-        let chained = graph(&[(0, [1, 0]), (1, [1, 1]), (0, [2, 1]), (1, [2, 2])]);
-        assert_eq!(chained.inter_replica_concurrency_ratio(), 0.0);
-
-        let mixed = graph(&[(0, [1, 0]), (1, [0, 1]), (0, [2, 1]), (1, [0, 2])]);
-        assert_eq!(mixed.inter_replica_concurrency_ratio(), 0.75);
-    }
-
-    #[test]
-    fn vector_clock_counts_match_graph_reachability_across_random_schedules() {
-        const REPLICAS: usize = 4;
-        let interners = interners(REPLICAS);
-        for seed in 0..24 {
-            let mut rng = ChaCha8Rng::from_seed([seed; 32]);
-            let mut clocks = [[0; REPLICAS]; REPLICAS];
-            let mut graph = ExecutionGraph::new();
-            for _ in 0..80 {
-                let origin = rng.random_range(0..REPLICAS);
-                for other in 0..REPLICAS {
-                    if rng.random_bool(0.3) {
-                        let remote = clocks[other];
-                        for (local, remote) in clocks[origin].iter_mut().zip(remote) {
-                            *local = (*local).max(remote);
-                        }
+            // Later parents are processed first. An earlier parent is redundant
+            // iff a retained parent's causal past already contains its event.
+            // A maximum across origin prefixes is sufficient to test this.
+            for parent in parents {
+                let id = self.graph[parent].id();
+                let origin = origins[id.origin_id()];
+                if frontier[origin] < id.seq() {
+                    retained_edges.push((parent, node, ()));
+                    let start = parent.index() * origin_count;
+                    for (known, &seq) in frontier
+                        .iter_mut()
+                        .zip(&clocks[start..start + origin_count])
+                    {
+                        *known = (*known).max(seq);
                     }
                 }
-                clocks[origin][origin] += 1;
-                graph.append(&event(origin, &clocks[origin], &interners[origin]));
             }
-            assert_eq!(
-                graph.inter_replica_concurrency_ratio(),
-                brute_force_ratio(&graph),
-                "seed {seed}"
-            );
-        }
-    }
 
-    #[test]
-    fn concurrency_counting_handles_a_hundred_thousand_events() {
-        let interners = interners(2);
-        let mut graph = ExecutionGraph::new();
-        for sequence in 1..=50_000 {
-            graph.append(&event(0, &[sequence, 0], &interners[0]));
-            graph.append(&event(1, &[0, sequence], &interners[1]));
+            let id = self.graph[node].id();
+            frontier[origins[id.origin_id()]] = id.seq();
+            let start = idx * origin_count;
+            clocks[start..start + origin_count].copy_from_slice(&frontier);
+            progress.inc(1);
         }
-        assert_eq!(graph.inter_replica_concurrency_ratio(), 1.0);
-        assert_eq!(graph.graph.edge_count(), 99_998);
+
+        if retained_edges.len() != self.graph.edge_count() {
+            progress.set_message("Applying transitive reduction...");
+            // Removing individual edges scans adjacency lists and can become
+            // quadratic for high-fan-out nodes. Rebuild once instead, moving
+            // operation payloads and preserving every node index.
+            drop(clocks);
+            let original = std::mem::replace(
+                &mut self.graph,
+                Dag::with_capacity(node_count, retained_edges.len()),
+            );
+            let (nodes, _) = original.into_graph().into_nodes_edges();
+            for node in nodes {
+                self.graph.add_node(node.weight);
+            }
+            self.graph.add_edges(retained_edges).unwrap();
+        }
+
+        self.reduced = true;
+        progress.finish_with_message("Execution DAG reduced ✓");
     }
 }

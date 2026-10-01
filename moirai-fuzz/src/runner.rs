@@ -231,7 +231,7 @@ where
     );
         check_pb.set_message("Checking convergence...");
 
-        let first_value = replicas[0].observed_query(&predicate.query);
+        let first_value = replicas[0].query(&predicate.query);
 
         let num_delivered_events = replicas[0].delivered_count();
         let first_replica_id = replicas[0].id().clone();
@@ -246,10 +246,11 @@ where
                     r.id()
                 );
             }
-            let value = r.observed_query(&predicate.query);
+            let value = r.query(&predicate.query);
             if !(predicate.cmp)(&first_value, &value) {
                 check_pb.finish_and_clear();
-                if let Some(ref graph) = execution_graph {
+                if let Some(ref mut graph) = execution_graph {
+                    graph.reduce(display);
                     warn!(
                         "Execution graph at divergence:\n{}",
                         clean_dot_output(&graph.to_dot())

@@ -49,6 +49,7 @@ Times use `Duration` internally and integer nanoseconds in JSON (`*_ns`). The te
 ## Derived Metrics
 
 - Inter-Replica Concurrency Ratio (ICR)
+- Average concurrency per update over the whole execution
 - Average number of events between stability progress points (per replica, including the initial frontier)
 - Stability progress count (per replica)
 - Average effect time (per replica and across all replicas)
@@ -109,4 +110,6 @@ For each issued event, the non-origin components of its version vector count its
 
 Counts use `u128` and are accumulated while events are appended. For `N` events and `R` replicas, ICR counting takes `O(N * R)` time and `O(R)` additional memory. Every send must be included once, starting at sequence one for each origin, with causal dependencies appended first.
 
-DOT export retains the sparse dependency DAG, including redundant edges, with at most one predecessor per origin per event. It does not run transitive reduction.
+`avg_concurrent_updates` is `2 * concurrent_pairs / N`: each concurrent pair contributes one partner to each of its two updates. This counts concurrency across the complete execution. An empty execution has no average. Both concurrency metrics are computed when execution-graph capture is enabled and are independent of replica metric sampling.
+
+DOT export first performs transitive reduction: redundant edges are removed without changing events or causal reachability. Reduction uses per-origin causal clocks, taking `O(N * R^2)` time and `O(N * R)` temporary memory. A progress bar is shown for graphs with at least 1,000 updates when display is enabled. Repeated exports reuse the reduced graph unless another update was appended.

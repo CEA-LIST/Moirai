@@ -159,43 +159,51 @@ fn run_results_table(run_number: usize, results: &RunReport) -> Table {
             .as_ref()
             .map_or_else(not_available, seed_to_hex),
     ]);
-    results_table.add_row(vec![
-        "Average response time (per sample)",
-        &format_optional_duration(results.run_stats.avg_response_time),
-    ]);
-    results_table.add_row(vec![
-        "Response samples",
-        &format_count(results.run_stats.response_sample_count),
-    ]);
-    results_table.add_row(vec![
-        "Average effect time (per sample)",
-        &format_optional_duration(results.run_stats.avg_effect_time),
-    ]);
-    results_table.add_row(vec![
-        "Effect samples",
-        &format_count(results.run_stats.effect_sample_count),
-    ]);
-    results_table.add_row(vec![
-        "Average response time (per replica)",
-        &format_optional_duration(results.run_stats.avg_replica_response_time),
-    ]);
-    results_table.add_row(vec![
-        "Replicas with response samples",
-        &format_count(results.run_stats.response_replica_count),
-    ]);
-    results_table.add_row(vec![
-        "Average effect time (per replica)",
-        &format_optional_duration(results.run_stats.avg_replica_effect_time),
-    ]);
-    results_table.add_row(vec![
-        "Replicas with effect samples",
-        &format_count(results.run_stats.effect_replica_count),
-    ]);
+    if !results.run_stats.is_redundant() {
+        results_table.add_row(vec![
+            "Average response time (per sample)",
+            &format_optional_duration(results.run_stats.avg_response_time),
+        ]);
+        results_table.add_row(vec![
+            "Response samples",
+            &format_count(results.run_stats.response_sample_count),
+        ]);
+        results_table.add_row(vec![
+            "Average effect time (per sample)",
+            &format_optional_duration(results.run_stats.avg_effect_time),
+        ]);
+        results_table.add_row(vec![
+            "Effect samples",
+            &format_count(results.run_stats.effect_sample_count),
+        ]);
+        results_table.add_row(vec![
+            "Average response time (per replica)",
+            &format_optional_duration(results.run_stats.avg_replica_response_time),
+        ]);
+        results_table.add_row(vec![
+            "Replicas with response samples",
+            &format_count(results.run_stats.response_replica_count),
+        ]);
+        results_table.add_row(vec![
+            "Average effect time (per replica)",
+            &format_optional_duration(results.run_stats.avg_replica_effect_time),
+        ]);
+        results_table.add_row(vec![
+            "Replicas with effect samples",
+            &format_count(results.run_stats.effect_replica_count),
+        ]);
+    }
 
     if let Some(ratio) = results.inter_replica_concurrency_ratio {
         results_table.add_row(vec![
             "Inter-replica concurrency ratio",
             &format!("{ratio:.4}"),
+        ]);
+    }
+    if let Some(average) = results.avg_concurrent_updates {
+        results_table.add_row(vec![
+            "Average concurrency per update",
+            &format_optional_decimal(Some(average)),
         ]);
     }
 
@@ -547,4 +555,59 @@ fn group_decimal_digits(value: &str) -> String {
         result.push_str(fractional);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::ChurnConfig,
+        fuzzer::{ReplicaStats, RunStats},
+    };
+
+    fn report(response_replicas: usize, effect_replicas: usize) -> RunReport {
+        let mut replica = ReplicaStats::new();
+        replica.avg_response_time = Some(Duration::from_nanos(100));
+        RunReport {
+            config: RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, Some([0; 32])),
+            final_value: None,
+            run_stats: RunStats {
+                response_replica_count: response_replicas,
+                effect_replica_count: effect_replicas,
+                avg_response_time: Some(Duration::from_nanos(100)),
+                ..RunStats::default()
+            },
+            measurements: vec![replica],
+            recorders: None,
+            execution_graph_dot: None,
+            inter_replica_concurrency_ratio: Some(0.5),
+            avg_concurrent_updates: Some(3.5),
+        }
+    }
+
+    #[test]
+    fn single_replica_sampling_hides_run_stats_but_keeps_replica_and_concurrency_metrics() {
+        for replica_count in [0, 1] {
+            let tables = display_run_results(1, &report(replica_count, replica_count));
+            let run = tables[0].to_string();
+            assert!(!run.contains("Average response time (per sample)"));
+            assert!(!run.contains("Average effect time (per sample)"));
+            assert!(!run.contains("Replicas with response samples"));
+            assert!(run.contains("Average concurrent updates per update"));
+            assert!(run.contains("3.50"));
+            assert!(run.contains("Inter-replica concurrency ratio"));
+            assert_eq!(tables.len(), 2);
+            assert!(tables[1].to_string().contains("Replica 0"));
+        }
+    }
+
+    #[test]
+    fn multi_replica_sampling_displays_run_stats() {
+        for (responses, effects) in [(2, 0), (0, 2), (1, 2)] {
+            let table = run_results_table(1, &report(responses, effects)).to_string();
+            assert!(table.contains("Average response time (per sample)"));
+            assert!(table.contains("Average effect time (per sample)"));
+            assert!(table.contains("Replicas with response samples"));
+        }
+    }
 }
