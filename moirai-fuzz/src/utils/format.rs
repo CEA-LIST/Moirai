@@ -1,22 +1,13 @@
-use std::fmt::Debug;
-
-/// Format a value with an optional character limit, adding ellipsis if the limit is exceeded.
-pub fn format_string_ellipsis<V>(value: &V, limit: Option<usize>) -> String
-where
-    V: Debug,
-{
-    let s = format!("{value:?}");
-    if let Some(limit) = limit {
-        if s.len() <= limit {
-            s.to_string()
-        } else {
-            let start = &s[..limit]; // les limit premiers caractères
-            let end = &s[s.len() - 3..]; // les 3 derniers caractères
-            format!("{start} ... {end}")
-        }
-    } else {
-        s.to_string()
-    }
+/// Limit already-formatted text without adding Debug quotes or splitting UTF-8 characters.
+pub fn format_string_ellipsis(value: &str, limit: Option<usize>) -> String {
+    let Some(limit) = limit else {
+        return value.to_owned();
+    };
+    let Some((end, _)) = value.char_indices().nth(limit) else {
+        return value.to_owned();
+    };
+    let tail = value.char_indices().rev().nth(2).map_or(0, |(idx, _)| idx);
+    format!("{} ... {}", &value[..end], &value[tail..])
 }
 
 /// Remove extraneous formatting from DOT output
@@ -36,4 +27,27 @@ pub fn seed_to_hex(seed: &[u8; 32]) -> String {
         write!(&mut s, "{:02X}", b).unwrap();
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ellipsis_preserves_already_formatted_text() {
+        let value = r#"{"hzog": {89}, "crx": {0}, "xhzg": {83}}"#;
+        assert_eq!(format_string_ellipsis(value, Some(120)), value);
+        assert_eq!(format_string_ellipsis(value, None), value);
+        assert_eq!(format_string_ellipsis("", Some(0)), "");
+        assert_eq!(format_string_ellipsis("abc", Some(3)), "abc");
+    }
+
+    #[test]
+    fn ellipsis_truncates_at_character_boundaries() {
+        assert_eq!(
+            format_string_ellipsis("abcdéfgh🙂終", Some(5)),
+            "abcdé ... h🙂終"
+        );
+        assert_eq!(format_string_ellipsis("é🙂", Some(1)), "é ... é🙂");
+    }
 }

@@ -21,6 +21,7 @@ pub struct FootprintNode {
     /// Size of the log in bytes, including its children
     pub inclusive_bytes: usize,
     /// Children of the log, if any
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<FootprintNode>,
 }
 

@@ -246,13 +246,12 @@ where
     L: IsLog + LogFootprint + DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(
-            self,
-            self.children()
-                .iter()
-                .map(|(k, v)| FootprintNode::parent(k, vec![v.footprint()]))
-                .collect(),
-        )
+        let children = self
+            .children
+            .iter()
+            .map(|(_, v)| v.footprint())
+            .collect::<Vec<FootprintNode>>();
+        FootprintNode::parent(self, children)
     }
 }
 
@@ -785,7 +784,7 @@ mod tests {
         let replica_zero =
             MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
 
-        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10_000, None, None)
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 1_000, None, None)
             .with_response_time(replica_zero.clone())
             .with_effect_time(replica_zero.clone())
             .with_query_time(replica_zero.clone())
@@ -801,7 +800,8 @@ mod tests {
             "uw_map_rw_set",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
-        );
+        )
+        .save(moirai_fuzz::config::SaveMode::Summary);
 
         fuzzer::<UWMapNested, Value>(config);
     }

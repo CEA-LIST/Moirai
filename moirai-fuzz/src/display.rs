@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{cmp::Reverse, time::Duration};
 
 use comfy_table::{
     Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::UTF8_FULL,
@@ -7,9 +7,9 @@ use readable::byte::Byte;
 
 use crate::{
     FootprintNode,
-    config::RunConfig,
+    config::{CallSampling, MetricsSampling, ReplicaSampling, RunConfig},
     fuzzer::{ExecutionReport, ExecutionSummary, RunReport},
-    utils::format::seed_to_hex,
+    utils::format::{format_string_ellipsis, seed_to_hex},
 };
 
 /// Presentation is separate from execution; callers can run with `without_display()`.
@@ -70,7 +70,84 @@ pub fn display_config_table(run_config: &RunConfig, final_merge: bool) -> Table 
         config_table.add_row(vec!["Seed", "Random"]);
     }
 
+    for (metric, sampling, basis) in [
+        (
+            "Response time sampling",
+            &run_config.metrics.response_time,
+            "communication calls",
+        ),
+        (
+            "Effect time sampling",
+            &run_config.metrics.effect_time,
+            "effects",
+        ),
+        (
+            "Query time sampling",
+            &run_config.metrics.query_time,
+            "queries",
+        ),
+        ("Log size sampling", &run_config.metrics.log_size, "effects"),
+        (
+            "Replica size sampling",
+            &run_config.metrics.replica_size,
+            "communication calls",
+        ),
+    ] {
+        config_table.add_row(vec![
+            metric.to_owned(),
+            format_metrics_sampling(sampling.as_ref(), basis),
+        ]);
+    }
+    config_table.add_row(vec![
+        "Stability progress sampling".to_owned(),
+        run_config.metrics.track_stability.as_ref().map_or_else(
+            || "Disabled".to_owned(),
+            |replicas| {
+                format!(
+                    "Every frontier advance; {}",
+                    format_replica_sampling(replicas)
+                )
+            },
+        ),
+    ]);
+
     config_table
+}
+
+fn format_metrics_sampling(sampling: Option<&MetricsSampling>, basis: &str) -> String {
+    let Some(sampling) = sampling else {
+        return "Disabled".to_owned();
+    };
+    let frequency = match &sampling.calls {
+        CallSampling::All => format!("All {basis}"),
+        CallSampling::Every { interval } if interval.get() == 1 => format!("All {basis}"),
+        CallSampling::Every { interval } => {
+            format!("Every {} {basis}", format_count(interval.get()))
+        }
+    };
+    format!(
+        "{frequency}; {}",
+        format_replica_sampling(&sampling.replicas)
+    )
+}
+
+fn format_replica_sampling(sampling: &ReplicaSampling) -> String {
+    match sampling {
+        ReplicaSampling::All => "all replicas".to_owned(),
+        ReplicaSampling::Count(count) => format!(
+            "{} randomly selected replica{}",
+            format_count(count.get()),
+            if count.get() == 1 { "" } else { "s" },
+        ),
+        ReplicaSampling::Indices(indices) => format!(
+            "replicas [{}]",
+            indices
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    }
 }
 
 /// Display summary statistics across all runs
@@ -148,7 +225,7 @@ fn run_results_table(run_number: usize, results: &RunReport) -> Table {
         ]);
 
     if let Some(val) = &results.final_value {
-        results_table.add_row(vec!["Final value", &val]);
+        results_table.add_row(vec!["Final value", &format_string_ellipsis(val, Some(120))]);
     }
 
     results_table.add_row(vec![
@@ -231,6 +308,13 @@ fn replica_metrics_table(replica_idx: usize, stats: &crate::fuzzer::ReplicaStats
         "Progress count",
         format_optional_count(stats.stability_progress_count),
     );
+    add_metric_row(
+        &mut table,
+        "Stability",
+        "Average events between progress",
+        format_optional_decimal(stats.avg_events_between_stability),
+    );
+
     for (category, count) in [
         ("Response", stats.response_sample_count),
         ("Effect", stats.effect_sample_count),
@@ -242,12 +326,6 @@ fn replica_metrics_table(replica_idx: usize, stats: &crate::fuzzer::ReplicaStats
             add_metric_row(&mut table, category, "Samples", format_count(count));
         }
     }
-    add_metric_row(
-        &mut table,
-        "Stability",
-        "Average events between progress",
-        format_optional_decimal(stats.avg_events_between_stability),
-    );
 
     add_metric_row(
         &mut table,
@@ -397,108 +475,97 @@ fn format_optional_footprint(footprint: Option<&FootprintNode>) -> String {
 fn format_footprint(root: &FootprintNode) -> String {
     let mut formatter = FootprintFormatter {
         lines: vec![format_footprint_label(root)],
-        grouped: false,
-        truncated: false,
     };
-    formatter.children(&[root], "", 1, false);
-    if formatter.truncated {
-        formatter
-            .lines
-            .push("… further branches hidden; full tree retained in the report".into());
-    }
-    if formatter.grouped {
-        formatter.lines.push(
-            "Σ sums individual footprints; nested levels and shared allocations may overlap."
-                .into(),
-        );
-    }
+    formatter.children(&root.children, "", 1, 0);
     formatter.lines.join("\n")
 }
 
+const FOOTPRINT_MAX_CHILDREN: usize = 5;
 const FOOTPRINT_MAX_LINES: usize = 40;
 const FOOTPRINT_MAX_DEPTH: usize = 8;
 
-/// A presentation-only view. Repeated siblings are grouped by their full type
-/// name, then their children are grouped recursively; no footprint is rewritten.
+/// A presentation-only view: show each node's largest children and summarize
+/// omitted siblings without traversing their descendants or rewriting the tree.
 struct FootprintFormatter {
     lines: Vec<String>,
-    grouped: bool,
-    truncated: bool,
 }
 
 impl FootprintFormatter {
-    fn push(&mut self, line: String) -> bool {
-        if self.lines.len() >= FOOTPRINT_MAX_LINES - 1 {
-            self.truncated = true;
-            return false;
-        }
-        self.lines.push(line);
-        true
-    }
-
     fn children(
         &mut self,
-        nodes: &[&FootprintNode],
+        children: &[FootprintNode],
         prefix: &str,
         depth: usize,
-        grouped_parent: bool,
+        reserved_lines: usize,
     ) {
-        let mut groups = BTreeMap::<&str, Vec<&FootprintNode>>::new();
-        for node in nodes {
-            for child in &node.children {
-                groups.entry(&child.name).or_default().push(child);
-            }
+        let limit = if depth > FOOTPRINT_MAX_DEPTH {
+            0
+        } else {
+            children.len().min(FOOTPRINT_MAX_CHILDREN)
+        };
+        let mut ranked = children.iter().collect::<Vec<_>>();
+        if limit > 0 {
+            // Stable ties retain tree order. Sort references, not the captured tree.
+            ranked.sort_by_key(|child| Reverse(child.inclusive_bytes));
         }
-        let group_count = groups.len();
-        for (index, children) in groups.into_values().enumerate() {
-            if self.truncated {
+        let mut shown = 0;
+        for (index, child) in ranked.iter().take(limit).enumerate() {
+            let is_last = index + 1 == children.len();
+            // Reserve a summary for remaining siblings and for each ancestor
+            // that still has siblings. A non-leaf also needs at least one line
+            // for its children, even if they must all be summarized.
+            let reserved = reserved_lines + usize::from(!is_last);
+            let minimum_lines = 1 + usize::from(!child.children.is_empty());
+            if self.lines.len() + reserved + minimum_lines > FOOTPRINT_MAX_LINES {
                 break;
             }
-            self.node(
-                &children,
-                prefix,
-                index + 1 == group_count,
-                depth,
-                grouped_parent,
-            );
-        }
-    }
 
-    fn node(
-        &mut self,
-        nodes: &[&FootprintNode],
-        prefix: &str,
-        is_last: bool,
-        depth: usize,
-        grouped_parent: bool,
-    ) {
-        self.grouped |= nodes.len() > 1;
-        // let connector = if is_last { "└── " } else { "├── " };
-
-        let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
-        let child_count = nodes.iter().map(|n| n.children.len()).sum::<usize>();
-        if child_count > 0 && depth >= FOOTPRINT_MAX_DEPTH {
-            self.push(format!(
-                "{child_prefix}└── … {} child footprints hidden (depth limit)",
-                format_count(child_count)
+            let connector = if is_last { "└── " } else { "├── " };
+            self.lines.push(format!(
+                "{prefix}{connector}{}",
+                format_footprint_label(child)
             ));
-        } else {
-            self.children(
-                nodes,
-                &child_prefix,
-                depth + 1,
-                grouped_parent || nodes.len() > 1,
-            );
+            let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
+            self.children(&child.children, &child_prefix, depth + 1, reserved);
+            shown += 1;
+        }
+
+        if shown < children.len() {
+            let omitted = &ranked[shown..];
+            // These are inclusive footprints: adding descendants again would
+            // double-count them. Use u128 so the display sum cannot overflow usize.
+            let bytes = omitted
+                .iter()
+                .map(|child| child.inclusive_bytes as u128)
+                .sum();
+            let reason = if depth > FOOTPRINT_MAX_DEPTH {
+                " (depth limit)"
+            } else if shown < limit {
+                " (line limit)"
+            } else {
+                ""
+            };
+            debug_assert!(self.lines.len() + reserved_lines < FOOTPRINT_MAX_LINES);
+            self.lines.push(format!(
+                "{prefix}└── … {} more {} — Σ {}{reason}",
+                format_count(omitted.len()),
+                if omitted.len() == 1 {
+                    "child"
+                } else {
+                    "children"
+                },
+                format_footprint_bytes(bytes),
+            ));
         }
     }
 }
 
-// fn format_footprint_bytes(bytes: u128) -> String {
-//     match u64::try_from(bytes) {
-//         Ok(bytes) => Byte::from(bytes).to_string(),
-//         Err(_) => format!("{} B", group_decimal_digits(&bytes.to_string())),
-//     }
-// }
+fn format_footprint_bytes(bytes: u128) -> String {
+    match u64::try_from(bytes) {
+        Ok(bytes) => Byte::from(bytes).to_string(),
+        Err(_) => format!("{} B", group_decimal_digits(&bytes.to_string())),
+    }
+}
 
 fn format_footprint_label(node: &FootprintNode) -> String {
     format!(
@@ -559,6 +626,8 @@ fn group_decimal_digits(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, num::NonZeroUsize};
+
     use super::*;
     use crate::{
         config::ChurnConfig,
@@ -582,6 +651,326 @@ mod tests {
             execution_graph_dot: None,
             inter_replica_concurrency_ratio: Some(0.5),
             avg_concurrent_updates: Some(3.5),
+        }
+    }
+
+    fn rows(table: &Table) -> BTreeMap<String, String> {
+        table
+            .row_iter()
+            .filter_map(|row| {
+                let mut cells = row.cell_iter();
+                Some((cells.next()?.content(), cells.next()?.content()))
+            })
+            .collect()
+    }
+
+    fn footprint(name: &str, bytes: usize, children: Vec<FootprintNode>) -> FootprintNode {
+        FootprintNode {
+            name: name.to_owned(),
+            inclusive_bytes: bytes,
+            children,
+        }
+    }
+
+    #[test]
+    fn footprint_tree_sorts_small_trees_and_preserves_connectors() {
+        let root = footprint(
+            "Root",
+            300,
+            vec![
+                footprint("A", 100, vec![footprint("A1", 50, vec![])]),
+                footprint("B", 200, vec![]),
+            ],
+        );
+        assert_eq!(
+            format_footprint(&root),
+            [
+                format_footprint_label(&root),
+                format!("├── {}", format_footprint_label(&root.children[1])),
+                format!("└── {}", format_footprint_label(&root.children[0])),
+                format!(
+                    "    └── {}",
+                    format_footprint_label(&root.children[0].children[0])
+                ),
+            ]
+            .join("\n")
+        );
+        assert_eq!(
+            format_footprint(&footprint("Leaf", 80, vec![])),
+            "Leaf — 80 B"
+        );
+    }
+
+    #[test]
+    fn footprint_tree_displays_largest_children_at_each_parent_and_summarizes_the_rest() {
+        let mut children = (0..7)
+            .map(|index| footprint(&format!("Branch{index}"), 1_000 + index, vec![]))
+            .collect::<Vec<_>>();
+        children[6].children = (0..7)
+            .map(|index| footprint(&format!("Leaf{index}"), (index + 1) * 10, vec![]))
+            .collect();
+        // Descendant bytes must not be added to the omitted parent's inclusive size.
+        children[0].children = vec![footprint("HiddenDescendant", 900, vec![])];
+        let root = footprint("Root", 9_000, children);
+        let original = serde_json::to_value(&root).unwrap();
+        let rendered = format_footprint(&root);
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Branch"))
+                .count(),
+            5
+        );
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Leaf"))
+                .count(),
+            5
+        );
+        assert!(rendered.contains(&format!(
+            "│   └── … 2 more children — Σ {}",
+            format_footprint_bytes(30)
+        )));
+        assert!(rendered.ends_with(&format!(
+            "└── … 2 more children — Σ {}",
+            format_footprint_bytes(2_001)
+        )));
+        let expected_branches = (2..7)
+            .rev()
+            .map(|index| format!("├── {}", format_footprint_label(&root.children[index])))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Branch"))
+                .collect::<Vec<_>>(),
+            expected_branches
+        );
+        let expected_leaves = (2..7)
+            .rev()
+            .map(|index| {
+                format!(
+                    "│   ├── {}",
+                    format_footprint_label(&root.children[6].children[index])
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Leaf"))
+                .collect::<Vec<_>>(),
+            expected_leaves
+        );
+        assert!(!rendered.contains("Branch0"));
+        assert!(!rendered.contains("Branch1"));
+        assert!(!rendered.contains("Leaf0"));
+        assert!(!rendered.contains("Leaf1"));
+        assert!(!rendered.contains("HiddenDescendant"));
+        assert_eq!(serde_json::to_value(&root).unwrap(), original);
+    }
+
+    #[test]
+    fn footprint_tree_keeps_original_order_for_equal_sizes() {
+        let root = footprint(
+            "Root",
+            400,
+            vec![
+                footprint("First", 50, vec![]),
+                footprint("Second", 50, vec![]),
+                footprint("Largest", 70, vec![]),
+                footprint("Third", 50, vec![]),
+                footprint("Fourth", 50, vec![]),
+                footprint("Fifth", 50, vec![]),
+                footprint("Smallest", 10, vec![]),
+            ],
+        );
+        let rendered = format_footprint(&root);
+        let expected = [2, 0, 1, 3, 4]
+            .map(|index| format!("├── {}", format_footprint_label(&root.children[index])));
+        assert_eq!(
+            rendered.lines().skip(1).take(5).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(rendered.ends_with("└── … 2 more children — Σ 60 B"));
+    }
+
+    #[test]
+    fn footprint_tree_displays_repeated_types_individually_and_handles_one_omission() {
+        let root = footprint(
+            "Container",
+            100,
+            (0..6).map(|_| footprint("Child", 10, vec![])).collect(),
+        );
+        let rendered = format_footprint(&root);
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Child —"))
+                .count(),
+            5
+        );
+        assert!(rendered.ends_with("└── … 1 more child — Σ 10 B"));
+
+        let exact = footprint("Container", 100, root.children[..5].to_vec());
+        let rendered = format_footprint(&exact);
+        assert_eq!(rendered.lines().count(), 6);
+        assert!(!rendered.contains('…'));
+        assert!(rendered.ends_with("└── Child — 10 B"));
+    }
+
+    #[test]
+    fn footprint_tree_depth_limit_keeps_an_omission_count_and_size() {
+        let mut root = footprint("Bottom", 10, vec![]);
+        for depth in (0..10).rev() {
+            root = footprint(&format!("Level{depth}"), 100 + depth, vec![root]);
+        }
+        let rendered = format_footprint(&root);
+        assert!(rendered.contains("Level8 —"));
+        assert!(!rendered.contains("Level9 —"));
+        assert!(rendered.ends_with(&format!(
+            "… 1 more child — Σ {} (depth limit)",
+            format_footprint_bytes(109)
+        )));
+    }
+
+    #[test]
+    fn footprint_tree_line_limit_reserves_summaries_for_omitted_siblings() {
+        fn wide_tree(depth: usize) -> FootprintNode {
+            let children = if depth == 0 {
+                vec![]
+            } else {
+                (0..5).map(|_| wide_tree(depth - 1)).collect()
+            };
+            let bytes = 1 + children
+                .iter()
+                .map(|child| child.inclusive_bytes)
+                .sum::<usize>();
+            footprint("Node", bytes, children)
+        }
+        let root = wide_tree(4);
+        let rendered = format_footprint(&root);
+        assert!(rendered.lines().count() <= FOOTPRINT_MAX_LINES);
+        assert!(rendered.contains("(line limit)"));
+        assert!(rendered.lines().last().unwrap().starts_with("└── … "));
+        assert!(
+            rendered
+                .lines()
+                .last()
+                .unwrap()
+                .contains("more children — Σ")
+        );
+    }
+
+    #[test]
+    fn footprint_tree_summary_handles_sizes_larger_than_usize() {
+        let root = footprint(
+            "Root",
+            usize::MAX,
+            (0..7)
+                .map(|_| footprint("Child", usize::MAX, vec![]))
+                .collect(),
+        );
+        assert!(format_footprint(&root).ends_with(&format!(
+            "└── … 2 more children — Σ {}",
+            format_footprint_bytes(2 * usize::MAX as u128)
+        )));
+    }
+
+    #[test]
+    fn configuration_table_displays_metric_frequencies_and_replica_selection() {
+        let config = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None)
+            .with_response_time(MetricsSampling::all())
+            .with_effect_time(MetricsSampling::new(
+                CallSampling::Every {
+                    interval: NonZeroUsize::new(5).unwrap(),
+                },
+                ReplicaSampling::Indices(vec![0, 3]),
+            ))
+            .with_query_time(MetricsSampling::new(
+                CallSampling::Every {
+                    interval: NonZeroUsize::new(1).unwrap(),
+                },
+                ReplicaSampling::Count(NonZeroUsize::new(1).unwrap()),
+            ))
+            .with_replica_size(MetricsSampling::every_replica(
+                NonZeroUsize::new(2).unwrap(),
+            ))
+            .with_track_stability(ReplicaSampling::Indices(vec![0]));
+        let mut table = display_config_table(&config, true);
+        let rows = rows(&table);
+        assert_eq!(
+            rows["Response time sampling"],
+            "All communication calls; all replicas"
+        );
+        assert_eq!(
+            rows["Effect time sampling"],
+            "Every 5 effects; replicas [0, 3]"
+        );
+        assert_eq!(
+            rows["Query time sampling"],
+            "All queries; 1 randomly selected replica"
+        );
+        assert_eq!(rows["Log size sampling"], "Disabled");
+        assert_eq!(
+            rows["Replica size sampling"],
+            "All communication calls; 2 randomly selected replicas"
+        );
+        assert_eq!(
+            rows["Stability progress sampling"],
+            "Every frontier advance; replicas [0]"
+        );
+        table.set_width(140);
+        let rendered = table.to_string();
+        for (metric, value) in rows
+            .into_iter()
+            .filter(|(metric, _)| metric.ends_with("sampling"))
+        {
+            assert!(rendered.contains(&metric));
+            assert!(rendered.contains(&value));
+        }
+    }
+
+    #[test]
+    fn configuration_table_displays_disabled_metrics_and_log_sampling_axis() {
+        let config = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None);
+        let config_rows = rows(&display_config_table(&config, true));
+        let metrics: Vec<_> = config_rows
+            .iter()
+            .filter(|(metric, _)| metric.ends_with("sampling"))
+            .collect();
+        assert_eq!(metrics.len(), 6);
+        assert!(metrics.iter().all(|(_, value)| *value == "Disabled"));
+
+        let config = config
+            .with_log_size(MetricsSampling::every_call(NonZeroUsize::new(3).unwrap()))
+            .with_track_stability(ReplicaSampling::All);
+        let config_rows = rows(&display_config_table(&config, true));
+        assert_eq!(
+            config_rows["Log size sampling"],
+            "Every 3 effects; all replicas"
+        );
+        assert_eq!(
+            config_rows["Stability progress sampling"],
+            "Every frontier advance; all replicas"
+        );
+    }
+
+    #[test]
+    fn final_value_is_plain_text_and_only_truncated_for_display() {
+        for value in [
+            r#"{"hzog": {89}, "crx": {0}, "xhzg": {83}}"#.to_owned(),
+            "é🙂".repeat(100),
+        ] {
+            let mut report = report(0, 0);
+            report.final_value = Some(value.clone());
+            let displayed = rows(&run_results_table(1, &report));
+            assert_eq!(
+                displayed["Final value"],
+                format_string_ellipsis(&value, Some(120))
+            );
+            assert_eq!(report.final_value, Some(value));
         }
     }
 

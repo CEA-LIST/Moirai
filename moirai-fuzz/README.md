@@ -98,9 +98,9 @@ Whole-replica sizing walks the underlying replica ID, TCSB, and unwrapped log wi
 
 ### Container footprint display
 
-Terminal footprint trees group repeated sibling types instead of printing one branch per map entry, list element, or other container child. Each group shows its instance count, the sum (`Σ`) of individual footprint estimates, and the minimum, average, and maximum per instance. The same grouping applies recursively, so nested container/log hierarchies remain visible. Averages are rounded down to whole bytes before formatting.
+Terminal footprint trees show at most **five individual children per node**, choosing the largest inclusive footprints and displaying them in descending size order. Equal sizes retain their original tree order. Remaining siblings are summarized in one branch, for example `└── … 2 341 more children — Σ 1.200 MB`. The same limit applies recursively to every displayed node, including repeated child types in maps, lists, and other containers. Sorting affects presentation only, not the captured tree.
 
-Root sizes remain the original inclusive measurements. Group sums are **not** deduplicated allocation totals: shared allocations and nested levels can overlap, so do not add them to the root or to one another. Small, heterogeneous trees still show individual branches. Rendering is limited to 40 tree lines and eight child levels, with explicit omission markers and a short sum legend when applicable. The complete trees in reports and JSON are unchanged.
+Summary sizes sum only the omitted direct children's inclusive footprints: their descendants are already included and are not added again. These sums are **not** deduplicated allocation totals; shared allocations can overlap, so do not add summaries to the root size. Root and individual node sizes remain the original inclusive measurements. Rendering is also limited to 40 tree lines and eight child levels; when either limit is reached, omitted children still receive a count-and-size summary. The complete trees in reports and JSON are unchanged.
 
 This reduces terminal output only, not the cost of capturing footprint trees.
 

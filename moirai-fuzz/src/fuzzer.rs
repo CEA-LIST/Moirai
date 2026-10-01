@@ -22,10 +22,7 @@ use crate::{
     },
     runner::{RunCapture, runner},
     serialize::{SaveTarget, save_record},
-    utils::{
-        format::{clean_dot_output, format_string_ellipsis},
-        option_duration_nanos,
-    },
+    utils::{format::clean_dot_output, option_duration_nanos},
 };
 
 /// Execute runs and return structured results, whether or not persistence is enabled.
@@ -576,7 +573,8 @@ fn average_duration(total: Duration, sample_count: usize) -> Option<Duration> {
 pub struct RunReport {
     pub config: RunConfig,
     /// Snapshot of the returned value of executing the query provided by the user to the first replica after all updates have been delivered everywhere.
-    /// This assume that all replicas have converged to the same state.
+    /// This assumes that all replicas have converged to the same state.
+    /// The captured text is retained in full; only terminal presentation truncates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_value: Option<String>,
     #[serde(default, skip_serializing_if = "RunStats::is_redundant")]
@@ -632,9 +630,7 @@ where
 
     RunReport {
         config,
-        final_value: capture
-            .final_value
-            .map(|v| format_string_ellipsis(&v, Some(120))),
+        final_value: capture.final_value,
         run_stats,
         measurements,
         recorders: Some(capture.measurements),
@@ -671,7 +667,60 @@ mod tests {
     };
 
     use super::*;
-    use crate::{config::ChurnConfig, execution_graph::ExecutionGraph};
+    use crate::{
+        config::{ChurnConfig, SaveMode},
+        execution_graph::ExecutionGraph,
+    };
+
+    #[test]
+    fn final_value_is_preserved_without_extra_debug_formatting_or_truncation() {
+        for final_value in [
+            r#"{"hzog": {89}, "crx": {0}, "xhzg": {83}}"#.to_owned(),
+            r#"{"path": "a\\b", "quote": "a\"b"}"#.to_owned(),
+            format!("{{\"{}\": {{89}}}}", "é🙂".repeat(100)),
+        ] {
+            let report = run_report(
+                RunCapture::<()> {
+                    config: RunConfig::new(ChurnConfig::new(0.4, 0.6), 2, 10, None, None),
+                    seed: [0; 32],
+                    final_value: Some(final_value.clone()),
+                    measurements: vec![ReplicaRecorders::default(); 2],
+                    execution_graph: None,
+                },
+                false,
+            );
+            assert_eq!(report.final_value.as_deref(), Some(final_value.as_str()));
+            assert_eq!(
+                serde_json::to_value(&report).unwrap()["final_value"],
+                final_value
+            );
+
+            let execution = ExecutionReport {
+                metadata: ExecutionMetadata {
+                    name: "final_value".to_owned(),
+                    timestamp: "2026-10-01T15:00:00+02:00".to_owned(),
+                    git_commit: None,
+                    git_branch: None,
+                    final_merge: true,
+                },
+                summary: None,
+                runs: vec![RunRecord {
+                    run_number: 1,
+                    results: report,
+                }],
+            };
+            for mode in [SaveMode::Summary, SaveMode::Full] {
+                let json = execution.to_json(mode).unwrap();
+                let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(value["runs"][0]["results"]["final_value"], final_value);
+                let decoded: ExecutionReport = serde_json::from_str(&json).unwrap();
+                assert_eq!(
+                    decoded.runs[0].results.final_value.as_deref(),
+                    Some(final_value.as_str())
+                );
+            }
+        }
+    }
 
     #[test]
     fn run_report_contains_global_concurrency_and_transitively_reduced_dot() {
