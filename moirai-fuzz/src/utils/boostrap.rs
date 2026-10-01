@@ -10,7 +10,7 @@ use rand_chacha::ChaCha8Rng;
 use crate::{
     config::{CallSampling, MetricsConfig, MetricsSampling, ReplicaSampling},
     observers::{
-        observer_log::LogObserver,
+        observer_log::{CommitmentAccessor, LogObserver},
         recorder::{
             EffectRecorder, LogSizeRecorder, QueryRecorder, ReplicaSizeRecorder, ResponseRecorder,
             StabilityRecorder, sampling_rng,
@@ -35,6 +35,7 @@ pub fn bootstrap_n<L>(
     metrics_config: &MetricsConfig,
     with_stability: bool,
     seed: [u8; 32],
+    commitment_accessor: Option<CommitmentAccessor<L>>,
 ) -> Vec<ReplicaObserver<LogObserver<L>>>
 where
     L: IsLog + crate::observers::footprint::LogFootprint,
@@ -57,6 +58,7 @@ where
                 LogSizeRecorder::new(config.log_size),
             ),
             with_stability,
+            commitment_accessor,
         );
         replicas.push(replica);
     }

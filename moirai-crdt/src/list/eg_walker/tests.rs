@@ -550,7 +550,7 @@ fn fuzz_list() {
         fuzzer::fuzzer,
     };
 
-    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 3_000, None, None).without_stability();
+    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 3_000, None, None).without_log_stabilization();
     let runs = vec![run; 1];
 
     let config = FuzzerConfig::<GraphLog<List<char>>, Read<String>>::new(

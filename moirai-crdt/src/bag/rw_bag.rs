@@ -4,8 +4,8 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash};
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
-    FootprintNode, LogFootprint,
     generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+    observers::footprint::{FootprintNode, LogFootprint},
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},

@@ -423,28 +423,36 @@ mod tests {
         use moirai_fuzz::{
             config::{
                 CallSampling, ChurnConfig, FuzzerConfig, MetricsSampling, Predicate,
-                ReplicaSampling, RunConfig, SaveMode,
+                ReplicaSampling, RunConfig,
             },
             fuzzer::fuzzer,
+            utils::seed_hex::parse_hex_seed,
         };
+
         let replica_zero =
             MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
-        let run = RunConfig::new(ChurnConfig::new(0.9, 0.2), 4, 10_000, None, None)
-            .with_response_time(replica_zero.clone())
-            .with_effect_time(replica_zero.clone())
-            .with_query_time(replica_zero.clone())
-            .with_log_size(replica_zero.clone())
-            .with_replica_size(replica_zero)
-            .with_track_stability(ReplicaSampling::Indices(vec![0]))
-            .with_execution_graph();
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000_000,
+            None,
+            Some(
+                parse_hex_seed(
+                    "0x665A465C8960A890E4EDA68EAE17BF7558EFA299E7279960653A2C7298CDFBBE",
+                )
+                .unwrap(),
+            ),
+        )
+        .with_response_time(replica_zero.clone())
+        .with_effect_time(replica_zero.clone())
+        .with_log_size(replica_zero.clone())
+        .without_log_stabilization();
 
         let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>::new(
             "aw_set",
-            runs,
+            vec![run.clone()],
             Predicate::new(Read::new(), |a, b| a == b),
-        )
-        .save(SaveMode::Summary);
+        );
 
         fuzzer::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>(config);
     }
@@ -454,22 +462,38 @@ mod tests {
     #[ignore]
     fn fuzz_commitment_aw_set() {
         use moirai_fuzz::{
-            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
+            config::{
+                CallSampling, ChurnConfig, FuzzerConfig, MetricsSampling, Predicate,
+                ReplicaSampling, RunConfig,
+            },
             fuzzer::fuzzer,
+            utils::seed_hex::parse_hex_seed,
         };
 
         type Log = CommitmentLog<VecLog<AWSet<usize>>>;
 
-        let runs = vec![RunConfig::new(
+        let replica_zero =
+            MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
+        let run = RunConfig::new(
             ChurnConfig::new(0.4, 0.6),
             8,
-            10_000,
+            1_000_000,
             None,
-            None,
-        )];
+            Some(
+                parse_hex_seed(
+                    "0x665A465C8960A890E4EDA68EAE17BF7558EFA299E7279960653A2C7298CDFBBE",
+                )
+                .unwrap(),
+            ),
+        )
+        .with_response_time(replica_zero.clone())
+        .with_effect_time(replica_zero.clone())
+        .with_log_size(replica_zero.clone())
+        .without_log_stabilization();
+
         let config = FuzzerConfig::<Log, Read<HashSet<usize>>>::new(
             "aw_set_commitment",
-            runs,
+            vec![run],
             Predicate::new(Read::new(), |a, b| a == b),
         )
         .with_omega_oracle();

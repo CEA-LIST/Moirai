@@ -6,7 +6,7 @@ use moirai_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{FootprintNode, utils::duration_nanos};
+use crate::{observers::footprint::FootprintNode, utils::duration_nanos};
 
 /// Phase of the runner when a measurement was taken. Combined statistics include all phases.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +140,33 @@ impl StabilitySample {
     }
 }
 
+/// A majority-backed commitment frontier, distinct from causal stability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitmentSample {
+    after_effect_id: usize,
+    #[serde(with = "causal_frontier")]
+    frontier: CausalFrontier,
+    phase: Phase,
+}
+
+impl CommitmentSample {
+    pub fn new(after_effect_id: usize, frontier: CausalFrontier) -> Self {
+        Self {
+            after_effect_id,
+            frontier,
+            phase: Phase::Execution,
+        }
+    }
+
+    pub fn after_effect_id(&self) -> usize {
+        self.after_effect_id
+    }
+
+    pub fn frontier(&self) -> &CausalFrontier {
+        &self.frontier
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuerySample {
     call_id: usize,
@@ -202,7 +229,13 @@ macro_rules! phased_sample {
     )* };
 }
 
-phased_sample!(ResponseSample, EffectSample, QuerySample, StabilitySample);
+phased_sample!(
+    ResponseSample,
+    EffectSample,
+    QuerySample,
+    StabilitySample,
+    CommitmentSample
+);
 
 mod causal_frontier {
     use std::collections::BTreeMap;

@@ -5,12 +5,12 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    FootprintNode,
     config::CallSampling,
     metrics::{
-        EffectSample, LogSizeSample, Phase, QuerySample, ReplicaSizeSample, ResponseSample,
-        StabilitySample,
+        CommitmentSample, EffectSample, LogSizeSample, Phase, QuerySample, ReplicaSizeSample,
+        ResponseSample, StabilitySample,
     },
+    observers::footprint::FootprintNode,
 };
 
 fn should_record(sampling: &CallSampling, counter: usize) -> bool {
@@ -47,6 +47,8 @@ pub struct ReplicaRecorders {
     pub replica_size_recorder: ReplicaSizeRecorder,
     #[serde(skip_serializing_if = "StabilityRecorder::disabled", default)]
     pub stability_recorder: StabilityRecorder,
+    #[serde(skip_serializing_if = "CommitmentRecorder::disabled", default)]
+    pub commitment_recorder: CommitmentRecorder,
     #[serde(skip_serializing_if = "EffectRecorder::disabled", default)]
     pub effect_recorder: EffectRecorder,
     #[serde(skip_serializing_if = "LogSizeRecorder::disabled", default)]
@@ -211,6 +213,45 @@ impl StabilityRecorder {
     fn disabled(&self) -> bool {
         !self.enabled
     }
+}
+
+/// Exhaustive commitment progress, enabled only by the commitment-log adapter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommitmentRecorder {
+    pub enabled: bool,
+    #[serde(deserialize_with = "deserialize_commitment_progress")]
+    pub progress: Vec<CommitmentSample>,
+}
+
+impl CommitmentRecorder {
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            progress: Vec::new(),
+        }
+    }
+
+    fn disabled(&self) -> bool {
+        !self.enabled
+    }
+}
+
+fn deserialize_commitment_progress<'de, D>(
+    deserializer: D,
+) -> Result<Vec<CommitmentSample>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Both kinds of progress use the same wire shape and canonical resolver handling.
+    deserialize_progress(deserializer).map(|samples| {
+        samples
+            .into_iter()
+            .map(|sample| {
+                CommitmentSample::new(sample.after_effect_id(), sample.frontier().clone())
+                    .with_phase(sample.phase())
+            })
+            .collect()
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

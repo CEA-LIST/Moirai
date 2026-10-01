@@ -90,6 +90,16 @@ This section documents the existing behavior; it does not change scheduling.
 
 ## Sampling and phases
 
+Log stabilization and causal-stability recording are independent:
+`without_log_stabilization()` suppresses forwarding TCSB causal frontiers to the
+root log, while `with_track_stability(...)` records those frontiers regardless of
+whether they are applied. Neither builder changes the other's setting, so their
+order does not matter. `with_log_stabilization()` re-enables forwarding;
+`without_track_stability()` disables the recording. Commitment-driven child
+stabilization is unaffected. Tables label the metric **Causal stability** and
+show **Log stabilization** separately in the configuration. The JSON field is
+`disable_log_stabilization`; old reports using `disable_stability` still load.
+
 Each sample is tagged `execution`, `final_convergence`, or `validation` (the final convergence queries). Derived statistics include all phases (callers can use raw samples to analyze phases separately). Log-size samples use effect IDs, with distinct `effect`/`stability` boundaries. A stability snapshot reuses the preceding effect's ID and sampling decision.
 
 Per-replica statistics include sample counts. Run means have two explicit interpretations: `avg_response_time`/`avg_effect_time` pool all recorded samples, whereas `avg_replica_response_time`/`avg_replica_effect_time` weight each replica with at least one sample equally. Replicas with zero samples do not contribute to either mean. Durations are rounded down to whole nanoseconds.
@@ -97,6 +107,14 @@ Per-replica statistics include sample counts. Run means have two explicit interp
 Whole-replica sizing walks the underlying replica ID, TCSB, and unwrapped log with one shared `DeepSizeOf` context, counting shared `Rc`/`Arc` allocations once. Observer layouts, sampling configuration, RNGs, and recorder buffers are excluded. Sizes remain allocation-footprint estimates, not process RSS or allocator bookkeeping measurements.
 
 ### Container footprint display
+
+Commitment-log trees expose the application child, the leader-vote log
+(`POLog<LeaderVote, EventHistory<LeaderVote>>`), and the
+`CommitmentProtocol<Omega>` state as separate children. The protocol node includes
+the candidate-support table. Observer wrappers and recorder storage remain
+excluded. These are inclusive component footprints, so shared allocations can
+appear in more than one child; the root remains the independently deduplicated
+total, rather than a sum of its displayed children.
 
 Terminal footprint trees show at most **five individual children per node**, choosing the largest inclusive footprints and displaying them in descending size order. Equal sizes retain their original tree order. Remaining siblings are summarized in one branch, for example `└── … 2 341 more children — Σ 1.200 MB`. The same limit applies recursively to every displayed node, including repeated child types in maps, lists, and other containers. Sorting affects presentation only, not the captured tree.
 

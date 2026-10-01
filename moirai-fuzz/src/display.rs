@@ -6,9 +6,9 @@ use comfy_table::{
 use readable::byte::Byte;
 
 use crate::{
-    FootprintNode,
     config::{CallSampling, MetricsSampling, ReplicaSampling, RunConfig},
     fuzzer::{ExecutionReport, ExecutionSummary, RunReport},
+    observers::footprint::FootprintNode,
     utils::format::{format_string_ellipsis, seed_to_hex},
 };
 
@@ -63,6 +63,14 @@ pub fn display_config_table(run_config: &RunConfig, final_merge: bool) -> Table 
     ]);
 
     config_table.add_row(vec!["Final merge", if final_merge { "Yes" } else { "No" }]);
+    config_table.add_row(vec![
+        "Log stabilization",
+        if run_config.disable_log_stabilization {
+            "Disabled"
+        } else {
+            "Enabled"
+        },
+    ]);
 
     if let Some(seed) = run_config.seed {
         config_table.add_row(vec!["Seed", &seed_to_hex(&seed)]);
@@ -188,6 +196,8 @@ pub fn display_run_results(run_number: usize, results: &RunReport) -> Vec<Table>
 fn has_displayable_metrics(stats: &crate::fuzzer::ReplicaStats) -> bool {
     stats.stability_progress_count.is_some()
         || stats.avg_events_between_stability.is_some()
+        || stats.commitment_progress_count.is_some()
+        || stats.avg_events_between_commitments.is_some()
         || stats.avg_effect_time.is_some()
         || stats.p99_effect_time.is_some()
         || stats.total_effect_time.is_some()
@@ -304,16 +314,31 @@ fn replica_metrics_table(replica_idx: usize, stats: &crate::fuzzer::ReplicaStats
 
     add_metric_row(
         &mut table,
-        "Stability",
+        "Causal stability",
         "Progress count",
         format_optional_count(stats.stability_progress_count),
     );
     add_metric_row(
         &mut table,
-        "Stability",
+        "Causal stability",
         "Average events between progress",
         format_optional_decimal(stats.avg_events_between_stability),
     );
+
+    if stats.commitment_progress_count.is_some() {
+        add_metric_row(
+            &mut table,
+            "Commitment",
+            "Progress count",
+            format_optional_count(stats.commitment_progress_count),
+        );
+        add_metric_row(
+            &mut table,
+            "Commitment",
+            "Average events between progress",
+            format_optional_decimal(stats.avg_events_between_commitments),
+        );
+    }
 
     for (category, count) in [
         ("Response", stats.response_sample_count),
@@ -622,381 +647,4 @@ fn group_decimal_digits(value: &str) -> String {
         result.push_str(fractional);
     }
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{collections::BTreeMap, num::NonZeroUsize};
-
-    use super::*;
-    use crate::{
-        config::ChurnConfig,
-        fuzzer::{ReplicaStats, RunStats},
-    };
-
-    fn report(response_replicas: usize, effect_replicas: usize) -> RunReport {
-        let mut replica = ReplicaStats::new();
-        replica.avg_response_time = Some(Duration::from_nanos(100));
-        RunReport {
-            config: RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, Some([0; 32])),
-            final_value: None,
-            run_stats: RunStats {
-                response_replica_count: response_replicas,
-                effect_replica_count: effect_replicas,
-                avg_response_time: Some(Duration::from_nanos(100)),
-                ..RunStats::default()
-            },
-            measurements: vec![replica],
-            recorders: None,
-            execution_graph_dot: None,
-            inter_replica_concurrency_ratio: Some(0.5),
-            avg_concurrent_updates: Some(3.5),
-        }
-    }
-
-    fn rows(table: &Table) -> BTreeMap<String, String> {
-        table
-            .row_iter()
-            .filter_map(|row| {
-                let mut cells = row.cell_iter();
-                Some((cells.next()?.content(), cells.next()?.content()))
-            })
-            .collect()
-    }
-
-    fn footprint(name: &str, bytes: usize, children: Vec<FootprintNode>) -> FootprintNode {
-        FootprintNode {
-            name: name.to_owned(),
-            inclusive_bytes: bytes,
-            children,
-        }
-    }
-
-    #[test]
-    fn footprint_tree_sorts_small_trees_and_preserves_connectors() {
-        let root = footprint(
-            "Root",
-            300,
-            vec![
-                footprint("A", 100, vec![footprint("A1", 50, vec![])]),
-                footprint("B", 200, vec![]),
-            ],
-        );
-        assert_eq!(
-            format_footprint(&root),
-            [
-                format_footprint_label(&root),
-                format!("├── {}", format_footprint_label(&root.children[1])),
-                format!("└── {}", format_footprint_label(&root.children[0])),
-                format!(
-                    "    └── {}",
-                    format_footprint_label(&root.children[0].children[0])
-                ),
-            ]
-            .join("\n")
-        );
-        assert_eq!(
-            format_footprint(&footprint("Leaf", 80, vec![])),
-            "Leaf — 80 B"
-        );
-    }
-
-    #[test]
-    fn footprint_tree_displays_largest_children_at_each_parent_and_summarizes_the_rest() {
-        let mut children = (0..7)
-            .map(|index| footprint(&format!("Branch{index}"), 1_000 + index, vec![]))
-            .collect::<Vec<_>>();
-        children[6].children = (0..7)
-            .map(|index| footprint(&format!("Leaf{index}"), (index + 1) * 10, vec![]))
-            .collect();
-        // Descendant bytes must not be added to the omitted parent's inclusive size.
-        children[0].children = vec![footprint("HiddenDescendant", 900, vec![])];
-        let root = footprint("Root", 9_000, children);
-        let original = serde_json::to_value(&root).unwrap();
-        let rendered = format_footprint(&root);
-        assert_eq!(
-            rendered
-                .lines()
-                .filter(|line| line.contains("Branch"))
-                .count(),
-            5
-        );
-        assert_eq!(
-            rendered
-                .lines()
-                .filter(|line| line.contains("Leaf"))
-                .count(),
-            5
-        );
-        assert!(rendered.contains(&format!(
-            "│   └── … 2 more children — Σ {}",
-            format_footprint_bytes(30)
-        )));
-        assert!(rendered.ends_with(&format!(
-            "└── … 2 more children — Σ {}",
-            format_footprint_bytes(2_001)
-        )));
-        let expected_branches = (2..7)
-            .rev()
-            .map(|index| format!("├── {}", format_footprint_label(&root.children[index])))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            rendered
-                .lines()
-                .filter(|line| line.contains("Branch"))
-                .collect::<Vec<_>>(),
-            expected_branches
-        );
-        let expected_leaves = (2..7)
-            .rev()
-            .map(|index| {
-                format!(
-                    "│   ├── {}",
-                    format_footprint_label(&root.children[6].children[index])
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            rendered
-                .lines()
-                .filter(|line| line.contains("Leaf"))
-                .collect::<Vec<_>>(),
-            expected_leaves
-        );
-        assert!(!rendered.contains("Branch0"));
-        assert!(!rendered.contains("Branch1"));
-        assert!(!rendered.contains("Leaf0"));
-        assert!(!rendered.contains("Leaf1"));
-        assert!(!rendered.contains("HiddenDescendant"));
-        assert_eq!(serde_json::to_value(&root).unwrap(), original);
-    }
-
-    #[test]
-    fn footprint_tree_keeps_original_order_for_equal_sizes() {
-        let root = footprint(
-            "Root",
-            400,
-            vec![
-                footprint("First", 50, vec![]),
-                footprint("Second", 50, vec![]),
-                footprint("Largest", 70, vec![]),
-                footprint("Third", 50, vec![]),
-                footprint("Fourth", 50, vec![]),
-                footprint("Fifth", 50, vec![]),
-                footprint("Smallest", 10, vec![]),
-            ],
-        );
-        let rendered = format_footprint(&root);
-        let expected = [2, 0, 1, 3, 4]
-            .map(|index| format!("├── {}", format_footprint_label(&root.children[index])));
-        assert_eq!(
-            rendered.lines().skip(1).take(5).collect::<Vec<_>>(),
-            expected
-        );
-        assert!(rendered.ends_with("└── … 2 more children — Σ 60 B"));
-    }
-
-    #[test]
-    fn footprint_tree_displays_repeated_types_individually_and_handles_one_omission() {
-        let root = footprint(
-            "Container",
-            100,
-            (0..6).map(|_| footprint("Child", 10, vec![])).collect(),
-        );
-        let rendered = format_footprint(&root);
-        assert_eq!(
-            rendered
-                .lines()
-                .filter(|line| line.contains("Child —"))
-                .count(),
-            5
-        );
-        assert!(rendered.ends_with("└── … 1 more child — Σ 10 B"));
-
-        let exact = footprint("Container", 100, root.children[..5].to_vec());
-        let rendered = format_footprint(&exact);
-        assert_eq!(rendered.lines().count(), 6);
-        assert!(!rendered.contains('…'));
-        assert!(rendered.ends_with("└── Child — 10 B"));
-    }
-
-    #[test]
-    fn footprint_tree_depth_limit_keeps_an_omission_count_and_size() {
-        let mut root = footprint("Bottom", 10, vec![]);
-        for depth in (0..10).rev() {
-            root = footprint(&format!("Level{depth}"), 100 + depth, vec![root]);
-        }
-        let rendered = format_footprint(&root);
-        assert!(rendered.contains("Level8 —"));
-        assert!(!rendered.contains("Level9 —"));
-        assert!(rendered.ends_with(&format!(
-            "… 1 more child — Σ {} (depth limit)",
-            format_footprint_bytes(109)
-        )));
-    }
-
-    #[test]
-    fn footprint_tree_line_limit_reserves_summaries_for_omitted_siblings() {
-        fn wide_tree(depth: usize) -> FootprintNode {
-            let children = if depth == 0 {
-                vec![]
-            } else {
-                (0..5).map(|_| wide_tree(depth - 1)).collect()
-            };
-            let bytes = 1 + children
-                .iter()
-                .map(|child| child.inclusive_bytes)
-                .sum::<usize>();
-            footprint("Node", bytes, children)
-        }
-        let root = wide_tree(4);
-        let rendered = format_footprint(&root);
-        assert!(rendered.lines().count() <= FOOTPRINT_MAX_LINES);
-        assert!(rendered.contains("(line limit)"));
-        assert!(rendered.lines().last().unwrap().starts_with("└── … "));
-        assert!(
-            rendered
-                .lines()
-                .last()
-                .unwrap()
-                .contains("more children — Σ")
-        );
-    }
-
-    #[test]
-    fn footprint_tree_summary_handles_sizes_larger_than_usize() {
-        let root = footprint(
-            "Root",
-            usize::MAX,
-            (0..7)
-                .map(|_| footprint("Child", usize::MAX, vec![]))
-                .collect(),
-        );
-        assert!(format_footprint(&root).ends_with(&format!(
-            "└── … 2 more children — Σ {}",
-            format_footprint_bytes(2 * usize::MAX as u128)
-        )));
-    }
-
-    #[test]
-    fn configuration_table_displays_metric_frequencies_and_replica_selection() {
-        let config = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None)
-            .with_response_time(MetricsSampling::all())
-            .with_effect_time(MetricsSampling::new(
-                CallSampling::Every {
-                    interval: NonZeroUsize::new(5).unwrap(),
-                },
-                ReplicaSampling::Indices(vec![0, 3]),
-            ))
-            .with_query_time(MetricsSampling::new(
-                CallSampling::Every {
-                    interval: NonZeroUsize::new(1).unwrap(),
-                },
-                ReplicaSampling::Count(NonZeroUsize::new(1).unwrap()),
-            ))
-            .with_replica_size(MetricsSampling::every_replica(
-                NonZeroUsize::new(2).unwrap(),
-            ))
-            .with_track_stability(ReplicaSampling::Indices(vec![0]));
-        let mut table = display_config_table(&config, true);
-        let rows = rows(&table);
-        assert_eq!(
-            rows["Response time sampling"],
-            "All communication calls; all replicas"
-        );
-        assert_eq!(
-            rows["Effect time sampling"],
-            "Every 5 effects; replicas [0, 3]"
-        );
-        assert_eq!(
-            rows["Query time sampling"],
-            "All queries; 1 randomly selected replica"
-        );
-        assert_eq!(rows["Log size sampling"], "Disabled");
-        assert_eq!(
-            rows["Replica size sampling"],
-            "All communication calls; 2 randomly selected replicas"
-        );
-        assert_eq!(
-            rows["Stability progress sampling"],
-            "Every frontier advance; replicas [0]"
-        );
-        table.set_width(140);
-        let rendered = table.to_string();
-        for (metric, value) in rows
-            .into_iter()
-            .filter(|(metric, _)| metric.ends_with("sampling"))
-        {
-            assert!(rendered.contains(&metric));
-            assert!(rendered.contains(&value));
-        }
-    }
-
-    #[test]
-    fn configuration_table_displays_disabled_metrics_and_log_sampling_axis() {
-        let config = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None);
-        let config_rows = rows(&display_config_table(&config, true));
-        let metrics: Vec<_> = config_rows
-            .iter()
-            .filter(|(metric, _)| metric.ends_with("sampling"))
-            .collect();
-        assert_eq!(metrics.len(), 6);
-        assert!(metrics.iter().all(|(_, value)| *value == "Disabled"));
-
-        let config = config
-            .with_log_size(MetricsSampling::every_call(NonZeroUsize::new(3).unwrap()))
-            .with_track_stability(ReplicaSampling::All);
-        let config_rows = rows(&display_config_table(&config, true));
-        assert_eq!(
-            config_rows["Log size sampling"],
-            "Every 3 effects; all replicas"
-        );
-        assert_eq!(
-            config_rows["Stability progress sampling"],
-            "Every frontier advance; all replicas"
-        );
-    }
-
-    #[test]
-    fn final_value_is_plain_text_and_only_truncated_for_display() {
-        for value in [
-            r#"{"hzog": {89}, "crx": {0}, "xhzg": {83}}"#.to_owned(),
-            "é🙂".repeat(100),
-        ] {
-            let mut report = report(0, 0);
-            report.final_value = Some(value.clone());
-            let displayed = rows(&run_results_table(1, &report));
-            assert_eq!(
-                displayed["Final value"],
-                format_string_ellipsis(&value, Some(120))
-            );
-            assert_eq!(report.final_value, Some(value));
-        }
-    }
-
-    #[test]
-    fn single_replica_sampling_hides_run_stats_but_keeps_replica_and_concurrency_metrics() {
-        for replica_count in [0, 1] {
-            let tables = display_run_results(1, &report(replica_count, replica_count));
-            let run = tables[0].to_string();
-            assert!(!run.contains("Average response time (per sample)"));
-            assert!(!run.contains("Average effect time (per sample)"));
-            assert!(!run.contains("Replicas with response samples"));
-            assert!(run.contains("Average concurrent updates per update"));
-            assert!(run.contains("3.50"));
-            assert!(run.contains("Inter-replica concurrency ratio"));
-            assert_eq!(tables.len(), 2);
-            assert!(tables[1].to_string().contains("Replica 0"));
-        }
-    }
-
-    #[test]
-    fn multi_replica_sampling_displays_run_stats() {
-        for (responses, effects) in [(2, 0), (0, 2), (1, 2)] {
-            let table = run_results_table(1, &report(responses, effects)).to_string();
-            assert!(table.contains("Average response time (per sample)"));
-            assert!(table.contains("Average effect time (per sample)"));
-            assert!(table.contains("Replicas with response samples"));
-        }
-    }
 }

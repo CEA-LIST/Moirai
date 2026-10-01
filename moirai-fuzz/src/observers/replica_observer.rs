@@ -16,7 +16,7 @@ use crate::{
     metrics::{Phase, ReplicaSizeSample, ResponseSample},
     observers::{
         footprint::LogFootprint,
-        observer_log::LogObserver,
+        observer_log::{CommitmentAccessor, LogObserver},
         recorder::{
             EffectRecorder, LogSizeRecorder, QueryRecorder, ReplicaRecorders, ReplicaSizeRecorder,
             ResponseRecorder, StabilityRecorder, time,
@@ -151,6 +151,7 @@ where
             LogSizeRecorder,
         ),
         with_stability: bool,
+        commitment_accessor: Option<CommitmentAccessor<L>>,
     ) -> Self
     where
         M: AsRef<str> + Debug,
@@ -178,6 +179,7 @@ where
                     recorders.3,
                     recorders.5,
                     with_stability,
+                    commitment_accessor,
                 ),
             ),
             response_recorder: recorders.0,
@@ -212,6 +214,7 @@ where
         ReplicaRecorders {
             delivered_event_count,
             stability_recorder: observer_log.stability_recorder,
+            commitment_recorder: observer_log.commitment_recorder,
             effect_recorder: observer_log.effect_recorder,
             log_size_recorder: observer_log.log_size_recorder,
             response_recorder,

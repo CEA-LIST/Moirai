@@ -16,8 +16,8 @@ use crate::{
     observers::{
         footprint::{FootprintNode, LogFootprint},
         recorder::{
-            EffectRecorder, LogSizeRecorder, QueryRecorder, ReplicaRecorders, ReplicaSizeRecorder,
-            ResponseRecorder, StabilityRecorder,
+            CommitmentRecorder, EffectRecorder, LogSizeRecorder, QueryRecorder, ReplicaRecorders,
+            ReplicaSizeRecorder, ResponseRecorder, StabilityRecorder,
         },
     },
     runner::{RunCapture, runner},
@@ -42,6 +42,7 @@ where
         save,
         display,
         oracle_driver,
+        commitment_accessor,
     } = config;
 
     if oracle_driver.is_some() {
@@ -68,6 +69,7 @@ where
             &predicate,
             oracle_driver.as_ref(),
             display,
+            commitment_accessor,
         );
 
         let results = run_report(run_data, display);
@@ -121,6 +123,11 @@ pub struct ReplicaStats {
     pub stability_progress_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_events_between_stability: Option<f64>,
+    //* COMMITMENT (only for a root CommitmentLog) */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commitment_progress_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_events_between_commitments: Option<f64>,
     //* EFFECT TIME */
     #[serde(
         default,
@@ -204,6 +211,8 @@ impl ReplicaStats {
             log_size_sample_count: None,
             stability_progress_count: None,
             avg_events_between_stability: None,
+            commitment_progress_count: None,
+            avg_events_between_commitments: None,
             avg_effect_time: None,
             p99_effect_time: None,
             total_effect_time: None,
@@ -251,6 +260,7 @@ impl ReplicaStats {
 
         stats.stability_progress_count(&recorders.stability_recorder);
         stats.avg_events_between_stability(&recorders.stability_recorder);
+        stats.commitment_progress(&recorders.commitment_recorder);
         stats.avg_effect_time(&recorders.effect_recorder);
         stats.p99_effect_time(&recorders.effect_recorder);
         stats.total_effect_time(&recorders.effect_recorder);
@@ -292,6 +302,23 @@ impl ReplicaStats {
             self.avg_events_between_stability =
                 Some(total_events as f64 / stability_recorder.progress.len() as f64);
         }
+    }
+
+    /// Count newly committed updates between successive actual commitment frontiers.
+    /// Unlike stability's initial-empty-frontier convention, this needs two commitments.
+    pub fn commitment_progress(&mut self, recorder: &CommitmentRecorder) {
+        self.commitment_progress_count = recorder.enabled.then_some(recorder.progress.len());
+        self.avg_events_between_commitments = None;
+        if !recorder.enabled || recorder.progress.len() < 2 {
+            return;
+        }
+        let total_events = recorder
+            .progress
+            .windows(2)
+            .map(|pair| pair[1].frontier().sum() - pair[0].frontier().sum())
+            .sum::<usize>();
+        self.avg_events_between_commitments =
+            Some(total_events as f64 / (recorder.progress.len() - 1) as f64);
     }
 
     pub fn avg_effect_time(&mut self, effect_recorder: &EffectRecorder) {

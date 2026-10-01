@@ -8,9 +8,9 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ReplicaRecorders,
     config::{RunConfig, SaveMode},
     fuzzer::{ExecutionSummary, ReplicaStats, RunReport, RunStats},
+    observers::recorder::ReplicaRecorders,
     utils::git::{get_git_branch, get_git_commit},
 };
 

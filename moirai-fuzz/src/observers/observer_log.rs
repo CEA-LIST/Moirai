@@ -6,12 +6,14 @@ use moirai_protocol::{
 };
 
 use crate::{
-    metrics::{DeliveryPhase, EffectSample, LogSizeSample, StabilitySample},
+    metrics::{CommitmentSample, DeliveryPhase, EffectSample, LogSizeSample, StabilitySample},
     observers::{
         footprint::{FootprintNode, LogFootprint},
-        recorder::{EffectRecorder, LogSizeRecorder, StabilityRecorder, time},
+        recorder::{CommitmentRecorder, EffectRecorder, LogSizeRecorder, StabilityRecorder, time},
     },
 };
+
+pub type CommitmentAccessor<L> = for<'a> fn(&'a L) -> Option<&'a CausalFrontier>;
 
 /// A wrapper log to record metrics about the inner log
 pub struct LogObserver<L> {
@@ -20,6 +22,8 @@ pub struct LogObserver<L> {
     pub stability_recorder: StabilityRecorder,
     pub effect_recorder: EffectRecorder,
     pub log_size_recorder: LogSizeRecorder,
+    pub commitment_recorder: CommitmentRecorder,
+    commitment_accessor: Option<CommitmentAccessor<L>>,
     /// Whether to call stabilize on the inner log
     with_stability: bool,
 }
@@ -35,6 +39,8 @@ where
             stability_recorder: StabilityRecorder::default(),
             effect_recorder: EffectRecorder::default(),
             log_size_recorder: LogSizeRecorder::default(),
+            commitment_recorder: CommitmentRecorder::default(),
+            commitment_accessor: None,
         }
     }
 }
@@ -60,6 +66,24 @@ impl<L: IsLog + LogFootprint> IsLog for LogObserver<L> {
             );
         } else {
             self.inner.effect(event, ctx);
+        }
+
+        // Read after the inner effect timer has stopped. The current commitment
+        // implementation advances at most once per effect.
+        if self.commitment_recorder.enabled
+            && let Some(accessor) = self.commitment_accessor
+            && let Some(frontier) = accessor(&self.inner)
+            && self
+                .commitment_recorder
+                .progress
+                .last()
+                .is_none_or(|previous| {
+                    frontier.partial_cmp(previous.frontier()) == Some(std::cmp::Ordering::Greater)
+                })
+        {
+            self.commitment_recorder.progress.push(
+                CommitmentSample::new(cnt, frontier.clone()).with_phase(self.effect_recorder.phase),
+            );
         }
 
         self.log_size_recorder.observe_effect(cnt);
@@ -106,6 +130,7 @@ impl<L> LogObserver<L> {
         effect_recorder: EffectRecorder,
         log_size_recorder: LogSizeRecorder,
         with_stability: bool,
+        commitment_accessor: Option<CommitmentAccessor<L>>,
     ) -> Self {
         LogObserver {
             inner,
@@ -113,6 +138,12 @@ impl<L> LogObserver<L> {
             effect_recorder,
             log_size_recorder,
             with_stability,
+            commitment_recorder: if commitment_accessor.is_some() {
+                CommitmentRecorder::new()
+            } else {
+                CommitmentRecorder::default()
+            },
+            commitment_accessor,
         }
     }
 

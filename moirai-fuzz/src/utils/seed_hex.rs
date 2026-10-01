@@ -31,7 +31,7 @@ where
     }
 }
 
-fn parse_hex_seed(seed: &str) -> Result<[u8; 32], String> {
+pub fn parse_hex_seed(seed: &str) -> Result<[u8; 32], String> {
     let digits = seed.strip_prefix("0x").unwrap_or(seed);
     if digits.len() != 64 {
         return Err(format!(

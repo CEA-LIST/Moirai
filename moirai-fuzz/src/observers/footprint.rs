@@ -110,7 +110,14 @@ where
     CommitmentLog<L>: DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(self, vec![self.child().footprint()])
+        FootprintNode::parent(
+            self,
+            vec![
+                self.child().footprint(),
+                self.leader_log().footprint(),
+                FootprintNode::leaf(self.protocol()),
+            ],
+        )
     }
 }
 

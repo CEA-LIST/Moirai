@@ -3,7 +3,10 @@ use std::convert::Infallible;
 #[cfg(feature = "fuzz")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{FootprintNode, LogFootprint, generator::command_generator::CommandGenerator};
+use moirai_fuzz::{
+    generator::command_generator::CommandGenerator,
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{

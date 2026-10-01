@@ -16,7 +16,9 @@ use crate::{
     execution_graph::ExecutionGraph,
     generator::command_generator::CommandGenerator,
     metrics::Phase,
-    observers::{footprint::LogFootprint, recorder::ReplicaRecorders},
+    observers::{
+        footprint::LogFootprint, observer_log::CommitmentAccessor, recorder::ReplicaRecorders,
+    },
     utils::{
         boostrap::bootstrap_n,
         format::{clean_dot_output, seed_to_hex},
@@ -43,6 +45,7 @@ pub fn runner<L, Q>(
     predicate: &Predicate<Q>,
     oracle_driver: Option<&OracleDriver<L>>,
     display: bool,
+    commitment_accessor: Option<CommitmentAccessor<L>>,
 ) -> RunCapture<L::Op>
 where
     Q: QueryOperation,
@@ -63,8 +66,9 @@ where
     let mut replicas = bootstrap_n::<L>(
         config.num_replicas,
         &config.metrics,
-        !config.disable_stability,
+        !config.disable_log_stabilization,
         used_seed,
+        commitment_accessor,
     );
 
     let reachability = config.reachability.clone().unwrap_or_else(|| {

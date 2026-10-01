@@ -6,7 +6,7 @@ use moirai_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::utils::seed_hex;
+use crate::{observers::observer_log::CommitmentAccessor, utils::seed_hex};
 
 /// Connects the generic fuzzer to a log-specific leader oracle.
 pub struct OracleDriver<L>
@@ -20,6 +20,10 @@ impl<L> OracleDriver<L>
 where
     L: IsLog,
 {
+    pub(crate) fn new(set_leader: fn(&mut L, &ReplicaId)) -> Self {
+        Self { set_leader }
+    }
+
     pub(crate) fn set_leader(&self, log: &mut L, leader: &ReplicaId) {
         (self.set_leader)(log, leader);
     }
@@ -92,6 +96,7 @@ where
     pub display: bool,
     /// Optional adapter used to update a protocol oracle immediately before command preparation.
     pub oracle_driver: Option<OracleDriver<L>>,
+    pub(crate) commitment_accessor: Option<CommitmentAccessor<L>>,
 }
 
 impl<'a, L, Q> FuzzerConfig<'a, L, Q>
@@ -112,6 +117,7 @@ where
             save: None,
             display: true,
             oracle_driver: None,
+            commitment_accessor: None,
         }
     }
 
@@ -141,11 +147,13 @@ where
     L: IsLog,
     Q: QueryOperation,
 {
-    /// Drive the commitment log's Omega oracle from the simulated network state.
+    /// Drive the commitment log's Omega oracle from the simulated network state,
+    /// and capture its majority-backed commitment progress on every replica.
     pub fn with_omega_oracle(mut self) -> Self {
-        self.oracle_driver = Some(OracleDriver {
-            set_leader: |log, leader| log.oracle_mut().set_leader(leader.clone()),
-        });
+        self.oracle_driver = Some(OracleDriver::new(|log, leader| {
+            log.oracle_mut().set_leader(leader.clone());
+        }));
+        self.commitment_accessor = Some(CommitmentLog::<L>::committed_frontier);
         self
     }
 }
@@ -272,8 +280,10 @@ pub struct RunConfig {
     pub seed: Option<[u8; 32]>,
     /// Whether to generate an execution graph in GraphViz format
     pub execution_graph: bool,
-    /// Whether to disable stability (`stabilize()` will never be called)
-    pub disable_stability: bool,
+    /// Suppress forwarding TCSB causal frontiers to the root log's `stabilize()`.
+    /// Causal-stability detection and its metric recording remain independent.
+    /// Internal commitment-driven stabilization is not affected.
+    pub disable_log_stabilization: bool,
     /// Metrics configuration for this run
     pub metrics: MetricsConfig,
 }
@@ -320,7 +330,7 @@ impl RunConfig {
             reachability,
             seed,
             execution_graph: false,
-            disable_stability: false,
+            disable_log_stabilization: false,
             metrics: MetricsConfig {
                 response_time: None,
                 effect_time: None,
@@ -337,13 +347,13 @@ impl RunConfig {
         self
     }
 
-    pub fn with_stability(mut self) -> Self {
-        self.disable_stability = false;
+    pub fn with_log_stabilization(mut self) -> Self {
+        self.disable_log_stabilization = false;
         self
     }
 
-    pub fn without_stability(mut self) -> Self {
-        self.disable_stability = true;
+    pub fn without_log_stabilization(mut self) -> Self {
+        self.disable_log_stabilization = true;
         self
     }
 
@@ -372,9 +382,15 @@ impl RunConfig {
         self
     }
 
+    /// Record causal-frontier advances independently of log stabilization.
     pub fn with_track_stability(mut self, sampling: ReplicaSampling) -> Self {
         self.metrics.track_stability = Some(sampling);
-        self.disable_stability = false;
+        self
+    }
+
+    /// Disable causal-stability metrics without changing log stabilization.
+    pub fn without_track_stability(mut self) -> Self {
+        self.metrics.track_stability = None;
         self
     }
 }

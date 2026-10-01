@@ -1,5 +1,8 @@
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{FootprintNode, LogFootprint, generator::command_generator::CommandGenerator};
+use moirai_fuzz::{
+    generator::command_generator::CommandGenerator,
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 use moirai_macros::union;
 use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
 #[cfg(feature = "fuzz")]

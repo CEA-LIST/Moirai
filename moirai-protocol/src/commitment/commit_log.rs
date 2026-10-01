@@ -96,20 +96,19 @@ where
         }
     }
 
-    fn stabilize(&mut self, _frontier: &CausalFrontier) {
-        // TODO: check this is correct
-        // let mut committed = self
-        //     .protocol
-        //     .last_committed()
-        //     .cloned()
-        //     .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
-        // let previous = committed.clone();
-        // committed.join(frontier);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        let mut committed = self
+            .protocol
+            .last_committed()
+            .cloned()
+            .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
+        let previous = committed.clone();
+        committed.join(frontier);
 
-        // if committed != previous {
-        //     self.protocol.update_last_committed(committed.clone());
-        //     self.child.stabilize(&committed);
-        // }
+        if committed != previous {
+            self.protocol.update_last_committed(committed.clone());
+            self.child.stabilize(&committed);
+        }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -139,6 +138,21 @@ where
 
     pub fn child(&self) -> &L {
         &self.child
+    }
+
+    /// The latest majority-backed commitment frontier, if commitment has advanced.
+    pub fn committed_frontier(&self) -> Option<&CausalFrontier> {
+        self.protocol.last_committed()
+    }
+
+    /// Read-only access to the log of leader votes and their causal history.
+    pub fn leader_log(&self) -> &POLog<LeaderVote, EventHistory<LeaderVote>> {
+        &self.leader_log
+    }
+
+    /// Read-only access to commitment state, including candidate support.
+    pub fn protocol(&self) -> &CommitmentProtocol<Omega> {
+        &self.protocol
     }
 }
 

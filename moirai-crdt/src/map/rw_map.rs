@@ -7,8 +7,8 @@ use std::{
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
-    FootprintNode, LogFootprint,
     generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+    observers::footprint::{FootprintNode, LogFootprint},
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
@@ -295,13 +295,12 @@ where
     L: IsLog + LogFootprint + DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(
-            self,
-            self.children()
-                .iter()
-                .map(|(k, v)| FootprintNode::parent(k, vec![v.footprint()]))
-                .collect(),
-        )
+        let children = self
+            .children()
+            .iter()
+            .map(|(_, child)| child.footprint())
+            .collect();
+        FootprintNode::parent(self, children)
     }
 }
 
