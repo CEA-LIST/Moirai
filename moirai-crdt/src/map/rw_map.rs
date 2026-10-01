@@ -297,8 +297,8 @@ where
     fn footprint(&self) -> FootprintNode {
         let children = self
             .children()
-            .iter()
-            .map(|(_, child)| child.footprint())
+            .values()
+            .map(|child| child.footprint())
             .collect();
         FootprintNode::parent(self, children)
     }

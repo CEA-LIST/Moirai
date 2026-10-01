@@ -248,8 +248,8 @@ where
     fn footprint(&self) -> FootprintNode {
         let children = self
             .children
-            .iter()
-            .map(|(_, v)| v.footprint())
+            .values()
+            .map(|v| v.footprint())
             .collect::<Vec<FootprintNode>>();
         FootprintNode::parent(self, children)
     }
