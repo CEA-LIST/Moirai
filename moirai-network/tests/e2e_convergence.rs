@@ -3650,6 +3650,9 @@ fn r1_seeded_random_operations_converge() {
     if let Err(why) = r1_account_for_history(&nodes, &issued, CONVERGE_TIMEOUT) {
         panic!("R1 seed {seed}: {why}\nreproduce with:\n  {reproduce}");
     }
+
+    // With every history in, the rendered states must still agree.
+    assert_converged(&nodes, CONVERGE_TIMEOUT);
 }
 
 /// How many of `steps` each replica of `nodes` was asked to apply, by id.
@@ -3668,32 +3671,38 @@ fn issued_per_replica(nodes: &[&dyn Node], steps: &[Step]) -> BTreeMap<String, u
 /// issued at each replica and `timeout` how long a replica may take to
 /// deliver what it has not delivered yet. `Err` carries the report.
 ///
-/// One read of each replica's `delivered_ops`, compared across the replicas
-/// and with the total issued; `timeout` is not used.
+/// Polled until `timeout`, not read once: the rendered states agreeing says
+/// nothing of an operation that changes nothing a replica renders, and a
+/// replica renders the agreed state before such an operation reaches it
+/// (NW.08). Each replica must read back `delivered_ops` equal to the total
+/// issued, `pending_ops` zero and `ops_applied` equal to what was issued at
+/// it. `delivered_ops` is the sum of the replica's delivered version vector,
+/// and no replica delivers an origin's event beyond that origin's own count,
+/// so with `ops_applied` pinning each origin's count the three fix which
+/// operations were delivered, not only how many.
 fn r1_account_for_history(
     nodes: &[&dyn Node],
     issued: &BTreeMap<String, u64>,
     timeout: Duration,
 ) -> std::result::Result<(), String> {
-    let _ = timeout;
     let total: u64 = issued.values().sum();
-    let delivered: Vec<(String, u64)> = nodes
-        .iter()
-        .map(|n| (n.id().to_string(), metric(*n, "delivered_ops").unwrap_or(0)))
-        .collect();
-    if !delivered.windows(2).all(|w| w[0].1 == w[1].1) {
-        return Err(format!(
-            "the replicas render the same state but do not account \
-             for the same history: {delivered:?}"
-        ));
-    }
-    if delivered[0].1 != total {
-        return Err(format!(
-            "{} of {total} operations were delivered",
-            delivered[0].1
-        ));
-    }
-    Ok(())
+    let expected = |id: &str| Some((total, 0, issued.get(id).copied().unwrap_or(0)));
+    let mut seen = Vec::new();
+    let settled = poll_until(timeout, || {
+        seen = histories(nodes);
+        Ok(seen
+            .iter()
+            .all(|(id, history)| *history == expected(id))
+            .then_some(()))
+    });
+    settled.map_err(|_| {
+        format!(
+            "within {timeout:?} the replicas did not each account for exactly the \
+             {total} operations the scenario issued ({issued:?}): (delivered_ops, \
+             pending_ops, ops_applied) must read ({total}, 0, issued there), and \
+             read {seen:?}"
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
