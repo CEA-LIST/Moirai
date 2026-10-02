@@ -12,7 +12,7 @@ description = "Macros for the Moirai CRDT framework implementation"
 moirai-protocol = { path = "../moirai-protocol" }
 moirai-fuzz = { path = "../moirai-fuzz", optional = true }
 paste = "1.0.15"
-rustc-hash = "1.1.0"
+rustc-hash = "2.1.3"
 deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
     "elsa",
 ] }
