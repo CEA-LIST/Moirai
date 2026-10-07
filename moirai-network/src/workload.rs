@@ -38,9 +38,12 @@ pub mod ops {
 
     /// `Json::JsonKind(JsonKind::Object(UWMap::Remove(key)))`.
     ///
-    /// Note the observed semantics: `Remove` resets the child CRDT to its
-    /// default value rather than dropping the key from the rendered state, so
-    /// a removed string reads back as `[]`, not as an absent key.
+    /// What a remove does, since the presence rule of `union!` (`42ee5ab`): a
+    /// `Remove` that has seen every update to the key drops the key from the
+    /// rendered state, at the remover and at every replica that has delivered
+    /// it, so a removed string reads as an absent key, not as an empty value.
+    /// An update concurrent with the remove keeps the key, holding that
+    /// update's effect alone.
     pub fn object_remove(key: &str) -> Value {
         json!({ "JsonKind": { "Object": { "Remove": key } } })
     }
@@ -119,15 +122,20 @@ enum Kind {
 
 /// A seeded stream of operations across `replicas` replicas.
 ///
-/// # Every key has one kind, for ever
+/// # Every key has one kind
 ///
-/// Measured against a live node, not assumed: the generated `JsonKind` union
-/// binds a key to a variant on its first write, and every later operation of a
-/// different variant is refused — `{"success":false,"message":"Operation not
-/// enabled"}`. A `Remove` does **not** release the binding: after removing a
-/// counter-valued key, an increment is still accepted and a string insert is
-/// still refused. So the generator assigns a kind per key up front and never
-/// crosses them.
+/// The generated `JsonKind` union binds a key to a variant on its first write,
+/// and with no remove every later operation of a different variant is refused
+/// (measured against a live node: `{"success":false,"message":"Operation not
+/// enabled"}`). A `Remove` that has seen every update to the key releases the
+/// binding, but only where it has been delivered: there an operation of
+/// another kind is accepted and reads alone, and one of the same kind starts
+/// from empty. At a replica the remove has not reached, the binding still
+/// holds, and a write of another kind concurrent with a write of the old kind
+/// opens a conflict of kinds. Which replicas have released a key's binding at
+/// a given step depends on delivery, which the generator does not model (the
+/// same reason every insert is at position 0, below). So the generator assigns
+/// a kind per key up front and never crosses them.
 ///
 /// This matters because a rejected operation is a test failure, not a condition
 /// to handle. A generator that mixed kinds would produce a run that fails for a
