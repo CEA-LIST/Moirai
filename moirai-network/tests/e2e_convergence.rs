@@ -3710,9 +3710,12 @@ fn r1_account_for_history(
 // ---------------------------------------------------------------------------
 //
 // An operation that changes nothing a replica renders (a second `enable` of a
-// flag, a `remove` of a key already at its default) leaves the rendered states
-// agreeing before it has reached every replica, so "the states agree" is not
-// "the histories are in". These scenarios hold deliveries back with the
+// flag) leaves the rendered states agreeing before it has reached every
+// replica, so "the states agree" is not "the histories are in". A `remove` of
+// a key already at its default was such an operation before ST.10, when a
+// remove reset the key's value and left the key rendered; since ST.10 a remove
+// that no concurrent update keeps makes the key absent, which changes the
+// render. These scenarios hold deliveries back with the
 // in-process pause flag, which buffers at the pausing replica what the paused
 // peer sends and hands it over on resume, and put R1's question to
 // `r1_account_for_history` at a moment whose answer the schedule fixes. The
