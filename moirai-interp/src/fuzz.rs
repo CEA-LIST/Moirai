@@ -1,7 +1,7 @@
 //! An operation generator, so `moirai-fuzz` runs over the interpreted log
 //! unchanged.
 //!
-//! `fuzzer::<ModelLog>` (`moirai-fuzz/src/fuzzer.rs:22-25`) asks a log for an
+//! `fuzzer::<ModelLog, _>` (`moirai-fuzz/src/fuzzer.rs:22-28`) asks a log for an
 //! operation and then *sends* it, unwrapping the result: a generated
 //! operation that `is_enabled` would refuse crashes the run rather than
 //! failing it. So this generator produces only table-valid, state-valid
@@ -16,10 +16,7 @@
 
 use std::cell::RefCell;
 
-use moirai_fuzz::{
-    metrics::{FuzzMetrics, StructureMetrics},
-    op_generator::OpGeneratorNested,
-};
+use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MetamodelSemantics, TieBreak, metamodel_digest,
 };
@@ -57,8 +54,8 @@ const BUDGET: u32 = 6;
 /// the merge rules rather than filling every set with singletons.
 const WORDS: [&str; 6] = ["alpha", "beta", "gamma", "delta", "door", "room"];
 
-impl OpGeneratorNested for ModelLog {
-    fn generate(&self, rng: &mut impl Rng) -> Self::Op {
+impl CommandGenerator for ModelLog {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         let Some(sem) = self.semantics() else {
             let (descriptor, digest) = DESCRIPTOR
                 .with_borrow(Clone::clone)
@@ -100,7 +97,12 @@ fn site_op(
                 Some(Node::Slot(slot)) => Some(slot),
                 _ => None,
             };
-            let held: Vec<&ObjectNode> = slot.map(|slot| slot.objects()).unwrap_or_default();
+            // The objects `check` holds a local writer to: at a family slot
+            // the present ones only, so a slot whose members are all absent
+            // is an empty slot here as it is there.
+            let held: Vec<&ObjectNode> = slot
+                .map(|slot| slot.served(target.is_family(sem)))
+                .unwrap_or_default();
             // A class this replica has already put here, or a new one when it
             // has put none: writing a second class locally is what
             // `union.rs:130-145` refuses, so the generator does not try.
@@ -327,6 +329,21 @@ fn leaf_op(
                 LeafOp::Write(Scalar::Enum(class.0, rng.random_range(0..literals) as u16))
             }
         }
+        LeafSite::Scalar(LeafRule::OptionalRegister { class }) => {
+            // An `MVRegister`, which takes `Write` and `Clear` whatever its
+            // value; a literal of its enum when the value feature has one.
+            if rng.random_range(0..8) == 0 {
+                LeafOp::Clear
+            } else if let Some(class) = class {
+                let literals = sem
+                    .enums
+                    .get(class.index())
+                    .map_or(1, |entry| entry.literals.len().max(1));
+                LeafOp::Write(Scalar::Enum(class.0, rng.random_range(0..literals) as u16))
+            } else {
+                LeafOp::Write(word)
+            }
+        }
         LeafSite::Set(_) | LeafSite::Bag => match rng.random_range(0..8) {
             0 => LeafOp::Clear,
             1..=2 => LeafOp::Remove(word),
@@ -354,25 +371,19 @@ fn leaf_op(
     }
 }
 
-impl FuzzMetrics for ModelLog {
-    fn structure_metrics(&self) -> StructureMetrics {
-        node_metrics(self.root())
+/// `fuzzer` requires a size estimate of the log and of its operations, which
+/// it reads only when a run samples memory (`memory_sample_interval`). These
+/// count no heap storage at all: the interpreted tree is not measured, and no
+/// figure read through them is a measurement of it.
+impl deepsize::DeepSizeOf for ModelLog {
+    fn deep_size_of_children(&self, _context: &mut deepsize::Context) -> usize {
+        0
     }
 }
 
-fn node_metrics(node: &Node) -> StructureMetrics {
-    match node {
-        Node::Unbound => StructureMetrics::empty(),
-        Node::Leaf(_) => StructureMetrics::scalar(),
-        Node::Opt(opt) => opt
-            .child()
-            .map_or_else(StructureMetrics::empty, node_metrics),
-        Node::Seq(seq) => StructureMetrics::object(seq.children().values().map(node_metrics)),
-        Node::Map(map) => StructureMetrics::object(map.children().values().map(node_metrics)),
-        Node::Slot(slot) => StructureMetrics::object(
-            slot.objects()
-                .into_iter()
-                .map(|object| StructureMetrics::object(object.fields().values().map(node_metrics))),
-        ),
+/// See the [`ModelLog`] impl: no heap storage is counted.
+impl deepsize::DeepSizeOf for ModelOp {
+    fn deep_size_of_children(&self, _context: &mut deepsize::Context) -> usize {
+        0
     }
 }
