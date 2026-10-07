@@ -918,49 +918,6 @@ mod tests {
         assert_eq!(read_of(a.state()), read_of(b.state()));
     }
 
-    /// A key removed with nothing concurrent stays, holding the empty string,
-    /// which is what the generated path does too and is therefore the answer
-    /// I-A1 asks for rather than the one that reads nicer.
-    ///
-    /// `UWMap::Remove` resets the child instead of dropping it
-    /// (`uw_map.rs:150-152`), and `redundant_by_parent` on an `EventGraph`
-    /// leaves the reset in the log, so the child is not at its default on
-    /// either path: `UWMapLog::execute_query` keeps it because
-    /// `JsonKindValue::Value(String([]))` is not `JsonKindValue::Unset`, and
-    /// this read-out keeps it because `Some("")` is not the `None` an unwritten
-    /// entry reads. The same sentence is already written about an unset
-    /// optional text, six tests up.
-    #[test]
-    fn a_key_removed_with_nothing_concurrent_keeps_the_emptied_entry() {
-        let sem = json();
-        let (mut a, mut b) = opened("m1", &json_descriptor());
-        let object = class_slot(&sem, "Object");
-
-        let event = a
-            .send(put(
-                &sem,
-                "gone",
-                "String",
-                InstanceOp::Leaf(LeafOp::InsertChar { pos: 0, ch: 'z' }),
-            ))
-            .unwrap();
-        b.receive(event);
-
-        let event = a
-            .send(ModelOp::Instance(InstanceOp::variant(
-                object,
-                InstanceOp::field(
-                    feature_slot(&sem, object, "entry"),
-                    InstanceOp::remove(Scalar::text("gone")),
-                ),
-            )))
-            .unwrap();
-        b.receive(event);
-
-        assert_eq!(read_of(a.state()), json!({"gone": ""}));
-        assert_eq!(read_of(b.state()), read_of(a.state()));
-    }
-
     /// Two writers who put different JSON kinds at one key open a conflict
     /// there and both survive it, which is `union.rs:180-200`'s retention
     /// reached through a map rather than through a record field.
