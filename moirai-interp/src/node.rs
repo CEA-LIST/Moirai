@@ -392,6 +392,25 @@ impl Target {
         slots
     }
 
+    /// Whether the generated runtime holds a `union!` here: at the roots, and
+    /// for a target class that is abstract or has a subclass
+    /// (`has_codegen_polymorphic_family`). A class with no subclass is a
+    /// `record!` there, and holds no union.
+    ///
+    /// At such a slot an object is served only while it is present
+    /// ([`ObjectNode::is_present`]), as `union!` serves only its present
+    /// children; at a record's slot every object is, as ST.02 and ST.04
+    /// settled.
+    pub(crate) fn is_family(self, sem: &MetamodelSemantics) -> bool {
+        match self {
+            Target::Roots => true,
+            Target::Class(target) => !sem
+                .classes
+                .get(target.index())
+                .is_some_and(|class| class.instantiable && class.concrete.as_ref() == [target]),
+        }
+    }
+
     /// The classes that may, by name; the error path only.
     pub(crate) fn allowed(self, sem: &MetamodelSemantics) -> Vec<Arc<str>> {
         self.allowed_slots(sem)
@@ -697,6 +716,11 @@ fn insert_resolved<T>(list: &mut Vec<T>, item: T, id: impl Fn(&T) -> &EventId) {
 }
 
 /// A containment, as `union!`'s three states.
+///
+/// An object stays here after a removal above it, present or absent
+/// ([`ObjectNode::is_present`]); at a family slot ([`Target::is_family`]) the
+/// absent ones are kept as `union!` keeps its covered children, and
+/// [`SlotNode::served`] leaves them out.
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SlotNode {
@@ -944,6 +968,25 @@ impl ObjectNode {
         );
     }
 
+    /// Whether an operation that reached this object is one no removal has
+    /// seen: `union!`'s presence rule, decided from the same record that
+    /// decides whether a writer sees the object alive.
+    ///
+    /// A removal above the object that had seen every operation routed to it
+    /// leaves it absent: at a slot where the generated runtime holds a
+    /// `union!` ([`Target::is_family`]) it is not read, and a local writer is
+    /// not held to it (`VariantTaken`, `NotNew`). It stays in its slot with
+    /// its fields and touches, so an operation concurrent with the removal,
+    /// delivered later, reaches its history and makes it present again under
+    /// its identity, and one whose writer saw it absent creates it again
+    /// ([`ObjectNode::written_by`]). Pruning the touches at stability does not
+    /// move the answer: it drops only touches a removal had seen and, of one
+    /// origin's stable touches, all but the latest, which no removal has seen
+    /// if an earlier one is unseen, since a removal that saw it saw them too.
+    pub(crate) fn is_present(&self) -> bool {
+        self.touches.iter().any(|touch| touch.covered_by.is_empty())
+    }
+
     /// The class this is an instance of.
     pub fn class(&self) -> ClassSlot {
         self.class
@@ -972,6 +1015,16 @@ impl SlotNode {
             SlotNode::Value(object) => vec![object.as_ref()],
             SlotNode::Conflicts(objects) => objects.iter().collect(),
         }
+    }
+
+    /// The objects a reader is served and a local writer is held to: at a
+    /// slot where the generated runtime holds a `union!` (`family`, see
+    /// [`Target::is_family`]) the present ones, elsewhere every one.
+    pub(crate) fn served(&self, family: bool) -> Vec<&ObjectNode> {
+        self.objects()
+            .into_iter()
+            .filter(|object| !family || object.is_present())
+            .collect()
     }
 }
 
@@ -1545,45 +1598,37 @@ pub(crate) fn check(
                     allowed: target.allowed(sem),
                 });
             }
-            let slot = match node {
-                Some(Node::Slot(slot)) => Some(slot),
-                _ => None,
+            // What a writer is held to here: at a family slot an absent
+            // object is not there for it, as `union!`'s `is_enabled` sees
+            // only its present children.
+            let served = match node {
+                Some(Node::Slot(slot)) => slot.served(target.is_family(sem)),
+                _ => Vec::new(),
             };
+            let found = served.iter().copied().find(|object| object.class == *class);
             // `union.rs:130-145`: a *local* writer is told that this slot is
             // taken, so a conflict is something concurrency opens and never
             // something one replica opens on its own. A peer's operation is
             // not held to it: refusing it here is what would lose the
             // retention `ip9` asserts.
-            if let Some(slot) = slot.filter(|_| mode.is_local()) {
-                let held = match slot {
-                    SlotNode::Unset => None,
-                    SlotNode::Value(object) => Some(object.class),
-                    SlotNode::Conflicts(objects) => objects.first().map(|object| object.class),
-                };
-                if let Some(held) = held
-                    && slot.find(*class).is_none()
-                {
-                    return Err(Refusal::VariantTaken {
-                        class: at.class.clone(),
-                        feature: at.feature.clone(),
-                        held: sem
-                            .classes
-                            .get(held.index())
-                            .map_or_else(|| Arc::from("?"), |class| Arc::clone(&class.name)),
-                        offered: sem
-                            .classes
-                            .get(class.index())
-                            .map_or_else(|| Arc::from("?"), |class| Arc::clone(&class.name)),
-                    });
-                }
+            if mode.is_local()
+                && let Some(held) = served.first().map(|object| object.class)
+                && found.is_none()
+            {
+                return Err(Refusal::VariantTaken {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    held: sem
+                        .classes
+                        .get(held.index())
+                        .map_or_else(|| Arc::from("?"), |class| Arc::clone(&class.name)),
+                    offered: sem
+                        .classes
+                        .get(class.index())
+                        .map_or_else(|| Arc::from("?"), |class| Arc::clone(&class.name)),
+                });
             }
-            check_object(
-                sem,
-                slot.and_then(|slot| slot.find(*class)),
-                *class,
-                inner,
-                mode,
-            )
+            check_object(sem, found, *class, inner, mode)
         }
     }
 }

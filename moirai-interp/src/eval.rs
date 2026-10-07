@@ -16,7 +16,8 @@
 //!   class, own and inherited alike, with `eClass` naming the class;
 //! - a family wrapper is the contained object directly, `Unset` an absent
 //!   key, a conflict set `{"__conflict": [...]}` ordered by class name and
-//!   then by canonical bytes;
+//!   then by canonical bytes; an object a removal had seen every operation
+//!   of is absent there, as `union!`'s covered child is;
 //! - a text attribute is a string, characters joined;
 //! - an unset optional is an absent key;
 //! - a sequence is an array in read order;
@@ -26,7 +27,10 @@
 //!   (`uw_map.rs:184-190`) and therefore how both paths spell an entry that
 //!   has been removed: at a key of a class with no subclass (a `record!`) an
 //!   emptied object is absent, at a key of a class with subclasses (a
-//!   `union!`, the values of JSON's `Object` included) it stays, emptied;
+//!   `union!`, the values of JSON's `Object` included) an object the removal
+//!   had seen every operation of is absent, so the key reads `Unset` and is
+//!   absent, and one a concurrent update reached stays, holding that
+//!   update's effect;
 //! - an instance of a **transparent** class is the value of the one feature
 //!   the class is represented by, with no `eClass` key and no object around
 //!   it: `json.ecore`'s `Array` is the array itself and its `Object` is the
@@ -131,9 +135,10 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
 /// keyed collections inside it read by their own rules. So an object a
 /// removal emptied, with nothing written after, is left out at such a key.
 /// A class with subclasses, an abstract one included, is a `union!`, which
-/// mints `Unset` and reads a held member, emptied or not, as a value: no
-/// object at all is fresh there, so an emptied member stays at its key
-/// (ST.01's keyed guard, and a JSON `Object`'s removed keys, whose value
+/// mints `Unset` and reads a present member, emptied or not, as a value: no
+/// object at all is fresh there, and a key is left out when the removal had
+/// seen every operation of every object at it, which leaves none present
+/// (ST.01's keyed place, and a JSON `Object`'s removed keys, whose value
 /// class `Json` is abstract). A leaf site's fresh child is its own log.
 ///
 /// The fresh object holds no object and no entry anywhere below it: its
@@ -145,9 +150,7 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
 /// form, which is what [`reads_as_fresh`] relies on.
 fn fresh_entry(sem: &MetamodelSemantics, site: Site, form: Form) -> Option<Value> {
     if let Site::Object(Target::Class(target)) = site
-        && let Some(class) = sem.classes.get(target.index())
-        && class.instantiable
-        && class.concrete.as_ref() == [target]
+        && !Target::Class(target).is_family(sem)
     {
         return read_class(sem, target, &BTreeMap::new(), None, form);
     }
@@ -216,11 +219,14 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
             // whose record still holds an emptied key of its own, reads as a
             // fresh one does and is dropped, as `UWMapLog` drops a `record!`
             // whose own map still holds a key but reads `{}`. A removed key
-            // of a JSON `Object` stays whatever its emptied value reads, `""`
-            // for a JSON string included, because its value class `Json` has
-            // subclasses and no object at all is fresh there. A text
-            // attribute at the key of a leaf-valued map is a leaf log of its
-            // own, and a removed one that reads `""` is dropped.
+            // of a JSON `Object` is dropped because no object is present at
+            // it once the removal had seen every operation of each, and not
+            // because of what its emptied value reads: its value class `Json`
+            // has subclasses and no object at all is fresh there, so a value
+            // typed empty, or emptied by an update the removal had not seen,
+            // stays. A text attribute at the key of a leaf-valued map is a
+            // leaf log of its own, and a removed one that reads `""` is
+            // dropped.
             //
             // The fresh entry is computed once, and only for a collection
             // that holds a child: an empty one has nothing to compare, and
@@ -244,14 +250,18 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
             .child()
             .and_then(|child| read_in(sem, child, Shaped::Bare(site), form)),
         (Shaped::Bare(Site::Leaf(_)), Node::Leaf(leaf)) => Some(leaf.read_json(Some(sem))),
-        (Shaped::Bare(Site::Object(_)), Node::Slot(slot)) => {
-            let objects: Vec<&ObjectNode> = slot.objects();
+        (Shaped::Bare(Site::Object(target)), Node::Slot(slot)) => {
+            // At a family slot, the present objects only: one a removal had
+            // seen every operation of is absent, as `union!` reads only its
+            // present children, so a slot whose every object is absent reads
+            // as `Unset` does.
+            let objects: Vec<&ObjectNode> = slot.served(target.is_family(sem));
             match objects.len() {
                 0 => None,
-                // Whatever is there, default or not, and the same for a
+                // Whatever is served, default or not, and the same for a
                 // conflict below: an object in a slot exists because somebody
                 // instantiated it, and `read_object` gives it at least its
-                // `eClass`. `union!`'s own read counts every child it holds
+                // `eClass`. `union!`'s own read counts every present child
                 // the same way, so the two paths agree on a slot holding one
                 // written object beside one created and never written into.
                 1 => read_object(sem, objects[0], form),
