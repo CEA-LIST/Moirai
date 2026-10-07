@@ -60,8 +60,9 @@ pub fn descriptor() -> Value {
 ///   `Box.slot` (a write of the `Box` that unsets its slot).
 /// - `Outer`: the same nesting, and U unsets `Holder.inner`, the optional
 ///   that holds the `Box`.
-/// - `Keyed`: key `k` of `Holder.bag`, and U removes `k`. The guard: outside
-///   the claim, it must serve what it serves today.
+/// - `Keyed`: key `k` of `Holder.bag`, and U removes `k`. Outside ST.01's
+///   claim; under ST.10's rule (a member every write to which a removal has
+///   seen is absent) it serves what the optional places serve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
     Flat,
@@ -495,25 +496,18 @@ pub fn v1(schedule: &Schedule) -> Value {
     document(schedule.place, Some(shape(schedule.member, 10)))
 }
 
-/// The keyed guard's value, what both runtimes serve today: both members
-/// stay at a removed key, the one W reached holding W's +10, the other
-/// emptied.
+/// The keyed place's value under ST.10's rule (`cea-cdrt-knowledge/spec/
+/// items/ST.10.md`, B2): the member W reached, alone at the removed key,
+/// holding W's +10; U had seen every write to the other member, which is
+/// absent. The same document V1 fixes for an optional place.
 pub fn keyed(schedule: &Schedule) -> Value {
-    let (a, b) = if schedule.member == "A" {
-        (10, 0)
-    } else {
-        (0, 10)
-    };
-    document(Place::Keyed, Some(conflict(a, b)))
+    document(Place::Keyed, Some(shape(schedule.member, 10)))
 }
 
-/// What U alone leaves: an optional place reads unset; a removed key keeps
-/// both members, emptied.
+/// What U alone leaves: an optional place reads unset, and a removed key
+/// whose every write U had seen is absent (ST.10).
 pub fn unset_alone(place: Place) -> Value {
-    match place {
-        Place::Keyed => document(Place::Keyed, Some(conflict(0, 0))),
-        _ => document(place, None),
-    }
+    document(place, None)
 }
 
 // ---------------------------------------------------------------------------

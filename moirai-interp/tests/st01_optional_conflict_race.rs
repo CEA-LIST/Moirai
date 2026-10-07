@@ -17,10 +17,11 @@
 //! - O3: a fourth replica joins by state transfer after any step of the
 //!   schedule, from any of the three, delivers what it lacks, serves what the
 //!   others serve, and makes O2's later writes (C1, C3).
-//! - O6: guards, green before the change and required green after: the keyed
-//!   collection's race serves what it serves today, U alone leaves every
-//!   optional place unset, and the in-process joiner of O3 converges on the
-//!   keyed collection, where the store already converges.
+//! - O6: the keyed collection's race serves the reached member alone (ST.10
+//!   re-pinned it from both members, the other emptied), U alone leaves every
+//!   place unset (ST.10 re-pinned the removed key from both members
+//!   emptied), and the in-process joiner of O3 converges on the keyed
+//!   collection.
 //!
 //! Each of O1, O2 and O3 runs every schedule, counts what fails, prints the
 //! counts on lines starting `ST01-`, and asserts once at the end, so a red
@@ -413,12 +414,12 @@ fn join_and_check(
 // ---------------------------------------------------------------------------
 
 /// O6, the keyed collection: key `k` holds the conflict, and U removes the
-/// key while W increments one member. Outside the claim, and what both
-/// runtimes serve today on every replica in every order: both members stay,
-/// the reached one holding W's +10 under its identity, the other emptied.
-/// All 288 schedules.
+/// key while W increments one member. Outside ST.01's claim; under ST.10's
+/// rule, on every replica in every order, the reached member alone, holding
+/// W's +10 under its identity; U had seen every write to the other, which is
+/// absent. All 288 schedules.
 #[test]
-fn st01_o6_guard_a_removed_key_keeps_both_members_as_today() {
+fn st01_o6_a_removed_key_serves_the_reached_member_alone() {
     let tray = Tray::new();
     let desc = descriptor();
     for schedule in schedules(Place::Keyed) {
@@ -451,11 +452,11 @@ fn st01_o6_guard_a_removed_key_keeps_both_members_as_today() {
 }
 
 /// O6, U alone: with no concurrent write, an unset leaves every optional
-/// place reading unset and a removed key holding both members emptied, on
-/// every replica, whichever replica unsets. 12 conflict schedules x 3 seats
-/// of U, in each of the four places.
+/// place reading unset and a removed key absent (ST.10), on every replica,
+/// whichever replica unsets. 12 conflict schedules x 3 seats of U, in each
+/// of the four places.
 #[test]
-fn st01_o6_guard_an_unset_alone_leaves_the_place_as_today() {
+fn st01_o6_an_unset_alone_leaves_every_place_unset() {
     let tray = Tray::new();
     let desc = descriptor();
     for place in Place::ALL {
@@ -479,10 +480,11 @@ fn st01_o6_guard_an_unset_alone_leaves_the_place_as_today() {
     }
 }
 
-/// O6, the joiner of O3 on the keyed collection, where the store converges
-/// today: the check that the in-process joiner (a snapshot and a serde round
-/// trip, then every operation delivered in the order sent) is sound, so that
-/// a failure of O3 is the store's and not the harness's.
+/// O6, the joiner of O3 on the keyed collection: the check that the
+/// in-process joiner (a snapshot and a serde round trip, then every
+/// operation delivered in the order sent) is sound, so that a failure of O3
+/// is the store's and not the harness's. Its value is [`keyed`]'s, which
+/// ST.10 re-pinned.
 #[test]
 fn st01_o6_guard_the_in_process_joiner_converges_where_the_store_does() {
     let tray = Tray::new();

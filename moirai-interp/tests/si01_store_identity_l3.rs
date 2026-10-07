@@ -148,10 +148,10 @@ fn json_schedule(js: &Json) -> Vec<ModelOp> {
 const UML_DEFAULT: &str = r#"{"eClass":"Model","name":"N","ownedElements":[{"abstract":true,"attributes":[],"eClass":"Class","generalizations":[],"name":"Door","owner":null,"stereotype":["s"],"taggedValue":[]},{"attributes":[],"eClass":"Class","generalizations":[],"owner":null,"stereotype":[],"taggedValue":[]},{"attributes":[],"eClass":"Class","generalizations":[],"name":"Hatch","owner":null,"stereotype":[],"taggedValue":[]}],"owner":null,"stereotype":[],"taggedValue":[]}"#;
 
 /// The same for `json_schedule`: a plain JSON document, no `eClass` and no
-/// record anywhere; the removed string reads `""` and keeps its key, which is
-/// `eval.rs`'s documented rule for a `String` at a key.
-const JSON_DEFAULT: &str =
-    r#"{"flag":true,"gone":"","n":3.0,"o":{"k":"v"},"tags":["q","p"],"title":"xy"}"#;
+/// record anywhere. The removed string is absent: ST.10 re-pinned this text
+/// from `{"flag":true,"gone":"","n":3.0,...}`, the removal having seen every
+/// write to `gone`.
+const JSON_DEFAULT: &str = r#"{"flag":true,"n":3.0,"o":{"k":"v"},"tags":["q","p"],"title":"xy"}"#;
 
 /// The default read, in process, is the text it was.
 #[test]

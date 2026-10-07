@@ -12,8 +12,13 @@
 //! generated runtime composes as a `record!`, a freshly minted value is the
 //! object at its default, so an object the removal emptied and nothing wrote
 //! after is left out, one level deeper as well. At a key of a class with
-//! subclasses, a `union!`, a freshly minted value holds no object, so an
-//! emptied object stays there, as ST.01's O6 guard pins for a conflict.
+//! subclasses, a `union!`, a freshly minted value holds no object; under
+//! ST.10's rule (`cea-cdrt-knowledge/spec/items/ST.10.md`, B2) an object
+//! every write to which the removal had seen is absent, so such a key whose
+//! every object the removal emptied is left out too, and an object a
+//! concurrent write reached stays alone. ST.10 re-pinned the `Union`,
+//! `UnionOne`, `UnionDeep` and `Family` values below, which kept the emptied
+//! objects at the key.
 //!
 //! The metamodel is `st05.ecore` (in `arachne-model-plane`,
 //! `arachne-codegen/tests/generated/st05/`), whose descriptor, as
@@ -723,8 +728,8 @@ pub fn formed_doc(place: Place) -> Value {
 /// what it had seen (X's and Y's writes) and keeps W's (update-wins); an
 /// object the removal emptied that W did not reach is left out at a key of
 /// a class with no subclass (the `Mid` at key `j`) and by an optional (the
-/// `Mid` in `Box.mid`, ST.02; `Box.note`, ST.04), and stays, emptied, at a
-/// key of a class with subclasses (the other member of `Union`).
+/// `Mid` in `Box.mid`, ST.02; `Box.note`, ST.04), and, at a key of a class
+/// with subclasses, is absent (the other member of `Union`, ST.10).
 fn race_value(schedule: &Schedule, w: i64) -> Value {
     let content = match (schedule.place, schedule.target) {
         (Place::Record, Target::Member) => boxed(w, None, None, &[]),
@@ -732,8 +737,8 @@ fn race_value(schedule: &Schedule, w: i64) -> Value {
         (Place::RecordDeep, Target::Sub) => boxed(0, None, None, &[("j", mid(w))]),
         (Place::RecordDeep, Target::Mid) => boxed(0, None, Some(mid(w)), &[]),
         (Place::RecordInner, Target::Member) => boxed(2, None, None, &[("j", mid(w))]),
-        (Place::Union, Target::Member) => conflict(shape("A", w, &[]), shape("B", 0, &[])),
-        (Place::Union, Target::Other) => conflict(shape("A", 0, &[]), shape("B", w, &[])),
+        (Place::Union, Target::Member) => shape("A", w, &[]),
+        (Place::Union, Target::Other) => shape("B", w, &[]),
         (Place::UnionOne, Target::Member) => shape("A", w, &[]),
         (Place::UnionDeep, Target::Member) => shape("A", w, &[]),
         (Place::UnionDeep, Target::Sub) => shape("A", 0, &[("j", mid(w))]),
@@ -752,16 +757,14 @@ pub fn expected(schedule: &Schedule) -> Value {
 /// What the removal alone leaves: at a key of a class with no subclass,
 /// nothing (`Record`, `RecordDeep`: the whole `Box` emptied; `RecordInner`:
 /// the `Mid` at key `j`, beside the `Box`'s own `k` 2, which U did not
-/// remove); at a key of a class with subclasses, the emptied members
-/// (`Union`, ST.01's O6), the emptied `A` without its emptied `Mid`
-/// (`UnionDeep`), the emptied `Bin` (`Family`).
+/// remove); at a key of a class with subclasses, nothing either, since the
+/// removal had seen every write to every object there (ST.10: `Union`,
+/// `UnionOne`, `UnionDeep`, `Family`).
 pub fn alone(place: Place) -> Value {
     let content = match place {
         Place::Record | Place::RecordDeep => None,
         Place::RecordInner => Some(boxed(2, None, None, &[])),
-        Place::Union => Some(conflict(shape("A", 0, &[]), shape("B", 0, &[]))),
-        Place::UnionOne | Place::UnionDeep => Some(shape("A", 0, &[])),
-        Place::Family => Some(bin(0)),
+        Place::Union | Place::UnionOne | Place::UnionDeep | Place::Family => None,
     };
     document(place, content)
 }
@@ -776,7 +779,8 @@ pub fn race_roles(schedule: &Schedule) -> (&'static [Role], &'static [Role]) {
         (Place::RecordDeep, Target::Sub) => (&[Role::Box, Role::Sub], &[Role::MidOpt]),
         (Place::RecordDeep, Target::Mid) => (&[Role::Box, Role::MidOpt], &[Role::Sub]),
         (Place::RecordInner, _) => (&[Role::Box, Role::Sub], &[]),
-        (Place::Union, _) => (&[Role::A, Role::B], &[]),
+        (Place::Union, Target::Member) => (&[Role::A], &[Role::B]),
+        (Place::Union, _) => (&[Role::B], &[Role::A]),
         (Place::UnionOne, _) => (&[Role::A], &[]),
         (Place::UnionDeep, Target::Member) => (&[Role::A], &[Role::Sub]),
         (Place::UnionDeep, _) => (&[Role::A, Role::Sub], &[]),
@@ -791,10 +795,10 @@ pub fn alone_roles(place: Place) -> (&'static [Role], &'static [Role]) {
         Place::Record => (&[], &[Role::Box]),
         Place::RecordDeep => (&[], &[Role::Box, Role::MidOpt, Role::Sub]),
         Place::RecordInner => (&[Role::Box], &[Role::Sub]),
-        Place::Union => (&[Role::A, Role::B], &[]),
-        Place::UnionOne => (&[Role::A], &[]),
-        Place::UnionDeep => (&[Role::A], &[Role::Sub]),
-        Place::Family => (&[Role::Bin], &[]),
+        Place::Union => (&[], &[Role::A, Role::B]),
+        Place::UnionOne => (&[], &[Role::A]),
+        Place::UnionDeep => (&[], &[Role::A, Role::Sub]),
+        Place::Family => (&[], &[Role::Bin]),
     }
 }
 
@@ -1022,13 +1026,13 @@ pub fn once_more_op(tray: &Tray, place: Place) -> ModelOp {
 
 /// What every replica serves after [`again_alone_op`] (`m` 5) and after
 /// [`once_more_op`] (`m` 6): the removed key's object holding that write
-/// alone.
+/// alone, and at `Union` nothing else at the key (ST.10: the `B` the removal
+/// emptied is absent).
 pub fn again_alone(place: Place, m: i64) -> Value {
     let content = match place {
         Place::Record | Place::RecordDeep => boxed(m, None, None, &[]),
         Place::RecordInner => boxed(2, None, None, &[("j", mid(m))]),
-        Place::Union => conflict(shape("A", m, &[]), shape("B", 0, &[])),
-        Place::UnionOne | Place::UnionDeep => shape("A", m, &[]),
+        Place::Union | Place::UnionOne | Place::UnionDeep => shape("A", m, &[]),
         Place::Family => bin(m),
     };
     document(place, Some(content))

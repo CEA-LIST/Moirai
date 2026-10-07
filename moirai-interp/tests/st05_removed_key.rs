@@ -7,7 +7,9 @@
 //! operation, all serve one default read and one identified read (C1), the
 //! document the keyed collection's rule fixes (C2: at a key of a class with
 //! no subclass an object the removal emptied and nothing wrote after is left
-//! out; at a key of a class with subclasses it stays, emptied), under
+//! out; at a key of a class with subclasses an object every write to which
+//! the removal had seen is absent, ST.10's re-pin of "it stays, emptied"),
+//! under
 //! SI.01's identities (C3); later writes move nothing and an object written
 //! again after the removal is new; a joiner by state transfer at any step
 //! serves the same.

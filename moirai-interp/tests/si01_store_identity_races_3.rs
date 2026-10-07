@@ -87,7 +87,9 @@ fn agreed(replicas: &[(&str, &Rep)], who: &str) -> Value {
 /// is an update and creates nothing, and a write concurrent with a removal
 /// survives it: after the heal every replica serves `k`, holding W's
 /// increment and not X's, under the identity every replica served for it
-/// after X, and `g` emptied. An increment of `k` written after the heal (Z)
+/// after X, and not `g`, which C had seen every write to (ST.10 re-pinned it
+/// from `g` emptied, and `a` after C from both members emptied). An
+/// increment of `k` written after the heal (Z)
 /// moves no identity. A number put under `g` after the heal (P), by a writer
 /// who had delivered C, is a write into a member the clear had removed and
 /// nothing had written into since: a new element, under an identity nothing
@@ -134,14 +136,12 @@ fn si01_a_clear_raced_by_an_update_keeps_the_updated_members_identity_in_both_de
             // Partitioned: C on a, W on b.
             let clear = send!(a, js.root(InstanceOp::clear()));
             let on_a = served(&a);
-            ever.extend(identified(&on_a, 3, &format!("{who}, a after C")));
+            ever.extend(identified(&on_a, 1, &format!("{who}, a after C")));
             assert_eq!(
-                (
-                    member(&on_a, "k")["value"].clone(),
-                    member(&on_a, "g")["value"].clone()
-                ),
-                (json!(0.0), json!(0.0)),
-                "{who}: a serves both members emptied by its clear: {on_a}"
+                on_a["entry"],
+                json!({}),
+                "{who}: a serves neither member after its clear, which had seen every write to \
+                 both (ST.10): {on_a}"
             );
             let w = send!(b, js.put("k", js.number(inc_float(10.0))));
             let on_b = served(&b);
@@ -171,14 +171,15 @@ fn si01_a_clear_raced_by_an_update_keeps_the_updated_members_identity_in_both_de
                 &[("a", &a), ("b", &b), ("c", &c)],
                 &format!("{who}, healed"),
             );
-            ever.extend(identified(&healed, 3, &format!("{who}, healed")));
+            ever.extend(identified(&healed, 2, &format!("{who}, healed")));
             assert_eq!(
-                (
-                    member(&healed, "k")["value"].clone(),
-                    member(&healed, "g")["value"].clone(),
-                ),
-                (json!(10.0), json!(0.0)),
+                member(&healed, "k")["value"],
+                json!(10.0),
                 "{who}: W's increment survives the concurrent clear and X's do not: {healed}"
+            );
+            assert!(
+                healed["entry"].get("g").is_none(),
+                "{who}: `g`, every write to which the clear had seen, is absent (ST.10): {healed}"
             );
             assert_eq!(
                 id_of(member(&healed, "k")),
@@ -204,7 +205,7 @@ fn si01_a_clear_raced_by_an_update_keeps_the_updated_members_identity_in_both_de
                 &[("a", &a), ("b", &b), ("c", &c)],
                 &format!("{who}, after Z"),
             );
-            ever.extend(identified(&after, 3, &format!("{who}, after Z")));
+            ever.extend(identified(&after, 2, &format!("{who}, after Z")));
             assert_eq!(
                 member(&after, "k")["value"],
                 json!(110.0),
@@ -453,20 +454,21 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
         a.stability().stable_version
     );
     let pruned = served(&a);
-    ever.extend(identified(&pruned, 5, "joiner, a after T"));
+    ever.extend(identified(&pruned, 3, "joiner, a after T"));
     assert_eq!(
         without(&pruned, "t"),
         before,
         "joiner, a across its pruning: something a serves moved, beyond the member T added"
     );
     assert_eq!(
-        (
-            member(&pruned, "k")["value"].clone(),
-            member(&pruned, "j")["value"].clone(),
-            member(&pruned, "g")["value"].clone(),
-        ),
-        (json!(10.0), json!(0.0), json!(0.0)),
-        "joiner: a serves L's increment of `k` and `j` and `g` emptied: {pruned}"
+        member(&pruned, "k")["value"],
+        json!(10.0),
+        "joiner: a serves L's increment of `k`: {pruned}"
+    );
+    assert!(
+        pruned["entry"].get("j").is_none() && pruned["entry"].get("g").is_none(),
+        "joiner: on a, R_j and R_g had seen every write to `j` and `g`, which are absent \
+         (ST.10), not served emptied: {pruned}"
     );
     let t_id = id_of(member(&pruned, "t"));
 

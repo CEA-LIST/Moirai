@@ -256,8 +256,9 @@ fn round_of_writes(js: &Json, a: &mut Rep, b: &mut Rep, c: &mut Rep) {
 /// fourth number `h` makes every earlier operation stable on all three; the
 /// pruning that follows must again move nothing served. After it, a write to
 /// `k` from each replica moves nothing; and `j`, removed by `b`, made stable
-/// everywhere and put again by `c`, is a new element: a new identity, and its
-/// old one served nowhere.
+/// everywhere, is absent (ST.10: the removal had seen every write to it), and
+/// put again by `c` is a new element: a new identity, and its old one served
+/// nowhere.
 #[test]
 fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_writers_see() {
     let js = Json::new();
@@ -315,7 +316,9 @@ fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_wr
         a.stability().stable_version
     );
     let pruned = served(&a, JSON_TRANSPARENT);
-    ever.extend(identified(&pruned, 4, "stability, a after T"));
+    // Three, not four (ST.10): on `a`, R_j had seen X_j, `j`'s one write so
+    // far, so `j` is absent until W2 reaches it.
+    ever.extend(identified(&pruned, 3, "stability, a after T"));
     assert_eq!(
         without(&pruned, "t"),
         before,
@@ -451,15 +454,17 @@ fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_wr
             replica.stability().stable_version
         );
     }
-    let emptied = agreed([&a, &b, &c], JSON_TRANSPARENT, "stability, j removed");
-    ever.extend(identified(&emptied, 5, "stability, j removed"));
+    let removed = agreed([&a, &b, &c], JSON_TRANSPARENT, "stability, j removed");
+    ever.extend(identified(&removed, 4, "stability, j removed"));
     assert_eq!(
-        (
-            member(&emptied, "k")["value"].clone(),
-            member(&emptied, "j")["value"].clone(),
-        ),
-        (json!(3110.0), json!(0.0)),
-        "stability, j removed: {emptied}"
+        member(&removed, "k")["value"],
+        json!(3110.0),
+        "stability, j removed: {removed}"
+    );
+    assert!(
+        removed["entry"].get("j").is_none(),
+        "stability, j removed: the removal had seen every write to `j`, which must be absent \
+         (ST.10), not served emptied: {removed}"
     );
     send_all(
         &mut c,
