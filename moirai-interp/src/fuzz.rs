@@ -16,6 +16,7 @@
 
 use std::cell::RefCell;
 
+use deepsize::{Context, DeepSizeOf};
 use moirai_fuzz::op_generator::CommandGenerator;
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MetamodelSemantics, TieBreak, metamodel_digest,
@@ -24,8 +25,11 @@ use rand::{Rng, RngExt};
 
 use crate::leaf::{LeafLog, LeafOp, Scalar};
 use crate::log::ModelLog;
-use crate::node::{LeafSite, Node, ObjectNode, Shaped, Site, Target, shaped, visible};
-use crate::op::{InstanceOp, ModelOp};
+use crate::node::{
+    Creator, LeafSite, MapNode, Node, ObjectNode, OptNode, SeqNode, Shaped, Site, SlotNode, Target,
+    Touch, shaped, visible,
+};
+use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
 
 thread_local! {
     static DESCRIPTOR: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
@@ -212,7 +216,12 @@ fn shaped_op(
                 }
                 1 => InstanceOp::clear(),
                 2..=4 if budget > 0 || keys.is_empty() => {
-                    InstanceOp::entry(fresh, site_op(sem, None, site, rng, next))
+                    // The word may be a key the map holds: its value is then
+                    // written as the existing-key arm writes one, against the
+                    // child, so that a held key is offered only a class it
+                    // serves and a non-empty object is never offered `New`.
+                    let child = map.and_then(|map| map.children().get(&fresh));
+                    InstanceOp::entry(fresh, site_op(sem, child, site, rng, next))
                 }
                 _ if keys.is_empty() => {
                     InstanceOp::entry(fresh, site_op(sem, None, site, rng, next))
@@ -318,15 +327,11 @@ fn leaf_op(
             }
         }
         LeafSite::Scalar(LeafRule::Enum { class, tie }) => {
-            let literals = sem
-                .enums
-                .get(class.index())
-                .map_or(1, |entry| entry.literals.len().max(1));
             let clearable = !matches!(tie, TieBreak::LastWriterWins | TieBreak::Fair);
             if clearable && rng.random_range(0..8) == 0 {
                 LeafOp::Clear
             } else {
-                LeafOp::Write(Scalar::Enum(class.0, rng.random_range(0..literals) as u16))
+                LeafOp::Write(literal(sem, class, rng))
             }
         }
         LeafSite::Scalar(LeafRule::OptionalRegister { class }) => {
@@ -335,11 +340,7 @@ fn leaf_op(
             if rng.random_range(0..8) == 0 {
                 LeafOp::Clear
             } else if let Some(class) = class {
-                let literals = sem
-                    .enums
-                    .get(class.index())
-                    .map_or(1, |entry| entry.literals.len().max(1));
-                LeafOp::Write(Scalar::Enum(class.0, rng.random_range(0..literals) as u16))
+                LeafOp::Write(literal(sem, class, rng))
             } else {
                 LeafOp::Write(word)
             }
@@ -371,19 +372,200 @@ fn leaf_op(
     }
 }
 
+/// One literal of the enum at `class` (its slot in the table's `enums`),
+/// drawn uniformly; literal 0 when the table does not know the enum or it
+/// has no literal.
+fn literal(sem: &MetamodelSemantics, class: ClassSlot, rng: &mut impl Rng) -> Scalar {
+    let count = sem
+        .enums
+        .get(class.index())
+        .map_or(1, |entry| entry.literals.len().max(1));
+    Scalar::Enum(class.0, rng.random_range(0..count) as u16)
+}
+
 /// `fuzzer` requires a size estimate of the log and of its operations, which
-/// it reads only when a run samples memory (`memory_sample_interval`). These
-/// count no heap storage at all: the interpreted tree is not measured, and no
-/// figure read through them is a measurement of it.
-impl deepsize::DeepSizeOf for ModelLog {
-    fn deep_size_of_children(&self, _context: &mut deepsize::Context) -> usize {
+/// it reads only when a run samples memory (`memory_sample_interval`).
+///
+/// Counted: the header's strings, the descriptor's bytes, and the model tree,
+/// every container and every leaf log in it. Not counted: the parsed table
+/// behind the `Arc<MetamodelSemantics>`, since `moirai-semantics` does not
+/// implement `DeepSizeOf`, so a sampled replica reads low by the table's size,
+/// the same for every replica; and what an object's creations and touches
+/// hold beyond their own inline size (see the [`Touch`] impl).
+impl DeepSizeOf for ModelLog {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        let header = self.header().map_or(0, |header| {
+            header.model_id.deep_size_of_children(context)
+                + header.metamodel_id.deep_size_of_children(context)
+        });
+        let descriptor = self.descriptor().map_or(0, str::len);
+        header + descriptor + self.root().deep_size_of_children(context)
+    }
+}
+
+/// `Install`'s strings, and an instance operation's boxes and the values it
+/// carries.
+impl DeepSizeOf for ModelOp {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            ModelOp::Install {
+                model_id,
+                metamodel_id,
+                descriptor,
+            } => {
+                model_id.deep_size_of_children(context)
+                    + metamodel_id.deep_size_of_children(context)
+                    + descriptor.deep_size_of_children(context)
+            }
+            ModelOp::Instance(op) => op.deep_size_of_children(context),
+        }
+    }
+}
+
+impl DeepSizeOf for InstanceOp {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            InstanceOp::Field(_, inner) | InstanceOp::Variant(_, inner) => {
+                inner.deep_size_of_children(context)
+            }
+            InstanceOp::Seq(SeqOp::Insert { op, .. } | SeqOp::Update { op, .. })
+            | InstanceOp::Opt(OptOp::Set(op)) => op.deep_size_of_children(context),
+            InstanceOp::Map(MapOp::Update { key, op }) => {
+                key.deep_size_of_children(context) + op.deep_size_of_children(context)
+            }
+            InstanceOp::Map(MapOp::Remove { key }) => key.deep_size_of_children(context),
+            InstanceOp::Seq(SeqOp::Delete { .. })
+            | InstanceOp::Opt(OptOp::Unset)
+            | InstanceOp::Map(MapOp::Clear)
+            | InstanceOp::New => 0,
+            InstanceOp::Leaf(leaf) => leaf.deep_size_of_children(context),
+        }
+    }
+}
+
+impl DeepSizeOf for LeafOp {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            LeafOp::Insert { value, .. }
+            | LeafOp::Inc(value)
+            | LeafOp::Dec(value)
+            | LeafOp::Write(value)
+            | LeafOp::Add(value)
+            | LeafOp::Remove(value) => value.deep_size_of_children(context),
+            LeafOp::InsertChar { .. }
+            | LeafOp::DeleteChar { .. }
+            | LeafOp::DeleteRange { .. }
+            | LeafOp::Reset
+            | LeafOp::Enable
+            | LeafOp::Disable
+            | LeafOp::Clear => 0,
+        }
+    }
+}
+
+impl DeepSizeOf for Node {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            Node::Unbound => 0,
+            Node::Slot(slot) => slot.deep_size_of_children(context),
+            Node::Seq(seq) => seq.deep_size_of_children(context),
+            Node::Opt(opt) => opt.deep_size_of_children(context),
+            Node::Map(map) => map.deep_size_of_children(context),
+            Node::Leaf(leaf) => leaf.deep_size_of_children(context),
+        }
+    }
+}
+
+impl DeepSizeOf for SlotNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            SlotNode::Unset => 0,
+            SlotNode::Value(object) => object.deep_size_of_children(context),
+            SlotNode::Conflicts(objects) => objects.deep_size_of_children(context),
+        }
+    }
+}
+
+impl DeepSizeOf for ObjectNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.born.deep_size_of_children(context)
+            + self.creators.deep_size_of_children(context)
+            + self.touches.deep_size_of_children(context)
+            // `FeatureSlot` is `moirai-semantics`'s and has no impl, so the
+            // map is counted by hand: one key and one node per field.
+            + self
+                .fields
+                .values()
+                .map(|field| {
+                    std::mem::size_of::<(FeatureSlot, Node)>() + field.deep_size_of_children(context)
+                })
+                .sum::<usize>()
+    }
+}
+
+impl DeepSizeOf for SeqNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.positions.deep_size_of_children(context) + self.children.deep_size_of_children(context)
+    }
+}
+
+impl DeepSizeOf for OptNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.child.deep_size_of_children(context) + self.ghost.deep_size_of_children(context)
+    }
+}
+
+impl DeepSizeOf for MapNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.children.deep_size_of_children(context)
+    }
+}
+
+/// A creation's own inline size only: its fields are private to `node.rs`,
+/// which this feature does not reach into.
+impl DeepSizeOf for Creator {
+    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
         0
     }
 }
 
-/// See the [`ModelLog`] impl: no heap storage is counted.
-impl deepsize::DeepSizeOf for ModelOp {
-    fn deep_size_of_children(&self, _context: &mut deepsize::Context) -> usize {
+/// A touch's own inline size only, its list of removals left out, for the
+/// reason given on the [`Creator`] impl.
+impl DeepSizeOf for Touch {
+    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
         0
+    }
+}
+
+impl DeepSizeOf for LeafLog {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        match self {
+            LeafLog::Text(log) => log.deep_size_of_children(context),
+            LeafLog::OrderedSet(log) => log.deep_size_of_children(context),
+            LeafLog::CounterI8(log) => log.deep_size_of_children(context),
+            LeafLog::CounterI16(log) => log.deep_size_of_children(context),
+            LeafLog::CounterI32(log) => log.deep_size_of_children(context),
+            LeafLog::CounterI64(log) => log.deep_size_of_children(context),
+            LeafLog::CounterF32(log) => log.deep_size_of_children(context),
+            LeafLog::CounterF64(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterI8(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterI16(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterI32(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterI64(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterF32(log) => log.deep_size_of_children(context),
+            LeafLog::SimpleCounterF64(log) => log.deep_size_of_children(context),
+            LeafLog::FlagEw(log) => log.deep_size_of_children(context),
+            LeafLog::FlagDw(log) => log.deep_size_of_children(context),
+            LeafLog::RegisterMv(log) | LeafLog::RegisterOptional(log) => {
+                log.deep_size_of_children(context)
+            }
+            LeafLog::RegisterLww(log) => log.deep_size_of_children(context),
+            LeafLog::RegisterFair(log) => log.deep_size_of_children(context),
+            LeafLog::RegisterPo(log) => log.deep_size_of_children(context),
+            LeafLog::RegisterTo(log) => log.deep_size_of_children(context),
+            LeafLog::SetAw(log) => log.deep_size_of_children(context),
+            LeafLog::SetRw(log) => log.deep_size_of_children(context),
+            LeafLog::Bag(log) => log.deep_size_of_children(context),
+        }
     }
 }
