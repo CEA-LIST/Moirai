@@ -536,9 +536,9 @@ fn enum_slot(sem: &MetamodelSemantics, name: &str) -> u16 {
         .0
 }
 
-/// The feature and the leaf operation of a generated operation on `Doc`, if
-/// it writes the value at a key.
-fn doc_leaf(op: &ModelOp) -> Option<(String, LeafOp)> {
+/// The feature and the map operation of a generated operation on `Doc`, if
+/// it addresses one of its keyed collections.
+fn doc_map(op: &ModelOp) -> Option<(String, &MapOp<Box<InstanceOp>>)> {
     let doc = class_slot(&OPTREG, "Doc");
     let ModelOp::Instance(InstanceOp::Variant(class, inner)) = op else {
         return None;
@@ -549,16 +549,48 @@ fn doc_leaf(op: &ModelOp) -> Option<(String, LeafOp)> {
     let InstanceOp::Field(feature, inner) = inner.as_ref() else {
         return None;
     };
-    let InstanceOp::Map(MapOp::Update { op, .. }) = inner.as_ref() else {
-        return None;
-    };
-    let InstanceOp::Leaf(leaf) = op.as_ref() else {
+    let InstanceOp::Map(map) = inner.as_ref() else {
         return None;
     };
     let name = OPTREG.classes[doc.index()].visible[feature.index()]
         .0
         .to_string();
+    Some((name, map))
+}
+
+/// The feature and the leaf operation of a generated operation on `Doc`, if
+/// it writes the value at a key.
+fn doc_leaf(op: &ModelOp) -> Option<(String, LeafOp)> {
+    let (name, MapOp::Update { op, .. }) = doc_map(op)? else {
+        return None;
+    };
+    let InstanceOp::Leaf(leaf) = op.as_ref() else {
+        return None;
+    };
     Some((name, leaf.clone()))
+}
+
+/// Keeps `nulls`, the keys (feature, key as the read names it) whose last
+/// operation wrote `Scalar::Null`, up to date with one more operation: a
+/// write of `Scalar::Null` adds its key, any other operation at a key takes
+/// it out, and a clear of a collection takes out every key of it.
+fn track_nulls(nulls: &mut BTreeSet<(String, String)>, op: &ModelOp) {
+    let sem: &MetamodelSemantics = &OPTREG;
+    match doc_map(op) {
+        Some((feature, MapOp::Update { key, op })) => {
+            let at = (feature, key.to_key(Some(sem)));
+            if matches!(op.as_ref(), InstanceOp::Leaf(LeafOp::Write(Scalar::Null))) {
+                nulls.insert(at);
+            } else {
+                nulls.remove(&at);
+            }
+        }
+        Some((feature, MapOp::Remove { key })) => {
+            nulls.remove(&(feature, key.to_key(Some(sem))));
+        }
+        Some((feature, MapOp::Clear)) => nulls.retain(|(at, _)| *at != feature),
+        None => {}
+    }
 }
 
 /// O1: one replica on the optional-register descriptor sends what the
@@ -567,6 +599,16 @@ fn doc_leaf(op: &ModelOp) -> Option<(String, LeafOp)> {
 /// only; `levels` and `tones` are written literals of their own enum only,
 /// every literal of it; and the read renders every value under `levels` and
 /// `tones` as a literal name.
+///
+/// Since ST.13 (ruling R1, Cam, 2026-10-08) the arm also writes
+/// `Scalar::Null`, the absent value. Such a write is classed nowhere, and the
+/// read may render `null` only at a key whose last operation in the run wrote
+/// `Scalar::Null`: one replica sends every operation in order, so a key reads
+/// what the last operation at it left. Every other value under `levels` and
+/// `tones` is still a literal name. A key whose last operation was a `Clear`,
+/// a removal of the key or a clear of its collection reads `[]`, which the
+/// keyed read leaves out, so it renders nothing. What a write of
+/// `Scalar::Null` reads back as is held in `st13_optional_null.rs`'s N1.
 #[test]
 fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() {
     let level = enum_slot(&OPTREG, "Level");
@@ -577,11 +619,14 @@ fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() 
     let mut ops: BTreeMap<String, usize> = BTreeMap::new();
     let mut literals: BTreeMap<String, BTreeSet<u16>> = BTreeMap::new();
     // Each value the read renders, as its JSON text (`"LOW"`, or `7` for a
-    // literal the enum does not have).
+    // literal the enum does not have), but for a `null` at a key whose last
+    // operation wrote `Scalar::Null`.
     let mut rendered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for run in 0..4u8 {
         let (mut a, _b) = opened("st12", &optreg_descriptor());
         let mut rng = ChaCha8Rng::from_seed(seed(run));
+        // The keys whose last operation in this run wrote `Scalar::Null`.
+        let mut nulls: BTreeSet<(String, String)> = BTreeSet::new();
         for step in 0..400 {
             let op = match generated(a.state(), &mut rng) {
                 Ok(op) => op,
@@ -596,10 +641,12 @@ fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() 
                 ));
                 break;
             }
+            track_nulls(&mut nulls, &op);
             if let Some((feature, leaf)) = doc_leaf(&op) {
                 *ops.entry(feature.clone()).or_default() += 1;
                 match leaf {
                     LeafOp::Clear => *clears.entry(feature).or_default() += 1,
+                    LeafOp::Write(Scalar::Null) => {}
                     LeafOp::Write(value) => {
                         let kind = match (&value, feature.as_str()) {
                             (Scalar::Str(_), "details") => "text".to_string(),
@@ -639,8 +686,12 @@ fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() 
         let state = read(&a);
         for feature in ["levels", "tones"] {
             if let Some(map) = state.get(feature).and_then(Value::as_object) {
-                for values in map.values() {
+                for (key, values) in map {
+                    let null_written = nulls.contains(&(feature.to_string(), key.clone()));
                     for value in values.as_array().into_iter().flatten() {
+                        if value.is_null() && null_written {
+                            continue;
+                        }
                         rendered
                             .entry(feature.to_string())
                             .or_default()
@@ -691,8 +742,9 @@ fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() 
         let got = rendered.get(feature).cloned().unwrap_or_default();
         if got.is_empty() || !got.is_subset(&allowed) {
             wrong.push(format!(
-                "`{feature}`: the read renders {got:?}, where a non-empty subset of {allowed:?} \
-                 is expected"
+                "`{feature}`: the read renders {got:?} (a `null` at a key whose last operation \
+                 wrote `Scalar::Null` left out), where a non-empty subset of {allowed:?} is \
+                 expected"
             ));
         }
     }
