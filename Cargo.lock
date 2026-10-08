@@ -577,6 +577,7 @@ dependencies = [
  "deepsize_derive",
  "elsa",
  "petgraph 0.8.3",
+ "smallvec",
  "stable_deref_trait",
 ]
 
@@ -1625,6 +1626,7 @@ dependencies = [
 name = "moirai-semantics"
 version = "0.1.0"
 dependencies = [
+ "deepsize",
  "serde",
  "serde_json",
  "sha2",

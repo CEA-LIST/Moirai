@@ -13,3 +13,11 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0.128" }
 sha2 = "0.10"
 smallvec = { version = "1.15.1", features = ["serde"] }
+# Only for `moirai-interp`'s `fuzz` feature, which counts the parsed table in
+# a sampled replica's deep size; off by default, so no other build sees it.
+deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
+    "smallvec",
+] }
+
+[features]
+deepsize = ["dep:deepsize"]

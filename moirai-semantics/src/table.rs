@@ -10,6 +10,7 @@ use smallvec::SmallVec;
 /// Which vector it addresses is fixed by where it was read from: `classes`
 /// everywhere except [`LeafRule::Enum`], which addresses `enums`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(transparent)]
 pub struct ClassSlot(pub u16);
 
@@ -24,6 +25,7 @@ impl ClassSlot {
 /// feature name over the class's declared features — attributes,
 /// containments and references in one numbering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(transparent)]
 pub struct FeatureSlot(pub u16);
 
@@ -48,6 +50,7 @@ impl FeatureSlot {
 /// `EByteObject` `java.lang.Byte`. Ecore has no unsigned byte at all, so a
 /// `u8` here would have been a width Ecore cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(rename_all = "lowercase")]
 pub enum NumKind {
     /// `EByte`.
@@ -66,6 +69,7 @@ pub enum NumKind {
 
 /// Which concurrent write to a flag wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(rename_all = "lowercase")]
 pub enum FlagWins {
     /// `EWFlag`, the house default for `EBoolean`.
@@ -76,6 +80,7 @@ pub enum FlagWins {
 
 /// How a register settles concurrent writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub enum TieBreak {
     /// `MVRegister`, the house default.
     #[serde(rename = "mv")]
@@ -96,6 +101,7 @@ pub enum TieBreak {
 
 /// How a set settles an add concurrent with a remove.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub enum SetTie {
     /// `AWSet`, the house default.
     #[serde(rename = "aw")]
@@ -107,6 +113,7 @@ pub enum SetTie {
 
 /// The merge rule of one scalar value: the innermost CRDT of an attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LeafRule {
     /// `GraphLog<List<char>>`: every string, `iD="true"` included.
@@ -169,6 +176,7 @@ pub enum LeafRule {
 /// happens under it and never to it. That is why this is its own vocabulary
 /// and not a [`LeafRule`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum KeyKind {
     /// `EString`, and any datatype the descriptor describes as a string.
@@ -191,6 +199,7 @@ pub enum KeyKind {
 
 /// The collection a feature's values sit in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Shape {
     /// One value, always present.
@@ -234,6 +243,7 @@ pub enum Shape {
 /// the `lowercase` they were written under until 2026-09-18 and is therefore
 /// no change to any descriptor already emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(rename_all = "camelCase")]
 pub enum UnsupportedReason {
     /// A `uw-map` containment: keyed by a feature of its target.
@@ -324,6 +334,7 @@ impl UnsupportedReason {
 
 /// One feature's whole merge policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum MergeRule {
     /// A shaped collection of leaves.
@@ -360,6 +371,7 @@ pub enum MergeRule {
 
 /// Where one facet's value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(rename_all = "camelCase")]
 pub enum FacetSource {
     /// The `.ecore` file says so.
@@ -379,6 +391,7 @@ pub enum FacetSource {
 /// This is what keeps "derived" honest: criterion I-A4 is falsified by a
 /// facet with no source, so the parser requires all four.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub struct Provenance {
     /// Source of `ordered`.
     pub ordered: FacetSource,
@@ -392,6 +405,7 @@ pub struct Provenance {
 
 /// One declared feature.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub struct FeatureSemantics {
     /// Position in the declaring class's `declared`.
     pub slot: FeatureSlot,
@@ -406,6 +420,7 @@ pub struct FeatureSemantics {
 
 /// One class, with its inheritance already flattened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub struct ClassSemantics {
     /// Position in `classes`.
     pub slot: ClassSlot,
@@ -443,6 +458,7 @@ pub struct ClassSemantics {
 
 /// One enum class.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 pub struct EnumSemantics {
     /// Position in `enums`.
     pub slot: ClassSlot,
@@ -455,6 +471,7 @@ pub struct EnumSemantics {
 
 /// A whole metamodel's merge policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "deepsize", derive(deepsize::DeepSizeOf))]
 #[serde(rename_all = "camelCase")]
 pub struct MetamodelSemantics {
     /// The metamodel's namespace URI, one half of its identity.
