@@ -651,6 +651,14 @@ pub(crate) struct Creator {
     step: u32,
 }
 
+/// A creation holds its id's heap; its step is inline.
+#[cfg(feature = "fuzz")]
+impl deepsize::DeepSizeOf for Creator {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context)
+    }
+}
+
 impl Creator {
     fn new(ctx: Ctx<'_>) -> Self {
         Creator {
@@ -692,6 +700,14 @@ pub(crate) struct Touch {
     /// already holds one listed here adds nothing, so the list holds only
     /// removals concurrent with one another, in resolved-id order.
     covered_by: Vec<EventId>,
+}
+
+/// A touch holds its id's heap and the list of removals that cover it.
+#[cfg(feature = "fuzz")]
+impl deepsize::DeepSizeOf for Touch {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context) + self.covered_by.deep_size_of_children(context)
+    }
 }
 
 impl Touch {

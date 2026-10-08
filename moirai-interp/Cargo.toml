@@ -61,7 +61,7 @@ serde = ["moirai-protocol/serde", "moirai-crdt/serde"]
 # crate's own `sink` feature, so turning it on for one and not the other does
 # not compile.
 sink = ["moirai-protocol/sink", "moirai-crdt/sink"]
-fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
+fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils", "moirai-semantics/deepsize"]
 # `QueryableLog for ModelLog` and the `model_node` example. Off by default so
 # the crate stays a log and a table for every test that does not need a
 # socket; `serde` because a log that cannot be serialized cannot be

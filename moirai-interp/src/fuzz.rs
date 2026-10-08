@@ -26,8 +26,8 @@ use rand::{Rng, RngExt};
 use crate::leaf::{LeafLog, LeafOp, Scalar};
 use crate::log::ModelLog;
 use crate::node::{
-    Creator, LeafSite, MapNode, Node, ObjectNode, OptNode, SeqNode, Shaped, Site, SlotNode, Target,
-    Touch, shaped, visible,
+    LeafSite, MapNode, Node, ObjectNode, OptNode, SeqNode, Shaped, Site, SlotNode, Target, shaped,
+    visible,
 };
 use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
 
@@ -337,12 +337,18 @@ fn leaf_op(
         LeafSite::Scalar(LeafRule::OptionalRegister { class }) => {
             // An `MVRegister`, which takes `Write` and `Clear` whatever its
             // value; a literal of its enum when the value feature has one.
-            if rng.random_range(0..8) == 0 {
+            // Its value is `Option<T>`, so on one draw in eight it writes
+            // `Scalar::Null`, the absent value, in place of the one drawn:
+            // the draws are the same as when it writes the value.
+            let draw = rng.random_range(0..8);
+            if draw == 0 {
                 LeafOp::Clear
-            } else if let Some(class) = class {
-                LeafOp::Write(literal(sem, class, rng))
             } else {
-                LeafOp::Write(word)
+                let value = match class {
+                    Some(class) => literal(sem, class, rng),
+                    None => word,
+                };
+                LeafOp::Write(if draw == 1 { Scalar::Null } else { value })
             }
         }
         LeafSite::Set(_) | LeafSite::Bag => match rng.random_range(0..8) {
@@ -386,12 +392,18 @@ fn literal(sem: &MetamodelSemantics, class: ClassSlot, rng: &mut impl Rng) -> Sc
 /// `fuzzer` requires a size estimate of the log and of its operations, which
 /// it reads only when a run samples memory (`memory_sample_interval`).
 ///
-/// Counted: the header's strings, the descriptor's bytes, and the model tree,
-/// every container and every leaf log in it. Not counted: the parsed table
-/// behind the `Arc<MetamodelSemantics>`, since `moirai-semantics` does not
-/// implement `DeepSizeOf`, so a sampled replica reads low by the table's size,
-/// the same for every replica; and what an object's creations and touches
-/// hold beyond their own inline size (see the [`Touch`] impl).
+/// Counted: the header's strings, the descriptor's bytes, the parsed table
+/// and the model tree, every container and every leaf log in it, with each
+/// object's creations and touches and the removals that cover them.
+///
+/// The table is counted through its `Arc`, never through the pointee, so a
+/// walk counts it once however many logs it meets that share it: each
+/// replica's own sample counts its table, and a walk over two clones of one
+/// log counts their shared table once.
+///
+/// An object's fields and a map's entries are charged on one basis: each
+/// entry its inline size, `size_of::<(K, V)>()`, plus what its key and its
+/// value hold (see [`entries`]).
 impl DeepSizeOf for ModelLog {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         let header = self.header().map_or(0, |header| {
@@ -399,8 +411,31 @@ impl DeepSizeOf for ModelLog {
                 + header.metamodel_id.deep_size_of_children(context)
         });
         let descriptor = self.descriptor().map_or(0, str::len);
-        header + descriptor + self.root().deep_size_of_children(context)
+        let table = self
+            .semantics()
+            .map_or(0, |sem| sem.deep_size_of_children(context));
+        header + descriptor + table + self.root().deep_size_of_children(context)
     }
+}
+
+/// What the entries of a map hold, on one basis whatever the map's type:
+/// each entry its inline size, `size_of::<(K, V)>()`, plus its key's and its
+/// value's heap.
+///
+/// Not `deepsize`'s `BTreeMap` charge, which comes to about five eighths of
+/// one entry per entry, below what a B-tree leaf holds for it.
+fn entries<'a, K, V>(map: impl IntoIterator<Item = (&'a K, &'a V)>, context: &mut Context) -> usize
+where
+    K: DeepSizeOf + 'a,
+    V: DeepSizeOf + 'a,
+{
+    map.into_iter()
+        .map(|(key, value)| {
+            std::mem::size_of::<(K, V)>()
+                + key.deep_size_of_children(context)
+                + value.deep_size_of_children(context)
+        })
+        .sum()
 }
 
 /// `Install`'s strings, and an instance operation's boxes and the values it
@@ -491,15 +526,7 @@ impl DeepSizeOf for ObjectNode {
         self.born.deep_size_of_children(context)
             + self.creators.deep_size_of_children(context)
             + self.touches.deep_size_of_children(context)
-            // `FeatureSlot` is `moirai-semantics`'s and has no impl, so the
-            // map is counted by hand: one key and one node per field.
-            + self
-                .fields
-                .values()
-                .map(|field| {
-                    std::mem::size_of::<(FeatureSlot, Node)>() + field.deep_size_of_children(context)
-                })
-                .sum::<usize>()
+            + entries(&self.fields, context)
     }
 }
 
@@ -517,23 +544,7 @@ impl DeepSizeOf for OptNode {
 
 impl DeepSizeOf for MapNode {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
-        self.children.deep_size_of_children(context)
-    }
-}
-
-/// A creation's own inline size only: its fields are private to `node.rs`,
-/// which this feature does not reach into.
-impl DeepSizeOf for Creator {
-    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
-        0
-    }
-}
-
-/// A touch's own inline size only, its list of removals left out, for the
-/// reason given on the [`Creator`] impl.
-impl DeepSizeOf for Touch {
-    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
-        0
+        entries(&self.children, context)
     }
 }
 
