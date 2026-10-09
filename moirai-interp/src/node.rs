@@ -12,12 +12,14 @@
 //! through [`Node::for_rule`].
 //!
 //! What it does *not* own is the ordering half. [`SeqNode`] holds
-//! `GraphLog<List<EventId>>` verbatim, the same field `NestedListLog`
-//! holds, and resolves a position exactly as `nested_list.rs:138-139` and
-//! `:166-167` do: `ReadAt(event.version())`, the state the writer saw, and
-//! never the current state. Resolving against the current state is the
-//! divergence the copied code's own comment warns about, and it is invisible
-//! until two writers touch one list at once.
+//! `CachedLog<GraphLog<List<EventId>>, Vec<EventId>>` verbatim, the same
+//! field `NestedListLog` holds, and resolves a position exactly as
+//! `nested_list.rs:138-139` and `:166-167` do: `ReadAt(event.version())`, the
+//! state the writer saw, and never the current state. Resolving against the
+//! current state is the divergence the copied code's own comment warns about,
+//! and it is invisible until two writers touch one list at once. The one
+//! shortcut is the cache's own condition: an operation whose version includes
+//! every event the list holds saw the current state, which the cache keeps.
 //!
 //! The removal rule is copied the same way: `uw_map.rs:150-152` routes a
 //! `Remove` to `child.redundant_by_parent(version, true)` rather than
@@ -51,14 +53,13 @@ use std::sync::Arc;
 use moirai_crdt::list::eg_walker::{List, ReadAt};
 use moirai_protocol::{
     clock::version_vector::Version,
-    crdt::query::Read,
     event::{
         Event,
         id::{EventId, ResolvedEventId},
         lamport::Lamport,
     },
     replica::ReplicaIdx,
-    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{cache::CachedLog, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
 };
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, SetTie, Shape, TieBreak,
@@ -759,7 +760,12 @@ pub enum SlotNode {
     serde(bound(serialize = "", deserialize = ""))
 )]
 pub struct SeqNode {
-    pub(crate) positions: GraphLog<List<EventId>>,
+    /// The order, kept current by every effect: `CachedLog` replays an event
+    /// onto its cached read-out when the event is after everything the list
+    /// holds, and drops the read-out otherwise. See [`positions_serde`] for
+    /// what crosses a state transfer.
+    #[cfg_attr(feature = "serde", serde(with = "positions_serde"))]
+    pub(crate) positions: Positions,
     /// Keyed by the id of the operation that inserted the child, as
     /// `NestedListLog` keys its own children. A hash map and not a sorted one
     /// because Moirai v0.4 dropped `Ord` from [`EventId`]: an id orders by a
@@ -769,6 +775,56 @@ pub struct SeqNode {
     /// id. See [`children_serde`].
     #[cfg_attr(feature = "serde", serde(with = "children_serde"))]
     pub(crate) children: HashMap<EventId, Node>,
+}
+
+/// A sequence's ordering half: the eg-walker graph, and its current order
+/// kept beside it.
+pub(crate) type Positions = CachedLog<GraphLog<List<EventId>>, Vec<EventId>>;
+
+/// A sequence's ordering half as the graph and the cache's frontier.
+///
+/// `CachedLog`'s own serialization skips the frontier, the join of every
+/// version the list has taken in, and a log without one answers that every
+/// version is after everything it holds. A joiner by state transfer would then
+/// read the position of an operation concurrent with one it adopted in the
+/// current order rather than in the order its writer saw. So the frontier
+/// travels beside the graph, and the cached order, which is derived from the
+/// graph, does not: it is recomputed on the first read.
+#[cfg(feature = "serde")]
+mod positions_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{CachedLog, EventId, GraphLog, List, Positions, Version};
+
+    #[derive(Serialize)]
+    struct Out<'a> {
+        inner: &'a GraphLog<List<EventId>>,
+        frontier: Option<&'a Version>,
+    }
+
+    #[derive(Deserialize)]
+    struct In {
+        inner: GraphLog<List<EventId>>,
+        frontier: Option<Version>,
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        positions: &Positions,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        Out {
+            inner: positions.inner(),
+            frontier: positions.frontier(),
+        }
+        .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Positions, D::Error> {
+        let In { inner, frontier } = In::deserialize(deserializer)?;
+        Ok(CachedLog::from_parts(inner, frontier))
+    }
 }
 
 /// A sequence's children as a list of pairs rather than as a JSON object.
@@ -1047,7 +1103,14 @@ impl SlotNode {
 impl SeqNode {
     /// The children in read order.
     pub fn order(&self) -> Vec<EventId> {
-        self.positions.execute_query_read()
+        self.order_ref().to_vec()
+    }
+
+    /// The children in read order, from the cache: a replay of the graph only
+    /// when an event concurrent with something the list held, or a removal
+    /// above it, has dropped the cached order since it was last read.
+    pub(crate) fn order_ref(&self) -> &[EventId] {
+        self.positions.read_ref()
     }
 
     /// The children, by the id of the operation that inserted them.
@@ -1060,24 +1123,6 @@ impl OptNode {
     /// What is here, if anything.
     pub fn child(&self) -> Option<&Node> {
         self.child.as_deref()
-    }
-}
-
-/// `positions.eval(&Read::new())` without importing `EvalNested` everywhere.
-trait ReadPositions {
-    fn execute_query_read(&self) -> Vec<EventId>;
-    fn execute_query_read_at(&self, version: &Version) -> Vec<EventId>;
-}
-
-impl ReadPositions for GraphLog<List<EventId>> {
-    fn execute_query_read(&self) -> Vec<EventId> {
-        self.eval(&Read::new())
-    }
-
-    /// The order the writer of an operation saw, which is the only reading of
-    /// a position two replicas can agree on (`nested_list.rs:138`).
-    fn execute_query_read_at(&self, version: &Version) -> Vec<EventId> {
-        self.eval(&ReadAt::new(version))
     }
 }
 
@@ -1450,7 +1495,7 @@ impl<'a> Emit<'a> {
 /// `GraphLog::effect` ignores its effect context outright
 /// (`graph_log.rs`), so a silent one is passed here rather than threaded down
 /// a recursion that would carry it for nobody.
-fn positions_effect(positions: &mut GraphLog<List<EventId>>, event: Event<List<EventId>>) {
+fn positions_effect(positions: &mut Positions, event: Event<List<EventId>>) {
     positions.effect(event, &mut EffectContext::silent());
 }
 
@@ -1485,7 +1530,7 @@ pub(crate) fn check(
                 Some(Node::Seq(seq)) => Some(seq),
                 _ => None,
             };
-            let order = seq.map(SeqNode::order).unwrap_or_default();
+            let order = seq.map(SeqNode::order_ref).unwrap_or_default();
             // A position means what it meant in the state its writer saw, and
             // only a local writer's state is this one. A peer's position is
             // resolved against its own version when it is applied, and out of
@@ -1981,9 +2026,20 @@ fn apply_object(
 }
 
 /// The child this position named, in the state the operation's own writer
-/// saw.
+/// saw, which is the only reading of a position two replicas can agree on
+/// (`nested_list.rs:138`).
+///
+/// An operation whose version includes every event the list holds saw the
+/// list as it is now, so the cached order answers; any other replays the
+/// graph at the operation's version.
 fn target_at(seq: &SeqNode, ctx: Ctx<'_>, pos: usize, at: &At) -> Result<EventId, Refusal> {
-    let order = seq.positions.execute_query_read_at(ctx.version);
+    let replayed: Vec<EventId>;
+    let order = if seq.positions.is_after_everything(ctx.version) {
+        seq.order_ref()
+    } else {
+        replayed = seq.positions.inner().eval(&ReadAt::new(ctx.version));
+        &replayed
+    };
     order.get(pos).cloned().ok_or_else(|| Refusal::OutOfBounds {
         class: at.class.clone(),
         feature: at.feature.clone(),

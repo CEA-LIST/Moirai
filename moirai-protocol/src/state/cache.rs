@@ -163,6 +163,26 @@ impl<L, V> CachedLog<L, V> {
         }
     }
 
+    /// A log rebuilt around `inner` with the frontier it had, as
+    /// [`CachedLog::frontier`] answered it, and an empty cache.
+    ///
+    /// For a holder that carries the frontier beside the log across a
+    /// serialization the derived one skips it in: without it the rebuilt log
+    /// would answer [`CachedLog::is_after_everything`] yes for every version.
+    pub fn from_parts(inner: L, frontier: Option<Version>) -> Self {
+        Self {
+            inner,
+            frontier,
+            read_cache: CacheCell::new(),
+        }
+    }
+
+    /// The join of every version this log has taken in, `None` while it has
+    /// taken in nothing.
+    pub fn frontier(&self) -> Option<&Version> {
+        self.frontier.as_ref()
+    }
+
     pub fn inner(&self) -> &L {
         &self.inner
     }
@@ -186,7 +206,7 @@ impl<L, V> CachedLog<L, V> {
     /// log has since taken in an event concurrent with both — which is the
     /// whole of the defect. A frontier has no meaningful origin of its own
     /// either, being a join, so the shortcut would fire on it by accident.
-    fn is_after_everything(&self, version: &Version) -> bool {
+    pub fn is_after_everything(&self, version: &Version) -> bool {
         let Some(frontier) = &self.frontier else {
             // Nothing has been taken in, so the log is empty and holds nothing
             // the event could be concurrent with.
