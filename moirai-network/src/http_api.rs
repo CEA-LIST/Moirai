@@ -652,7 +652,7 @@ impl<O: NetworkOp> Api<O> {
     /// operation's depth is the *model's* depth and not the protocol's. An
     /// interpreted `ModelOp` carries its whole path from the model root, about
     /// seven JSON levels per containment step, so an element at containment
-    /// depth 24 — which SysON's Batmobile reaches, and which the SysML v2
+    /// depth 24 — which SysON's largest public example model reaches, and which the SysML v2
     /// standard libraries pass three times over — produces an operation
     /// nesting 168 levels. With the default limit of 128 such an operation is
     /// answered `400 Invalid op JSON: recursion limit exceeded` and a real
@@ -1090,7 +1090,7 @@ mod tests {
     /// The limit is not a protocol bound: an interpreted `ModelOp` carries its
     /// whole path from the model root, about seven JSON levels per containment
     /// step, so an element at containment depth 24 produces an operation
-    /// nesting 168 levels. SysON's Batmobile — 741 elements, containment depth
+    /// nesting 168 levels. SysON's largest public example model — 741 elements, containment depth
     /// 24 — has 335 such operations out of 30,344, and the SysML v2 standard
     /// libraries reach containment depth 69. Before this test, a real SysML
     /// model could not be handed to a node over HTTP at all.
