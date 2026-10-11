@@ -100,6 +100,15 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// - `POST /api/resume-all`      resume all peers
 /// - `GET  /api/peers`           list peers and status
 /// - `POST /api/leave`           deregister from the bootnode session
+///
+/// Every request passes the [`OriginPolicy`] before any route reads its body
+/// or sends anything to the event loop (NW.11): a request whose `Origin` the
+/// allow-list does not admit is answered 403 to anything but a read and is
+/// granted no `Access-Control-*` header; a `POST` that declares a content
+/// type other than `application/json`, or carries a body and declares none,
+/// is answered 415. A request with no `Origin` is a local process and is
+/// served: the API authenticates no one, so whoever can open a connection to
+/// the port without a browser can read and write as the node.
 pub(crate) fn start_http_api<O: NetworkOp>(
     port: u16,
     replica_id: String,
@@ -197,6 +206,11 @@ fn spawn_http_api<O: NetworkOp>(
             }
         };
         eprintln!("[{}] HTTP API listening on {}", replica_id, addr);
+        let origins = OriginPolicy::from_env();
+        eprintln!(
+            "[{}] HTTP API answers the browser origins {}",
+            replica_id, origins
+        );
 
         let api = Api {
             replica_id,
@@ -205,6 +219,7 @@ fn spawn_http_api<O: NetworkOp>(
             ctrl,
             metamodels,
             timeout,
+            origins,
         };
         for request in server.incoming_requests() {
             api.serve(request);
@@ -229,6 +244,8 @@ struct Api<O> {
     /// How long a request waits for the event loop; [`REPLY_TIMEOUT`] but in
     /// tests.
     timeout: Duration,
+    /// Which browser origins are answered, read once at start.
+    origins: OriginPolicy,
 }
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -423,8 +440,186 @@ fn expired_batch(of: usize) -> Reply {
     )
 }
 
-fn add_cors(mut resp: Reply) -> Reply {
-    resp.add_header(Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap());
+/// The variable that names the browser origins the API answers,
+/// comma-separated.
+const ALLOWED_ORIGINS_VAR: &str = "HTTP_ALLOWED_ORIGINS";
+
+/// The allow-list when [`ALLOWED_ORIGINS_VAR`] is unset or empty: the two
+/// browser editors' Vite dev servers, the first on 5173 and the second on
+/// 5174, under the two names a browser on this machine reaches them by.
+const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+];
+
+/// One entry of the allow-list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AllowedOrigin {
+    /// An origin, compared as a whole string.
+    Exact(String),
+    /// `scheme://host:*`: that scheme and that host with any decimal port.
+    /// Holds `scheme://host:`, the part before the port.
+    AnyPort(String),
+}
+
+impl AllowedOrigin {
+    fn parse(entry: &str) -> Self {
+        match entry.strip_suffix('*') {
+            Some(head) if head.ends_with(':') && head.contains("://") => {
+                AllowedOrigin::AnyPort(head.to_string())
+            }
+            _ => AllowedOrigin::Exact(entry.to_string()),
+        }
+    }
+
+    fn admits(&self, origin: &str) -> bool {
+        match self {
+            AllowedOrigin::Exact(exact) => origin == exact,
+            AllowedOrigin::AnyPort(head) => {
+                origin.strip_prefix(head.as_str()).is_some_and(|port| {
+                    !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+                })
+            }
+        }
+    }
+}
+
+impl Display for AllowedOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AllowedOrigin::Exact(exact) => f.write_str(exact),
+            AllowedOrigin::AnyPort(head) => write!(f, "{head}*"),
+        }
+    }
+}
+
+/// The browser origins the API answers (NW.11).
+///
+/// [`ALLOWED_ORIGINS_VAR`] lists them, separated by commas, each entry an
+/// exact origin or `scheme://host:*`; a configured list replaces
+/// [`DEFAULT_ALLOWED_ORIGINS`], which applies when the variable is unset or
+/// empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginPolicy {
+    allowed: Vec<AllowedOrigin>,
+}
+
+impl OriginPolicy {
+    fn from_env() -> Self {
+        Self::from_list(std::env::var(ALLOWED_ORIGINS_VAR).ok().as_deref())
+    }
+
+    fn from_list(list: Option<&str>) -> Self {
+        let mut allowed: Vec<AllowedOrigin> = list
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(AllowedOrigin::parse)
+            .collect();
+        if allowed.is_empty() {
+            allowed = DEFAULT_ALLOWED_ORIGINS
+                .iter()
+                .map(|origin| AllowedOrigin::parse(origin))
+                .collect();
+        }
+        OriginPolicy { allowed }
+    }
+
+    /// Who sent `request`, by its `Origin` header: none is a local process,
+    /// one the list admits is an allowed page, and anything else (`null`,
+    /// a near miss, two `Origin` headers) is foreign. `*` is never admitted,
+    /// since it would be echoed as a grant to every origin.
+    fn classify(&self, request: &Request) -> Caller {
+        let mut origins = request
+            .headers()
+            .iter()
+            .filter(|header| header.field.equiv("Origin"))
+            .map(|header| header.value.as_str());
+        match (origins.next(), origins.next()) {
+            (None, _) => Caller::Local,
+            (Some(origin), None)
+                if origin != "*" && self.allowed.iter().any(|entry| entry.admits(origin)) =>
+            {
+                Caller::Allowed(origin.to_string())
+            }
+            _ => Caller::Foreign,
+        }
+    }
+}
+
+impl Display for OriginPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (at, entry) in self.allowed.iter().enumerate() {
+            if at > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{entry}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Who sent a request, as the [`OriginPolicy`] classifies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Caller {
+    /// No `Origin`: a local process (curl, a Node client, a test harness).
+    Local,
+    /// A page on an origin the list admits; the origin, to echo.
+    Allowed(String),
+    /// A page on any other origin.
+    Foreign,
+}
+
+/// Whether a method only reads. A foreign caller may send these and is
+/// answered without any `Access-Control-*` header, so its page cannot read
+/// the answer; every other method from it is refused.
+fn reads_only(method: &Method) -> bool {
+    matches!(method, Method::Get | Method::Head | Method::Options)
+}
+
+/// Whether a request's body is declared JSON, or it carries no body and
+/// declares no type: a `Content-Type` whose media type is not
+/// `application/json` (in any ASCII case, parameters allowed) fails, and so
+/// does a body (a non-zero `Content-Length`, or a `Transfer-Encoding`) with
+/// no `Content-Type`.
+fn declares_json_or_nothing(request: &Request) -> bool {
+    let mut declared = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.equiv("Content-Type"))
+        .peekable();
+    if declared.peek().is_none() {
+        let chunked = request
+            .headers()
+            .iter()
+            .any(|header| header.field.equiv("Transfer-Encoding"));
+        return !chunked && request.body_length().unwrap_or(0) == 0;
+    }
+    declared.all(|header| {
+        let value = header.value.as_str();
+        let media = value.split(';').next().unwrap_or(value).trim();
+        media.eq_ignore_ascii_case("application/json")
+    })
+}
+
+/// The CORS headers `caller` is granted: its own origin echoed once to an
+/// allowed page, no `Access-Control-Allow-Origin` to a local process, and no
+/// `Access-Control-*` header at all to a foreign page. Never `*`.
+fn add_cors(mut resp: Reply, caller: &Caller) -> Reply {
+    resp.add_header(Header::from_bytes(b"Vary", b"Origin").unwrap());
+    match caller {
+        Caller::Foreign => return resp,
+        Caller::Allowed(origin) => {
+            if let Ok(allow) = Header::from_bytes(b"Access-Control-Allow-Origin", origin.as_bytes())
+            {
+                resp.add_header(allow);
+            }
+        }
+        Caller::Local => {}
+    }
     resp.add_header(
         Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, POST, OPTIONS").unwrap(),
     );
@@ -482,8 +677,15 @@ impl<O: NetworkOp> Api<O> {
     fn serve(&self, mut request: Request) {
         let path = request.url().to_string();
         let method = request.method().clone();
+        // Decided before any route reads the body or reaches the event loop,
+        // so a refused request changes nothing.
+        let caller = self.origins.classify(&request);
 
-        let reply = if method == Method::Options {
+        let reply = if caller == Caller::Foreign && !reads_only(&method) {
+            error(403, "this origin is not allowed to write to this node")
+        } else if method == Method::Post && !declares_json_or_nothing(&request) {
+            error(415, "a request body must be declared application/json")
+        } else if method == Method::Options {
             Response::from_string("").with_status_code(204)
         } else {
             match route(&method, &path) {
@@ -525,7 +727,7 @@ impl<O: NetworkOp> Api<O> {
                 Route::Unknown => not_found(),
             }
         };
-        let _ = request.respond(add_cors(reply));
+        let _ = request.respond(add_cors(reply, &caller));
     }
 
     /// One round trip to the event loop: `None` when it did not answer in
@@ -866,9 +1068,16 @@ pub(crate) mod testing {
         };
 
         let payload = body.unwrap_or("");
+        // NW.11: a body is declared JSON, as every client of the API must now
+        // declare it; a request without a body sends no type, as before.
+        let content_type = if body.is_some() {
+            "Content-Type: application/json\r\n"
+        } else {
+            ""
+        };
         let raw = format!(
             "{head} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
-             Content-Length: {}\r\n\r\n{payload}",
+             {content_type}Content-Length: {}\r\n\r\n{payload}",
             payload.len()
         );
         stream.write_all(raw.as_bytes()).expect("request written");

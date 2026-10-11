@@ -39,6 +39,18 @@
 //!   surrounding whitespace ignored. It waits up to 60 s for the file to
 //!   appear and exits non-zero naming the path if it does not
 //!
+//! # Where the HTTP API listens, and whom it answers (NW.11)
+//!
+//! - `HTTP_BIND_ADDR` — the IP address the HTTP listener binds, on both the
+//!   ports-file path and the fixed-port path; unset or empty, `0.0.0.0` as
+//!   always (a container needs that, or its published port stops answering).
+//!   An address that does not parse is a configuration error: the node exits
+//!   non-zero naming the variable and binds nothing. The replication listener
+//!   is not affected
+//! - `HTTP_ALLOWED_ORIGINS` — the browser origins the API answers, read by
+//!   `moirai-network`'s HTTP API; see its documentation for the default list,
+//!   the entry forms and the trust given to a request with no `Origin`
+//!
 //! # Peer discovery
 //!
 //! Set `BOOTNODE_URL` to have the replica register with a bootnode session
@@ -165,7 +177,7 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
-use std::net::TcpListener;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -303,6 +315,33 @@ fn path_var(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// The address the HTTP listener binds: `HTTP_BIND_ADDR`, or `0.0.0.0` when
+/// it is unset or empty. An address that does not parse ends the process,
+/// naming the variable, rather than falling back to any address (NW.11).
+fn http_bind_addr(replica_id: &str) -> IpAddr {
+    match env::var("HTTP_BIND_ADDR") {
+        Ok(raw) if raw.trim().is_empty() => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        Ok(raw) => raw.trim().parse().unwrap_or_else(|err| {
+            eprintln!("[{replica_id}] invalid HTTP_BIND_ADDR `{raw}`: {err}");
+            std::process::exit(1);
+        }),
+        Err(env::VarError::NotPresent) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        Err(err) => {
+            eprintln!("[{replica_id}] invalid HTTP_BIND_ADDR: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The HTTP listener on `addr:port`, or the end of the process when the bind
+/// fails.
+fn bind_http(replica_id: &str, addr: IpAddr, port: u16) -> TcpListener {
+    TcpListener::bind(SocketAddr::new(addr, port)).unwrap_or_else(|err| {
+        eprintln!("[{replica_id}] Failed to start HTTP server on {addr}:{port}: {err}");
+        std::process::exit(1);
+    })
+}
+
 /// The port a bound listener holds.
 fn bound_port(listener: &TcpListener) -> u16 {
     listener
@@ -355,6 +394,7 @@ fn main() {
     let http_port: Option<u16> = env::var("HTTP_PORT").ok().and_then(|p| p.parse().ok());
     let ports_file = path_var("PORTS_FILE");
     let peers_file = path_var("PEERS_FILE");
+    let http_bind = http_bind_addr(&replica_id);
 
     // The default log this replica hosts. Set, `LOG_ID` means join that log;
     // unset, a fresh id is minted and printed, which is right only for the
@@ -375,20 +415,15 @@ fn main() {
     // The replication listener, and the HTTP one when its port must be known
     // before the API serves, are bound here, so that a port of 0 is chosen by
     // the kernel in the bind that keeps it. A fixed HTTP port without
-    // `PORTS_FILE` is bound inside the API's thread, as it always was.
+    // `PORTS_FILE` is bound where the API is started, as it always was. Both
+    // bind `HTTP_BIND_ADDR`.
     let listener = TcpListener::bind(format!("0.0.0.0:{listen_port}"))
         .map_err(TransportError::from)
         .expect("Failed to create TCP transport");
     let listen_port = bound_port(&listener);
     let http_listener = match http_port {
         Some(port) if port == 0 || ports_file.is_some() => {
-            match TcpListener::bind(format!("0.0.0.0:{port}")) {
-                Ok(listener) => Some(listener),
-                Err(err) => {
-                    eprintln!("[{replica_id}] Failed to start HTTP server on port {port}: {err}");
-                    std::process::exit(1);
-                }
-            }
+            Some(bind_http(&replica_id, http_bind, port))
         }
         _ => None,
     };
@@ -527,7 +562,7 @@ fn main() {
 
     match (http_listener, http_port) {
         (Some(listener), _) => node.start_http_on(listener),
-        (None, Some(port)) => node.start_http(port),
+        (None, Some(port)) => node.start_http_on(bind_http(&replica_id, http_bind, port)),
         (None, None) => {}
     }
 
