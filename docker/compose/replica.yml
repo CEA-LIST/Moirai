@@ -57,6 +57,13 @@ services:
       ADVERTISE_ADDR: "${REPLICA_NAME}:9001"
       LISTEN_PORT: "9001"
       HTTP_PORT: "8081"
+      # The browser origins the HTTP API answers (NW.11), from the host's
+      # variable: comma-separated exact origins or `scheme://host:*`. Empty
+      # leaves the node's default, the two editors' dev servers on
+      # localhost and 127.0.0.1, ports 5173 and 5174. `HTTP_BIND_ADDR` is not
+      # passed on purpose: inside the container the API must bind 0.0.0.0, or
+      # the published port stops answering.
+      HTTP_ALLOWED_ORIGINS: "${HTTP_ALLOWED_ORIGINS:-}"
       BOOTNODE_URL: "${BOOTNODE_URL:-http://bootnode:7000}"
       SESSION_ID: "${SESSION_ID:-stack}"
       RECONCILE_SECS: "${RECONCILE_SECS:-5}"

@@ -108,6 +108,7 @@ while :; do
         [ -n "$op" ] || continue
         curl -fsS --max-time 2 -o /dev/null \
             -X POST "http://$host:$HTTP_PORT$path" \
+            -H 'Content-Type: application/json' \
             -d "$op" \
             2>/dev/null
     done

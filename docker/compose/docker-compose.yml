@@ -160,7 +160,8 @@ services:
   # point — one binary, and a metamodel it was never built for arrives at run
   # time:
   #
-  #     curl -X POST --data-binary @uml.metamodel.json \
+  #     curl -X POST -H 'Content-Type: application/json' \
+  #         --data-binary @uml.metamodel.json \
   #         http://<replica>:8081/api/metamodels
   #
   # The image ships the Arachne examples at /metamodels, which `METAMODEL_DIR`
