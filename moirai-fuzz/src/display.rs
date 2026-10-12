@@ -1,8 +1,6 @@
 use std::{cmp::Reverse, time::Duration};
 
-use comfy_table::{
-    Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::UTF8_FULL,
-};
+use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use readable::byte::Byte;
 
 use crate::{
@@ -31,7 +29,6 @@ pub fn display_execution_report(report: &ExecutionReport) {
 pub fn display_config_table(run_config: &RunConfig, final_merge: bool) -> Table {
     let mut config_table = Table::new();
     config_table
-        .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
             Cell::new("Fuzzer Configuration")
@@ -162,7 +159,6 @@ fn format_replica_sampling(sampling: &ReplicaSampling) -> String {
 pub fn display_summary(_execution_summary: &ExecutionSummary) -> Table {
     let mut summary_table = Table::new();
     summary_table
-        .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
             Cell::new("Execution Summary")
@@ -221,7 +217,6 @@ fn has_displayable_metrics(stats: &crate::fuzzer::ReplicaStats) -> bool {
 fn run_results_table(run_number: usize, results: &RunReport) -> Table {
     let mut results_table = Table::new();
     results_table
-        .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
             Cell::new(format!(
@@ -300,7 +295,6 @@ fn run_results_table(run_number: usize, results: &RunReport) -> Table {
 fn replica_metrics_table(replica_idx: usize, stats: &crate::fuzzer::ReplicaStats) -> Table {
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
             Cell::new(format!("Replica {replica_idx}"))

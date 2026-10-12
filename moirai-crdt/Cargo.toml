@@ -1,6 +1,6 @@
 [package]
 name = "moirai-crdt"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 authors = [
     "Léo Olivier <leo.olivier@cea.fr>",
@@ -16,7 +16,8 @@ readme = "README.md"
 moirai-protocol = { path = "../moirai-protocol" }
 moirai-macros = { path = "../moirai-macros" }
 rustc-hash = "2.1.3"
-petgraph = { version = "0.8.3", features = ["serde-1"] }
+#! Can't be updated to 0.8 because of vf2
+petgraph = { version = "0.6.5", features = ["serde-1"] }
 vf2 = { version = "1.0.1" }
 serde_json = { version = "1.0.151" }
 # MOIRAI-FUZZ
@@ -26,6 +27,7 @@ rand = { version = "0.10.3", optional = true }
 deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
     "elsa",
 ] }
+bitrep = "0.5.1"
 
 [features]
 default = ["fuzz"]

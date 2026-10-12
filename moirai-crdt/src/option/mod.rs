@@ -101,28 +101,6 @@ where
     }
 }
 
-#[cfg(feature = "fuzz")]
-impl<L> CommandGenerator for OptionLog<L>
-where
-    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
-{
-    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
-        match &self.child {
-            Some(child) => {
-                if rng.random_bool(1.0 / 5.0) {
-                    Optional::Unset
-                } else {
-                    Optional::Set(child.generate_command(rng))
-                }
-            }
-            None => Optional::Set(<L as CommandGenerator>::generate_command(
-                &L::default(),
-                rng,
-            )),
-        }
-    }
-}
-
 impl<L, V> EvalNested<Read<Option<V>>> for OptionLog<L>
 where
     L: IsLog + EvalNested<Read<V>>,
@@ -155,6 +133,28 @@ where
 {
     fn default() -> Self {
         Self { child: None }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> CommandGenerator for OptionLog<L>
+where
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
+{
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
+        match &self.child {
+            Some(child) => {
+                if rng.random_bool(1.0 / 5.0) {
+                    Optional::Unset
+                } else {
+                    Optional::Set(child.generate_command(rng))
+                }
+            }
+            None => Optional::Set(<L as CommandGenerator>::generate_command(
+                &L::default(),
+                rng,
+            )),
+        }
     }
 }
 

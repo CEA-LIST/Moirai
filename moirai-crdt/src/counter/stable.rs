@@ -1,8 +1,3 @@
-use std::{
-    fmt::Debug,
-    ops::{Add, AddAssign, SubAssign},
-};
-
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
@@ -10,7 +5,7 @@ use moirai_protocol::{
     state::stable_state::IsStableState,
 };
 
-use crate::counter::resettable_counter::Counter as ResettableCounter;
+use crate::counter::resettable_counter::{Counter as ResettableCounter, CounterValue};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -28,24 +23,24 @@ impl<V> CounterStable<V> {
     }
 }
 
-impl<V> IsStableState<ResettableCounter<V>> for CounterStable<V>
+impl<V> IsStableState<ResettableCounter<V>> for CounterStable<V::Accumulator>
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: CounterValue,
 {
     fn is_default(&self) -> bool {
-        self.0 == V::default()
+        V::value(&self.0) == V::default()
     }
 
     fn apply(&mut self, value: ResettableCounter<V>) {
         match value {
-            ResettableCounter::Inc(v) => self.0 += v,
-            ResettableCounter::Dec(v) => self.0 -= v,
+            ResettableCounter::Inc(v) => V::increment(&mut self.0, v),
+            ResettableCounter::Dec(v) => V::decrement(&mut self.0, v),
             ResettableCounter::Reset => unreachable!(),
         }
     }
 
     fn clear(&mut self) {
-        self.0 = V::default();
+        self.0 = V::Accumulator::default();
     }
 
     fn prune_redundant_ops(
@@ -54,7 +49,7 @@ where
         tagged_op: &TaggedOp<ResettableCounter<V>>,
     ) {
         if let ResettableCounter::Reset = tagged_op.op() {
-            <CounterStable<V> as IsStableState<ResettableCounter<V>>>::clear(self)
+            <Self as IsStableState<ResettableCounter<V>>>::clear(self)
         }
     }
 }

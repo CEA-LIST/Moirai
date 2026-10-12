@@ -34,9 +34,9 @@ pub enum Counter<V: Add + AddAssign + SubAssign + Default + Copy> {
 
 impl<V> ReplicatedDataType for Counter<V>
 where
-    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: CounterValue,
 {
-    type StableState = CounterStable<V>;
+    type StableState = CounterStable<V::Accumulator>;
     type Rejection = Infallible;
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
@@ -64,14 +64,14 @@ where
 
 impl<V, U> UsesUnstableService<U> for Counter<V>
 where
-    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: CounterValue,
     U: IsUnstableCore<Self>,
 {
 }
 
 impl<V, U> Eval<Read<V>, U> for Counter<V>
 where
-    V: Add<Output = V> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: CounterValue,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
@@ -79,15 +79,15 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> <Read<V> as QueryOperation>::Response {
-        let mut counter = *stable;
+        let mut counter = stable.clone();
         for op in unstable.iter().map(|t| t.op()) {
             match op {
-                Counter::Inc(v) => *counter.as_inner_mut() += *v,
-                Counter::Dec(v) => *counter.as_inner_mut() -= *v,
+                Counter::Inc(v) => V::increment(counter.as_inner_mut(), *v),
+                Counter::Dec(v) => V::decrement(counter.as_inner_mut(), *v),
                 Counter::Reset => unreachable!(),
             }
         }
-        *counter.as_inner()
+        V::value(counter.as_inner())
     }
 }
 
@@ -104,18 +104,91 @@ where
     }
 }
 
+/// Numeric values supported by the resettable counter.
+///
+/// Integers accumulate directly. Floating-point values use exact `bitrep`
+/// accumulators and round only when the counter is read.
+/// Implement this trait to select an accumulator for a custom numeric type.
+pub trait CounterValue:
+    Add<Output = Self> + AddAssign + SubAssign + Default + Copy + Debug + PartialEq
+{
+    /// Stored sum
+    type Accumulator: Clone + Debug + Default;
+
+    fn increment(accumulator: &mut Self::Accumulator, value: Self);
+
+    fn decrement(accumulator: &mut Self::Accumulator, value: Self);
+
+    /// Read the sum, rounding to the numeric type if needed.
+    fn value(accumulator: &Self::Accumulator) -> Self;
+}
+
+macro_rules! integer_counter_values {
+    ($($integer:ty),+ $(,)?) => {
+        $(
+            impl CounterValue for $integer {
+                type Accumulator = Self;
+
+                fn increment(accumulator: &mut Self, value: Self) {
+                    *accumulator += value;
+                }
+
+                fn decrement(accumulator: &mut Self, value: Self) {
+                    *accumulator -= value;
+                }
+
+                fn value(accumulator: &Self) -> Self {
+                    *accumulator
+                }
+            }
+        )+
+    };
+}
+
+integer_counter_values!(
+    u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
+
+macro_rules! float_counter_value {
+    ($float:ty, $accumulator:ident, $sum:ty) => {
+        #[doc(hidden)]
+        #[derive(Clone, Debug, Default, PartialEq, Eq)]
+        pub struct $accumulator($sum);
+
+        #[cfg(feature = "test_utils")]
+        impl DeepSizeOf for $accumulator {
+            fn deep_size_of_children(&self, _context: &mut deepsize::Context) -> usize {
+                // bitrep's fixed-size accumulator has no heap allocations.
+                0
+            }
+        }
+
+        impl CounterValue for $float {
+            type Accumulator = $accumulator;
+
+            fn increment(accumulator: &mut Self::Accumulator, value: Self) {
+                accumulator.0.add(value);
+            }
+
+            fn decrement(accumulator: &mut Self::Accumulator, value: Self) {
+                accumulator.0.add(-value);
+            }
+
+            fn value(accumulator: &Self::Accumulator) -> Self {
+                accumulator.0.value()
+            }
+        }
+    };
+}
+
+float_counter_value!(f32, F32Accumulator, bitrep::SumF32);
+float_counter_value!(f64, F64Accumulator, bitrep::SumF64);
+
 #[cfg(feature = "fuzz")]
 impl<V, U> OpGenerator<U> for Counter<V>
 where
     U: IsUnstableCore<Self>,
-    V: Add<Output = V>
-        + AddAssign
-        + SubAssign
-        + Default
-        + Copy
-        + Debug
-        + PartialEq
-        + ValueGenerator,
+    V: CounterValue + ValueGenerator,
 {
     type Config = ();
 
@@ -223,7 +296,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     #[ignore]
-    fn fuzz_resettable_counter() {
+    fn fuzz_resettable_counter_int() {
         use moirai_fuzz::{
             config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
@@ -240,5 +313,27 @@ mod tests {
         );
 
         fuzzer::<VecLog<Counter<i32>>, Read<i32>>(config);
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_resettable_counter_float() {
+        use moirai_fuzz::{
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
+            fuzzer::fuzzer,
+        };
+        use moirai_protocol::state::po_log::VecLog;
+
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 1_000, None, None);
+        let runs = vec![run.clone(); 1];
+
+        let config = FuzzerConfig::<VecLog<Counter<f64>>, Read<f64>>::new(
+            "resettable_counter",
+            runs,
+            Predicate::new(Read::new(), |a, b| a == b),
+        );
+
+        fuzzer::<VecLog<Counter<f64>>, Read<f64>>(config);
     }
 }
