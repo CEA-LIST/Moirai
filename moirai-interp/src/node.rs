@@ -1009,10 +1009,11 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// A removal took `node` away: report what it held.
+    /// A removal took `node` away: report the creations below it that it
+    /// had seen.
     fn report_removal(&self, node: &Node) {
         if let Some(removed) = self.removed {
-            node.identities(&mut removed.borrow_mut());
+            node.identities(self.version, &mut removed.borrow_mut());
         }
     }
 
@@ -1307,33 +1308,41 @@ impl Node {
         }
     }
 
-    /// Every identity an object below this node has been created under: each
-    /// of its creations, as [`ObjectNode::identity`] renders one. What a
-    /// reference by identity may name of something a removal took away.
-    pub(crate) fn identities(&self, out: &mut HashSet<String>) {
+    /// Every identity an object below this node has been created under by a
+    /// creation in `version`: each such creation, as [`ObjectNode::identity`]
+    /// renders one. What a reference by identity may name of something a
+    /// removal at `version` took away.
+    ///
+    /// Only the creations the removal had seen: whether one concurrent with
+    /// it is below this node when the removal is applied depends on the
+    /// order a replica delivers the two in, so reporting it would make the
+    /// links a removal drops depend on that order too. A link the removal
+    /// had seen to a target it had not seen is the generated runtime's arc to
+    /// a vertex its writer did not hold, which that intake refuses.
+    pub(crate) fn identities(&self, version: &Version, out: &mut HashSet<String>) {
         match self {
             Node::Unbound | Node::Leaf(_) | Node::Refs(_) => {}
             Node::Slot(slot) => {
                 for object in slot.objects() {
-                    object.identities(out);
+                    object.identities(version, out);
                 }
             }
             Node::Seq(seq) => {
                 for child in seq.children.values() {
-                    child.identities(out);
+                    child.identities(version, out);
                 }
             }
             Node::Opt(opt) => {
                 if let Some(child) = opt.child.as_deref() {
-                    child.identities(out);
+                    child.identities(version, out);
                 }
                 for object in &opt.ghost {
-                    object.identities(out);
+                    object.identities(version, out);
                 }
             }
             Node::Map(map) => {
                 for child in map.children.values() {
-                    child.identities(out);
+                    child.identities(version, out);
                 }
             }
         }
@@ -1396,7 +1405,29 @@ impl Node {
             // over a `json.ecore` object whose every entry had been removed.
             Node::Map(map) => map.children.is_empty(),
             Node::Leaf(leaf) => leaf.is_default(),
-            Node::Refs(refs) => refs.is_default(),
+            // SI.05: links live outside the containment, as the generated
+            // runtime's arcs live in its reference graph and its record
+            // carries no field for the reference. So the links an object
+            // holds do not keep it alive: an optional's child that holds
+            // nothing else is taken out by an unset, and a link concurrent
+            // with the unset does not bring it back (see [`crate::refs`]).
+            Node::Refs(_) => true,
+        }
+    }
+
+    /// Whether some reference by identity below this node holds a link, in
+    /// what the read-out reads: an optional's ghost is not counted.
+    pub(crate) fn holds_links(&self) -> bool {
+        match self {
+            Node::Unbound | Node::Leaf(_) => false,
+            Node::Refs(refs) => !refs.is_default(),
+            Node::Slot(slot) => slot
+                .objects()
+                .into_iter()
+                .any(|object| object.fields.values().any(Node::holds_links)),
+            Node::Seq(seq) => seq.children.values().any(Node::holds_links),
+            Node::Opt(opt) => opt.child.as_deref().is_some_and(Node::holds_links),
+            Node::Map(map) => map.children.values().any(Node::holds_links),
         }
     }
 
@@ -1503,12 +1534,17 @@ impl ObjectNode {
         self.fields.values().all(Node::is_default)
     }
 
-    /// This object's creations and everything below it, as
+    /// This object's creations in `version` and everything below it, as
     /// [`Node::identities`] collects them.
-    fn identities(&self, out: &mut HashSet<String>) {
-        out.extend(self.creators.iter().map(Creator::render));
+    fn identities(&self, version: &Version, out: &mut HashSet<String>) {
+        out.extend(
+            self.creators
+                .iter()
+                .filter(|creator| creator.id.is_predecessor_of(version))
+                .map(Creator::render),
+        );
         for field in self.fields.values() {
-            field.identities(out);
+            field.identities(version, out);
         }
     }
 
@@ -1998,10 +2034,14 @@ pub(crate) fn apply(
                 MapOp::Update { key, op } => {
                     let name = key.to_key(Some(sem));
                     let mut emit = emit.map_key(&name);
-                    if !map.children.contains_key(&key) {
-                        emit.create();
-                    } else if !ctx.silent {
-                        emit.update();
+                    // A link creates nothing: an entry it reaches that holds
+                    // nothing else reads as fresh and is left out.
+                    if !ctx.silent {
+                        if map.children.contains_key(&key) {
+                            emit.update();
+                        } else {
+                            emit.create();
+                        }
                     }
                     let child = map
                         .children
@@ -2045,10 +2085,14 @@ pub(crate) fn apply(
             };
             match opt_op {
                 OptOp::Set(inner) => {
-                    if opt.child.is_none() {
-                        emit.create();
-                    } else if !ctx.silent {
-                        emit.update();
+                    // A link creates nothing: a child it reaches that holds
+                    // nothing else is at its default and is taken out below.
+                    if !ctx.silent {
+                        if opt.child.is_some() {
+                            emit.update();
+                        } else {
+                            emit.create();
+                        }
                     }
                     let child = opt
                         .child
@@ -2082,7 +2126,7 @@ pub(crate) fn apply(
                         object.redundant_by_parent(ctx.version, true);
                         object.retire(ctx.id, ctx.version);
                         if let Some(removed) = ctx.removed {
-                            object.identities(&mut removed.borrow_mut());
+                            object.identities(ctx.version, &mut removed.borrow_mut());
                         }
                     }
                     // After the ghost's own reset, so that what joins it now

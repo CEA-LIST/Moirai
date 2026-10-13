@@ -286,6 +286,19 @@ fn read_in(
                 if reads_as_fresh(&value, fresh, form) {
                     continue;
                 }
+                // SI.05: links live outside the containment (the generated
+                // record carries no field for a reference by identity), so an
+                // entry a removal emptied of everything but links concurrent
+                // with it is as fresh as one holding none, and is left out.
+                if child.holds_links()
+                    && reads_as_fresh(
+                        &read_in(sem, child, Shaped::Bare(site), form, Some(&HashSet::new())),
+                        fresh,
+                        form,
+                    )
+                {
+                    continue;
+                }
                 if let Some(value) = value {
                     entries.insert(key.to_key(Some(sem)), value);
                 }
