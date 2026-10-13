@@ -93,6 +93,7 @@
 //! Classes and enums are numbered by one sorted pass over both name sets, but
 //! each into its own dense space: a `ClassSlot` reached through
 //! [`MergeRule::Containment`], [`MergeRule::Reference`],
+//! [`MergeRule::IdentityReference`],
 //! [`ClassSemantics::visible`], [`ClassSemantics::concrete`] or
 //! [`MetamodelSemantics::roots`] addresses `classes`, and one reached through
 //! [`LeafRule::Enum`] addresses `enums`. The plan's sentence "one numbering,

@@ -136,6 +136,7 @@ enum RawMerge {
     Attribute { shape: Shape, leaf: RawLeaf },
     Containment { shape: Shape, target: String },
     Reference { many: bool, target: String },
+    IdentityReference { many: bool, target: String },
     Unsupported { reason: UnsupportedReason },
 }
 
@@ -602,6 +603,10 @@ fn feature_rule(
             target: class_slot(&target)?,
         }),
         RawMerge::Reference { many, target } => Ok(MergeRule::Reference {
+            many,
+            target: class_slot(&target)?,
+        }),
+        RawMerge::IdentityReference { many, target } => Ok(MergeRule::IdentityReference {
             many,
             target: class_slot(&target)?,
         }),

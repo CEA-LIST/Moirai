@@ -362,6 +362,21 @@ pub enum MergeRule {
         /// Slot in `classes` of the declared target.
         target: ClassSlot,
     },
+    /// A non-containment reference carried by the store identity of the
+    /// object it was linked to (SI.05), as the generated runtime's typed
+    /// reference graph carries an arc to a vertex: a link names its target's
+    /// served identity and not an attribute value, a rename moves nothing, a
+    /// removal of the target that had seen the link takes it away, and a
+    /// single-valued one keeps the greatest of its concurrent links by
+    /// `FairPolicy`. The descriptor spells it
+    /// `{"kind": "identityReference", "many", "target"}`; a reference that
+    /// declares an `eOpposite` keeps [`MergeRule::Reference`].
+    IdentityReference {
+        /// Whether the reference is multi-valued.
+        many: bool,
+        /// Slot in `classes` of the declared target.
+        target: ClassSlot,
+    },
     /// A feature with no rule to run.
     Unsupported {
         /// Why.
