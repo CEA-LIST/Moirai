@@ -30,6 +30,7 @@ use crate::node::{
     visible,
 };
 use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
+use crate::refs::RefNode;
 
 thread_local! {
     static DESCRIPTOR: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
@@ -96,6 +97,11 @@ fn site_op(
 ) -> InstanceOp {
     match site {
         Site::Leaf(leaf) => InstanceOp::Leaf(leaf_op(sem, leaf_of(node), leaf, rng)),
+        // An identity reference takes a link of any identity: one nobody
+        // serves is held and never read.
+        Site::Refs { .. } => InstanceOp::Leaf(LeafOp::Link(
+            WORDS[rng.random_range(0..WORDS.len())].to_string(),
+        )),
         Site::Object(target) => {
             let slot = match node {
                 Some(Node::Slot(slot)) => Some(slot),
@@ -487,6 +493,7 @@ impl DeepSizeOf for LeafOp {
             | LeafOp::Write(value)
             | LeafOp::Add(value)
             | LeafOp::Remove(value) => value.deep_size_of_children(context),
+            LeafOp::Link(target) | LeafOp::Unlink(target) => target.deep_size_of_children(context),
             LeafOp::InsertChar { .. }
             | LeafOp::DeleteChar { .. }
             | LeafOp::DeleteRange { .. }
@@ -507,6 +514,7 @@ impl DeepSizeOf for Node {
             Node::Opt(opt) => opt.deep_size_of_children(context),
             Node::Map(map) => map.deep_size_of_children(context),
             Node::Leaf(leaf) => leaf.deep_size_of_children(context),
+            Node::Refs(refs) => refs.deep_size_of_children(context),
         }
     }
 }
@@ -545,6 +553,18 @@ impl DeepSizeOf for OptNode {
 impl DeepSizeOf for MapNode {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         entries(&self.children, context)
+    }
+}
+
+impl DeepSizeOf for RefNode {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.links
+            .iter()
+            .map(|link| {
+                link.target.deep_size_of_children(context) + link.id.deep_size_of_children(context)
+            })
+            .sum::<usize>()
+            + self.links.capacity() * std::mem::size_of::<crate::refs::Link>()
     }
 }
 

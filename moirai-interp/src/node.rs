@@ -46,7 +46,8 @@
 // (`nested_list.rs:74`, `uw_map.rs:236`).
 #![allow(clippy::mutable_key_type)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -72,8 +73,9 @@ use moirai_protocol::state::{
     sink::{Sink, SinkCollector},
 };
 
-use crate::leaf::{LeafLog, LeafMismatch, Scalar};
+use crate::leaf::{LeafLog, LeafMismatch, LeafOp, Scalar};
 use crate::op::{InstanceOp, MapOp, OptOp, SeqOp};
+use crate::refs::RefNode;
 
 /// Why an operation was not routed.
 ///
@@ -429,6 +431,12 @@ pub(crate) enum Site {
     Object(Target),
     /// A leaf.
     Leaf(LeafSite),
+    /// A reference by store identity (SI.05): the links one reference
+    /// feature holds, single-valued or many-valued.
+    Refs {
+        /// Whether the reference is multi-valued.
+        many: bool,
+    },
 }
 
 /// A feature's rule split into its collection and what the collection holds.
@@ -453,6 +461,8 @@ impl Shaped {
             Shaped::Bare(Site::Leaf(LeafSite::Set(_))) => "a set",
             Shaped::Bare(Site::Leaf(LeafSite::Bag)) => "a bag",
             Shaped::Bare(Site::Leaf(LeafSite::OrderedSet)) => "an ordered set",
+            Shaped::Bare(Site::Refs { many: false }) => "a single-valued identity reference",
+            Shaped::Bare(Site::Refs { many: true }) => "a many-valued identity reference",
             Shaped::Optional(_) => "optional",
             Shaped::Sequence(_) => "a sequence",
             Shaped::Keyed(_) => "a keyed collection",
@@ -505,6 +515,10 @@ pub(crate) fn shaped(rule: &MergeRule) -> Result<Shaped, UnsupportedReason> {
         MergeRule::Reference { many: true, .. } => {
             Shaped::Bare(Site::Leaf(LeafSite::Set(SetTie::AddWins)))
         }
+        // SI.05: a reference by the store identity of its target, linked and
+        // unlinked by identity, read as the generated reference graph reads
+        // its arcs (see [`crate::refs`]).
+        MergeRule::IdentityReference { many, .. } => Shaped::Bare(Site::Refs { many }),
         MergeRule::Unsupported { reason } => return Err(reason),
     })
 }
@@ -540,6 +554,8 @@ pub enum Node {
     Map(MapNode),
     /// A leaf.
     Leaf(LeafLog),
+    /// The links of a reference by store identity (SI.05).
+    Refs(RefNode),
 }
 
 impl Default for Node {
@@ -956,6 +972,15 @@ pub(crate) struct Ctx<'a> {
     /// How many class steps of the operation lie above this level: `0` at
     /// the top of a model. See [`Creator`].
     pub step: u32,
+    /// The operation links or unlinks a reference by identity (SI.05): it
+    /// reaches its source without touching anything on the way, as the
+    /// generated runtime writes an arc into its reference graph and nothing
+    /// into the containment. See [`crate::refs`].
+    pub silent: bool,
+    /// Where a removal reports the identities it took away, so that the log
+    /// can let go of the links to them it had seen once the operation is
+    /// applied. `None` where nobody listens.
+    pub removed: Option<&'a RefCell<HashSet<String>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -966,6 +991,28 @@ impl<'a> Ctx<'a> {
             lamport,
             version,
             step: 0,
+            silent: false,
+            removed: None,
+        }
+    }
+
+    /// The same context, routing a link or an unlink silently.
+    pub(crate) fn silently(self, silent: bool) -> Self {
+        Ctx { silent, ..self }
+    }
+
+    /// The same context, with removals reported to `removed`.
+    pub(crate) fn reporting(self, removed: &'a RefCell<HashSet<String>>) -> Self {
+        Ctx {
+            removed: Some(removed),
+            ..self
+        }
+    }
+
+    /// A removal took `node` away: report what it held.
+    fn report_removal(&self, node: &Node) {
+        if let Some(removed) = self.removed {
+            node.identities(&mut removed.borrow_mut());
         }
     }
 
@@ -1155,6 +1202,7 @@ impl Node {
             Site::Leaf(LeafSite::Set(tie)) => Node::Leaf(LeafLog::for_set(tie)),
             Site::Leaf(LeafSite::Bag) => Node::Leaf(LeafLog::for_bag()),
             Site::Leaf(LeafSite::OrderedSet) => Node::Leaf(LeafLog::for_ordered_set()),
+            Site::Refs { .. } => Node::Refs(RefNode::default()),
         }
     }
 
@@ -1189,6 +1237,10 @@ impl Node {
                 }
             }
             Node::Leaf(leaf) => leaf.stabilize(version),
+            // A link stays until an unlink, a removal of its source or one of
+            // its target that had seen it takes it away; nothing about it
+            // changes when it becomes stable.
+            Node::Refs(_) => {}
         }
     }
 
@@ -1222,6 +1274,7 @@ impl Node {
                 }
             }
             Node::Leaf(leaf) => leaf.redundant_by_parent(version, conservative),
+            Node::Refs(refs) => refs.redundant_by_parent(version),
         }
     }
 
@@ -1231,7 +1284,7 @@ impl Node {
     /// below its version and stays alive.
     fn retire(&mut self, removal: &EventId, version: &Version) {
         match self {
-            Node::Unbound | Node::Leaf(_) => {}
+            Node::Unbound | Node::Leaf(_) | Node::Refs(_) => {}
             Node::Slot(slot) => slot.for_each_mut(|object| object.retire(removal, version)),
             Node::Seq(seq) => {
                 for child in seq.children.values_mut() {
@@ -1249,6 +1302,73 @@ impl Node {
             Node::Map(map) => {
                 for child in map.children.values_mut() {
                     child.retire(removal, version);
+                }
+            }
+        }
+    }
+
+    /// Every identity an object below this node has been created under: each
+    /// of its creations, as [`ObjectNode::identity`] renders one. What a
+    /// reference by identity may name of something a removal took away.
+    pub(crate) fn identities(&self, out: &mut HashSet<String>) {
+        match self {
+            Node::Unbound | Node::Leaf(_) | Node::Refs(_) => {}
+            Node::Slot(slot) => {
+                for object in slot.objects() {
+                    object.identities(out);
+                }
+            }
+            Node::Seq(seq) => {
+                for child in seq.children.values() {
+                    child.identities(out);
+                }
+            }
+            Node::Opt(opt) => {
+                if let Some(child) = opt.child.as_deref() {
+                    child.identities(out);
+                }
+                for object in &opt.ghost {
+                    object.identities(out);
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values() {
+                    child.identities(out);
+                }
+            }
+        }
+    }
+
+    /// A removal at `version` took away the objects whose identities are
+    /// `removed`: every reference by identity below this node lets go of the
+    /// links to them the removal had seen.
+    pub(crate) fn drop_links(&mut self, removed: &HashSet<String>, version: &Version) {
+        match self {
+            Node::Unbound | Node::Leaf(_) => {}
+            Node::Refs(refs) => refs.drop_targets(removed, version),
+            Node::Slot(slot) => slot.for_each_mut(|object| {
+                for field in object.fields.values_mut() {
+                    field.drop_links(removed, version);
+                }
+            }),
+            Node::Seq(seq) => {
+                for child in seq.children.values_mut() {
+                    child.drop_links(removed, version);
+                }
+            }
+            Node::Opt(opt) => {
+                if let Some(child) = opt.child.as_mut() {
+                    child.drop_links(removed, version);
+                }
+                for object in &mut opt.ghost {
+                    for field in object.fields.values_mut() {
+                        field.drop_links(removed, version);
+                    }
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values_mut() {
+                    child.drop_links(removed, version);
                 }
             }
         }
@@ -1276,6 +1396,7 @@ impl Node {
             // over a `json.ecore` object whose every entry had been removed.
             Node::Map(map) => map.children.is_empty(),
             Node::Leaf(leaf) => leaf.is_default(),
+            Node::Refs(refs) => refs.is_default(),
         }
     }
 
@@ -1293,6 +1414,9 @@ impl Node {
             Node::Opt(opt) => opt.child.as_ref().map_or(0, |child| child.polog_len()),
             Node::Map(map) => map.children.values().map(Node::polog_len).sum(),
             Node::Leaf(leaf) => leaf.polog_len(),
+            // Not a PO-Log: the links are what the read-out reads, and
+            // stability drops none of them.
+            Node::Refs(_) => 0,
         }
     }
 }
@@ -1377,6 +1501,15 @@ impl ObjectNode {
 
     fn is_default(&self) -> bool {
         self.fields.values().all(Node::is_default)
+    }
+
+    /// This object's creations and everything below it, as
+    /// [`Node::identities`] collects them.
+    fn identities(&self, out: &mut HashSet<String>) {
+        out.extend(self.creators.iter().map(Creator::render));
+        for field in self.fields.values() {
+            field.identities(out);
+        }
     }
 
     #[cfg(feature = "test_utils")]
@@ -1607,6 +1740,30 @@ pub(crate) fn check(
                 OptOp::Unset => Ok(()),
             }
         }
+        Shaped::Bare(Site::Refs { many }) => {
+            let InstanceOp::Leaf(leaf_op) = op else {
+                return Err(Refusal::WrongShape {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    expected: Shaped::Bare(Site::Refs { many }).word(),
+                    got: word(op),
+                });
+            };
+            // A reference by identity takes a link and an unlink of an
+            // identity and nothing else; minimum and maximum cardinalities
+            // are not held at this intake.
+            match leaf_op {
+                LeafOp::Link(_) | LeafOp::Unlink(_) => Ok(()),
+                other => Err(Refusal::Leaf {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    mismatch: LeafMismatch {
+                        op: other.kind(),
+                        leaf: "identity reference",
+                    },
+                }),
+            }
+        }
         Shaped::Bare(Site::Leaf(leaf_site)) => {
             let InstanceOp::Leaf(leaf_op) = op else {
                 return Err(Refusal::WrongShape {
@@ -1799,9 +1956,14 @@ pub(crate) fn apply(
                 }
                 SeqOp::Update { pos, op } => {
                     let target = target_at(seq, ctx, pos, at)?;
-                    positions_effect(&mut seq.positions, ctx.event(List::Update { pos }));
                     let mut emit = emit.list_element(target.clone());
-                    emit.update();
+                    // A link passes through without updating the position:
+                    // it is no write into the child, and an update here would
+                    // keep the child alive against a concurrent removal.
+                    if !ctx.silent {
+                        positions_effect(&mut seq.positions, ctx.event(List::Update { pos }));
+                        emit.update();
+                    }
                     let child = seq
                         .children
                         .entry(target)
@@ -1817,6 +1979,7 @@ pub(crate) fn apply(
                     if let Some(child) = seq.children.get_mut(&target) {
                         child.redundant_by_parent(ctx.version, true);
                         child.retire(ctx.id, ctx.version);
+                        ctx.report_removal(child);
                     }
                     Ok(())
                 }
@@ -1835,10 +1998,10 @@ pub(crate) fn apply(
                 MapOp::Update { key, op } => {
                     let name = key.to_key(Some(sem));
                     let mut emit = emit.map_key(&name);
-                    if map.children.contains_key(&key) {
-                        emit.update();
-                    } else {
+                    if !map.children.contains_key(&key) {
                         emit.create();
+                    } else if !ctx.silent {
+                        emit.update();
                     }
                     let child = map
                         .children
@@ -1855,6 +2018,7 @@ pub(crate) fn apply(
                     if let Some(child) = map.children.get_mut(&key) {
                         child.redundant_by_parent(ctx.version, true);
                         child.retire(ctx.id, ctx.version);
+                        ctx.report_removal(child);
                     }
                     Ok(())
                 }
@@ -1864,6 +2028,7 @@ pub(crate) fn apply(
                     for child in map.children.values_mut() {
                         child.redundant_by_parent(ctx.version, true);
                         child.retire(ctx.id, ctx.version);
+                        ctx.report_removal(child);
                     }
                     Ok(())
                 }
@@ -1880,10 +2045,10 @@ pub(crate) fn apply(
             };
             match opt_op {
                 OptOp::Set(inner) => {
-                    if opt.child.is_some() {
-                        emit.update();
-                    } else {
+                    if opt.child.is_none() {
                         emit.create();
+                    } else if !ctx.silent {
+                        emit.update();
                     }
                     let child = opt
                         .child
@@ -1903,6 +2068,7 @@ pub(crate) fn apply(
                     if let Some(child) = opt.child.as_mut() {
                         child.redundant_by_parent(ctx.version, true);
                         child.retire(ctx.id, ctx.version);
+                        ctx.report_removal(child);
                         if child.is_default() {
                             bury(&mut opt.ghost, opt.child.take());
                         }
@@ -1915,12 +2081,43 @@ pub(crate) fn apply(
                     for object in &mut opt.ghost {
                         object.redundant_by_parent(ctx.version, true);
                         object.retire(ctx.id, ctx.version);
+                        if let Some(removed) = ctx.removed {
+                            object.identities(&mut removed.borrow_mut());
+                        }
                     }
                     // After the ghost's own reset, so that what joins it now
                     // is not reset twice.
                     shed(opt);
                     Ok(())
                 }
+            }
+        }
+        Shaped::Bare(Site::Refs { .. }) => {
+            let (InstanceOp::Leaf(leaf_op), Node::Refs(refs)) = (op, node) else {
+                return Err(Refusal::WrongShape {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    expected: "an identity reference",
+                    got: "something else",
+                });
+            };
+            match leaf_op {
+                LeafOp::Link(target) => {
+                    refs.link(&target, ctx.id, *ctx.lamport, ctx.version);
+                    Ok(())
+                }
+                LeafOp::Unlink(target) => {
+                    refs.unlink(&target, ctx.version);
+                    Ok(())
+                }
+                other => Err(Refusal::Leaf {
+                    class: at.class.clone(),
+                    feature: at.feature.clone(),
+                    mismatch: LeafMismatch {
+                        op: other.kind(),
+                        leaf: "identity reference",
+                    },
+                }),
             }
         }
         Shaped::Bare(Site::Leaf(_)) => {
@@ -1964,7 +2161,8 @@ pub(crate) fn apply(
             let object = slot
                 .find_mut(class)
                 .expect("`ensure_variant` put one of this class here");
-            if !minted {
+            // A link reaches its source without touching it.
+            if !minted && !ctx.silent {
                 object.written_by(ctx);
             }
             apply_object(sem, object, ctx.below_class(), *inner, emit)
@@ -2011,7 +2209,9 @@ fn apply_object(
                 reason,
             })?;
             let mut emit = emit.field(name);
-            emit.update();
+            if !ctx.silent {
+                emit.update();
+            }
             let child = object
                 .fields
                 .entry(slot)

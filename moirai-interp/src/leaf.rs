@@ -221,6 +221,12 @@ pub enum LeafOp {
     Remove(Scalar),
     /// Register, set or bag: everything out.
     Clear,
+    /// Identity reference (SI.05): link the object whose served identity
+    /// this is.
+    Link(String),
+    /// Identity reference (SI.05): unlink the object whose served identity
+    /// this is, as far as this writer has seen it linked.
+    Unlink(String),
 }
 
 impl LeafOp {
@@ -240,6 +246,8 @@ impl LeafOp {
             LeafOp::Add(_) => "Add",
             LeafOp::Remove(_) => "Remove",
             LeafOp::Clear => "Clear",
+            LeafOp::Link(_) => "Link",
+            LeafOp::Unlink(_) => "Unlink",
         }
     }
 }

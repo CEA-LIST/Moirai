@@ -29,6 +29,7 @@ pub mod matrix;
 pub mod network;
 pub mod node;
 pub mod op;
+pub mod refs;
 #[cfg(feature = "test_utils")]
 pub mod testing;
 
@@ -36,3 +37,4 @@ pub use leaf::{LeafLog, LeafMismatch, LeafOp, Scalar};
 pub use log::{ModelHeader, ModelLog};
 pub use node::{MapNode, Node, ObjectNode, OptNode, Refusal, SeqNode, SlotNode};
 pub use op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
+pub use refs::RefNode;

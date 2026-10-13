@@ -59,7 +59,7 @@
 //! allocation on a path that runs per read rather than per operation, and
 //! which cannot drift from what a minted-and-emptied feature reads.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use moirai_protocol::crdt::{eval::EvalNested, query::Read};
 use moirai_semantics::{ClassSlot, FeatureSlot, MetamodelSemantics};
@@ -67,6 +67,7 @@ use serde_json::{Map, Value};
 
 use crate::log::ModelLog;
 use crate::node::{Node, ObjectNode, Shaped, Site, Target, shaped, visible};
+use crate::refs::has_identity_references;
 
 /// The key a conflict set is carried under.
 pub const CONFLICT: &str = "__conflict";
@@ -114,13 +115,47 @@ pub fn read_identified(sem: &MetamodelSemantics, root: &Node) -> Value {
 }
 
 fn read_root(sem: &MetamodelSemantics, root: &Node, form: Form) -> Value {
-    read_in(sem, root, Shaped::Bare(Site::Object(Target::Roots)), form).unwrap_or(Value::Null)
+    let site = Shaped::Bare(Site::Object(Target::Roots));
+    if !has_identity_references(sem) {
+        return read_in(sem, root, site, form, None).unwrap_or(Value::Null);
+    }
+    // SI.05: a link is read only while its target is in the read-out, so the
+    // read-out's identities are taken first, from the identified document
+    // with every link held, and the document is then read with them.
+    let mut served = HashSet::new();
+    if let Some(all) = read_in(sem, root, site, Form::Identified, None) {
+        identities(&all, &mut served);
+    }
+    read_in(sem, root, site, form, Some(&served)).unwrap_or(Value::Null)
+}
+
+/// The identities a reference by identity may be read as: those the
+/// read-out holds, or none to filter by.
+type Served<'a> = Option<&'a HashSet<String>>;
+
+/// Every identity an identified document carries under [`ID`].
+fn identities(value: &Value, out: &mut HashSet<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(id)) = map.get(ID) {
+                out.insert(id.clone());
+            }
+            map.values().for_each(|item| identities(item, out));
+        }
+        Value::Array(items) => items.iter().for_each(|item| identities(item, out)),
+        _ => {}
+    }
 }
 
 /// What a feature nobody has written reads as: whatever one minted from the
 /// same rule and left alone reads as.
-fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Value> {
-    read_in(sem, &Node::for_shaped(shape), shape, form)
+fn read_absent(
+    sem: &MetamodelSemantics,
+    shape: Shaped,
+    form: Form,
+    served: Served<'_>,
+) -> Option<Value> {
+    read_in(sem, &Node::for_shaped(shape), shape, form, served)
 }
 
 /// What a freshly minted entry of a keyed collection at `site` reads as in
@@ -148,13 +183,18 @@ fn read_absent(sem: &MetamodelSemantics, shape: Shaped, form: Form) -> Option<Va
 /// ends the recursion through a class whose keyed collection holds its own
 /// class (`Dir.children` of `Dir`). It also carries no identity in either
 /// form, which is what [`reads_as_fresh`] relies on.
-fn fresh_entry(sem: &MetamodelSemantics, site: Site, form: Form) -> Option<Value> {
+fn fresh_entry(
+    sem: &MetamodelSemantics,
+    site: Site,
+    form: Form,
+    served: Served<'_>,
+) -> Option<Value> {
     if let Site::Object(Target::Class(target)) = site
         && !Target::Class(target).is_family(sem)
     {
-        return read_class(sem, target, &BTreeMap::new(), None, form);
+        return read_class(sem, target, &BTreeMap::new(), None, form, served);
     }
-    read_absent(sem, Shaped::Bare(site), form)
+    read_absent(sem, Shaped::Bare(site), form, served)
 }
 
 /// Whether a keyed entry read in `form` is `fresh` ([`fresh_entry`] in the
@@ -184,11 +224,17 @@ fn reads_as_fresh(value: &Option<Value>, fresh: &Option<Value>, form: Form) -> b
 
 /// One node, or `None` where the canonical form has no key at all.
 pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) -> Option<Value> {
-    read_in(sem, node, shape, Form::Canonical)
+    read_in(sem, node, shape, Form::Canonical, None)
 }
 
 /// One node in either form, or `None` where the canonical form has no key.
-fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> Option<Value> {
+fn read_in(
+    sem: &MetamodelSemantics,
+    node: &Node,
+    shape: Shaped,
+    form: Form,
+    served: Served<'_>,
+) -> Option<Value> {
     match (shape, node) {
         (_, Node::Unbound) => None,
         (Shaped::Sequence(site), Node::Seq(seq)) => {
@@ -197,7 +243,7 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
                 // Only what is there: an id in the ordering with no child
                 // behind it is a hole, and a hole is nothing, not a default.
                 if let Some(child) = seq.children().get(&id)
-                    && let Some(value) = read_in(sem, child, Shaped::Bare(site), form)
+                    && let Some(value) = read_in(sem, child, Shaped::Bare(site), form, served)
                 {
                     items.push(value);
                 }
@@ -235,8 +281,8 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
             let mut fresh: Option<Option<Value>> = None;
             let mut entries = Map::new();
             for (key, child) in map.children() {
-                let value = read_in(sem, child, Shaped::Bare(site), form);
-                let fresh = fresh.get_or_insert_with(|| fresh_entry(sem, site, form));
+                let value = read_in(sem, child, Shaped::Bare(site), form, served);
+                let fresh = fresh.get_or_insert_with(|| fresh_entry(sem, site, form, served));
                 if reads_as_fresh(&value, fresh, form) {
                     continue;
                 }
@@ -248,8 +294,11 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
         }
         (Shaped::Optional(site), Node::Opt(opt)) => opt
             .child()
-            .and_then(|child| read_in(sem, child, Shaped::Bare(site), form)),
+            .and_then(|child| read_in(sem, child, Shaped::Bare(site), form, served)),
         (Shaped::Bare(Site::Leaf(_)), Node::Leaf(leaf)) => Some(leaf.read_json(Some(sem))),
+        // SI.05: the links a reference by identity holds, as far as their
+        // targets are in the read-out (`served`).
+        (Shaped::Bare(Site::Refs { many }), Node::Refs(refs)) => Some(refs.read(many, served)),
         (Shaped::Bare(Site::Object(target)), Node::Slot(slot)) => {
             // At a family slot, the present objects only: one a removal had
             // seen every operation of is absent, as `union!` reads only its
@@ -264,12 +313,12 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
                 // `eClass`. `union!`'s own read counts every present child
                 // the same way, so the two paths agree on a slot holding one
                 // written object beside one created and never written into.
-                1 => read_object(sem, objects[0], form),
+                1 => read_object(sem, objects[0], form, served),
                 _ => {
                     let mut values: Vec<(String, Vec<u8>, Value)> = objects
                         .iter()
                         .filter_map(|object| {
-                            let value = read_object(sem, object, form)?;
+                            let value = read_object(sem, object, form, served)?;
                             let name = sem
                                 .classes
                                 .get(object.class().index())
@@ -316,9 +365,14 @@ fn read_in(sem: &MetamodelSemantics, node: &Node, shape: Shaped, form: Form) -> 
 /// at all: an instance of such a class *is* that feature's value, so a
 /// feature with nothing to show leaves nothing to show. Every other class
 /// carries at least its `eClass`.
-fn read_object(sem: &MetamodelSemantics, object: &ObjectNode, form: Form) -> Option<Value> {
+fn read_object(
+    sem: &MetamodelSemantics,
+    object: &ObjectNode,
+    form: Form,
+    served: Served<'_>,
+) -> Option<Value> {
     let identity = (form == Form::Identified).then(|| object.identity());
-    read_class(sem, object.class(), object.fields(), identity, form)
+    read_class(sem, object.class(), object.fields(), identity, form, served)
 }
 
 /// An object of `class` holding `fields`, as [`read_object`] reads it;
@@ -329,6 +383,7 @@ fn read_class(
     fields: &BTreeMap<FeatureSlot, Node>,
     identity: Option<String>,
     form: Form,
+    served: Served<'_>,
 ) -> Option<Value> {
     let mut out = Map::new();
     let Some(class) = sem.classes.get(class_slot.index()) else {
@@ -345,8 +400,8 @@ fn read_class(
         let (_, rule) = visible(sem, class_slot, slot)?;
         let shape = shaped(rule).ok()?;
         let value = match fields.get(&slot) {
-            Some(node) => read_in(sem, node, shape, form),
-            None => read_absent(sem, shape, form),
+            Some(node) => read_in(sem, node, shape, form, served),
+            None => read_absent(sem, shape, form, served),
         };
         return match form {
             Form::Canonical => value,
@@ -382,8 +437,8 @@ fn read_class(
             continue;
         };
         let value = match fields.get(&slot) {
-            Some(node) => read_in(sem, node, shape, form),
-            None => read_absent(sem, shape, form),
+            Some(node) => read_in(sem, node, shape, form, served),
+            None => read_absent(sem, shape, form, served),
         };
         if let Some(value) = value {
             out.insert(name.to_string(), value);

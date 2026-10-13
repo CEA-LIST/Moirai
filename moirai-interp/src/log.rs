@@ -30,6 +30,8 @@
 //! route increments [`ModelLog::unresolved`] and changes nothing else, and
 //! nothing here panics on one.
 
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use moirai_protocol::{
@@ -43,8 +45,9 @@ use serde_json::Value;
 #[cfg(feature = "sink")]
 use moirai_protocol::state::sink::SinkCollector;
 
+use crate::leaf::LeafOp;
 use crate::node::{At, Ctx, Emit, Mode, Node, Refusal, Shaped, Site, Target, apply, check};
-use crate::op::ModelOp;
+use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
 
 /// What a model says it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +152,24 @@ impl ModelLog {
     }
 }
 
+/// Whether the operation ends in a link or an unlink of a reference by
+/// identity: the operations that reach their source without touching it
+/// (see [`crate::refs`]).
+fn links(op: &InstanceOp) -> bool {
+    match op {
+        InstanceOp::Field(_, inner) | InstanceOp::Variant(_, inner) => links(inner),
+        InstanceOp::Seq(SeqOp::Update { op, .. })
+        | InstanceOp::Opt(OptOp::Set(op))
+        | InstanceOp::Map(MapOp::Update { op, .. }) => links(op),
+        InstanceOp::Leaf(LeafOp::Link(_) | LeafOp::Unlink(_)) => true,
+        InstanceOp::Seq(SeqOp::Insert { .. } | SeqOp::Delete { .. })
+        | InstanceOp::Opt(OptOp::Unset)
+        | InstanceOp::Map(MapOp::Remove { .. } | MapOp::Clear)
+        | InstanceOp::New
+        | InstanceOp::Leaf(_) => false,
+    }
+}
+
 /// A descriptor's text as a table, or the sentence that says why not.
 fn parse(descriptor: &str) -> Result<MetamodelSemantics, Refusal> {
     let value: Value = serde_json::from_str(descriptor)
@@ -222,7 +243,10 @@ impl IsLog for ModelLog {
                     self.unresolved += 1;
                     return;
                 };
-                let ctx = Ctx::top(event.id(), event.lamport(), event.version());
+                let removed = RefCell::new(HashSet::new());
+                let ctx = Ctx::top(event.id(), event.lamport(), event.version())
+                    .silently(links(op))
+                    .reporting(&removed);
                 // Asked before anything is written, so that an operation this
                 // table cannot route leaves the model exactly as it was.
                 if check(
@@ -254,6 +278,12 @@ impl IsLog for ModelLog {
                 );
                 if outcome.is_err() {
                     self.unresolved += 1;
+                }
+                // SI.05: a removal takes away the links to what it removed
+                // that it had seen, wherever in the model they are held.
+                let removed = removed.into_inner();
+                if !removed.is_empty() && crate::refs::has_identity_references(&sem) {
+                    self.root.drop_links(&removed, event.version());
                 }
             }
         }

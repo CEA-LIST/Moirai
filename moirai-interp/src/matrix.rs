@@ -291,7 +291,9 @@ pub fn rule_constructions(rule: &MergeRule) -> Vec<Construction> {
             Shape::Keyed { .. } => vec![Construction::KeyedMap],
             Shape::Set { .. } | Shape::Bag | Shape::OrderedSet => Vec::new(),
         },
-        MergeRule::Reference { .. } | MergeRule::Unsupported { .. } => Vec::new(),
+        MergeRule::Reference { .. }
+        | MergeRule::IdentityReference { .. }
+        | MergeRule::Unsupported { .. } => Vec::new(),
     }
 }
 
