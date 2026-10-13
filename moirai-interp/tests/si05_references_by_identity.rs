@@ -613,9 +613,17 @@ fn si05_many_valued_concurrent_links_are_kept_and_a_relink_survives_a_concurrent
 }
 
 /// Convergence where SI.01's served identity is decided by a merge: `a` and
-/// `b` each put a new card in `Board.pinned` at once (the two creations
-/// collapse into one object), and each links `x.related` to the card it
-/// created. Every replica reads the same document, in both orders.
+/// `b` each put a new card in `Board.pinned` at once and title it (`p` on `a`,
+/// `q` on `b`), so the two creations collapse into one object, and each links
+/// `x.related` to the card it created. Every replica reads the same document,
+/// in both orders. Only convergence is claimed (spec, F6): whether the link
+/// written against the creation that loses resolves is not.
+///
+/// Amendment A1 (spec, "Round 1 oracle amendment A1"): each writer titles its
+/// card before it reads the card's identity. An optional drops a child its
+/// write left at the default, as the generated runtime's `OptionLog` does
+/// (`option/mod.rs`, ST.02), so a card put there with nothing written into it
+/// is not served and has no identity to link.
 #[test]
 fn si05_two_creations_of_the_pinned_card_converge_with_their_links() {
     let board = Board::new();
@@ -623,8 +631,12 @@ fn si05_two_creations_of_the_pinned_card_converge_with_their_links() {
         let mut replicas = three(&board_descriptor());
         xyz(&board, &mut replicas);
         let mut pending: Vec<(usize, Msg)> = Vec::new();
-        for from in [0usize, 1] {
+        let mut created: Vec<String> = Vec::new();
+        for (from, title) in [(0usize, "p"), (1, "q")] {
             let mut ops = vec![send(&mut replicas[from], board.new_pinned(), "pin a card")];
+            for op in board.title_ops(At::Pinned, title) {
+                ops.push(send(&mut replicas[from], op, "title the pinned card"));
+            }
             let doc = identified(&replicas[from]);
             let pinned = id_at(&doc, At::Pinned);
             ops.push(send_wire(
@@ -632,15 +644,26 @@ fn si05_two_creations_of_the_pinned_card_converge_with_their_links() {
                 board.link(At::Board(0), board.related, &pinned),
                 "link x.related -> the pinned card",
             ));
+            created.push(pinned);
             pending.extend(ops.into_iter().map(|message| (from, message)));
         }
+        assert_ne!(
+            created[0], created[1],
+            "premise: `a` and `b` each created the pinned card, so each was served an identity of its own"
+        );
         if b_first {
             pending.reverse();
         }
         for (from, message) in pending {
             deliver_all(&mut replicas, from, &message);
         }
-        agreed(&replicas, &format!("pinned, b first = {b_first}"));
+        let doc = agreed(&replicas, &format!("pinned, b first = {b_first}"));
+        let served = id_at(&doc, At::Pinned);
+        assert!(
+            created.contains(&served),
+            "premise: the two creations collapse into one pinned card, served as one of them; \
+             it serves {served}, the creations were {created:?} (b first = {b_first})"
+        );
     }
 }
 
