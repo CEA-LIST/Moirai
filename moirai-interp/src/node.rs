@@ -172,6 +172,22 @@ pub enum Refusal {
         /// Which form.
         reason: UnsupportedReason,
     },
+    /// A link names an identity the writer's read-out serves on an object
+    /// whose class is neither the reference's target class nor one of its
+    /// subclasses (SI.07, I1), as the generated reference graph has no arc
+    /// kind from this reference to a vertex of that class.
+    LinkClass {
+        /// The class the reference is declared on.
+        class: Arc<str>,
+        /// The reference.
+        feature: Arc<str>,
+        /// The identity the link names.
+        identity: String,
+        /// The class of the object served under that identity.
+        offered: Arc<str>,
+        /// The reference's target class.
+        target: Arc<str>,
+    },
     /// `New` on an object that is not empty.
     NotNew {
         /// The class.
@@ -269,6 +285,17 @@ impl fmt::Display for Refusal {
                  (decision D6): {}",
                 reason.as_str(),
                 reason.why()
+            ),
+            Refusal::LinkClass {
+                class,
+                feature,
+                identity,
+                offered,
+                target,
+            } => write!(
+                f,
+                "`{class}.{feature}` links a `{target}`, and `{identity}` is a `{offered}`, \
+                 which is not one"
             ),
             Refusal::NotNew { class } => write!(
                 f,
@@ -1397,7 +1424,7 @@ impl Node {
             // `uw_map.rs:174`, verbatim: a map that holds a key is not at
             // its default, whatever that key now holds. It reads as `{}` once
             // every entry has been emptied — that is the read-out's rule, in
-            // `eval::read_node` — but it is not *default*, and the two are
+            // `eval::read_in` — but it is not *default*, and the two are
             // different questions. Answering `all(is_default)` here would
             // make an emptied map default on this path and not on the
             // generated one, and a conflict set drops its default members

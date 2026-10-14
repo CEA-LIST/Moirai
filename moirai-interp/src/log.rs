@@ -146,7 +146,10 @@ impl ModelLog {
                     op,
                     &At::root(),
                     Mode::Local,
-                )
+                )?;
+                // SI.07, I1: a local link to an object of the wrong class.
+                // A peer's link is never held to it (`effect` routes it).
+                crate::refs::check_link_class(sem, &self.root, op)
             }
         }
     }

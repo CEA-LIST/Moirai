@@ -20,6 +20,10 @@
 //!   it that it had seen ([`RefNode::drop_targets`], driven by the log once
 //!   the removal is applied), even when an update concurrent with the removal
 //!   keeps the target;
+//! - a link is read only while its source holds a write no removal has seen
+//!   (its vertex is in the graph: [`crate::node::ObjectNode`]'s presence,
+//!   read in `eval`), even when a text the removal reset keeps the source
+//!   served (SI.07, P1);
 //! - a link is read only while its target is in the read-out, and among the
 //!   links of a single-valued reference the greatest by `FairPolicy` is read,
 //!   the policy the generated reference graph is built with, so that a tie of
@@ -42,8 +46,13 @@ use moirai_protocol::{
         tag::Tag,
     },
 };
-use moirai_semantics::{MergeRule, MetamodelSemantics};
+use moirai_semantics::{ClassSlot, MergeRule, MetamodelSemantics};
 use serde_json::Value;
+
+use crate::eval::{ECLASS, ID, read_identified};
+use crate::leaf::LeafOp;
+use crate::node::{Node, Refusal, Target, visible};
+use crate::op::{InstanceOp, MapOp, OptOp, SeqOp};
 
 /// Whether any feature of the metamodel is a reference by identity: when
 /// none is, a removal has no link to let go of and a read has no link to
@@ -164,5 +173,107 @@ impl RefNode {
             }
             best.map_or(Value::Null, |(link, _)| Value::String(link.target.clone()))
         }
+    }
+}
+
+/// SI.07, I1: refuse a local `Link` whose identity the writer's identified
+/// read-out serves on an object whose class does not conform to the
+/// reference's target class (the class itself or a subclass at any depth),
+/// as the generated reference graph has no arc kind for it.
+///
+/// An identity the read-out does not serve is accepted (SI.05, ruling R3.1,
+/// reading B): it may name an object a peer created and this writer has not
+/// delivered yet. Only a local writer is held to this; a peer's link is
+/// applied whatever the receiver serves.
+pub(crate) fn check_link_class(
+    sem: &MetamodelSemantics,
+    root: &Node,
+    op: &InstanceOp,
+) -> Result<(), Refusal> {
+    let Some(link) = linked(sem, None, op) else {
+        return Ok(());
+    };
+    let doc = read_identified(sem, root);
+    let Some(offered) = served_class(&doc, link.identity) else {
+        return Ok(());
+    };
+    let Some(offered) = sem
+        .classes
+        .iter()
+        .find(|class| *class.name == *offered)
+        .map(|class| class.slot)
+    else {
+        return Ok(());
+    };
+    if Target::Class(link.target).allows(sem, offered) {
+        return Ok(());
+    }
+    let name = |slot: ClassSlot| {
+        sem.classes
+            .get(slot.index())
+            .map_or_else(|| std::sync::Arc::from("?"), |class| class.name.clone())
+    };
+    Err(Refusal::LinkClass {
+        class: name(link.class),
+        feature: link.feature,
+        identity: link.identity.to_string(),
+        offered: name(offered),
+        target: name(link.target),
+    })
+}
+
+/// The reference a `Link` ends in, as [`linked`] finds it.
+struct Linked<'a> {
+    class: ClassSlot,
+    feature: std::sync::Arc<str>,
+    target: ClassSlot,
+    identity: &'a str,
+}
+
+/// The reference by identity an operation links, and the identity it links,
+/// when the operation ends in a `Link`; `class` is the class the path has
+/// reached.
+fn linked<'a>(
+    sem: &MetamodelSemantics,
+    class: Option<ClassSlot>,
+    op: &'a InstanceOp,
+) -> Option<Linked<'a>> {
+    match op {
+        InstanceOp::Variant(class, inner) => linked(sem, Some(*class), inner),
+        InstanceOp::Field(slot, inner) => {
+            let class = class?;
+            if let InstanceOp::Leaf(LeafOp::Link(identity)) = inner.as_ref() {
+                let (name, rule) = visible(sem, class, *slot)?;
+                return match rule {
+                    MergeRule::IdentityReference { target, .. } => Some(Linked {
+                        class,
+                        feature: name.clone(),
+                        target: *target,
+                        identity,
+                    }),
+                    _ => None,
+                };
+            }
+            linked(sem, Some(class), inner)
+        }
+        InstanceOp::Seq(SeqOp::Insert { op, .. } | SeqOp::Update { op, .. })
+        | InstanceOp::Opt(OptOp::Set(op))
+        | InstanceOp::Map(MapOp::Update { op, .. }) => linked(sem, class, op),
+        _ => None,
+    }
+}
+
+/// The class name of the element an identified document serves under
+/// `identity`, if it serves one.
+fn served_class<'a>(doc: &'a Value, identity: &str) -> Option<&'a str> {
+    match doc {
+        Value::Object(map) => {
+            if map.get(ID).and_then(Value::as_str) == Some(identity) {
+                return map.get(ECLASS).and_then(Value::as_str);
+            }
+            map.values().find_map(|item| served_class(item, identity))
+        }
+        Value::Array(items) => items.iter().find_map(|item| served_class(item, identity)),
+        _ => None,
     }
 }

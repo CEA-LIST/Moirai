@@ -98,7 +98,7 @@ enum Form {
 /// `null` for a model whose root has not been written yet, which is the one
 /// state a JSON document cannot otherwise spell.
 pub fn read(sem: &MetamodelSemantics, root: &Node) -> Value {
-    read_root(sem, root, Form::Canonical)
+    read_root(sem, root, model_site(), Form::Canonical)
 }
 
 /// The whole model, in identified form: the canonical form in which every
@@ -111,11 +111,17 @@ pub fn read(sem: &MetamodelSemantics, root: &Node) -> Value {
 /// "__id": <identity>}`. Removing every identity and giving every transparent
 /// record back as its value gives [`read`]'s document.
 pub fn read_identified(sem: &MetamodelSemantics, root: &Node) -> Value {
-    read_root(sem, root, Form::Identified)
+    read_root(sem, root, model_site(), Form::Identified)
 }
 
-fn read_root(sem: &MetamodelSemantics, root: &Node, form: Form) -> Value {
-    let site = Shaped::Bare(Site::Object(Target::Roots));
+/// Where a model's root sits: one object of whichever class the descriptor
+/// names as a root.
+fn model_site() -> Shaped {
+    Shaped::Bare(Site::Object(Target::Roots))
+}
+
+/// The whole tree under `root`, sitting at `site`, in either form.
+fn read_root(sem: &MetamodelSemantics, root: &Node, site: Shaped, form: Form) -> Value {
     if !has_identity_references(sem) {
         return read_in(sem, root, site, form, None).unwrap_or(Value::Null);
     }
@@ -192,7 +198,14 @@ fn fresh_entry(
     if let Site::Object(Target::Class(target)) = site
         && !Target::Class(target).is_family(sem)
     {
-        return read_class(sem, target, &BTreeMap::new(), None, form, served);
+        return read_class(
+            sem,
+            target,
+            &BTreeMap::new(),
+            None,
+            form,
+            Fields::all(served),
+        );
     }
     read_absent(sem, Shaped::Bare(site), form, served)
 }
@@ -220,11 +233,6 @@ fn reads_as_fresh(value: &Option<Value>, fresh: &Option<Value>, form: Form) -> b
         }
         _ => value == fresh,
     }
-}
-
-/// One node, or `None` where the canonical form has no key at all.
-pub(crate) fn read_node(sem: &MetamodelSemantics, node: &Node, shape: Shaped) -> Option<Value> {
-    read_in(sem, node, shape, Form::Canonical, None)
 }
 
 /// One node in either form, or `None` where the canonical form has no key.
@@ -385,7 +393,55 @@ fn read_object(
     served: Served<'_>,
 ) -> Option<Value> {
     let identity = (form == Form::Identified).then(|| object.identity());
-    read_class(sem, object.class(), object.fields(), identity, form, served)
+    // SI.07, P1: the generated reference graph reads an arc only while its
+    // source vertex is in the graph. A record's vertex is added by every
+    // write that reaches it and taken away by a removal that had seen those
+    // writes; a link adds none. So the links of an object no write unseen by
+    // a removal has reached are not read, even while a text the removal reset
+    // keeps the object served, and they are read again once such a write
+    // reaches it: [`ObjectNode::is_present`] is that answer.
+    let none = HashSet::new();
+    let links = if object.is_present() {
+        served
+    } else {
+        Some(&none)
+    };
+    read_class(
+        sem,
+        object.class(),
+        object.fields(),
+        identity,
+        form,
+        Fields { served, links },
+    )
+}
+
+/// What the features of one object are read with: `served` for everything
+/// below it, `links` for its own references by identity, which read no link
+/// at all while the object itself holds no write a removal has not seen.
+#[derive(Clone, Copy)]
+struct Fields<'a> {
+    served: Served<'a>,
+    links: Served<'a>,
+}
+
+impl<'a> Fields<'a> {
+    /// Every feature read with `served`: an object no removal has reached,
+    /// or one that holds nothing yet.
+    fn all(served: Served<'a>) -> Self {
+        Fields {
+            served,
+            links: served,
+        }
+    }
+
+    /// What one feature of the given shape is read with.
+    fn for_shape(self, shape: Shaped) -> Served<'a> {
+        match shape {
+            Shaped::Bare(Site::Refs { .. }) => self.links,
+            _ => self.served,
+        }
+    }
 }
 
 /// An object of `class` holding `fields`, as [`read_object`] reads it;
@@ -396,7 +452,7 @@ fn read_class(
     fields: &BTreeMap<FeatureSlot, Node>,
     identity: Option<String>,
     form: Form,
-    served: Served<'_>,
+    fields_with: Fields<'_>,
 ) -> Option<Value> {
     let mut out = Map::new();
     let Some(class) = sem.classes.get(class_slot.index()) else {
@@ -412,6 +468,7 @@ fn read_class(
         let (name, _, _) = class.visible.get(slot.index())?;
         let (_, rule) = visible(sem, class_slot, slot)?;
         let shape = shaped(rule).ok()?;
+        let served = fields_with.for_shape(shape);
         let value = match fields.get(&slot) {
             Some(node) => read_in(sem, node, shape, form, served),
             None => read_absent(sem, shape, form, served),
@@ -449,6 +506,7 @@ fn read_class(
         let Ok(shape) = shaped(rule) else {
             continue;
         };
+        let served = fields_with.for_shape(shape);
         let value = match fields.get(&slot) {
             Some(node) => read_in(sem, node, shape, form, served),
             None => read_absent(sem, shape, form, served),
@@ -471,8 +529,10 @@ impl EvalNested<Read<Value>> for ModelLog {
 
 #[cfg(feature = "test_utils")]
 impl EvalNested<Read<Value>> for crate::testing::Harness {
+    /// What [`read`] serves of the same tree, at the harness's root site: a
+    /// link is read only while its target is in the read-out (SI.07, H1).
     fn execute_query(&self, _q: &Read<Value>) -> Value {
-        read_node(&self.sem, &self.root, self.site()).unwrap_or(Value::Null)
+        read_root(&self.sem, &self.root, self.site(), Form::Canonical)
     }
 }
 
