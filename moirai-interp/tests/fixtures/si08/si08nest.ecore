@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SI.08 round 2 (cea-cdrt-knowledge/spec/items/SI.08.md, "Round 2, written
+  before any rerun"): cards held where round 1's two boards hold none. A Frame
+  sits in an optional (Board.pinned) or at a key (Board.frames, a uw-map keyed
+  by FrameSlot.key), so a removal reaches it by an Unset, a Remove or a Clear.
+  Inside it a Card sits at a single containment (Frame.head, [1..1]), whose
+  class has no subclass and is therefore a record! field and not a union!
+  (no family), in an optional (Frame.extra) and at a key (Frame.slots, a
+  uw-map keyed by Slot.key): a removal of the Frame reaches all three from
+  above. Every text is an optional EString, whose reset records the deletion
+  and keeps its object served (ST.04). Card.blocker and Card.related are
+  references with no eOpposite, so the descriptor carries them on the
+  identity rule.
+-->
+<ecore:EPackage xmi:version="2.0"
+    xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="si08nest"
+    nsURI="http://cea.fr/crdt/si08/nest" nsPrefix="nest">
+  <eClassifiers xsi:type="ecore:EClass" name="Board">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="cards" upperBound="-1"
+        eType="#//Card" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="pinned" eType="#//Frame"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="frames" upperBound="-1"
+        eType="#//FrameSlot" containment="true">
+      <eAnnotations source="urn:arachne:semantics">
+        <details key="datatype" value="uw-map"/>
+        <details key="key-feature" value="key"/>
+        <details key="value-feature" value="value"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="FrameSlot">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="key" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="value" lowerBound="1" upperBound="1"
+        eType="#//Frame" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Frame">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="label" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="head" lowerBound="1"
+        eType="#//Card" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="extra" eType="#//Card"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="slots" upperBound="-1"
+        eType="#//Slot" containment="true">
+      <eAnnotations source="urn:arachne:semantics">
+        <details key="datatype" value="uw-map"/>
+        <details key="key-feature" value="key"/>
+        <details key="value-feature" value="value"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Slot">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="key" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="value" lowerBound="1" upperBound="1"
+        eType="#//Card" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Card">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="title" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"
+        iD="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="blocker" eType="#//Card"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="related" upperBound="-1"
+        eType="#//Card"/>
+  </eClassifiers>
+</ecore:EPackage>
