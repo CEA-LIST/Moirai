@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SI.05 round 3 (cea-cdrt-knowledge/spec/items/SI.05.md, "Round 3, written
+  before any rerun"): the board of si05board.ecore cut down to what a keyed
+  source needs. Board.slots is a uw-map keyed by Slot.key whose values are
+  Cards, a class with no subclass, which the generated runtime composes as a
+  record! (UWMapLog<String, CardLog>) and whose read leaves out an entry that
+  reads as a fresh Card. Card.rank is an optional EInt (a resettable counter),
+  which a key removal empties, unlike a text, whose reset records the
+  deletion and keeps the object (ST.04). Card.blocker and Card.related are
+  references with no eOpposite, so the descriptor carries them on the identity
+  rule.
+-->
+<ecore:EPackage xmi:version="2.0"
+    xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="si05keyed"
+    nsURI="http://cea.fr/crdt/si05/keyed" nsPrefix="keyed">
+  <eClassifiers xsi:type="ecore:EClass" name="Board">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="cards" upperBound="-1"
+        eType="#//Card" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="slots" upperBound="-1"
+        eType="#//Slot" containment="true">
+      <eAnnotations source="urn:arachne:semantics">
+        <details key="datatype" value="uw-map"/>
+        <details key="key-feature" value="key"/>
+        <details key="value-feature" value="value"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Slot">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="key" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="value" lowerBound="1" upperBound="1"
+        eType="#//Card" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Card">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="title" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"
+        iD="true"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="rank" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="blocker" eType="#//Card"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="related" upperBound="-1"
+        eType="#//Card"/>
+  </eClassifiers>
+</ecore:EPackage>
