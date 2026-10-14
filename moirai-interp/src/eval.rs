@@ -132,6 +132,13 @@ fn read_root(sem: &MetamodelSemantics, root: &Node, site: Shaped, form: Form) ->
     if let Some(all) = read_in(sem, root, site, Form::Identified, None) {
         identities(&all, &mut served);
     }
+    // SI.08: and only those of objects a write no removal has seen reached.
+    // An object a removal had seen every write of stays served while a text
+    // the removal reset keeps it, but the generated graph holds no vertex for
+    // it, so no link to it is read ([`Node::absent_identities`]).
+    let mut absent = HashSet::new();
+    root.absent_identities(&mut absent);
+    served.retain(|identity| !absent.contains(identity));
     read_in(sem, root, site, form, Some(&served)).unwrap_or(Value::Null)
 }
 

@@ -1458,6 +1458,42 @@ impl Node {
         }
     }
 
+    /// The identities of the objects below this node, in what the read-out
+    /// reads (an optional's ghost is not), that no write unseen by a removal
+    /// has reached ([`ObjectNode::is_present`] false).
+    ///
+    /// SI.08: the generated reference graph reads an arc only while its
+    /// target vertex is in the graph, and a removal takes away the vertex of
+    /// every record whose writes it had seen; a link adds none. So a link to
+    /// such an object is not read, even while a text the removal reset keeps
+    /// it served, and it is read again once a write the removal had not seen
+    /// reaches the object.
+    pub(crate) fn absent_identities(&self, out: &mut HashSet<String>) {
+        match self {
+            Node::Unbound | Node::Leaf(_) | Node::Refs(_) => {}
+            Node::Slot(slot) => {
+                for object in slot.objects() {
+                    object.absent_identities(out);
+                }
+            }
+            Node::Seq(seq) => {
+                for child in seq.children.values() {
+                    child.absent_identities(out);
+                }
+            }
+            Node::Opt(opt) => {
+                if let Some(child) = opt.child.as_deref() {
+                    child.absent_identities(out);
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values() {
+                    child.absent_identities(out);
+                }
+            }
+        }
+    }
+
     /// How many operations the leaves below this node still hold unstably.
     ///
     /// Leaves only: a sequence's ordering graph is an `EventGraph`, whose
@@ -1559,6 +1595,17 @@ impl ObjectNode {
 
     fn is_default(&self) -> bool {
         self.fields.values().all(Node::is_default)
+    }
+
+    /// This object's identity if it is not present, and those below it, as
+    /// [`Node::absent_identities`] collects them.
+    fn absent_identities(&self, out: &mut HashSet<String>) {
+        if !self.is_present() {
+            out.insert(self.identity());
+        }
+        for field in self.fields.values() {
+            field.absent_identities(out);
+        }
     }
 
     /// This object's creations in `version` and everything below it, as
