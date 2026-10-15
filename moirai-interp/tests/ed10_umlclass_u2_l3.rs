@@ -63,12 +63,18 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(100);
 static RUN_SEQ: AtomicU32 = AtomicU32::new(0);
 
+/// SI.10 (`cea-cdrt-knowledge/spec/items/SI.10.md`, legacy register L2): Arachne's shipped
+/// `umlclass.metamodel.json` is regenerated with SI.05's identity rule (`999ed54f...`), under which
+/// U2's references are `Link`s of creation identities, not the names this test writes. What ED.10
+/// claimed holds for the descriptor it was written for, the one models created before SI.10 keep
+/// (`a44920ad...`), frozen here byte for byte; the editor's ED.13 I1 builds U2 on the regenerated
+/// one. `ED10_DESCRIPTOR` still overrides.
 fn descriptor_path() -> PathBuf {
     std::env::var_os("ED10_DESCRIPTOR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../arachne-model-plane/examples/umlclass.metamodel.json")
+                .join("tests/fixtures/si10/legacy/umlclass.a44920ad.metamodel.json")
         })
 }
 
