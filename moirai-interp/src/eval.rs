@@ -526,7 +526,12 @@ fn read_class(
 }
 
 impl EvalNested<Read<Value>> for ModelLog {
+    /// The canonical form; once the model is cut (SI.12), the one the
+    /// migrating replica served when it cut.
     fn execute_query(&self, _q: &Read<Value>) -> Value {
+        if let Some(frozen) = self.frozen_plain() {
+            return frozen.clone();
+        }
         match self.semantics() {
             Some(sem) => read(sem, self.root()),
             None => Value::Null,

@@ -25,6 +25,7 @@ pub mod leaf;
 pub mod log;
 #[cfg(feature = "test_utils")]
 pub mod matrix;
+pub mod migrate;
 #[cfg(feature = "network")]
 pub mod network;
 pub mod node;

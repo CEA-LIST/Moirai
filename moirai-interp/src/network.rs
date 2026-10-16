@@ -45,9 +45,13 @@ impl QueryableLog for ModelLog {
 
     /// The same document with every element's store identity in it, which is
     /// what `GET /api/model/{id}/state/identified` answers: see
-    /// [`crate::eval::read_identified`].
+    /// [`crate::eval::read_identified`]. Once the model is cut (SI.12), the
+    /// document the migrating replica served when it cut.
     fn query_identified_state_json(replica: &Replica<Self, Tcsb<ModelOp>>) -> Value {
         let log = replica.state();
+        if let Some(frozen) = log.frozen_identified() {
+            return frozen.clone();
+        }
         match log.semantics() {
             Some(sem) => read_identified(sem, log.root()),
             None => Value::Null,

@@ -61,6 +61,23 @@ pub enum ModelOp {
     },
     /// Everything else.
     Instance(InstanceOp),
+    /// Close the log: the model was migrated to `migrated_to` (SI.12), and
+    /// this is the one operation the migration writes on it.
+    ///
+    /// It carries the two documents the migrating replica served when it
+    /// cut, because those are what every replica that delivers the cut
+    /// serves from then on, whatever else it has delivered: a replica that
+    /// applied an edit concurrent with the cut before the cut arrived cannot
+    /// take that edit back out of its tree, but it can stop reading the tree.
+    /// See [`crate::migrate`].
+    Cut {
+        /// The successor's model id.
+        migrated_to: String,
+        /// The identified read (`__id` on every element) at the cut.
+        identified: serde_json::Value,
+        /// The default read at the cut.
+        plain: serde_json::Value,
+    },
 }
 
 /// One step of the path, or its end.
@@ -354,7 +371,7 @@ mod tests {
     fn every_instance() -> InstanceOp {
         match every_variant() {
             ModelOp::Instance(op) => op,
-            ModelOp::Install { .. } => unreachable!(),
+            _ => unreachable!(),
         }
     }
 

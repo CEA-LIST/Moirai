@@ -201,6 +201,13 @@ pub enum Refusal {
         /// What the operation was.
         got: &'static str,
     },
+    /// The model was migrated (SI.12): this replica has delivered the cut,
+    /// and from then on the model is read-only and every write belongs to
+    /// its successor.
+    Migrated {
+        /// The successor's model id.
+        to: String,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -304,6 +311,11 @@ impl fmt::Display for Refusal {
             Refusal::NotAnObjectOp { class, got } => write!(
                 f,
                 "the path reached a `{class}`, and {got} is not an operation on an object"
+            ),
+            Refusal::Migrated { to } => write!(
+                f,
+                "this model was migrated to `{to}` and is read-only from the cut on: write to \
+                 `{to}` instead"
             ),
         }
     }

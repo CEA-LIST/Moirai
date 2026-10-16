@@ -29,9 +29,21 @@
 //! only honest answers are to apply it or to count it. One that will not
 //! route increments [`ModelLog::unresolved`] and changes nothing else, and
 //! nothing here panics on one.
+//!
+//! # The cut (SI.12)
+//!
+//! [`ModelOp::Cut`] closes a model that was migrated to another
+//! ([`crate::migrate`]). A replica that has delivered it names the successor
+//! ([`ModelLog::migration`]), refuses every local operation naming it, and
+//! serves, in both reads, the documents the migrating replica served when it
+//! cut, which the cut carries. Operations it delivers that the cut had not
+//! seen are still applied to the tree, as every received operation is, but
+//! the tree is no longer read: they are in neither the source's read-out nor
+//! the successor, and the status lists them by origin and sequence number.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use moirai_protocol::{
@@ -40,7 +52,7 @@ use moirai_protocol::{
     state::{effect_context::EffectContext, log::IsLog},
 };
 use moirai_semantics::{MetamodelSemantics, from_descriptor};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[cfg(feature = "sink")]
 use moirai_protocol::state::sink::SinkCollector;
@@ -76,6 +88,27 @@ pub struct ModelLog {
     descriptor: Option<String>,
     root: Node,
     unresolved: u64,
+    /// The greatest sequence number delivered from each origin, by replica
+    /// id. Causal delivery takes each origin's events in order, so this is
+    /// the set of events this replica has delivered, and what the events a
+    /// cut had not seen are counted against.
+    #[cfg_attr(feature = "serde", serde(default))]
+    delivered: BTreeMap<String, u64>,
+    /// The cut, once this replica has delivered one.
+    #[cfg_attr(feature = "serde", serde(default))]
+    cut: Option<Cut>,
+}
+
+/// A delivered [`ModelOp::Cut`]: the successor, what the cut had seen, and
+/// the two documents served from then on.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct Cut {
+    to: String,
+    /// The cut's causal past, as the greatest sequence number per origin.
+    seen: BTreeMap<String, u64>,
+    identified: Value,
+    plain: Value,
 }
 
 impl ModelLog {
@@ -116,6 +149,41 @@ impl ModelLog {
         self.unresolved
     }
 
+    /// The successor this replica has seen the model migrated to, once it
+    /// has delivered the cut.
+    pub fn migrated_to(&self) -> Option<&str> {
+        self.cut.as_ref().map(|cut| cut.to.as_str())
+    }
+
+    /// The migration status (SI.12): `{"migrated_to": null, "refused": []}`
+    /// before the cut; after it, the successor and every event this replica
+    /// has delivered that the cut had not seen, as `{"origin", "seq"}`.
+    pub fn migration(&self) -> Value {
+        let Some(cut) = &self.cut else {
+            return json!({ "migrated_to": Value::Null, "refused": [] });
+        };
+        let refused: Vec<Value> = self
+            .delivered
+            .iter()
+            .flat_map(|(origin, last)| {
+                let seen = cut.seen.get(origin).copied().unwrap_or(0);
+                (seen + 1..=*last).map(move |seq| json!({ "origin": origin, "seq": seq }))
+            })
+            .collect();
+        json!({ "migrated_to": cut.to, "refused": refused })
+    }
+
+    /// The identified read once the model is cut: what the migrating
+    /// replica served when it cut.
+    pub(crate) fn frozen_identified(&self) -> Option<&Value> {
+        self.cut.as_ref().map(|cut| &cut.identified)
+    }
+
+    /// The default read once the model is cut.
+    pub(crate) fn frozen_plain(&self) -> Option<&Value> {
+        self.cut.as_ref().map(|cut| &cut.plain)
+    }
+
     /// Where the model sits: one object of whichever class the descriptor
     /// names as a root.
     pub(crate) fn site() -> Shaped {
@@ -130,6 +198,9 @@ impl ModelLog {
     /// kind of operation, comes back with a sentence naming the class or the
     /// feature.
     pub fn refusal(&self, op: &ModelOp) -> Result<(), Refusal> {
+        if let Some(cut) = &self.cut {
+            return Err(Refusal::Migrated { to: cut.to.clone() });
+        }
         match op {
             ModelOp::Install { descriptor, .. } => {
                 if self.sem.is_some() {
@@ -151,8 +222,92 @@ impl ModelLog {
                 // A peer's link is never held to it (`effect` routes it).
                 crate::refs::check_link_class(sem, &self.root, op)
             }
+            ModelOp::Cut { .. } => self.sem.as_ref().map(|_| ()).ok_or(Refusal::NoTable),
         }
     }
+
+    /// Take a delivered cut, unless one was taken already.
+    ///
+    /// Two concurrent migrations of one model are not handled here (SI.12,
+    /// OB2): the first cut a replica delivers is the one it keeps.
+    fn take_cut(&mut self, event: &Event<ModelOp>, to: &str, identified: &Value, plain: &Value) {
+        if self.cut.is_some() {
+            return;
+        }
+        let version = event.version();
+        let seen = version
+            .iter()
+            .filter(|(_, seq)| *seq > 0)
+            .filter_map(|(idx, seq)| {
+                let origin = version.resolver().resolve(idx)?;
+                Some((origin.to_string(), seq as u64))
+            })
+            .collect();
+        self.cut = Some(Cut {
+            to: to.to_string(),
+            seen,
+            identified: identified.clone(),
+            plain: plain.clone(),
+        });
+    }
+
+    /// Count `event` as delivered from its origin.
+    fn note_delivered(&mut self, event: &Event<ModelOp>) {
+        let id = event.id();
+        let seq = id.seq() as u64;
+        match self.delivered.get_mut(id.origin_id()) {
+            Some(last) => *last = (*last).max(seq),
+            None => {
+                self.delivered.insert(id.origin_id().to_string(), seq);
+            }
+        }
+    }
+}
+
+/// A link target that names an object by the writer's own event: `@<seq>.<step>`,
+/// a served identity with its origin left out.
+///
+/// A migration plans the successor's operations before anyone knows which
+/// replica will send them ([`crate::migrate`]), so the links among the
+/// copied objects cannot name their writer. Every served identity starts
+/// with its origin's id, so a target starting with `@` names none, and is
+/// read here as the identity `<origin>@<seq>.<step>` of the event's own
+/// origin.
+fn own_target(target: &str, origin: &str) -> Option<String> {
+    let rest = target.strip_prefix('@')?;
+    let (seq, step) = rest.split_once('.')?;
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    (digits(seq) && digits(step)).then(|| format!("{origin}{target}"))
+}
+
+/// `op` with every link and unlink to an own target ([`own_target`])
+/// resolved against `origin`; `None` when it holds none.
+fn resolve_own(op: &InstanceOp, origin: &str) -> Option<InstanceOp> {
+    let boxed = |inner: &InstanceOp| resolve_own(inner, origin).map(Box::new);
+    Some(match op {
+        InstanceOp::Field(slot, inner) => InstanceOp::Field(*slot, boxed(inner)?),
+        InstanceOp::Variant(class, inner) => InstanceOp::Variant(*class, boxed(inner)?),
+        InstanceOp::Seq(SeqOp::Insert { pos, op }) => InstanceOp::Seq(SeqOp::Insert {
+            pos: *pos,
+            op: boxed(op)?,
+        }),
+        InstanceOp::Seq(SeqOp::Update { pos, op }) => InstanceOp::Seq(SeqOp::Update {
+            pos: *pos,
+            op: boxed(op)?,
+        }),
+        InstanceOp::Opt(OptOp::Set(op)) => InstanceOp::Opt(OptOp::Set(boxed(op)?)),
+        InstanceOp::Map(MapOp::Update { key, op }) => InstanceOp::Map(MapOp::Update {
+            key: key.clone(),
+            op: boxed(op)?,
+        }),
+        InstanceOp::Leaf(LeafOp::Link(target)) => {
+            InstanceOp::Leaf(LeafOp::Link(own_target(target, origin)?))
+        }
+        InstanceOp::Leaf(LeafOp::Unlink(target)) => {
+            InstanceOp::Leaf(LeafOp::Unlink(own_target(target, origin)?))
+        }
+        _ => return None,
+    })
 }
 
 /// Whether the operation ends in a link or an unlink of a reference by
@@ -209,7 +364,19 @@ impl IsLog for ModelLog {
             Some(sink) => sink,
             None => &mut discarded,
         };
+        self.note_delivered(&event);
         match event.op() {
+            ModelOp::Cut {
+                migrated_to,
+                identified,
+                plain,
+            } => {
+                if self.sem.is_none() {
+                    self.unresolved += 1;
+                    return;
+                }
+                self.take_cut(&event, migrated_to, identified, plain);
+            }
             ModelOp::Install {
                 model_id,
                 metamodel_id,
@@ -246,6 +413,11 @@ impl IsLog for ModelLog {
                     self.unresolved += 1;
                     return;
                 };
+                let op = match resolve_own(op, event.id().origin_id()) {
+                    Some(resolved) => Cow::Owned(resolved),
+                    None => Cow::Borrowed(op),
+                };
+                let op = op.as_ref();
                 let removed = RefCell::new(HashSet::new());
                 let ctx = Ctx::top(event.id(), event.lamport(), event.version())
                     .silently(links(op))

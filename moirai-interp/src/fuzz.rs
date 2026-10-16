@@ -459,6 +459,17 @@ impl DeepSizeOf for ModelOp {
                     + descriptor.deep_size_of_children(context)
             }
             ModelOp::Instance(op) => op.deep_size_of_children(context),
+            // The documents as their serialized length: `serde_json::Value`
+            // has no `DeepSizeOf`, and a cut is written once per model.
+            ModelOp::Cut {
+                migrated_to,
+                identified,
+                plain,
+            } => {
+                migrated_to.deep_size_of_children(context)
+                    + identified.to_string().len()
+                    + plain.to_string().len()
+            }
         }
     }
 }
