@@ -125,6 +125,12 @@ pub type MigrateFn<L> = fn(
 /// `GET /api/model/{id}/migration`. See [`GenericNode::enable_migration`].
 pub type MigrationFn<L> = fn(&LogReplica<L>) -> serde_json::Value;
 
+/// The application's check of the operations only a migration writes:
+/// `Err(reason)` refuses an adapter-submitted operation on any log, the
+/// default log and logs with no binding included. See
+/// [`GenericNode::enable_migration`].
+pub type MigrationOnlyFn<O> = fn(&O) -> Result<(), String>;
+
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
 /// asked.
@@ -336,6 +342,10 @@ where
     /// routes answer [`MigrateRefused::NotEnabled`].
     migrate_fn: Option<MigrateFn<L>>,
     migration_fn: Option<MigrationFn<L>>,
+    /// The application's check of what only a migration writes, run on
+    /// every adapter-submitted operation once [`Self::enable_migration`]
+    /// installed it.
+    migration_only_fn: Option<MigrationOnlyFn<L::Op>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -1238,6 +1248,7 @@ where
             op_guard_fn: None,
             migrate_fn: None,
             migration_fn: None,
+            migration_only_fn: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -1746,15 +1757,30 @@ where
     }
 
     /// Install the application's migration hooks (SI.12): `migrate` plans a
-    /// migration of a hosted log, `status` reads one log's migration status.
-    /// Needs [`Self::enable_registration`] too, whose key hook is what a
-    /// migration's `metamodel_id` is resolved through.
+    /// migration of a hosted log, `status` reads one log's migration status,
+    /// and `migration_only` refuses, at every adapter intake, the operations
+    /// only a migration writes (a cut, say), so that no client can write
+    /// one through `POST /api/model/{id}/op` or `/ops`, nor through the
+    /// default log's routes. Needs [`Self::enable_registration`] too, whose
+    /// key hook is what a migration's `metamodel_id` is resolved through.
     ///
     /// Purely additive: without it both migration routes answer 501 and
     /// nothing else changes.
-    pub fn enable_migration(&mut self, migrate: MigrateFn<L>, status: MigrationFn<L>) {
+    pub fn enable_migration(
+        &mut self,
+        migrate: MigrateFn<L>,
+        status: MigrationFn<L>,
+        migration_only: MigrationOnlyFn<L::Op>,
+    ) {
         self.migrate_fn = Some(migrate);
         self.migration_fn = Some(status);
+        self.migration_only_fn = Some(migration_only);
+    }
+
+    /// The refusal of an adapter-submitted operation that only a migration
+    /// writes; `Ok` when no migration hooks are installed.
+    fn check_migration_only(&self, op: &L::Op) -> Result<(), String> {
+        self.migration_only_fn.map_or(Ok(()), |check| check(op))
     }
 
     /// Migrate a hosted model to a new one under the descriptor
@@ -1762,16 +1788,27 @@ where
     /// `POST /api/model/{id}/migrate`.
     ///
     /// The application's hook plans it against this node's replica of the
-    /// model, with a freshly minted id for the successor. Its first operation
-    /// is applied to the model and broadcast, as any local write is: that is
-    /// the cut every replica of the model learns of the successor from. The
-    /// successor is then hosted, bound to the descriptor as a created model
-    /// is, and its operations are applied and broadcast in order. A replica
-    /// that wants the successor joins it by its id, as any model is joined.
+    /// model, with a freshly minted id for the successor: the cut, and the
+    /// successor's operations. Everything is applied here before anything
+    /// is sent, the cut last, because the cut cannot be taken back: the
+    /// successor is hosted, bound to the descriptor as a created model is,
+    /// and its operations are applied in order; then the cut is applied to
+    /// the model. Only once every one of them was accepted are they
+    /// broadcast, the successor's first, then the cut, which is what every
+    /// replica of the model learns of the successor from. A replica that
+    /// wants the successor joins it by its id, as any model is joined.
+    ///
+    /// The successor is hosted fresh and this node writes nothing else to it
+    /// first, so its `n`th operation is this node's event `n` on it: the
+    /// plan's links among the copied objects name their targets by those
+    /// events (`@<seq>.<step>`), which every replica resolves against the
+    /// event's origin, this node.
     ///
     /// Refused, with nothing written, when the model is not hosted, when the
-    /// node holds no descriptor for `metamodel_id`, and when the hook or the
-    /// model's own intake refuses.
+    /// node holds no descriptor for `metamodel_id`, when the hook refuses,
+    /// and when the successor's or the model's own intake refuses one of
+    /// the planned operations: the successor is then dropped again, and
+    /// nothing was sent or applied to the model.
     pub fn migrate(
         &mut self,
         log_id: &LogId,
@@ -1795,10 +1832,6 @@ where
         let successor = self.mint_model_id(&held);
         let (cut, ops) =
             migrate(&log.replica, &successor, &held).map_err(MigrateRefused::Refused)?;
-        let cut = self.apply_op_to(log_id, cut);
-        if !cut.success {
-            return Err(MigrateRefused::Refused(cut.message));
-        }
         self.host_log(successor.clone())
             .map_err(|error| MigrateRefused::Refused(error.to_string()))?;
         if let Some(log) = self.logs.get_mut(&successor) {
@@ -1811,15 +1844,33 @@ where
                 confirmed: false,
             });
         }
-        for op in ops {
-            let result = self.apply_op_to(&successor, op);
-            if !result.success {
-                eprintln!(
-                    "[{}] an operation of model {}, the successor of {}, was refused: {}",
-                    self.replica_id, successor, log_id, result.message
-                );
+        let mut events = Vec::with_capacity(ops.len());
+        for (index, op) in ops.into_iter().enumerate() {
+            match self.apply_local(&successor, op) {
+                Ok(event) => events.push(event),
+                Err(reason) => {
+                    // Applied here alone and sent nowhere: dropping the log
+                    // drops every trace of it.
+                    self.logs.remove(&successor);
+                    return Err(MigrateRefused::Refused(format!(
+                        "operation {} of the successor {successor} was refused, so nothing \
+                         was written: {reason}",
+                        index + 1
+                    )));
+                }
             }
         }
+        let cut = match self.apply_local(log_id, cut) {
+            Ok(cut) => cut,
+            Err(reason) => {
+                self.logs.remove(&successor);
+                return Err(MigrateRefused::Refused(format!(
+                    "the cut was refused, so nothing was written: {reason}"
+                )));
+            }
+        };
+        self.broadcast_batch(events);
+        self.broadcast(TransportMessage::Event { event: cut });
         eprintln!(
             "[{}] migrated model {} to {} under metamodel {}",
             self.replica_id, log_id, successor, metamodel_id
@@ -2253,9 +2304,16 @@ where
     /// when one is installed, runs before a registered log applies anything,
     /// and is handed the descriptor that log was registered under. `None`
     /// names the default log, which is never guarded; neither is a log hosted
-    /// with no binding.
+    /// with no binding. What only a migration writes is refused on every log
+    /// (see [`Self::enable_migration`]).
     fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
+        if let Err(reason) = self.check_migration_only(&op) {
+            return OpResult {
+                success: false,
+                message: reason,
+            };
+        }
         let checked = self.intake_guard(&log_id).and_then(|guard| match guard {
             Some((guard, descriptor)) => guard(&log_id, &descriptor, &op),
             None => Ok(()),
@@ -2451,6 +2509,20 @@ where
                     format!(
                         "the model moved since the read this batch was computed against: it \
                          was at {base} and is at {version}; nothing was applied"
+                    ),
+                    Some(version),
+                );
+            }
+        }
+        for (index, op) in ops.iter().enumerate() {
+            if let Err(reason) = self.check_migration_only(op) {
+                return answer(
+                    BatchOutcome::Refused,
+                    0,
+                    Some(index),
+                    format!(
+                        "operation {} of {of} refused, so none was applied: {reason}",
+                        index + 1
                     ),
                     Some(version),
                 );

@@ -130,7 +130,10 @@
 //! metamodel, through [`moirai_interp::migrate::migrate`]: the source is cut
 //! (read-only, frozen at the cut on every replica that delivers it) and the
 //! new model's id is answered under `model_id`. `GET /api/model/{id}/migration`
-//! answers `ModelLog::migration`.
+//! answers `ModelLog::migration`. A cut, or a link target in the plan's
+//! own-event form `@<seq>.<step>`, posted on any op route is refused
+//! (`moirai_interp::migrate::adapter_refusal`): a migration writes them, and
+//! nothing else does.
 //!
 //! # Conformance: there is no guard here
 //!
@@ -191,7 +194,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use moirai_interp::migrate::migrate;
+use moirai_interp::migrate::{adapter_refusal, migrate};
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
 use moirai_network::dashboard::DashboardConfig;
@@ -585,7 +588,9 @@ fn main() {
     // the upload hook above, because that is what re-derives the digest.
     node.enable_descriptor_adoption(adopt_descriptor);
     // SI.12: copy-migration to a revised descriptor this node serves.
-    node.enable_migration(migrate_model, migration_status);
+    // A cut, or a link in the plan's own-event form, is refused from every
+    // adapter: only `POST /api/model/{id}/migrate` writes them.
+    node.enable_migration(migrate_model, migration_status, adapter_refusal);
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 
