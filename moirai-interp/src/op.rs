@@ -70,6 +70,10 @@ pub enum ModelOp {
     /// applied an edit concurrent with the cut before the cut arrived cannot
     /// take that edit back out of its tree, but it can stop reading the tree.
     /// See [`crate::migrate`].
+    ///
+    /// So it grows with the model, and travels as one event frame: past the
+    /// relay's 768 KiB frame bound a cut would not reach peers behind a
+    /// relay (see "The size of the cut" in [`crate::migrate`]).
     Cut {
         /// The successor's model id.
         migrated_to: String,

@@ -175,6 +175,7 @@ impl ModelLog {
 
     /// The identified read once the model is cut: what the migrating
     /// replica served when it cut.
+    #[cfg(feature = "network")]
     pub(crate) fn frozen_identified(&self) -> Option<&Value> {
         self.cut.as_ref().map(|cut| &cut.identified)
     }
@@ -222,6 +223,10 @@ impl ModelLog {
                 // A peer's link is never held to it (`effect` routes it).
                 crate::refs::check_link_class(sem, &self.root, op)
             }
+            // Accepted from any local writer, because the replica that sends
+            // a migration's plan is one. A node's adapter intake must refuse
+            // a hand-built cut before it gets here: see
+            // [`crate::migrate::adapter_refusal`].
             ModelOp::Cut { .. } => self.sem.as_ref().map(|_| ()).ok_or(Refusal::NoTable),
         }
     }
@@ -229,7 +234,12 @@ impl ModelLog {
     /// Take a delivered cut, unless one was taken already.
     ///
     /// Two concurrent migrations of one model are not handled here (SI.12,
-    /// OB2): the first cut a replica delivers is the one it keeps.
+    /// OB2): the first cut a replica delivers is the one it keeps, so two
+    /// replicas that deliver two concurrent cuts in opposite orders name
+    /// different successors and freeze different documents. A rule that
+    /// picks one cut on every replica (the least cut event, say) waits on a
+    /// ruling; until then a node should not offer migration to two writers
+    /// of one model at once.
     fn take_cut(&mut self, event: &Event<ModelOp>, to: &str, identified: &Value, plain: &Value) {
         if self.cut.is_some() {
             return;
@@ -273,11 +283,24 @@ impl ModelLog {
 /// with its origin's id, so a target starting with `@` names none, and is
 /// read here as the identity `<origin>@<seq>.<step>` of the event's own
 /// origin.
+///
+/// The rewrite runs on every model log, a successor or not, and is a pure
+/// function of the event, so every replica reads the same target. What it
+/// opens is at local intake: SI.07's check by class cannot resolve the
+/// short form, so a link written in it is not held to the target's class.
+/// A local writer that is not a migration's plan never needs the form, and
+/// a node refuses it from its adapters ([`crate::migrate::adapter_refusal`]).
 fn own_target(target: &str, origin: &str) -> Option<String> {
     let rest = target.strip_prefix('@')?;
     let (seq, step) = rest.split_once('.')?;
     let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
     (digits(seq) && digits(step)).then(|| format!("{origin}{target}"))
+}
+
+/// Whether `op` ends in a link or an unlink to an own target
+/// ([`own_target`]).
+pub(crate) fn holds_own_target(op: &InstanceOp) -> bool {
+    resolve_own(op, "").is_some()
 }
 
 /// `op` with every link and unlink to an own target ([`own_target`])

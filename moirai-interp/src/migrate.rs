@@ -31,6 +31,26 @@
 //! (a conflict, say) refuses the migration too, by the feature's name, since
 //! the copy would otherwise not be the document the source served.
 //!
+//! These value refusals go beyond the revision check, and are limits of the
+//! copy as built today rather than of the revision: a model is refused when
+//! it holds, in a feature both descriptors declare,
+//!
+//! - a non-empty keyed collection or sequence of scalars (the copy does not
+//!   carry those shapes yet; empty ones are carried as their default);
+//! - a register or containment that reads a concurrent conflict
+//!   (`__conflict`), since the copy holds one value where the source read
+//!   several.
+//!
+//! The running SimpleUML example holds neither.
+//!
+//! # The size of the cut
+//!
+//! The cut carries both documents, so it grows with the model. A node sends
+//! it as one event frame, and a relay reads at most 768 KiB as one frame
+//! (`MAX_STATE_TRANSFER_BYTES` in `moirai-network`): a model whose two reads
+//! together come near that bound would cut a replica that peers behind a
+//! relay never hear the cut from. No claim of SI.12 covers that size.
+//!
 //! # Who sends the successor's operations
 //!
 //! The plan is written before anyone knows which replica sends it, so a link
@@ -38,7 +58,20 @@
 //! the writer's own event as `@<seq>.<step>`, which the log resolves against
 //! the event's origin on delivery. The sequence numbers assume what the plan
 //! is for: one writer sends every operation of it, in order, on a log it has
-//! written nothing else to, so the `n`th operation is its event `n`.
+//! written nothing else to, so the `n`th operation is its event `n`, and an
+//! event's identity is its origin and sequence number with nothing else to
+//! tell two events apart.
+//!
+//! # What an adapter may not send
+//!
+//! The cut and the own-event link form are the migration's own: the log
+//! accepts both from a local writer, because the replica that sends a plan
+//! is one. A node's adapter intake must not, or a client could freeze a
+//! model with a hand-built cut that skips the revision check and opens no
+//! successor, or name a link target `@<seq>.<step>` that SI.07's local
+//! check by class cannot resolve, and so get a link of the wrong class past
+//! it. [`adapter_refusal`] is that check, for a node to run on every
+//! operation an adapter submits.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -194,6 +227,24 @@ pub fn migrate(
         },
         ops: copy.ops,
     })
+}
+
+/// Why an operation submitted through a node's adapter is refused because it
+/// is a migration's own: a cut, or a link or unlink to an own-event target
+/// `@<seq>.<step>`. See the module header.
+pub fn adapter_refusal(op: &ModelOp) -> Result<(), String> {
+    match op {
+        ModelOp::Cut { .. } => Err(
+            "a cut is written by a migration (`POST /api/model/{id}/migrate`) and by nothing else"
+                .to_string(),
+        ),
+        ModelOp::Instance(op) if crate::log::holds_own_target(op) => Err(
+            "a link target `@<seq>.<step>` names an object by its writer's own event, which only \
+             a migration's plan does: name the object by its served identity"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// What kind of feature a rule makes, for the revision check.
