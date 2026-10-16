@@ -66,6 +66,13 @@ required-features = ["network"]
 name = "si12_copy_migration_l3"
 required-features = ["network"]
 
+# SI.12 round 3: copy-migration of generated models of 100 to 1,000 objects
+# on three nodes, an evaluation of about thirty node clusters; ignored by
+# default, run with `--ignored`.
+[[test]]
+name = "si12_scale_l3"
+required-features = ["network"]
+
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
 # because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither
