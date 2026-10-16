@@ -50,6 +50,22 @@ reqwest = { version = "0.12", default-features = false, features = [
 name = "model_node"
 required-features = ["network"]
 
+# SI.12's oracle reads every model through `QueryableLog`, which the `network`
+# feature brings in. Declared so that a run without the feature skips these
+# targets and a run that names one of them without it stops with cargo's
+# "requires the features: `network`", rather than failing to compile.
+[[test]]
+name = "si12_fixtures"
+required-features = ["network"]
+
+[[test]]
+name = "si12_copy_migration"
+required-features = ["network"]
+
+[[test]]
+name = "si12_copy_migration_l3"
+required-features = ["network"]
+
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
 # because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither
