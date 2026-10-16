@@ -21,7 +21,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
     BatchEnvelope, BatchOutcome, BatchResult, BoundDescriptor, Claim, ControlCmd, Intake,
-    NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused, ServedDescriptor, StateRead,
+    MigrateRefused, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
+    ServedDescriptor, StateRead,
 };
 
 /// How long a request waits for the node's event loop to take it before it
@@ -79,6 +80,12 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   again when that history brought a different one, because a node that
 ///   cannot say what a model is written in must not guess
 /// - `GET  /api/model/{id}/metrics`   that model's counters, `foreign_log_refusals` included
+/// - `POST /api/model/{id}/migrate`   migrate that model to a new one under the
+///   descriptor `{"metamodel_id": ...}` names (SI.12): 201 with the new model's
+///   id under `model_id`, 422 with the reason when refused, 404 for a model
+///   the node does not host
+/// - `GET  /api/model/{id}/migration` that model's migration status, as the
+///   application reads it
 ///
 /// Unscoped endpoints, which answer for the node's default log:
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
@@ -260,6 +267,10 @@ enum ModelLeaf {
     Ops,
     Metamodel,
     Metrics,
+    /// `POST migrate`: migrate the model to a revised descriptor (SI.12).
+    Migrate,
+    /// `GET migration`: the model's migration status.
+    Migration,
 }
 
 /// The route a request names. Parsed from the path split on `/`, so that
@@ -342,6 +353,14 @@ fn route<'a>(method: &Method, path: &'a str) -> Route<'a> {
         (&Method::Get, ["api", "model", id, "metrics"]) => Route::Model {
             id,
             leaf: ModelLeaf::Metrics,
+        },
+        (&Method::Post, ["api", "model", id, "migrate"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Migrate,
+        },
+        (&Method::Get, ["api", "model", id, "migration"]) => Route::Model {
+            id,
+            leaf: ModelLeaf::Migration,
         },
         _ => Route::Unknown,
     }
@@ -1025,8 +1044,58 @@ impl<O: NetworkOp> Api<O> {
                 None => expired_op(),
             },
             ModelLeaf::Ops => self.submit_batch(request, Some(log_id)),
+            ModelLeaf::Migrate => self.migrate(request, log_id),
+            ModelLeaf::Migration => {
+                match self.ask(|reply| ControlCmd::Migration { log_id, reply }) {
+                    Some(Ok(status)) => json_value(200, &status),
+                    Some(Err(refused)) => migrate_refused(refused),
+                    None => timeout(),
+                }
+            }
         }
     }
+
+    /// `POST /api/model/{id}/migrate`.
+    fn migrate(&self, request: &mut Request, log_id: LogId) -> Reply {
+        let body = match read_body(request) {
+            Ok(body) => body,
+            Err(reply) => return reply,
+        };
+        let body: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(body) => body,
+            Err(e) => return error(400, format!("Invalid JSON: {e}")),
+        };
+        let Some(metamodel_id) = body.get("metamodel_id").cloned() else {
+            return error(400, "`metamodel_id` is required");
+        };
+        let from = log_id.as_str().to_string();
+        match self.ask(|reply| ControlCmd::Migrate {
+            log_id,
+            metamodel_id: metamodel_id.clone(),
+            reply,
+        }) {
+            Some(Ok(successor)) => json_value(
+                201,
+                &json!({
+                    "model_id": successor.as_str(),
+                    "metamodel_id": metamodel_id,
+                    "migrated_from": from,
+                }),
+            ),
+            Some(Err(refused)) => migrate_refused(refused),
+            None => timeout(),
+        }
+    }
+}
+
+/// A refused migration, or a migration status that could not be read.
+fn migrate_refused(refused: MigrateRefused) -> Reply {
+    let status = match refused {
+        MigrateRefused::NotEnabled => 501,
+        MigrateRefused::NotHosted(_) => 404,
+        MigrateRefused::UnknownMetamodel(_) | MigrateRefused::Refused(_) => 422,
+    };
+    error(status, refused)
 }
 
 /// Raw HTTP against a spawned API, shared with the node tests in `generic.rs`

@@ -106,6 +106,25 @@ pub type NameFn = fn(&ServedDescriptor) -> Option<String>;
 /// See [`GenericNode::enable_descriptor_adoption`].
 pub type AdoptFn<L> = fn(&LogReplica<L>) -> Option<String>;
 
+/// The application's migration hook (SI.12): given a hosted log, the id
+/// minted for its successor and the descriptor the successor is to be opened
+/// under, the operation that cuts the source and the operations that open
+/// and fill the successor, in that order; or the reason it refuses, in which
+/// case nothing is written. See [`GenericNode::enable_migration`].
+///
+/// As with every other hook, the node reads inside neither the log nor the
+/// operations: what a migration maps, and what it refuses, is the
+/// application's.
+pub type MigrateFn<L> = fn(
+    &LogReplica<L>,
+    &LogId,
+    &ServedDescriptor,
+) -> Result<(<L as IsLog>::Op, Vec<<L as IsLog>::Op>), String>;
+
+/// The application's migration status of a hosted log, served verbatim on
+/// `GET /api/model/{id}/migration`. See [`GenericNode::enable_migration`].
+pub type MigrationFn<L> = fn(&LogReplica<L>) -> serde_json::Value;
+
 /// How long a replica with no history waits on one donor before asking another,
 /// and how long it waits before starting a fresh round once every peer has been
 /// asked.
@@ -312,6 +331,11 @@ where
     /// application's business; the node knows nothing about the shape of an
     /// operation.
     op_guard_fn: Option<OpGuardFn<L::Op>>,
+    /// The application's two migration hooks, installed together by
+    /// [`Self::enable_migration`]; `None` until then, and both migration
+    /// routes answer [`MigrateRefused::NotEnabled`].
+    migrate_fn: Option<MigrateFn<L>>,
+    migration_fn: Option<MigrationFn<L>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -777,6 +801,37 @@ impl Display for ServeRefused {
 
 impl std::error::Error for ServeRefused {}
 
+/// Why [`GenericNode::migrate`] declined, or the migration status could not
+/// be read. Nothing was written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrateRefused {
+    /// No migration hooks, or no registration hooks, were installed; see
+    /// [`GenericNode::enable_migration`].
+    NotEnabled,
+    /// The node does not host the model.
+    NotHosted(LogId),
+    /// The `metamodel_id` names no descriptor this node holds: the successor
+    /// is opened from the descriptor, so it has to be here.
+    UnknownMetamodel(serde_json::Value),
+    /// The application refused the migration, and said why.
+    Refused(String),
+}
+
+impl Display for MigrateRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotEnabled => write!(f, "model migration is not enabled on this node"),
+            Self::NotHosted(log_id) => write!(f, "model {log_id} is not hosted here"),
+            Self::UnknownMetamodel(id) => {
+                write!(f, "this node holds no descriptor for metamodel {id}")
+            }
+            Self::Refused(why) => write!(f, "the migration was refused: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for MigrateRefused {}
+
 impl From<HostError> for RegisterRefused {
     fn from(error: HostError) -> Self {
         match error {
@@ -1004,6 +1059,18 @@ pub(crate) enum ControlCmd {
         log_id: LogId,
         reply: Sender<bool>,
     },
+    /// `POST /api/model/{id}/migrate`. See [`GenericNode::migrate`].
+    Migrate {
+        log_id: LogId,
+        metamodel_id: serde_json::Value,
+        reply: Sender<Result<LogId, MigrateRefused>>,
+    },
+    /// `GET /api/model/{id}/migration`: the application's status of one
+    /// hosted log.
+    Migration {
+        log_id: LogId,
+        reply: Sender<Result<serde_json::Value, MigrateRefused>>,
+    },
 }
 
 /// What `GET /api/model/{id}/metamodel` is to answer for one hosted log.
@@ -1169,6 +1236,8 @@ where
             register_fn: None,
             name_fn: None,
             op_guard_fn: None,
+            migrate_fn: None,
+            migration_fn: None,
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -1674,6 +1743,98 @@ where
             model_id: log_id,
             created,
         })
+    }
+
+    /// Install the application's migration hooks (SI.12): `migrate` plans a
+    /// migration of a hosted log, `status` reads one log's migration status.
+    /// Needs [`Self::enable_registration`] too, whose key hook is what a
+    /// migration's `metamodel_id` is resolved through.
+    ///
+    /// Purely additive: without it both migration routes answer 501 and
+    /// nothing else changes.
+    pub fn enable_migration(&mut self, migrate: MigrateFn<L>, status: MigrationFn<L>) {
+        self.migrate_fn = Some(migrate);
+        self.migration_fn = Some(status);
+    }
+
+    /// Migrate a hosted model to a new one under the descriptor
+    /// `metamodel_id` names: the primitive behind
+    /// `POST /api/model/{id}/migrate`.
+    ///
+    /// The application's hook plans it against this node's replica of the
+    /// model, with a freshly minted id for the successor. Its first operation
+    /// is applied to the model and broadcast, as any local write is: that is
+    /// the cut every replica of the model learns of the successor from. The
+    /// successor is then hosted, bound to the descriptor as a created model
+    /// is, and its operations are applied and broadcast in order. A replica
+    /// that wants the successor joins it by its id, as any model is joined.
+    ///
+    /// Refused, with nothing written, when the model is not hosted, when the
+    /// node holds no descriptor for `metamodel_id`, and when the hook or the
+    /// model's own intake refuses.
+    pub fn migrate(
+        &mut self,
+        log_id: &LogId,
+        metamodel_id: serde_json::Value,
+    ) -> Result<LogId, MigrateRefused> {
+        let (Some(migrate), Some(descriptor_key)) = (self.migrate_fn, self.descriptor_key_fn)
+        else {
+            return Err(MigrateRefused::NotEnabled);
+        };
+        let Some(log) = self.logs.get(log_id) else {
+            return Err(MigrateRefused::NotHosted(log_id.clone()));
+        };
+        let unknown = || MigrateRefused::UnknownMetamodel(metamodel_id.clone());
+        let key = descriptor_key(&metamodel_id).ok_or_else(unknown)?;
+        let held = self
+            .descriptors()
+            .iter()
+            .find(|held| held.key == key)
+            .cloned()
+            .ok_or_else(unknown)?;
+        let successor = self.mint_model_id(&held);
+        let (cut, ops) =
+            migrate(&log.replica, &successor, &held).map_err(MigrateRefused::Refused)?;
+        let cut = self.apply_op_to(log_id, cut);
+        if !cut.success {
+            return Err(MigrateRefused::Refused(cut.message));
+        }
+        self.host_log(successor.clone())
+            .map_err(|error| MigrateRefused::Refused(error.to_string()))?;
+        if let Some(log) = self.logs.get_mut(&successor) {
+            log.binding = Some(Binding {
+                key: Some(key),
+                metamodel_id: metamodel_id.clone(),
+                state: BindingState::Held,
+                // Checked by `resolve_bindings` against the descriptor the
+                // successor's first operation carries, as a create is.
+                confirmed: false,
+            });
+        }
+        for op in ops {
+            let result = self.apply_op_to(&successor, op);
+            if !result.success {
+                eprintln!(
+                    "[{}] an operation of model {}, the successor of {}, was refused: {}",
+                    self.replica_id, successor, log_id, result.message
+                );
+            }
+        }
+        eprintln!(
+            "[{}] migrated model {} to {} under metamodel {}",
+            self.replica_id, log_id, successor, metamodel_id
+        );
+        Ok(successor)
+    }
+
+    /// The application's migration status of a hosted log.
+    fn migration_status(&self, log_id: &LogId) -> Result<serde_json::Value, MigrateRefused> {
+        let status = self.migration_fn.ok_or(MigrateRefused::NotEnabled)?;
+        let log = self
+            .logs
+            .get(log_id)
+            .ok_or_else(|| MigrateRefused::NotHosted(log_id.clone()))?;
+        Ok(status(&log.replica))
     }
 
     /// A fresh id for a model created under `descriptor`: named by the
@@ -3051,6 +3212,16 @@ where
             }
             ControlCmd::Hosts { log_id, reply } => {
                 let _ = reply.send(self.logs.contains_key(&log_id));
+            }
+            ControlCmd::Migrate {
+                log_id,
+                metamodel_id,
+                reply,
+            } => {
+                let _ = reply.send(self.migrate(&log_id, metamodel_id));
+            }
+            ControlCmd::Migration { log_id, reply } => {
+                let _ = reply.send(self.migration_status(&log_id));
             }
             ControlCmd::Leave { reply } => {
                 // A replica has no shutdown path — `run()` never returns and

@@ -123,6 +123,15 @@
 //! digits dropped (`<hex>_simpleuml`), or the bare `<32 hex>` when nothing is
 //! left; the whole string is the model's identity.
 //!
+//! # Migration (SI.12)
+//!
+//! `POST /api/model/{id}/migrate` with `{"metamodel_id": <digest>}` copies the
+//! model into a new one under that descriptor, a revision of the model's own
+//! metamodel, through [`moirai_interp::migrate::migrate`]: the source is cut
+//! (read-only, frozen at the cut on every replica that delivers it) and the
+//! new model's id is answered under `model_id`. `GET /api/model/{id}/migration`
+//! answers `ModelLog::migration`.
+//!
 //! # Conformance: there is no guard here
 //!
 //! The second difference. The generated node installs an intake guard
@@ -182,6 +191,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use moirai_interp::migrate::migrate;
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
 use moirai_network::dashboard::DashboardConfig;
@@ -303,6 +313,23 @@ fn install_ops(model_id: &LogId, descriptor: &ServedDescriptor) -> Vec<ModelOp> 
         metamodel_id: descriptor.key.clone(),
         descriptor: descriptor.text.clone(),
     }]
+}
+
+/// The migration hook: the cut and the successor's operations, planned on
+/// this node's replica of the model; see [`moirai_interp::migrate`].
+fn migrate_model(
+    replica: &LogReplica<ModelLog>,
+    successor: &LogId,
+    descriptor: &ServedDescriptor,
+) -> Result<(ModelOp, Vec<ModelOp>), String> {
+    migrate(replica.state(), successor.as_str(), &descriptor.text)
+        .map(|migration| (migration.cut, migration.ops))
+        .map_err(|why| why.to_string())
+}
+
+/// The migration status a hosted model reads: [`ModelLog::migration`].
+fn migration_status(replica: &LogReplica<ModelLog>) -> Value {
+    replica.state().migration()
 }
 
 /// How long a node told `PEERS_FILE` waits for the file to appear.
@@ -557,6 +584,8 @@ fn main() {
     // its first operation carries is served from the moment it lands. Needs
     // the upload hook above, because that is what re-derives the digest.
     node.enable_descriptor_adoption(adopt_descriptor);
+    // SI.12: copy-migration to a revised descriptor this node serves.
+    node.enable_migration(migrate_model, migration_status);
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 
