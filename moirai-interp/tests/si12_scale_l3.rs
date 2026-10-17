@@ -1,11 +1,14 @@
-//! SI.12 round 3: copy-migration of generated SimpleUML models of 100, 300
-//! and 1,000 elements on three `model_node` processes over loopback.
+//! SI.12 rounds 3 and 4: copy-migration of generated SimpleUML models of
+//! 100, 300 and 1,000 elements on three `model_node` processes over loopback,
+//! and, as an observation beyond the claim, of 5,000.
 //!
-//! The spec is `cea-cdrt-knowledge/spec/items/SI.12.md`, section "Round 3,
-//! written before any rerun"; the contract (M1 to M7) is restated in
-//! `si12/mod.rs`. Round 2 passed the claim on the paper's running example,
-//! ten objects; this file asks the same questions of models of 100 to 1,000
-//! objects, and times the migration while it does.
+//! The spec is `cea-cdrt-knowledge/spec/items/SI.12.md`, sections "Round 3,
+//! written before any rerun" and "Round 4, written before any rerun"; the
+//! contract (M1 to M7) is restated in `si12/mod.rs`. Round 2 passed the
+//! claim on the paper's running example, ten objects; this file asks the
+//! same questions of models of 100 to 1,000 objects, and times the
+//! migration while it does. Round 4 adds a second test, the same runs and
+//! checks at 5,000 objects, each run stopped at [`RUN_CEILING`].
 //!
 //! The models. [`generate`] builds, from a fixed seed per size, a SimpleUML
 //! model of exactly `size` objects under `D1`: model `Vehicle`, packages
@@ -56,7 +59,10 @@
 //!   each, identity references naming the copies), with `size` objects, in
 //!   both reads, listed under `D2`'s digest.
 //! - K7 (concurrent runs): the three concurrent edits are in neither `m` nor
-//!   `m'` on any node.
+//!   `m'` on any node. Since round 4, K7 first waits, up to the convergence
+//!   bound, for `b` and `c` to serve a copy holding as many objects as `a`'s,
+//!   so that it no longer depends on K6's poll having run, and says "copy not
+//!   yet present" when they do not, apart from "serves b's concurrent edit".
 //!
 //! Every timing here is a loopback resource check (VALIDATION.md section 1),
 //! not a performance number. Every size is reported, none is thresholded.
@@ -64,17 +70,26 @@
 //! ```bash
 //! nice -n 10 cargo build -j 2 -p moirai-interp --features network --example model_node
 //! nice -n 10 cargo test -j 2 -p moirai-interp --features network --test si12_scale_l3 \
-//!     -- --ignored --test-threads=1 --nocapture
+//!     -- --ignored --exact \
+//!     si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes \
+//!     --test-threads=1 --nocapture
 //! ```
 //!
 //! The binary is `MOIRAI_E2E_INTERP_NODE_BIN` or `target/debug/examples/model_node`;
 //! a missing one prints `E2E-SKIP si12-r3: <why>` and returns. A skip is not
 //! a pass. `SI12_R3_REPS` (1 to 5) and `SI12_R3_SIZES` (a subset of
 //! `100,300,1000`) shorten the schedule for the control arms only; the run
-//! then prints `"registered": false` and cannot meet the prediction.
+//! then prints `"registered": false` and cannot meet the prediction. The
+//! 5,000-object test, `si12_r4_copy_migration_of_a_5000_element_model_on_three_nodes`,
+//! reads neither; a bare `--ignored` runs both tests, so name the one meant.
+//!
+//! A run that stops before its migration keeps its nodes' log tails in its
+//! line, and an HTTP error carries its sources (a timeout, a connection the
+//! node closed), which round 3's debug-build runs lacked (OB7).
 
 mod si12;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,6 +116,15 @@ mod launch;
 const SIZES: [usize; 3] = [100, 300, 1_000];
 /// The registered repetitions of each case at each size.
 const REPS: usize = 5;
+/// Round 4's observation beyond the claim: one size, five repetitions of
+/// each case.
+const R4_SIZE: usize = 5_000;
+const R4_REPS: usize = 5;
+/// How long one run of the 5,000-object test may take, from before its
+/// nodes start. A run that reaches it is stopped at the wait it is in,
+/// recorded with what it observed until then, and never retried; the runs
+/// of the claim test have no ceiling.
+const RUN_CEILING: Duration = Duration::from_secs(40 * 60);
 /// The generator's seed; each size draws from `SEED ^ size`.
 const SEED: u64 = 0x5112_0003_5112_0003;
 /// Classes per package, associations per package.
@@ -730,6 +754,24 @@ struct Cluster {
     nodes: Vec<Node>,
     scratch: PathBuf,
     http: reqwest::blocking::Client,
+    /// When the run must stop, for a run that has a ceiling.
+    ceiling: Option<Instant>,
+    /// Whether a wait gave up at the ceiling rather than at its own bound.
+    stopped: Cell<bool>,
+}
+
+/// An error and every source under it: `reqwest` names the request in its
+/// own message and keeps the reason (a timeout, a connection the node
+/// closed) in its sources.
+fn with_sources(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        text.push_str(": ");
+        text.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    text
 }
 
 impl Drop for Cluster {
@@ -744,7 +786,7 @@ impl Drop for Cluster {
 
 impl Cluster {
     /// `si12-a` and `si12-b` serve `D1` and `D2`, `si12-c` serves `D1` alone.
-    fn start(binary: &Path, run: &str) -> Result<Self, String> {
+    fn start(binary: &Path, run: &str, ceiling: Option<Instant>) -> Result<Self, String> {
         let scratch =
             std::env::temp_dir().join(format!("moirai-si12-r3-{}-{run}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
@@ -781,10 +823,29 @@ impl Cluster {
                 .timeout(HTTP_TIMEOUT)
                 .build()
                 .map_err(|err| err.to_string())?,
+            ceiling,
+            stopped: Cell::new(false),
         };
         cluster.await_health()?;
         cluster.await_mesh()?;
         Ok(cluster)
+    }
+
+    /// When a wait of `wait` that starts now gives up: after `wait`, or at
+    /// the run's ceiling when that comes first.
+    fn deadline(&self, wait: Duration) -> Instant {
+        let own = Instant::now() + wait;
+        self.ceiling.map_or(own, |ceiling| ceiling.min(own))
+    }
+
+    /// Whether a wait that gave up at `deadline` gave up at the run's
+    /// ceiling; recorded when it did.
+    fn at_ceiling(&self, deadline: Instant) -> bool {
+        let reached = self.ceiling == Some(deadline);
+        if reached {
+            self.stopped.set(true);
+        }
+        reached
     }
 
     fn tails(&self) -> String {
@@ -807,9 +868,15 @@ impl Cluster {
             .http
             .get(self.nodes[node].url(path))
             .send()
-            .map_err(|err| format!("GET {path} on {}: {err}", self.nodes[node].id))?;
+            .map_err(|err| {
+                format!(
+                    "GET {path} on {}: {}",
+                    self.nodes[node].id,
+                    with_sources(&err)
+                )
+            })?;
         let status = response.status().as_u16();
-        let body = response.text().map_err(|err| err.to_string())?;
+        let body = response.text().map_err(|err| with_sources(&err))?;
         Ok((
             status,
             serde_json::from_str(&body).unwrap_or(Value::String(body)),
@@ -823,9 +890,15 @@ impl Cluster {
             .header("Content-Type", "application/json")
             .body(body)
             .send()
-            .map_err(|err| format!("POST {path} on {}: {err}", self.nodes[node].id))?;
+            .map_err(|err| {
+                format!(
+                    "POST {path} on {}: {}",
+                    self.nodes[node].id,
+                    with_sources(&err)
+                )
+            })?;
         let status = response.status().as_u16();
-        let body = response.text().map_err(|err| err.to_string())?;
+        let body = response.text().map_err(|err| with_sources(&err))?;
         Ok((
             status,
             serde_json::from_str(&body).unwrap_or(Value::String(body)),
@@ -870,13 +943,18 @@ impl Cluster {
     }
 
     fn await_mesh(&self) -> Result<(), String> {
-        let deadline = Instant::now() + MESH_TIMEOUT;
+        let deadline = self.deadline(MESH_TIMEOUT);
         loop {
             if (0..self.nodes.len()).all(|node| self.connected(node) + 1 >= self.nodes.len()) {
                 return Ok(());
             }
             if Instant::now() > deadline {
-                return Err(format!("the mesh never formed:\n{}", self.tails()));
+                let when = if self.at_ceiling(deadline) {
+                    " before the run's ceiling"
+                } else {
+                    ""
+                };
+                return Err(format!("the mesh never formed{when}:\n{}", self.tails()));
             }
             std::thread::sleep(POLL);
         }
@@ -969,14 +1047,26 @@ impl Cluster {
 
     /// Post operations in batches of [`BATCH`]; each batch must be applied
     /// whole. A batch answered 504 `expired` was applied nowhere, by the
-    /// route's contract, and is posted again, at most three times.
+    /// route's contract, and is posted again, at most three times. A run
+    /// with a ceiling posts no batch once it is past it.
     fn submit_batches(&self, node: usize, model: &str, ops: &[ModelOp]) -> Result<(), String> {
-        for chunk in ops.chunks(BATCH) {
+        let batches = ops.len().div_ceil(BATCH);
+        for (index, chunk) in ops.chunks(BATCH).enumerate() {
+            let batch = index + 1;
+            if self.ceiling.is_some_and(|ceiling| Instant::now() > ceiling) {
+                self.stopped.set(true);
+                return Err(format!(
+                    "the run reached its ceiling while {} was writing {model}, before batch \
+                     {batch} of {batches}",
+                    self.nodes[node].id
+                ));
+            }
             let body = json!({ "ops": chunk }).to_string();
             let mut expired = 0;
             loop {
-                let (status, answer) =
-                    self.post(node, &format!("/api/model/{model}/ops"), body.clone())?;
+                let (status, answer) = self
+                    .post(node, &format!("/api/model/{model}/ops"), body.clone())
+                    .map_err(|why| format!("batch {batch} of {batches}: {why}"))?;
                 if status == 200 && answer["applied"] == json!(chunk.len()) {
                     break;
                 }
@@ -985,7 +1075,8 @@ impl Cluster {
                     continue;
                 }
                 return Err(format!(
-                    "{} answered a batch of {} on {model} with {status}: {answer}",
+                    "{} answered batch {batch} of {batches}, {} operations, on {model} with \
+                     {status}: {answer}",
                     self.nodes[node].id,
                     chunk.len()
                 ));
@@ -1051,12 +1142,15 @@ impl Cluster {
     /// Poll until `check` holds on every node, or answer the last reason it
     /// did not.
     fn until(&self, what: &str, check: impl Fn(usize) -> Result<(), String>) -> Result<(), String> {
-        let deadline = Instant::now() + CONVERGE_TIMEOUT;
+        let deadline = self.deadline(CONVERGE_TIMEOUT);
         loop {
             let outcome: Result<(), String> = (0..self.nodes.len()).try_for_each(&check);
             match outcome {
                 Ok(()) => return Ok(()),
                 Err(why) if Instant::now() > deadline => {
+                    if self.at_ceiling(deadline) {
+                        return Err(format!("{what}, stopped at the run's ceiling: {why}"));
+                    }
                     return Err(format!(
                         "{what}, not within {} s: {why}",
                         CONVERGE_TIMEOUT.as_secs()
@@ -1202,15 +1296,36 @@ fn refused_edit(
 }
 
 /// Everything up to the migration: the nodes, `m` written on `a` and joined
-/// by `b` and `c` first, and K0. Answers the cluster and `m`.
+/// by `b` and `c` first, and K0. Answers the cluster and `m`. When it stops
+/// once the nodes are up, their log tails go in the run's line: the cluster
+/// is dropped on the way out, and its directory with it.
 fn set_up(
     binary: &Path,
     g: &Generated,
     d1: &Uml,
+    ceiling: Option<Instant>,
     out: &mut Outcome,
 ) -> Result<(Cluster, String), String> {
     let run = format!("{}-{}-{}", out.size, out.case.name(), out.rep);
-    let cluster = Cluster::start(binary, &run).map_err(|why| format!("the nodes: {why}"))?;
+    let cluster =
+        Cluster::start(binary, &run, ceiling).map_err(|why| format!("the nodes: {why}"))?;
+    match write_m(&cluster, g, d1, out) {
+        Ok(m) => Ok((cluster, m)),
+        Err(why) => {
+            out.setup = Some(why.clone());
+            record_nodes(&cluster, out);
+            Err(why)
+        }
+    }
+}
+
+/// `m` created on `a`, joined by `b` and `c`, written on `a`, and K0.
+fn write_m(
+    cluster: &Cluster,
+    g: &Generated,
+    d1: &Uml,
+    out: &mut Outcome,
+) -> Result<String, String> {
     let m = cluster.register(A, None, &digest(D1))?;
     cluster.register(B, Some(&m), &digest(D1))?;
     cluster.register(C, Some(&m), &digest(D1))?;
@@ -1262,14 +1377,28 @@ fn set_up(
     let metrics = cluster.metrics(A, &m)?;
     out.measure("m_ops_applied_on_a", metrics["ops_applied"].clone());
     out.measure("m_delivered_on_a", metrics["delivered_ops"].clone());
-    Ok((cluster, m))
+    Ok(m)
+}
+
+/// What a run records last about its nodes, however it ends once they are
+/// up: their log tails when it did not hold every check or stopped in
+/// set-up, and, for a run with a ceiling, whether the ceiling stopped it.
+fn record_nodes(cluster: &Cluster, out: &mut Outcome) {
+    if cluster.ceiling.is_some() {
+        out.measure("stopped_at_ceiling", json!(cluster.stopped.get()));
+    }
+    if !out.held() {
+        out.measure("node_log_tails", json!(cluster.tails()));
+    }
 }
 
 /// The migrate call on `a`: K1's answer, and the copy's id, read off the
 /// answer or, when the call timed out (504, or no answer), off `a`'s
 /// migration status, where a migration still under way shows once it is
-/// done. Any other answer is a refusal: nothing was written, and the run
-/// stops there.
+/// done; that status is polled for the convergence bound, or until the
+/// run's ceiling in a run that has one, and the time until it names the
+/// copy is `migrated_ms`. Any other answer is a refusal: nothing was
+/// written, and the run stops there.
 fn migrate_on_a(cluster: &Cluster, m: &str, out: &mut Outcome) -> Result<String, String> {
     let started = Instant::now();
     let (status, answer) = cluster
@@ -1293,15 +1422,23 @@ fn migrate_on_a(cluster: &Cluster, m: &str, out: &mut Outcome) -> Result<String,
             return Err(format!("the migrate call answered {status}"));
         }
         _ => {
-            let deadline = Instant::now() + CONVERGE_TIMEOUT;
+            let deadline = cluster
+                .ceiling
+                .unwrap_or_else(|| Instant::now() + CONVERGE_TIMEOUT);
             loop {
                 if let Ok(status) = cluster.migration(A, m)
                     && let Some(copy) = status["migrated_to"].as_str()
                 {
+                    out.ms("migrated_ms", started);
                     break copy.to_string();
                 }
                 if Instant::now() > deadline {
                     out.check("K1", answered);
+                    if cluster.at_ceiling(deadline) {
+                        return Err(
+                            "a named no successor of m before the run's ceiling".to_string()
+                        );
+                    }
                     return Err("a names no successor of m".to_string());
                 }
                 std::thread::sleep(POLL);
@@ -1322,7 +1459,7 @@ fn migrate_on_a(cluster: &Cluster, m: &str, out: &mut Outcome) -> Result<String,
 /// is listed from the moment the cut is.
 fn reported(cluster: &Cluster, m: &str, copy: &str, refused: &[(&str, u64)]) -> Result<(), String> {
     let expected = migrated(copy, refused);
-    let deadline = Instant::now() + CONVERGE_TIMEOUT;
+    let deadline = cluster.deadline(CONVERGE_TIMEOUT);
     loop {
         let mut waiting = None;
         for node in [A, B, C] {
@@ -1353,6 +1490,12 @@ fn reported(cluster: &Cluster, m: &str, copy: &str, refused: &[(&str, u64)]) -> 
         match waiting {
             None => return Ok(()),
             Some(why) if Instant::now() > deadline => {
+                if cluster.at_ceiling(deadline) {
+                    return Err(format!(
+                        "every node names m' and the refused edits, stopped at the run's \
+                         ceiling: {why}"
+                    ));
+                }
                 return Err(format!(
                     "every node names m' and the refused edits, not within {} s: {why}",
                     CONVERGE_TIMEOUT.as_secs()
@@ -1487,7 +1630,21 @@ fn sizes(cluster: &Cluster, copy: &str, cut: (&Value, &Value), out: &mut Outcome
     }
 }
 
-fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
+/// When a run that may take `ceiling` from now must stop, recorded in its
+/// line as `ceiling_s`.
+fn start_ceiling(ceiling: Option<Duration>, out: &mut Outcome) -> Option<Instant> {
+    let ceiling = ceiling?;
+    out.measure("ceiling_s", json!(ceiling.as_secs()));
+    Some(Instant::now() + ceiling)
+}
+
+fn plain_run(
+    binary: &Path,
+    g: &Generated,
+    d1: &Uml,
+    rep: usize,
+    ceiling: Option<Duration>,
+) -> Outcome {
     let mut out = Outcome {
         size: g.size,
         case: Case::Plain,
@@ -1496,7 +1653,8 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
         checks: Vec::new(),
         measures: Map::new(),
     };
-    let (cluster, m) = match set_up(binary, g, d1, &mut out) {
+    let ceiling = start_ceiling(ceiling, &mut out);
+    let (cluster, m) = match set_up(binary, g, d1, ceiling, &mut out) {
         Ok(ready) => ready,
         Err(why) => {
             out.setup = Some(why);
@@ -1507,6 +1665,7 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
         (Ok(doc), Ok(plain)) => (doc, plain),
         (Err(why), _) | (_, Err(why)) => {
             out.setup = Some(format!("a's reads before the cut: {why}"));
+            record_nodes(&cluster, &mut out);
             return out;
         }
     };
@@ -1515,6 +1674,7 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
         Ok(copy) => copy,
         Err(why) => {
             out.check("K6", Err(format!("no copy to read: {why}")));
+            record_nodes(&cluster, &mut out);
             return out;
         }
     };
@@ -1526,7 +1686,7 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
     let agreed = (|| -> Result<(), String> {
         joined?;
         let first = cluster.identified(A, &copy)?;
-        let deadline = Instant::now() + CONVERGE_TIMEOUT;
+        let deadline = cluster.deadline(CONVERGE_TIMEOUT);
         let mut named_everywhere = false;
         loop {
             if !named_everywhere {
@@ -1550,6 +1710,12 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
                 return Ok(());
             }
             if Instant::now() > deadline {
+                if cluster.at_ceiling(deadline) {
+                    return Err(
+                        "the copy was not served equal on every node before the run's ceiling"
+                            .to_string(),
+                    );
+                }
                 return Err(format!(
                     "the copy was not served equal on every node within {} s",
                     CONVERGE_TIMEOUT.as_secs()
@@ -1572,13 +1738,17 @@ fn plain_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
         &mut out,
     );
     sizes(&cluster, &copy, (&cut_doc, &cut_plain), &mut out);
-    if !out.held() {
-        out.measure("node_log_tails", json!(cluster.tails()));
-    }
+    record_nodes(&cluster, &mut out);
     out
 }
 
-fn concurrent_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome {
+fn concurrent_run(
+    binary: &Path,
+    g: &Generated,
+    d1: &Uml,
+    rep: usize,
+    ceiling: Option<Duration>,
+) -> Outcome {
     let mut out = Outcome {
         size: g.size,
         case: Case::Concurrent,
@@ -1587,7 +1757,8 @@ fn concurrent_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome
         checks: Vec::new(),
         measures: Map::new(),
     };
-    let (cluster, m) = match set_up(binary, g, d1, &mut out) {
+    let ceiling = start_ceiling(ceiling, &mut out);
+    let (cluster, m) = match set_up(binary, g, d1, ceiling, &mut out) {
         Ok(ready) => ready,
         Err(why) => {
             out.setup = Some(why);
@@ -1639,6 +1810,7 @@ fn concurrent_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome
         Ok(reads) => reads,
         Err(why) => {
             out.setup = Some(format!("the partition: {why}"));
+            record_nodes(&cluster, &mut out);
             return out;
         }
     };
@@ -1646,6 +1818,7 @@ fn concurrent_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome
         Ok(copy) => copy,
         Err(why) => {
             out.check("K6", Err(format!("no copy to read: {why}")));
+            record_nodes(&cluster, &mut out);
             return out;
         }
     };
@@ -1688,31 +1861,61 @@ fn concurrent_run(binary: &Path, g: &Generated, d1: &Uml, rep: usize) -> Outcome
         &[("si12-b", 1), ("si12-b", 2), ("si12-c", 1)],
         &mut out,
     );
-    let k7 = [A, B, C].into_iter().try_for_each(|node| {
-        for model in [m.as_str(), copy.as_str()] {
-            let doc = cluster.identified(node, model)?;
-            let class = at_path(&doc, &renamed_path);
-            if class["name"] != json!(renamed_name) || class["abstract"] == json!(true) {
-                return Err(format!(
-                    "node {node} serves b's concurrent edit in {model}: {}",
-                    class["name"]
-                ));
+    // K7 reads `m'` on `b` and `c` only once each serves a copy as large as
+    // `a`'s, and waits for that itself, up to the convergence bound: in
+    // round 3 it relied on K6's poll, which a run whose K6 stops earlier
+    // skips (record 487c137). A copy that never arrives is "not yet
+    // present"; one that arrived and serves an edit concurrent with the cut,
+    // or another value, says which.
+    let k7 = (|| -> Result<(), String> {
+        let whole = objects(&cluster.identified(A, &copy)?)?;
+        cluster
+            .until("b and c serve a copy as large as a's (K7)", |node| {
+                if node == A {
+                    return Ok(());
+                }
+                let served = objects(&cluster.identified(node, &copy)?)?;
+                if served == whole {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "node {node} serves {served} of the {whole} objects of a's copy"
+                    ))
+                }
+            })
+            .map_err(|why| format!("copy not yet present: {why}"))?;
+        let edited = json!(format!("{renamed_name}s"));
+        [A, B, C].into_iter().try_for_each(|node| {
+            for model in [m.as_str(), copy.as_str()] {
+                let doc = cluster.identified(node, model)?;
+                let class = at_path(&doc, &renamed_path);
+                if class["name"] == edited || class["abstract"] == json!(true) {
+                    return Err(format!(
+                        "node {node} serves b's concurrent edit in {model}: {}",
+                        class["name"]
+                    ));
+                }
+                if class["name"] != json!(renamed_name) {
+                    return Err(format!(
+                        "node {node} serves {} in {model} for the name of {renamed_name}, \
+                         which is neither its name at the cut nor b's concurrent edit",
+                        class["name"]
+                    ));
+                }
+                let stereotypes = &at_path(&doc, &stereotyped_path)["stereotype"];
+                if stereotypes
+                    .as_array()
+                    .is_some_and(|items| items.contains(&json!("persistent")))
+                {
+                    return Err(format!("node {node} serves c's concurrent edit in {model}"));
+                }
             }
-            let stereotypes = &at_path(&doc, &stereotyped_path)["stereotype"];
-            if stereotypes
-                .as_array()
-                .is_some_and(|items| items.contains(&json!("persistent")))
-            {
-                return Err(format!("node {node} serves c's concurrent edit in {model}"));
-            }
-        }
-        Ok(())
-    });
+            Ok(())
+        })
+    })();
     out.check("K7", k7);
     sizes(&cluster, &copy, (&cut_doc, &cut_plain), &mut out);
-    if !out.held() {
-        out.measure("node_log_tails", json!(cluster.tails()));
-    }
+    record_nodes(&cluster, &mut out);
     out
 }
 
@@ -1784,26 +1987,35 @@ fn same(runs: &[&Outcome], key: &str) -> Value {
     }
 }
 
-/// SI.12 round 3, three nodes, 100 to 1,000 objects.
-#[test]
-#[ignore = "SI.12 round 3 evaluation: 30 runs on fresh model_node processes; run with --ignored"]
-fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
-    let binary = match node_binary() {
-        Ok(binary) => binary,
-        Err(why) => {
-            eprintln!("\nE2E-SKIP si12-r3: {why}");
-            return;
-        }
-    };
-    let (sizes, reps, registered) = schedule();
+/// Whether a run was stopped at its ceiling.
+fn stopped_at_ceiling(run: &Outcome) -> bool {
+    run.measures.get("stopped_at_ceiling") == Some(&json!(true))
+}
+
+/// The runs of `sizes`, `reps` times each, the sizes interleaved and each
+/// size's plain run before its concurrent one, each on three fresh nodes and
+/// each stopped at `ceiling` when one is given; every run's line, then a
+/// summary per size, printed under `tag`. With a ceiling, two runs in a row
+/// stopped at it end the schedule, and the runs not started are counted as
+/// such. Panics, as the claim test always did, when a run did not hold
+/// every check.
+fn evaluate(
+    tag: &str,
+    binary: &Path,
+    sizes: &[usize],
+    reps: usize,
+    registered: bool,
+    ceiling: Option<Duration>,
+) {
     println!(
-        "SI12-R3-SCHEDULE {}",
+        "{tag}-SCHEDULE {}",
         json!({
             "sizes": sizes,
             "reps": reps,
             "runs": sizes.len() * reps * 2,
             "registered": registered,
             "binary": binary.display().to_string(),
+            "ceiling_s": ceiling.map(|ceiling| ceiling.as_secs()),
         })
     );
     let d1 = Uml::new(D1);
@@ -1813,7 +2025,7 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
         let structure = g.structure(&d1).len();
         let links: usize = g.elements.iter().map(|element| element.refs.len()).sum();
         println!(
-            "SI12-R3-MODEL {}",
+            "{tag}-MODEL {}",
             json!({
                 "size": size,
                 "generated": g.elements.len(),
@@ -1825,21 +2037,29 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
             })
         );
     }
-    let mut outcomes = Vec::new();
-    for rep in 0..reps {
-        for size in &sizes {
+    let mut outcomes: Vec<Outcome> = Vec::new();
+    'schedule: for rep in 0..reps {
+        for size in sizes {
             let g = &models[size];
             for case in [Case::Plain, Case::Concurrent] {
+                if ceiling.is_some()
+                    && outcomes.len() >= 2
+                    && outcomes[outcomes.len() - 2..]
+                        .iter()
+                        .all(stopped_at_ceiling)
+                {
+                    break 'schedule;
+                }
                 let outcome = match case {
-                    Case::Plain => plain_run(&binary, g, &d1, rep),
-                    Case::Concurrent => concurrent_run(&binary, g, &d1, rep),
+                    Case::Plain => plain_run(binary, g, &d1, rep, ceiling),
+                    Case::Concurrent => concurrent_run(binary, g, &d1, rep, ceiling),
                 };
-                println!("SI12-R3-RUN {}", outcome.line());
+                println!("{tag}-RUN {}", outcome.line());
                 outcomes.push(outcome);
             }
         }
     }
-    for size in &sizes {
+    for size in sizes {
         let of = |case: Case| -> Vec<&Outcome> {
             outcomes
                 .iter()
@@ -1850,12 +2070,14 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
         let concurrent = of(Case::Concurrent);
         let all: Vec<&Outcome> = plain.iter().chain(concurrent.iter()).copied().collect();
         println!(
-            "SI12-R3-SUMMARY {}",
+            "{tag}-SUMMARY {}",
             json!({
                 "size": size,
                 "plain_runs_every_check": plain.iter().filter(|run| run.held()).count(),
                 "concurrent_runs_every_check": concurrent.iter().filter(|run| run.held()).count(),
+                "migrate_status": same(&all, "migrate_status"),
                 "migrate_ms_plain": spread(&plain, "migrate_ms"),
+                "migrated_ms": spread(&all, "migrated_ms"),
                 "cut_everywhere_ms_plain": spread(&plain, "cut_everywhere_ms"),
                 "agree_ms_plain": spread(&plain, "agree_ms"),
                 "migrate_ms_concurrent": spread(&concurrent, "migrate_ms"),
@@ -1881,7 +2103,7 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
     if let (Some(small), Some(large)) = (bytes(SIZES[0]), bytes(SIZES[2])) {
         let per_element = (large - small) / (SIZES[2] - SIZES[0]) as f64;
         println!(
-            "SI12-R3-EXTRAPOLATION {}",
+            "{tag}-EXTRAPOLATION {}",
             json!({
                 "kind": "linear extrapolation from the cut bytes at 100 and 1,000 objects, not a measurement",
                 "cut_bytes_per_object": per_element,
@@ -1892,13 +2114,19 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
     }
     let completed = outcomes.iter().filter(|run| run.setup.is_none()).count();
     let held = outcomes.iter().filter(|run| run.held()).count();
+    let stopped = outcomes
+        .iter()
+        .filter(|run| stopped_at_ceiling(run))
+        .count();
     println!(
-        "SI12-R3-RESULT {}",
+        "{tag}-RESULT {}",
         json!({
             "registered": registered,
             "runs": outcomes.len(),
+            "not_started": sizes.len() * reps * 2 - outcomes.len(),
             "completed": completed,
             "runs_every_check": held,
+            "stopped_at_ceiling": stopped,
         })
     );
     let failures: Vec<String> = outcomes
@@ -1908,9 +2136,48 @@ fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
         .collect();
     assert!(
         failures.is_empty(),
-        "si12-r3: {} of {} runs did not hold every check:\n{}",
+        "{}: {} of {} runs did not hold every check:\n{}",
+        tag.to_lowercase(),
         failures.len(),
         outcomes.len(),
         failures.join("\n")
+    );
+}
+
+/// SI.12 round 3, three nodes, 100 to 1,000 objects.
+#[test]
+#[ignore = "SI.12 round 3 evaluation: 30 runs on fresh model_node processes; run with --ignored"]
+fn si12_r3_copy_migration_of_100_300_and_1000_element_models_on_three_nodes() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => {
+            eprintln!("\nE2E-SKIP si12-r3: {why}");
+            return;
+        }
+    };
+    let (sizes, reps, registered) = schedule();
+    evaluate("SI12-R3", &binary, &sizes, reps, registered, None);
+}
+
+/// SI.12 round 4, three nodes, 5,000 objects: the claim test's runs and
+/// checks at a size beyond the claim, an observation with its own predicted
+/// outcome (the spec's round 4). Every run is stopped at [`RUN_CEILING`].
+#[test]
+#[ignore = "SI.12 round 4 observation: 10 runs at 5,000 objects on fresh model_node processes; run with --ignored"]
+fn si12_r4_copy_migration_of_a_5000_element_model_on_three_nodes() {
+    let binary = match node_binary() {
+        Ok(binary) => binary,
+        Err(why) => {
+            eprintln!("\nE2E-SKIP si12-r4: {why}");
+            return;
+        }
+    };
+    evaluate(
+        "SI12-R4",
+        &binary,
+        &[R4_SIZE],
+        R4_REPS,
+        true,
+        Some(RUN_CEILING),
     );
 }
