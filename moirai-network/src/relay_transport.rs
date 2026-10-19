@@ -83,6 +83,14 @@ const CHUNK_BYTES: usize = 256 * 1024;
 /// carries the same events (up to about 58,000 of a 5,000-object model).
 const MAX_JOINED_BYTES: usize = 256 * 1024 * 1024;
 
+/// The most every chunked message being joined holds together, whichever
+/// senders they claim to come from: two of the longest.
+const MAX_JOINING_BYTES: usize = 2 * MAX_JOINED_BYTES;
+
+/// The most chunked messages being joined at once, whichever senders they
+/// claim to come from: far more than the replicas of one session.
+const MAX_JOINING_SETS: usize = 256;
+
 /// How long dialling the relay may take.
 ///
 /// Short, and for the same reason the direct dial is: a relay that is down must
@@ -313,13 +321,27 @@ struct Joining {
     count: u32,
     next: u32,
     text: String,
+    /// When a chunk last joined this set, as the joiner's count of chunks
+    /// taken: what the oldest open set is told by.
+    touched: u64,
 }
 
 /// The chunked messages being joined, one per sender: the relay keeps one
 /// sender's frames in order, so a sender has at most one set open.
+///
+/// The `from` of a frame is the sender's own claim, so one relay client can
+/// open sets under many ids. What all open sets hold together is therefore
+/// bounded too, by [`MAX_JOINING_BYTES`]: a chunk that would pass it first
+/// drops the sets left longest without a chunk, and is dropped with its own
+/// set if that is not enough. A set past [`MAX_JOINING_SETS`] likewise
+/// drops the set left longest without a chunk.
 #[derive(Default)]
 struct Joiner {
     open: HashMap<PeerId, Joining>,
+    /// The bytes every open set holds, together.
+    held: usize,
+    /// The chunks taken so far.
+    taken: u64,
 }
 
 impl Joiner {
@@ -334,13 +356,17 @@ impl Joiner {
         count: u32,
         data: String,
     ) -> Option<String> {
+        self.taken += 1;
         if index == 0 {
-            if let Some(dropped) = self.open.remove(from) {
+            if let Some(dropped) = self.drop_set(from) {
                 eprintln!(
                     "[{local_id}] dropping an incomplete chunked message from {from} ({} of {} \
                      chunks)",
                     dropped.next, dropped.count
                 );
+            }
+            while self.open.len() >= MAX_JOINING_SETS {
+                self.drop_oldest(local_id, from);
             }
             self.open.insert(
                 from.clone(),
@@ -349,17 +375,18 @@ impl Joiner {
                     count,
                     next: 0,
                     text: String::new(),
+                    touched: self.taken,
                 },
             );
         }
-        let joining = self.open.get_mut(from)?;
+        let joining = self.open.get(from)?;
         if joining.id != id || joining.next != index || joining.count != count {
             eprintln!(
                 "[{local_id}] dropping an incomplete chunked message from {from}: chunk {index} \
                  of message {id} came when chunk {} of message {} was due",
                 joining.next, joining.id
             );
-            self.open.remove(from);
+            self.drop_set(from);
             return None;
         }
         if joining.text.len() + data.len() > MAX_JOINED_BYTES {
@@ -367,15 +394,67 @@ impl Joiner {
                 "[{local_id}] dropping a chunked message from {from}: it passes {MAX_JOINED_BYTES} \
                  bytes"
             );
-            self.open.remove(from);
+            self.drop_set(from);
             return None;
         }
+        if !self.make_room(local_id, from, data.len()) {
+            eprintln!(
+                "[{local_id}] dropping a chunked message from {from}: the chunked messages \
+                 being joined would hold more than {MAX_JOINING_BYTES} bytes"
+            );
+            self.drop_set(from);
+            return None;
+        }
+        let joining = self.open.get_mut(from)?;
         joining.text.push_str(&data);
         joining.next += 1;
+        joining.touched = self.taken;
+        self.held += data.len();
         if joining.next < joining.count {
             return None;
         }
-        self.open.remove(from).map(|joined| joined.text)
+        self.drop_set(from).map(|joined| joined.text)
+    }
+
+    /// Drop the sets of other senders left longest without a chunk until
+    /// `more` bytes fit under [`MAX_JOINING_BYTES`]; `false` when they do
+    /// not fit even with every other set dropped.
+    fn make_room(&mut self, local_id: &str, from: &PeerId, more: usize) -> bool {
+        while self.held + more > MAX_JOINING_BYTES {
+            if !self.drop_oldest(local_id, from) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Drop the set of a sender other than `from` left longest without a
+    /// chunk; `false` when there is none.
+    fn drop_oldest(&mut self, local_id: &str, from: &PeerId) -> bool {
+        let oldest = self
+            .open
+            .iter()
+            .filter(|(sender, _)| *sender != from)
+            .min_by_key(|(_, joining)| joining.touched)
+            .map(|(sender, _)| sender.clone());
+        let Some(oldest) = oldest else {
+            return false;
+        };
+        if let Some(dropped) = self.drop_set(&oldest) {
+            eprintln!(
+                "[{local_id}] dropping an incomplete chunked message from {oldest} ({} of {} \
+                 chunks) to make room for one from {from}",
+                dropped.next, dropped.count
+            );
+        }
+        true
+    }
+
+    /// Remove `from`'s open set, no longer counting what it held.
+    fn drop_set(&mut self, from: &PeerId) -> Option<Joining> {
+        let dropped = self.open.remove(from)?;
+        self.held -= dropped.text.len();
+        Some(dropped)
     }
 }
 
