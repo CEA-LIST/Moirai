@@ -111,8 +111,9 @@ pub struct ModelLog {
     /// it delivered, the one [`Cut::outranks`] puts first (SI.13, D3).
     #[cfg_attr(feature = "serde", serde(default))]
     cut: Option<Cut>,
-    /// The successors of every other cut this replica delivered, in the
-    /// order it set them aside.
+    /// The successors of every other cut this replica delivered, sorted and
+    /// each once, so that replicas that delivered the same cuts list the
+    /// same array whatever order they set them aside in.
     #[cfg_attr(feature = "serde", serde(default))]
     superseded: Vec<String>,
 }
@@ -313,13 +314,21 @@ impl ModelLog {
             None => self.cut = Some(taken),
             Some(kept) if kept.is(&taken) => self.cut = Some(kept),
             Some(kept) if taken.outranks(&kept) => {
-                self.superseded.push(kept.to);
+                self.set_aside(kept.to);
                 self.cut = Some(taken);
             }
             Some(kept) => {
-                self.superseded.push(taken.to);
+                self.set_aside(taken.to);
                 self.cut = Some(kept);
             }
+        }
+    }
+
+    /// List the successor of a cut set aside under `superseded`, in its
+    /// sorted place, once.
+    fn set_aside(&mut self, successor: String) {
+        if let Err(at) = self.superseded.binary_search(&successor) {
+            self.superseded.insert(at, successor);
         }
     }
 
