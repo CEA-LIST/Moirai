@@ -206,10 +206,7 @@ where
                 let map_op = UWMap::Update(target, op.clone());
                 self.children
                     .is_enabled(&map_op)
-                    .map_err(|error| NestedListRejection::ChildError {
-                        pos: *pos,
-                        error: Box::new(error),
-                    })
+                    .map_err(|error| NestedListRejection::ChildError { pos: *pos, error })
             }
             NestedList::Delete { pos } => {
                 if *pos < positions.len() {

@@ -176,12 +176,6 @@ where
         events.get(index).map(|(event, _)| event)
     }
 
-    /// # Complexity
-    /// Expected `O(N + E)` time and `O(E)` auxiliary space, where:
-    ///
-    /// - `N` is the number of replicas in the system that have issued events.
-    /// - `E` is the number of events newly added to the observer replica's
-    ///   causal past by `observer`.
     fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>> {
         if self.version(observer).is_none() {
             return Vec::new();
@@ -190,6 +184,7 @@ where
         let previous = self.previous(observer, observer.idx()).map(TaggedOp::id);
 
         let mut newly_observed = Vec::new();
+
         for (candidate_origin, events) in &self.store {
             let first = previous
                 .and_then(|event| self.strict_past_seq(event, *candidate_origin))

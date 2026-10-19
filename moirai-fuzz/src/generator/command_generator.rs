@@ -6,7 +6,7 @@ use moirai_protocol::{
     state::{
         cache::{CachedLog, IncrementalCache},
         graph_log::GraphLog,
-        log::{BoxedLog, IsLog},
+        log::IsLog,
         po_log::POLog,
         unstable_state::{IsUnstablePrune, event_graph::EventGraph},
     },
@@ -61,20 +61,17 @@ where
     }
 }
 
-impl<L> CommandGenerator for BoxedLog<L>
-where
-    L: CommandGenerator,
-{
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        Box::new(self.inner().generate_command(rng))
-    }
-}
-
 impl<L> CommandGenerator for CommitmentLog<L>
 where
     L: IsLog + CommandGenerator,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         self.child().generate_command(rng)
+    }
+}
+
+impl<L: CommandGenerator> CommandGenerator for Box<L> {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        (**self).generate_command(rng)
     }
 }

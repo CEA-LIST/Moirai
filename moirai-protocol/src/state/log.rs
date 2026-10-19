@@ -2,10 +2,7 @@ use std::fmt::{Debug, Display};
 
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::effect_context::EffectContext,
 };
@@ -64,28 +61,26 @@ pub trait DefaultSinkExpansion: IsLog {
 
 impl<L: IsLog> DefaultSinkExpansion for L {}
 
-/// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
+/// Explicit indirection for inline recursive logs.
 impl<L: IsLog> IsLog for Box<L> {
-    type Command = Box<L::Command>;
-    type Op = Box<L::Op>;
-    type Rejection = L::Rejection;
+    type Command = L::Command;
+    type Op = L::Op;
+    type Rejection = Box<L::Rejection>;
 
     fn new() -> Self {
         Box::new(L::new())
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {
-        Box::new((**self).prepare(*command))
+        (**self).prepare(command)
     }
 
     fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        (**self).is_enabled(op)
+        (**self).is_enabled(op).map_err(Box::new)
     }
 
     fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        let inner_op = *event.op().clone();
-        let inner_event = event.unfold(inner_op);
-        (**self).effect(inner_event, ctx);
+        (**self).effect(event, ctx);
     }
 
     fn stabilize(&mut self, frontier: &CausalFrontier) {
@@ -98,78 +93,5 @@ impl<L: IsLog> IsLog for Box<L> {
 
     fn is_default(&self) -> bool {
         (**self).is_default()
-    }
-}
-
-/// Log adapter that preserves indirection in read responses.
-///
-/// `Box<L>` is a transparent log wrapper. Use `BoxedLog<L>` when recursive
-/// generated log types need `Read<V>` to produce `Box<V>`.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub struct BoxedLog<L: IsLog>(Box<L>);
-
-impl<L: IsLog> BoxedLog<L> {
-    pub fn inner(&self) -> &L {
-        &self.0
-    }
-
-    pub fn inner_mut(&mut self) -> &mut L {
-        &mut self.0
-    }
-
-    pub fn into_inner(self) -> Box<L> {
-        self.0
-    }
-}
-
-impl<L: IsLog> Default for BoxedLog<L> {
-    fn default() -> Self {
-        Self(Box::default())
-    }
-}
-
-impl<L: IsLog> IsLog for BoxedLog<L> {
-    type Command = Box<L::Command>;
-    type Op = Box<L::Op>;
-    type Rejection = Box<L::Rejection>;
-
-    fn new() -> Self {
-        Self(Box::new(L::new()))
-    }
-
-    fn prepare(&self, command: Self::Command) -> Self::Op {
-        Box::new(self.0.as_ref().prepare(*command))
-    }
-
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        self.0.as_ref().is_enabled(op.as_ref()).map_err(Box::new)
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        let inner_op = *event.op().clone();
-        let inner_event = event.unfold(inner_op);
-        self.0.as_mut().effect(inner_event, ctx);
-    }
-
-    fn stabilize(&mut self, frontier: &CausalFrontier) {
-        self.0.as_mut().stabilize(frontier);
-    }
-
-    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.0.as_mut().redundant_by_parent(version, conservative);
-    }
-
-    fn is_default(&self) -> bool {
-        self.0.as_ref().is_default()
-    }
-}
-
-impl<L, V> EvalNested<Read<Box<V>>> for BoxedLog<L>
-where
-    L: IsLog + EvalNested<Read<V>>,
-{
-    fn execute_query(&self, _q: &Read<Box<V>>) -> Box<V> {
-        Box::new(self.0.as_ref().execute_query(&Read::new()))
     }
 }

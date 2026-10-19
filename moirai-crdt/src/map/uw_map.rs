@@ -80,7 +80,7 @@ where
 {
     type Command = UWMap<K, L::Op>;
     type Op = UWMap<K, L::Op>;
-    type Rejection = L::Rejection;
+    type Rejection = Box<L::Rejection>;
 
     fn new() -> Self {
         Self::default()
@@ -163,7 +163,7 @@ where
             UWMap::Update(k, v) => self
                 .children
                 .get(k)
-                .map_or_else(|| Ok(()), |child| child.is_enabled(v)),
+                .map_or_else(|| Ok(()), |child| child.is_enabled(v).map_err(Box::new)),
             UWMap::Remove(_) | UWMap::Clear => Ok(()),
         }
     }

@@ -431,6 +431,7 @@ mod tests {
 
         let replica_zero =
             MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
+
         let run = RunConfig::new(
             ChurnConfig::new(0.4, 0.6),
             8,
@@ -477,7 +478,7 @@ mod tests {
         let run = RunConfig::new(
             ChurnConfig::new(0.4, 0.6),
             8,
-            1_000_000,
+            10_000,
             None,
             Some(
                 parse_hex_seed(
@@ -489,6 +490,7 @@ mod tests {
         .with_response_time(replica_zero.clone())
         .with_effect_time(replica_zero.clone())
         .with_log_size(replica_zero.clone())
+        .with_replica_size(replica_zero.clone())
         .without_log_stabilization();
 
         let config = FuzzerConfig::<Log, Read<HashSet<usize>>>::new(

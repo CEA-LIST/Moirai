@@ -4,12 +4,7 @@ use deepsize::DeepSizeOf;
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
     crdt::replicated_data_type::ReplicatedDataType,
-    state::{
-        cache::CachedLog,
-        graph_log::GraphLog,
-        log::{BoxedLog, IsLog},
-        po_log::POLog,
-    },
+    state::{cache::CachedLog, graph_log::GraphLog, log::IsLog, po_log::POLog},
 };
 use serde::{Deserialize, Serialize};
 
@@ -121,22 +116,8 @@ where
     }
 }
 
-impl<L> LogFootprint for BoxedLog<L>
-where
-    L: IsLog + LogFootprint,
-    BoxedLog<L>: DeepSizeOf,
-{
+impl<L: LogFootprint + DeepSizeOf> LogFootprint for Box<L> {
     fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(self, vec![self.inner().footprint()])
-    }
-}
-
-impl<L> LogFootprint for Box<L>
-where
-    L: IsLog + LogFootprint,
-    Box<L>: DeepSizeOf,
-{
-    fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(self, vec![self.as_ref().footprint()])
+        FootprintNode::parent(self, vec![(**self).footprint()])
     }
 }

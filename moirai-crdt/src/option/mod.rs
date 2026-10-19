@@ -15,6 +15,7 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
+    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -24,6 +25,26 @@ use rand::RngExt;
 pub enum Optional<O> {
     Set(O),
     Unset,
+}
+
+// Optional operations embed their payload inline, just like list/map updates.
+// Convert only the payload; Unset never allocates.
+impl<O> Boxer<Optional<O>> for Optional<Box<O>> {
+    fn boxer(self) -> Optional<O> {
+        match self {
+            Self::Set(op) => Optional::Set(*op),
+            Self::Unset => Optional::Unset,
+        }
+    }
+}
+
+impl<O> Boxer<Optional<Box<O>>> for Optional<O> {
+    fn boxer(self) -> Optional<Box<O>> {
+        match self {
+            Self::Set(op) => Optional::Set(Box::new(op)),
+            Self::Unset => Optional::Unset,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

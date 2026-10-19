@@ -133,6 +133,13 @@ pub struct SupportDelta {
 }
 
 /// Computes only the positive support relationships decided by one delivered observer event.
+///
+/// # Complexity
+///
+/// Expected time is `O(N + E * H)`, where:
+/// - `N` is the number of replicas,
+/// - `E` is the number of newly observed candidates,
+/// - `H` is the number of stored events from the observer's replica.
 #[derive(Debug, Clone)]
 pub struct NewSupports {
     observer: EventId,

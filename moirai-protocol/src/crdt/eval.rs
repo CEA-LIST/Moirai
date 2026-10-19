@@ -1,6 +1,6 @@
 use crate::{
     crdt::{
-        query::{QueryOperation, ReadStable},
+        query::{QueryOperation, Read, ReadStable},
         replicated_data_type::ReplicatedDataType,
     },
     state::log::IsLog,
@@ -34,12 +34,13 @@ where
     fn execute_query(&self, q: &Q) -> Q::Response;
 }
 
-impl<L, Q> EvalNested<Q> for Box<L>
+/// Reading an explicitly boxed child preserves that indirection in its value.
+/// Collection logs can still read unboxed children without allocating per value.
+impl<L, V> EvalNested<Read<Box<V>>> for Box<L>
 where
-    Q: QueryOperation,
-    L: IsLog + EvalNested<Q>,
+    L: EvalNested<Read<V>>,
 {
-    fn execute_query(&self, q: &Q) -> Q::Response {
-        (**self).execute_query(q)
+    fn execute_query(&self, _q: &Read<Box<V>>) -> Box<V> {
+        Box::new((**self).execute_query(&Read::<V>::new()))
     }
 }
