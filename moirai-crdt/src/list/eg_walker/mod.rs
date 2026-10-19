@@ -1,12 +1,17 @@
+//! Positional list replay with update-wins membership.
+//!
+//! `GraphLog::stabilize` folds the largest causally stable critical prefix into
+//! the snapshot: every retained event must observe the entire discarded prefix.
+//! `ReadAt` returns `HistoryCompacted` for versions before or concurrent with the
+//! resulting retention boundary. Save and restore that boundary with the snapshot.
+
 mod causal_cursor;
 mod document;
 mod item;
 mod presence_state;
+mod replay;
 
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -15,28 +20,20 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::Eval,
         query::{QueryOperation, Read},
         redundancy::RedundancyRelation,
         replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
     },
-    event::{id::EventId, tagged_op::TaggedOp},
-    state::{
-        cache::IncrementalCache,
-        stable_state::IsStableState,
-        unstable_state::{CausalReplay, IsUnstableCore},
-    },
+    event::tagged_op::TaggedOp,
+    state::{cache::IncrementalCache, stable_state::IsStableState, unstable_state::CausalReplay},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use crate::list::eg_walker::{
-    causal_cursor::transition,
-    document::Document,
-    item::{ItemId, LifeDot},
-};
+use replay::replay_document;
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
@@ -54,14 +51,6 @@ pub enum List<V> {
     /// delete can only remove life dots it observed, so an unseen update dot keeps
     /// the item visible.
     Update { pos: usize },
-}
-
-#[derive(Clone, Debug)]
-struct DeleteEffect {
-    item_id: ItemId,
-    // A delete removes exactly the dots that were visible in its parent context.
-    // Capturing them once avoids any reachability query during advance/retreat.
-    removed_dots: Vec<LifeDot>,
 }
 
 impl<V> List<V>
@@ -84,184 +73,28 @@ where
         Self::Update { pos }
     }
 
-    /// Move the prepare view backwards across `event_id`.
-    ///
-    /// During replay, consecutive events can have different parent versions. To
-    /// interpret the next event, EgWalker first retreats prepare-state effects
-    /// that are present in the current version but absent from the next event's
-    /// parents. The effect view is intentionally untouched.
-    fn retreat<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
-    where
-        U: IsUnstableCore<List<V>>,
-    {
-        match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => {
-                let item_id = ItemId::event(event_id.clone());
-                let life_dot = LifeDot::event(event_id.clone());
-                if let Some(item_idx) = doc.position_of(&item_id) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.retreat_insert(&life_dot);
-                }
-            }
-            List::Update { .. } => {
-                let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(item_idx) = doc.position_of(target) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.retreat_update(&LifeDot::event(event_id.clone()));
-                }
-            }
-            List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
-
-                for effect in targets.iter() {
-                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
-                        let item = doc.item_mut(item_idx).unwrap();
-                        item.retreat_delete(&effect.removed_dots);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Move the prepare view forwards across `event_id`.
-    ///
-    /// This is the inverse of `retreat`: it reapplies prepare-state effects that
-    /// are needed to reach the next event's parent version. The effect view remains
-    /// the final accumulated replay result.
-    fn advance<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
-    where
-        U: IsUnstableCore<List<V>>,
-    {
-        match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => {
-                let item_id = ItemId::event(event_id.clone());
-                let life_dot = LifeDot::event(event_id.clone());
-                if let Some(item_idx) = doc.position_of(&item_id) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.advance_insert(life_dot);
-                }
-            }
-            List::Update { .. } => {
-                let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(item_idx) = doc.position_of(target) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.advance_update(LifeDot::event(event_id.clone()));
-                }
-            }
-            List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
-
-                for effect in targets.iter() {
-                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
-                        let item = doc.item_mut(item_idx).unwrap();
-                        item.advance_delete(&effect.removed_dots);
-                    }
-                }
-            }
-        }
-    }
-
-    fn delete_visible_item(doc: &mut Document<V>, pos: usize) -> Option<DeleteEffect> {
-        let idx = doc.visible_item_at(pos)?;
-        let item = doc.item_mut(idx).unwrap();
-        let removed_dots = item.apply_delete();
-        Some(DeleteEffect {
-            item_id: item.id.clone(),
-            removed_dots,
-        })
-    }
-
-    /// Apply one event after the prepare view has been moved to its parent version.
-    ///
-    /// Positional indices are interpreted against `prepare`. The operation also
-    /// updates `effect`, which is the state eventually materialized by reads.
-    fn apply(doc: &mut Document<V>, tagged_op: &TaggedOp<List<V>>) {
-        match tagged_op.op() {
-            List::Delete { pos } => {
-                let Some(effect) = Self::delete_visible_item(doc, *pos) else {
-                    debug_assert!(false, "No visible item found at position {pos}");
-                    return;
-                };
-                doc.delete_targets
-                    .insert(tagged_op.id().clone(), Arc::from([effect]));
-            }
-            List::DeleteRange { start, len } => {
-                let mut effects = Vec::new();
-
-                for _ in 0..*len {
-                    let Some(effect) = Self::delete_visible_item(doc, *start) else {
-                        return;
-                    };
-                    effects.push(effect);
-                }
-
-                doc.delete_targets
-                    .insert(tagged_op.id().clone(), effects.into());
-            }
-            List::Update { pos } => {
-                let Some(idx) = doc.visible_item_at(*pos) else {
-                    debug_assert!(false, "No visible item found at position {pos}");
-                    return;
-                };
-
-                let item_id = {
-                    let item = doc.item_mut(idx).unwrap();
-                    // Updating an existing element adds a fresh life dot for the same identity.
-                    // If concurrent with a delete, that dot is not part of the delete effect.
-                    let update_dot = LifeDot::event(tagged_op.id().clone());
-                    item.apply_update(update_dot);
-                    item.id.clone()
-                };
-                doc.update_targets.insert(tagged_op.id().clone(), item_id);
-            }
-            List::Insert { content, pos } => {
-                doc.insert_event(tagged_op.id().clone(), content.clone(), *pos);
-            }
-        }
-    }
-
-    fn replay_document<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Document<'a, V>
-    where
-        U: CausalReplay<List<V>> + 'a,
-        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
-        V: 'a,
-    {
-        let mut document = Document::new(stable);
-
-        for tagged_op in events {
-            let parents = unstable.direct_predecessors(tagged_op.id());
-            let transition = transition(unstable, document.prepared_head.as_ref(), &parents);
-
-            for event_id in transition.retreat {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in transition.advance {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op);
-            document.prepared_head = Some(tagged_op.id().clone());
-        }
-
-        document
-    }
-
-    /// Replay an event stream and materialize its final effect view.
-    fn replay<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Vec<V>
-    where
-        U: CausalReplay<List<V>> + 'a,
-        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
-        V: 'a,
-    {
-        Self::replay_document(stable, unstable, events).materialize()
-    }
-
     fn visible_len<U>(stable: &[V], unstable: &U) -> usize
     where
         U: CausalReplay<List<V>>,
     {
-        Self::replay_document(stable, unstable, unstable.iter()).visible_len()
+        replay_document(stable, unstable, unstable.iter()).visible_len()
+    }
+}
+
+impl<V> List<V> {
+    /// Apply an already-sequential operation to a materialized snapshot or cache.
+    /// Concurrent operations must go through causal replay first.
+    fn apply_sequential(self, value: &mut Vec<V>) {
+        match self {
+            Self::Insert { content, pos } => value.insert(pos, content),
+            Self::Delete { pos } => {
+                value.remove(pos);
+            }
+            Self::DeleteRange { start, len } => {
+                value.drain(start..start + len);
+            }
+            Self::Update { .. } => {}
+        }
     }
 }
 
@@ -293,6 +126,8 @@ where
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
+    // Per-operation folding is unsafe for positional operations. GraphLog uses
+    // the whole-prefix checkpoint hook instead.
     const DISABLE_STABILIZE: bool = true;
 }
 
@@ -301,6 +136,14 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
+    fn checkpoint(
+        stable: &Self::StableState,
+        unstable: &U,
+        prefix_len: usize,
+    ) -> Option<Self::StableState> {
+        Some(replay_document(stable, unstable, unstable.iter().take(prefix_len)).materialize())
+    }
+
     /// Validate positional operations against the current visible document.
     ///
     /// EgWalker operations store user-facing positions, so enablement is checked by
@@ -349,8 +192,10 @@ where
         if !conservative {
             return CausalReset::Prune;
         }
+        check_retained(version, unstable.retention_boundary())
+            .expect("Eg-Walker invariant: causal reset predates retained history");
         let predecessors = unstable.predecessors(version);
-        let len = Self::replay_document(stable, unstable, predecessors).visible_len();
+        let len = replay_document(stable, unstable, predecessors).visible_len();
         CausalReset::Inject(vec![List::DeleteRange { start: 0, len }])
     }
 }
@@ -361,7 +206,7 @@ where
     U: CausalReplay<Self>,
 {
     fn execute_query(_q: &Read<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
-        Self::replay(stable, unstable, unstable.iter())
+        replay_document(stable, unstable, unstable.iter()).materialize()
     }
 }
 
@@ -381,18 +226,7 @@ where
     V: Clone,
 {
     fn apply(&mut self, op: &List<V>) {
-        match op {
-            List::Insert { content, pos } => {
-                self.insert(*pos, content.clone());
-            }
-            List::Delete { pos } => {
-                self.remove(*pos);
-            }
-            List::DeleteRange { start, len } => {
-                self.drain(*start..*start + *len);
-            }
-            List::Update { .. } => {}
-        }
+        op.clone().apply_sequential(self);
     }
 }
 
@@ -400,6 +234,8 @@ where
 ///
 /// The unstable log supplies the predecessor events for the requested version,
 /// and the same replay algorithm is used on that restricted stream.
+/// Returns `HistoryCompacted` if the version does not include the checkpoint.
+/// Versions must use this replica's local index mapping.
 pub struct ReadAt<V> {
     version: Version,
     _marker: std::marker::PhantomData<V>,
@@ -415,7 +251,7 @@ impl<V> ReadAt<V> {
 }
 
 impl<V> QueryOperation for ReadAt<V> {
-    type Response = V;
+    type Response = Result<V, HistoryCompacted>;
 
     #[cfg(feature = "test_utils")]
     fn name() -> &'static str {
@@ -433,10 +269,46 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn execute_query(q: &ReadAt<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
+    fn execute_query(
+        q: &ReadAt<Vec<V>>,
+        stable: &Self::StableState,
+        unstable: &U,
+    ) -> Result<Vec<V>, HistoryCompacted> {
+        check_retained(&q.version, unstable.retention_boundary())?;
         let predecessors = unstable.predecessors(&q.version);
-        Self::replay(stable, unstable, predecessors)
+        Ok(replay_document(stable, unstable, predecessors).materialize())
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryCompacted {
+    pub boundary: CausalFrontier,
+}
+
+impl Display for HistoryCompacted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "history before or concurrent with checkpoint {} has been compacted",
+            self.boundary
+        )
+    }
+}
+
+impl std::error::Error for HistoryCompacted {}
+
+fn check_retained(
+    version: &Version,
+    boundary: Option<&CausalFrontier>,
+) -> Result<(), HistoryCompacted> {
+    if let Some(boundary) = boundary
+        && !version.includes_frontier(boundary)
+    {
+        return Err(HistoryCompacted {
+            boundary: boundary.clone(),
+        });
+    }
+    Ok(())
 }
 
 impl<V> IsStableState<List<V>> for Vec<V>
@@ -454,16 +326,7 @@ where
     /// Unstable replay then starts from this state and interprets only the remaining
     /// events.
     fn apply(&mut self, value: List<V>) {
-        match value {
-            List::Insert { content, pos } => self.insert(pos, content),
-            List::Delete { pos } => {
-                self.remove(pos);
-            }
-            List::DeleteRange { start, len } => {
-                self.drain(start..start + len);
-            }
-            List::Update { .. } => {}
-        }
+        value.apply_sequential(self);
     }
 
     fn clear(&mut self) {
@@ -544,3 +407,6 @@ where
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod flushing_tests;

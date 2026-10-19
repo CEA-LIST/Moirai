@@ -72,7 +72,7 @@ impl PreparePresence {
             Some(_) => {
                 self.delete_counts.remove(dot);
             }
-            None => {}
+            None => panic!("Eg-Walker invariant: no active delete for life dot {dot:?}"),
         }
     }
 }

@@ -1,17 +1,20 @@
-use std::sync::Arc;
-
 use moirai_protocol::event::id::EventId;
 
 use crate::{
     HashMap,
-    list::eg_walker::{
-        DeleteEffect,
-        item::{Item, ItemId},
-    },
+    list::eg_walker::item::{Item, ItemId},
 };
 
+#[derive(Clone, Copy)]
+enum PositionKind {
+    /// A gap before, between, or after visible items; no item is materialized.
+    Boundary,
+    /// A visible item, materialized if it is still inside a stable range.
+    Item,
+}
+
 #[derive(Debug)]
-pub enum Record<V> {
+enum Record<V> {
     /// Contiguous part of the stable state that has not been touched by unstable ops.
     ///
     /// This is the placeholder used by the partial-replay design: stable content
@@ -23,6 +26,13 @@ pub enum Record<V> {
 }
 
 impl<V> Record<V> {
+    fn prepared_len(&self) -> usize {
+        match self {
+            Self::StableRange { start, end } => end - start,
+            Self::Item(item) => usize::from(item.prepare.is_visible()),
+        }
+    }
+
     /// Can this record be used as an insertion anchor?
     ///
     /// Retreated insertions are still in the sequence but are not integrated in the
@@ -59,20 +69,14 @@ impl<V> Record<V> {
 #[derive(Debug)]
 pub struct Document<'a, V> {
     /// Stable baseline stored outside the unstable event graph.
-    pub stable: &'a [V],
+    stable: &'a [V],
     /// Replay sequence mixing compressed stable ranges and concrete item records.
-    pub records: Vec<Record<V>>,
-    /// Event whose causal state is currently represented by `prepare`.
-    pub prepared_head: Option<EventId>,
-    /// Key = update op id, value = item updated by that op.
-    pub update_targets: HashMap<EventId, ItemId>,
-    /// Key = delete op id, value = item/dots removed by that op.
-    pub delete_targets: HashMap<EventId, Arc<[DeleteEffect]>>,
+    records: Vec<Record<V>>,
     /// Concrete item identity to record index.
     ///
     /// Stable items that are still inside a `StableRange` are located by scanning
     /// ranges in `position_of`; only materialized `Item` records live in this map.
-    pub items_by_idx: HashMap<ItemId, usize>,
+    items_by_idx: HashMap<ItemId, usize>,
 }
 
 impl<'a, V> Document<'a, V> {
@@ -84,9 +88,6 @@ impl<'a, V> Document<'a, V> {
         let mut document = Self {
             stable,
             records: Vec::new(),
-            prepared_head: None,
-            update_targets: HashMap::default(),
-            delete_targets: HashMap::default(),
             items_by_idx: HashMap::default(),
         };
         if !stable.is_empty() {
@@ -99,7 +100,7 @@ impl<'a, V> Document<'a, V> {
     }
 
     /// Rebuild the item-to-record index after a splice or insertion.
-    pub fn rebuild_index(&mut self) {
+    fn rebuild_index(&mut self) {
         self.items_by_idx.clear();
         for (idx, record) in self.records.iter().enumerate() {
             if let Record::Item(item) = record {
@@ -112,7 +113,7 @@ impl<'a, V> Document<'a, V> {
     ///
     /// Materialized items are looked up through `items_by_idx`. Stable identities
     /// may still be compressed in a range, so they also need a range lookup.
-    pub fn position_of(&self, id: &ItemId) -> Option<usize> {
+    fn position_of(&self, id: &ItemId) -> Option<usize> {
         if let Some(idx) = self.items_by_idx.get(id) {
             return Some(*idx);
         }
@@ -135,76 +136,25 @@ impl<'a, V> Document<'a, V> {
     }
 
     /// Borrow the concrete item at `idx`, if the record is materialized.
-    pub fn item_mut(&mut self, idx: usize) -> Option<&mut Item<V>> {
+    fn item_mut(&mut self, idx: usize) -> Option<&mut Item<V>> {
         match self.records.get_mut(idx) {
             Some(Record::Item(item)) => Some(item),
             _ => None,
         }
     }
 
-    /// Split a stable range at a visible-position boundary.
-    ///
-    /// This is enough for insertion: inserting at a position inside stable content
-    /// only needs a boundary between two ranges, not a materialized stable item.
-    pub fn split_stable_range_at_boundary(&mut self, idx: usize, offset: usize) -> usize {
-        let (start, end) = match self.records[idx] {
-            Record::StableRange { start, end } => (start, end),
-            Record::Item(_) => return idx,
-        };
-
-        let len = end - start;
-        debug_assert!(offset <= len);
-
-        if offset == 0 {
-            return idx;
-        }
-        if offset == len {
-            return idx + 1;
-        }
-
-        self.records.splice(
-            idx..=idx,
-            [
-                Record::StableRange {
-                    start,
-                    end: start + offset,
-                },
-                Record::StableRange {
-                    start: start + offset,
-                    end,
-                },
-            ],
-        );
-        self.rebuild_index();
-        idx + 1
+    /// Journaled targets are always concrete items and remain in the sequence.
+    pub fn item_by_id_mut(&mut self, id: &ItemId) -> &mut Item<V> {
+        let idx = *self
+            .items_by_idx
+            .get(id)
+            .unwrap_or_else(|| panic!("Eg-Walker invariant: missing journal target {id:?}"));
+        self.item_mut(idx)
+            .expect("journal target must be materialized")
     }
 
-    /// Find the record boundary for a visible insertion position.
-    pub fn insertion_point(&mut self, target_pos: usize) -> usize {
-        let mut visible_pos = 0usize;
-        let mut record_idx = 0usize;
-
-        while record_idx < self.records.len() {
-            if visible_pos == target_pos {
-                return record_idx;
-            }
-
-            match &self.records[record_idx] {
-                Record::StableRange { start, end } => {
-                    let len = end - start;
-                    if visible_pos + len >= target_pos {
-                        return self
-                            .split_stable_range_at_boundary(record_idx, target_pos - visible_pos);
-                    }
-                    visible_pos += len;
-                }
-                Record::Item(item) if item.prepare.is_visible() => visible_pos += 1,
-                Record::Item(_) => {}
-            }
-            record_idx += 1;
-        }
-
-        record_idx
+    pub fn prepared_len(&self) -> usize {
+        self.records.iter().map(Record::prepared_len).sum()
     }
 
     fn previous_integrated_id(&self, idx: usize) -> Option<ItemId> {
@@ -282,39 +232,30 @@ impl<'a, V> Document<'a, V>
 where
     V: Clone,
 {
-    /// Find and materialize the visible item at `target_pos`.
-    pub fn visible_item_at(&mut self, target_pos: usize) -> Option<usize> {
-        let mut visible_pos = 0usize;
-        let mut record_idx = 0usize;
-
-        while record_idx < self.records.len() {
-            match &self.records[record_idx] {
-                Record::StableRange { start, end } => {
-                    let len = end - start;
-                    if target_pos < visible_pos + len {
-                        return Some(
-                            self.isolate_stable_item(record_idx, target_pos - visible_pos),
-                        );
-                    }
-                    visible_pos += len;
-                }
-                Record::Item(item) if item.prepare.is_visible() => {
-                    if visible_pos == target_pos {
-                        return Some(record_idx);
-                    }
-                    visible_pos += 1;
-                }
-                Record::Item(_) => {}
+    /// Find a prepared position. Boundaries stop before following invisible
+    /// records; item lookup skips them. That distinction preserves insert anchors.
+    fn locate(&mut self, mut pos: usize, kind: PositionKind) -> Option<usize> {
+        for idx in 0..self.records.len() {
+            let len = self.records[idx].prepared_len();
+            if pos < len || (matches!(kind, PositionKind::Boundary) && pos == len) {
+                return Some(self.split_stable_range(idx, pos, kind));
             }
-            record_idx += 1;
+            pos -= len;
         }
+        (matches!(kind, PositionKind::Boundary) && pos == 0).then_some(self.records.len())
+    }
 
-        None
+    /// Find and materialize a visible item in the prepared version.
+    pub fn visible_item_at(&mut self, pos: usize) -> Option<&mut Item<V>> {
+        let idx = self.locate(pos, PositionKind::Item)?;
+        self.item_mut(idx)
     }
 
     /// Insert an event-backed item at a visible position.
     pub fn insert_event(&mut self, event_id: EventId, content: V, target_pos: usize) {
-        let idx = self.insertion_point(target_pos);
+        let idx = self
+            .locate(target_pos, PositionKind::Boundary)
+            .expect("insert position must be within the prepared document");
 
         debug_assert!(
             idx == 0 || self.records[idx - 1].is_integrated(),
@@ -330,41 +271,43 @@ where
         self.integrate(item, idx);
     }
 
-    /// Replace one stable element inside a range by a concrete `Item`.
-    ///
-    /// Deletes and updates need item-level prepare/effect state, so a stable
-    /// element is isolated lazily the first time an unstable op targets it.
-    pub fn isolate_stable_item(&mut self, idx: usize, offset: usize) -> usize {
+    /// Split only as much stable content as needed: a boundary creates two
+    /// ranges, while an item creates up to two ranges around a concrete record.
+    fn split_stable_range(&mut self, idx: usize, offset: usize, kind: PositionKind) -> usize {
         let (start, end) = match self.records[idx] {
             Record::StableRange { start, end } => (start, end),
-            Record::Item(_) => return idx,
+            Record::Item(_) => return idx + offset,
         };
-
         let stable_idx = start + offset;
-        debug_assert!(stable_idx < end);
+        if matches!(kind, PositionKind::Boundary) && (offset == 0 || stable_idx == end) {
+            return idx + usize::from(offset > 0);
+        }
 
-        let mut replacement = Vec::new();
+        let mut replacement = Vec::with_capacity(3);
         if start < stable_idx {
             replacement.push(Record::StableRange {
                 start,
                 end: stable_idx,
             });
         }
-        replacement.push(Record::Item(Item::new_stable(
-            stable_idx,
-            self.stable[stable_idx].clone(),
-        )));
-        let item_idx = idx + usize::from(start < stable_idx);
-        if stable_idx + 1 < end {
+        let result_idx = idx + replacement.len();
+        let mut right_start = stable_idx;
+        if matches!(kind, PositionKind::Item) {
+            replacement.push(Record::Item(Item::new_stable(
+                stable_idx,
+                self.stable[stable_idx].clone(),
+            )));
+            right_start += 1;
+        }
+        if right_start < end {
             replacement.push(Record::StableRange {
-                start: stable_idx + 1,
+                start: right_start,
                 end,
             });
         }
-
         self.records.splice(idx..=idx, replacement);
         self.rebuild_index();
-        item_idx
+        result_idx
     }
 
     /// Convert the replay document into the user-visible list value.

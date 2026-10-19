@@ -9,12 +9,7 @@ use std::{
 use bimap::BiMap;
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-use petgraph::{
-    Direction,
-    graph::NodeIndex,
-    prelude::StableDiGraph,
-    visit::{Dfs, Visitable},
-};
+use petgraph::{Direction, algo::toposort, graph::NodeIndex, prelude::StableDiGraph};
 
 use crate::{
     clock::{
@@ -26,7 +21,7 @@ use crate::{
     state::unstable_state::{
         IsUnstableCausal, IsUnstableCore, IsUnstableDelivery, IsUnstablePrune,
     },
-    utils::hashmap::HashSet,
+    utils::hashmap::{HashMap, HashSet},
 };
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -35,7 +30,9 @@ pub struct EventGraph<O> {
     /// Directed Acyclic Graph (DAG) of update events.
     /// - Vertices are update operations tagged with their event id.
     /// - Arcs are direct causal predecessor relationships between events,
-    ///   i.e., a directed edge from event A to event B indicates that A is a direct causal predecessor of B.
+    ///   Edges point from a child to its direct causal parents.
+    /// Nodes are dense and stored in topological replay order. Every pruning
+    /// operation rebuilds the graph, so appends cannot reuse earlier slots.
     graph: StableDiGraph<TaggedOp<O>, ()>,
     /// Bidirectional map from graph's node index to event id
     map: BiMap<NodeIndex, EventId>,
@@ -43,13 +40,27 @@ pub struct EventGraph<O> {
     heads: HashSet<EventId>,
     /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
     cutter: Cutter,
+    /// Events at or before this cut have been folded into the stable snapshot.
+    retention_boundary: Option<CausalFrontier>,
 }
 
 impl<O> IsUnstableCore<O> for EventGraph<O>
 where
     O: Debug + Clone,
 {
+    fn retention_boundary(&self) -> Option<&CausalFrontier> {
+        self.retention_boundary.as_ref()
+    }
+
     fn append(&mut self, event: Event<O>) {
+        if let Some(boundary) = &self.retention_boundary {
+            assert!(
+                !boundary.contains(event.id()) && event.version().includes_frontier(boundary),
+                "EventGraph invariant: event {} predates checkpoint {}; state transfer is required",
+                event.id(),
+                boundary
+            );
+        }
         let new_tagged_op = TaggedOp::from(&event);
         // Find the immediate predecessors
         let immediate_parents = self.find_immediate_predecessors(event.version());
@@ -110,31 +121,8 @@ where
     where
         O: Clone,
     {
-        // TODO: stop earlier! the current implementation walks the whole graph
-        let start_nodes: Vec<NodeIndex> = self
-            .heads
-            .iter()
-            .map(|id| *self.map.get_by_right(id).unwrap())
-            .collect();
-
-        let mut collected = Vec::new();
-        let discovered = self.graph.visit_map();
-        let mut dfs = Dfs::from_parts(start_nodes, discovered);
-
-        debug_assert!(self.graph.node_count() >= self.heads.len());
-
-        while let Some(nx) = dfs.next(&self.graph) {
-            let event_id = self.map.get_by_left(&nx).unwrap();
-            if event_id.is_predecessor_of(version) {
-                let tagged_op = self.graph.node_weight(nx).unwrap();
-                collected.push((nx, tagged_op));
-            }
-        }
-
-        collected.sort_by_key(|(node_idx, _)| node_idx.index());
-        collected
-            .into_iter()
-            .map(|(_, tagged_op)| tagged_op)
+        self.iter()
+            .filter(|event| event.id().is_predecessor_of(version))
             .collect()
     }
 
@@ -227,27 +215,16 @@ where
     O: Debug + Clone,
 {
     fn remove(&mut self, event_id: &EventId) {
-        if let Some(node_idx) = self.map.get_by_right(event_id) {
-            self.graph.remove_node(*node_idx);
-            self.map.remove_by_right(event_id);
-            self.heads.remove(event_id);
-            self.cutter.remove_event(event_id);
+        if self.map.contains_right(event_id) {
+            self.retain(|event| event.id() != event_id);
         }
     }
 
     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-        let mut to_remove = Vec::new();
-        for node_idx in self.graph.node_indices() {
-            let tagged_op = self.graph.node_weight(node_idx).unwrap();
-            if !predicate(tagged_op) {
-                to_remove.push(node_idx);
-            }
-        }
-
-        for node_idx in to_remove {
-            let event_id = self.map.get_by_left(&node_idx).unwrap().clone();
-            self.remove(&event_id);
-        }
+        *self = self.rebuilt(
+            |idx| predicate(&self.graph[idx]),
+            self.retention_boundary.clone(),
+        );
     }
 
     fn clear(&mut self) {
@@ -265,7 +242,21 @@ impl<O> Default for EventGraph<O> {
             map: BiMap::new(),
             heads: HashSet::default(),
             cutter: Cutter::new(),
+            retention_boundary: None,
         }
+    }
+}
+
+impl<O> EventGraph<O> {
+    pub fn from_checkpoint(boundary: CausalFrontier) -> Self {
+        Self {
+            retention_boundary: Some(boundary),
+            ..Self::default()
+        }
+    }
+
+    pub fn retention_boundary(&self) -> Option<&CausalFrontier> {
+        self.retention_boundary.as_ref()
     }
 }
 
@@ -273,6 +264,85 @@ impl<O> EventGraph<O>
 where
     O: Debug + Clone,
 {
+    /// Largest stable prefix whose every event precedes every retained event.
+    /// Critical prefixes are prefixes of any topological order. For a candidate
+    /// cut, every prefix head must be a direct parent of every suffix root:
+    /// an intermediate vertex would contradict either head or root maximality.
+    pub(crate) fn stable_critical_prefix(&self, frontier: &CausalFrontier) -> usize {
+        let stable_len = self
+            .iter()
+            .take_while(|event| frontier.contains(event.id()))
+            .count();
+        (1..=stable_len)
+            .rev()
+            .find(|&len| self.is_critical_prefix(len))
+            .unwrap_or(0)
+    }
+
+    fn is_critical_prefix(&self, len: usize) -> bool {
+        let heads: Vec<_> = self
+            .graph
+            .node_indices()
+            .take(len)
+            .filter(|&idx| {
+                self.graph
+                    .neighbors_directed(idx, Direction::Incoming)
+                    .all(|child| child.index() >= len)
+            })
+            .collect();
+        self.graph.node_indices().skip(len).all(|idx| {
+            let parents: HashSet<_> = self
+                .graph
+                .neighbors_directed(idx, Direction::Outgoing)
+                .collect();
+            // Only minimal events of the suffix need checking.
+            parents.iter().any(|parent| parent.index() >= len)
+                || heads.iter().all(|head| parents.contains(head))
+        })
+    }
+
+    /// Rebuild the suffix and carry the discarded prefix's causal cut with it.
+    /// Caller must materialize the prefix before replacing the old graph.
+    pub(crate) fn after_checkpoint(&self, len: usize) -> Self {
+        assert!(len > 0 && len <= self.len() && self.is_critical_prefix(len));
+        let mut boundary = self.retention_boundary.clone().unwrap_or_else(|| {
+            CausalFrontier::new(self.iter().next().unwrap().id().resolver().clone())
+        });
+        for event in self.iter().take(len) {
+            let id = event.id();
+            boundary.set_by_idx(id.idx(), boundary.seq_by_idx(id.idx()).max(id.seq()));
+        }
+        self.rebuilt(|idx| idx.index() >= len, Some(boundary))
+    }
+
+    fn rebuilt(&self, keep: impl Fn(NodeIndex) -> bool, boundary: Option<CausalFrontier>) -> Self {
+        let mut rebuilt = Self {
+            retention_boundary: boundary,
+            ..Self::default()
+        };
+        let mut indices = HashMap::default();
+        // Edges point child -> parent, so reverse topological sort gives replay order.
+        let order = toposort(&self.graph, None).expect("EventGraph invariant: causal cycle");
+        for old in order.into_iter().rev().filter(|&idx| keep(idx)) {
+            let event = self.graph[old].clone();
+            let id = event.id().clone();
+            let new = rebuilt.graph.add_node(event);
+            indices.insert(old, new);
+            rebuilt.map.insert(new, id.clone());
+            rebuilt.cutter.insert(&id, new);
+            rebuilt.heads.insert(id);
+            for parent in self.graph.neighbors_directed(old, Direction::Outgoing) {
+                if let Some(&parent) = indices.get(&parent) {
+                    rebuilt.graph.add_edge(new, parent, ());
+                    rebuilt
+                        .heads
+                        .remove(rebuilt.map.get_by_left(&parent).unwrap());
+                }
+            }
+        }
+        rebuilt
+    }
+
     /// Find the immediate predecessors of the given version in the DAG.
     /// An immediate predecessor is a node that is a predecessor of the given version,
     /// and has no other predecessors that are also predecessors of the given version.
@@ -427,16 +497,6 @@ impl Cutter {
             }
         }
     }
-
-    /// Remove an event from the cutter. If the map of the replica becomes empty, remove the replica entry as well.
-    fn remove_event(&mut self, event_id: &EventId) {
-        if let Some(seq_map) = self.0.get_mut(&event_id.idx()) {
-            seq_map.remove(&event_id.seq());
-            if seq_map.is_empty() {
-                self.0.remove(&event_id.idx());
-            }
-        }
-    }
 }
 
 impl Display for Cutter {
@@ -457,3 +517,7 @@ impl Default for Cutter {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "event_graph_tests.rs"]
+mod tests;

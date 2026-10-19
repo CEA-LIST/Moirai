@@ -164,29 +164,11 @@ impl<V> Item<V> {
         let dot = LifeDot::stable(index);
         Self::new(
             item_id,
-            (index > 0).then_some(ItemId::stable(index - 1)),
+            index.checked_sub(1).map(ItemId::stable),
             None,
             content,
             dot,
         )
-    }
-
-    pub fn retreat_insert(&mut self, dot: &LifeDot) {
-        self.prepare.remove_life_dot(dot);
-        self.prepare.inserted = false;
-    }
-
-    pub fn advance_insert(&mut self, dot: LifeDot) {
-        self.prepare.inserted = true;
-        self.prepare.add_life_dot(dot);
-    }
-
-    pub fn retreat_update(&mut self, dot: &LifeDot) {
-        self.prepare.remove_life_dot(dot);
-    }
-
-    pub fn advance_update(&mut self, dot: LifeDot) {
-        self.prepare.add_life_dot(dot);
     }
 
     /// Apply an update to both the prepared parent view and the final result.
@@ -195,24 +177,10 @@ impl<V> Item<V> {
         self.prepare.add_life_dot(dot);
     }
 
-    /// Remove the dots observed in the current prepared parent context.
-    pub fn apply_delete(&mut self) -> Vec<LifeDot> {
-        let removed: Vec<_> = self.prepare.visible_life_dots().cloned().collect();
-        for dot in &removed {
+    /// Remove the dots captured in the operation's prepared parent context.
+    pub fn apply_delete(&mut self, removed: &[LifeDot]) {
+        for dot in removed {
             self.effect.remove_life_dot(dot);
-            self.prepare.record_delete(dot);
-        }
-        removed
-    }
-
-    pub fn retreat_delete(&mut self, removed: &[LifeDot]) {
-        for dot in removed {
-            self.prepare.undo_delete(dot);
-        }
-    }
-
-    pub fn advance_delete(&mut self, removed: &[LifeDot]) {
-        for dot in removed {
             self.prepare.record_delete(dot);
         }
     }
