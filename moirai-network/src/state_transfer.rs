@@ -107,14 +107,14 @@ pub enum LogPayload {
 /// discipline the relay's `read_frame` and the bootnode's `read_body`
 /// already apply, and for the same reason: the socket is unauthenticated.
 ///
-/// A node joining by state transfer names its own bound,
-/// [`LogPayload::decode_within`] its donor-side ceiling
-/// (`MAX_STATE_TRANSFER_LOG_BYTES` in `generic.rs`): a payload a donor would
-/// refuse to send is one a joiner should refuse to accept. Since SI.13 a
-/// relay session carries a state transfer as chunk frames (D2), so that
-/// ceiling bounds memory rather than one frame, and it is set by the size of
-/// a 5,000-object model's logs (21 MB for the copy, 62 to 88 MB for the cut
-/// source).
+/// This default does not bound a node's state transfer. A node joining by
+/// state transfer names its own bound to [`LogPayload::decode_within`], its
+/// donor-side ceiling (`MAX_STATE_TRANSFER_LOG_BYTES` in `generic.rs`, 128
+/// MiB): a payload a donor would refuse to send is one a joiner should
+/// refuse to accept. That ceiling, not this one, is the one sized for a
+/// 5,000-object model's logs (21 MB for the copy, 62 to 88 MB for the cut
+/// source), which a relay session carries as chunk frames since SI.13 (D2).
+/// The logs this default admits are smaller.
 const MAX_INFLATED_BYTES: u64 = 48 * 1024 * 1024;
 
 impl LogPayload {
