@@ -134,7 +134,10 @@ where
                 );
             }
             NestedList::Delete { pos } => {
-                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
+                let positions_at_version =
+                    self.positions.eval(&ReadAt::new(event.version())).expect(
+                        "NestedList invariant: delivered delete predates the positions checkpoint",
+                    );
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
@@ -148,7 +151,10 @@ where
                 );
             }
             NestedList::Update { pos, op } => {
-                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
+                let positions_at_version =
+                    self.positions.eval(&ReadAt::new(event.version())).expect(
+                        "NestedList invariant: delivered update predates the positions checkpoint",
+                    );
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));

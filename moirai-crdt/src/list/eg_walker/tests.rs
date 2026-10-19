@@ -70,35 +70,40 @@ fn starts_from_stable_document() {
 
 #[test]
 fn inserts_into_stable_document() {
-    let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-    let event = replica_a.send(List::insert('X', 1)).unwrap();
-    replica_b.receive(event);
-
-    assert_eq!(replica_a.query(&Read::<String>::new()), "aXbc");
-    assert_eq!(replica_b.query(&Read::<String>::new()), "aXbc");
+    for pos in 0..=3 {
+        let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
+        b.receive(a.send(List::insert('X', pos)).unwrap());
+        let mut expected = String::from("abc");
+        expected.insert(pos, 'X');
+        assert_eq!(a.query(&Read::<String>::new()), expected);
+        assert_eq!(b.query(&Read::<String>::new()), expected);
+    }
 }
 
 #[test]
 fn deletes_from_stable_document() {
-    let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
-
-    let event = replica_a.send(List::delete(1)).unwrap();
-    replica_b.receive(event);
-
-    assert_eq!(replica_a.query(&Read::<String>::new()), "ac");
-    assert_eq!(replica_b.query(&Read::<String>::new()), "ac");
+    for pos in 0..3 {
+        let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
+        b.receive(a.send(List::delete(pos)).unwrap());
+        let mut expected = String::from("abc");
+        expected.remove(pos);
+        assert_eq!(a.query(&Read::<String>::new()), expected);
+        assert_eq!(b.query(&Read::<String>::new()), expected);
+    }
 }
 
 #[test]
 fn delete_range_from_stable_document() {
-    let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c', 'd']);
-
-    let event = replica_a.send(List::delete_range(1, 2)).unwrap();
-    replica_b.receive(event);
-
-    assert_eq!(replica_a.query(&Read::<String>::new()), "ad");
-    assert_eq!(replica_b.query(&Read::<String>::new()), "ad");
+    for start in 0..=4 {
+        for len in 0..=4 - start {
+            let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c', 'd']);
+            b.receive(a.send(List::delete_range(start, len)).unwrap());
+            let mut expected = String::from("abcd");
+            expected.replace_range(start..start + len, "");
+            assert_eq!(a.query(&Read::<String>::new()), expected);
+            assert_eq!(b.query(&Read::<String>::new()), expected);
+        }
+    }
 }
 
 #[test]
@@ -110,7 +115,9 @@ fn read_at_uses_stable_document() {
     replica_a.send(List::delete(1)).unwrap();
 
     assert_eq!(
-        replica_a.query(&ReadAt::<Vec<char>>::new(&insert_version)),
+        replica_a
+            .query(&ReadAt::<Vec<char>>::new(&insert_version))
+            .unwrap(),
         vec!['a', 'X', 'b', 'c']
     );
     assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
@@ -133,15 +140,90 @@ fn concurrent_insertions_into_stable_document_converge() {
 
 #[test]
 fn stable_update_wins_over_concurrent_delete() {
-    let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
+    for pos in 0..3 {
+        let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
+        let delete = a.send(List::delete(pos)).unwrap();
+        let update = b.send(List::update(pos)).unwrap();
+        a.receive(update);
+        b.receive(delete);
+        assert_eq!(a.query(&Read::<String>::new()), "abc");
+        assert_eq!(b.query(&Read::<String>::new()), "abc");
+    }
+}
 
-    let event_a = replica_a.send(List::delete(1)).unwrap();
-    let event_b = replica_b.send(List::update(1)).unwrap();
-    replica_a.receive(event_b);
-    replica_b.receive(event_a);
+#[test]
+fn replay_preserves_positions_across_overlapping_deletes_and_updates() {
+    let [mut a, mut b, mut c] = ["a", "b", "c"].map(|id| {
+        ListReplica::bootstrap_with_state(
+            id.into(),
+            &["a", "b", "c"],
+            GraphLog::from_stable(vec!['a', 'b', 'c']),
+        )
+    });
+    let a_delete = a.send(List::delete_range(0, 2)).unwrap();
+    let b_delete = b.send(List::delete(0)).unwrap();
+    let c_update = c.send(List::update(0)).unwrap();
+    let c_delete = c.send(List::delete(1)).unwrap();
 
-    assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
-    assert_eq!(replica_b.query(&Read::<String>::new()), "abc");
+    // A has seen both overlapping deletes; B has seen only its own deletion.
+    // Their next insertions require different prepared versions during replay.
+    a.receive(b_delete.clone());
+    let a_insert = a.send(List::insert('X', 0)).unwrap();
+    let b_insert = b.send(List::insert('Y', 0)).unwrap();
+    let historical = [
+        (a_insert.event().version().clone(), "Xc"),
+        (b_insert.event().version().clone(), "Ybc"),
+        (c_delete.event().version().clone(), "ac"),
+    ];
+
+    for event in [b_insert.clone(), c_update.clone(), c_delete.clone()] {
+        a.receive(event);
+    }
+    for event in [c_update, c_delete, a_delete.clone(), a_insert.clone()] {
+        b.receive(event);
+    }
+    for event in [b_delete, b_insert, a_delete, a_insert] {
+        c.receive(event);
+    }
+    // Versions use replica-local indices, so query each author's own history.
+    for (replica, (version, expected)) in [&a, &b, &c].into_iter().zip(historical) {
+        assert_eq!(replica.query(&Read::<String>::new()), "XYac");
+        assert_eq!(
+            replica.query(&ReadAt::<Vec<char>>::new(&version)).unwrap(),
+            expected.chars().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn sequential_cache_and_snapshot_match_replay() {
+    type Log = CachedLog<GraphLog<List<char>>, Vec<char>>;
+    let mut replica = Replica::<Log, Tcsb<List<char>>>::bootstrap_with_state(
+        "a".into(),
+        &["a", "b"],
+        CachedLog::from_inner(GraphLog::from_stable(vec!['a', 'b', 'c'])),
+    );
+    let mut snapshot = vec!['a', 'b', 'c'];
+    for (op, expected) in [
+        (List::insert('X', 1), "aXbc"),
+        (List::delete(0), "Xbc"),
+        (List::update(2), "Xbc"),
+        (List::delete_range(1, 2), "X"),
+        (List::delete_range(1, 0), "X"),
+        (List::delete(0), ""),
+        (List::delete_range(0, 0), ""),
+        (List::insert('Z', 0), "Z"),
+    ] {
+        // Populate the cache before every edit to exercise sequential updates.
+        replica.query(&Read::<Vec<char>>::new());
+        <Vec<char> as IsStableState<List<char>>>::apply(&mut snapshot, op.clone());
+        replica.send(op).unwrap();
+        let expected_chars: Vec<_> = expected.chars().collect();
+        assert_eq!(snapshot, expected_chars);
+        assert_eq!(replica.query(&Read::<Vec<char>>::new()), expected_chars);
+        // Reading as String bypasses the Vec cache and forces causal replay.
+        assert_eq!(replica.query(&Read::<String>::new()), expected);
+    }
 }
 
 #[test]
@@ -272,6 +354,12 @@ fn in_paper() {
 
     let e4_version = e4.event().version();
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hi");
+    assert_eq!(
+        replica_a
+            .query(&ReadAt::<Vec<char>>::new(e4_version))
+            .unwrap(),
+        vec!['H', 'i']
+    );
 
     // e5: Delete(1) (remove 'i') on other branch
     let e5 = replica_b.send(List::delete(1)).unwrap();
@@ -295,7 +383,11 @@ fn in_paper() {
     replica_a.receive(e8.clone());
 
     // Final result should be "Hey!"
-    assert_eq!(replica_a.query(&ReadAt::new(e4_version)), vec!['H', 'i']);
+    assert!(
+        replica_a
+            .query(&ReadAt::<Vec<char>>::new(e4_version))
+            .is_err()
+    );
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hey!");
     assert_eq!(
         &replica_a.query(&Read::<String>::new()),
@@ -470,7 +562,7 @@ fn regression_2() {
     assert_eq!(state_b, result);
 }
 
-/// Simulate a long sequence of operations to test caching and performance.
+/// Check cached values after concurrent edits and automatic checkpointing.
 #[cfg(feature = "test_utils")]
 #[test]
 fn caching() {
@@ -503,55 +595,43 @@ fn caching() {
         }
     }
 
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_no_caching = time.elapsed();
-
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_with_caching_1 = time.elapsed();
-
-    let _ = replica_a.send(List::insert('A', 0)).unwrap();
-
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_with_caching_2 = time.elapsed();
-
-    println!(
-        "Elapsed without caching: {:?}, with caching 1: {:?}, with caching 2: {:?}",
-        elapsed_no_caching, elapsed_with_caching_1, elapsed_with_caching_2
+    assert!(replica_a.state().inner().retention_boundary().is_some());
+    let expected = replica_a.query(&Read::<String>::new());
+    for _ in 0..2 {
+        assert_eq!(
+            replica_a.state().read_ref().iter().collect::<String>(),
+            expected
+        );
+    }
+    replica_a.send(List::insert('A', 0)).unwrap();
+    assert_eq!(
+        replica_a.state().read_ref().iter().collect::<String>(),
+        format!("A{expected}")
     );
-
-    assert!(elapsed_with_caching_1 * 100 < elapsed_no_caching);
-    assert!(elapsed_with_caching_2 * 100 < elapsed_no_caching);
+    assert_eq!(
+        replica_a.query(&Read::<String>::new()),
+        format!("A{expected}")
+    );
 }
 
 #[cfg(feature = "fuzz")]
 #[test]
 #[ignore]
 fn fuzz_list() {
+    use std::num::NonZeroUsize;
+
     use moirai_fuzz::{
-        config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
+        config::{
+            ChurnConfig, FuzzerConfig, MetricsSampling, Predicate, ReplicaSampling, RunConfig,
+        },
         fuzzer::fuzzer,
     };
 
-    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 3_000, None, None)
-        .without_log_stabilization();
+    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 5_000, None, None)
+        .with_response_time(MetricsSampling::every_replica(
+            NonZeroUsize::new(1).unwrap(),
+        ))
+        .with_track_stability(ReplicaSampling::All);
     let runs = vec![run; 1];
 
     let config = FuzzerConfig::<GraphLog<List<char>>, Read<String>>::new(
