@@ -193,19 +193,42 @@ pub(crate) fn check_link_class(
     let Some(link) = linked(sem, None, op) else {
         return Ok(());
     };
+    // The class the read-out offers under a class name, by the lookup the
+    // refusal below makes; `None` when no class of the table is so named.
+    let offered_slot = |name: &str| {
+        sem.classes
+            .iter()
+            .find(|class| *class.name == *name)
+            .map(|class| class.slot)
+    };
+    let conforms = |offered: Option<ClassSlot>| {
+        offered.is_none_or(|offered| Target::Class(link.target).allows(sem, offered))
+    };
+    // A shortcut with the answer the read below gives, without building the
+    // whole identified document for every link (a migration's copy writes
+    // thousands of them): the read serves an identity only on an object that
+    // carries it, under that object's class, so when every object of the
+    // tree that carries it is of a conforming class, or none does, whatever
+    // the read serves under it conforms.
+    let mut carriers = Vec::new();
+    root.classes_of(link.identity, &mut carriers);
+    if carriers.iter().all(|slot| {
+        conforms(
+            sem.classes
+                .get(slot.index())
+                .and_then(|class| offered_slot(&class.name)),
+        )
+    }) {
+        return Ok(());
+    }
     let doc = read_identified(sem, root);
     let Some(offered) = served_class(&doc, link.identity) else {
         return Ok(());
     };
-    let Some(offered) = sem
-        .classes
-        .iter()
-        .find(|class| *class.name == *offered)
-        .map(|class| class.slot)
-    else {
+    let Some(offered) = offered_slot(offered) else {
         return Ok(());
     };
-    if Target::Class(link.target).allows(sem, offered) {
+    if conforms(Some(offered)) {
         return Ok(());
     }
     let name = |slot: ClassSlot| {

@@ -1506,6 +1506,39 @@ impl Node {
         }
     }
 
+    /// The classes of the objects below this node whose identity
+    /// ([`ObjectNode::identity`]) is `identity`, whether the read-out serves
+    /// them or not (an optional's ghost included): every object a read could
+    /// serve under that identity, and possibly more.
+    pub(crate) fn classes_of(&self, identity: &str, out: &mut Vec<ClassSlot>) {
+        match self {
+            Node::Unbound | Node::Leaf(_) | Node::Refs(_) => {}
+            Node::Slot(slot) => {
+                for object in slot.objects() {
+                    object.classes_of(identity, out);
+                }
+            }
+            Node::Seq(seq) => {
+                for child in seq.children.values() {
+                    child.classes_of(identity, out);
+                }
+            }
+            Node::Opt(opt) => {
+                if let Some(child) = opt.child.as_deref() {
+                    child.classes_of(identity, out);
+                }
+                for object in &opt.ghost {
+                    object.classes_of(identity, out);
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values() {
+                    child.classes_of(identity, out);
+                }
+            }
+        }
+    }
+
     /// How many operations the leaves below this node still hold unstably.
     ///
     /// Leaves only: a sequence's ordering graph is an `EventGraph`, whose
@@ -1617,6 +1650,17 @@ impl ObjectNode {
         }
         for field in self.fields.values() {
             field.absent_identities(out);
+        }
+    }
+
+    /// This object's class if its identity is `identity`, and those below
+    /// it, as [`Node::classes_of`] collects them.
+    fn classes_of(&self, identity: &str, out: &mut Vec<ClassSlot>) {
+        if self.identity() == identity {
+            out.push(self.class);
+        }
+        for field in self.fields.values() {
+            field.classes_of(identity, out);
         }
     }
 
