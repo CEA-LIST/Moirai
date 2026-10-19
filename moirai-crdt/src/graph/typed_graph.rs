@@ -1,19 +1,25 @@
 #![allow(clippy::mutable_key_type)]
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_macros::typed_graph;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FooBarEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BarBazEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FooBazEdge;
 
 typed_graph! {

@@ -3,21 +3,26 @@ use std::fmt::{Display, Error, Formatter};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::event::id::ResolvedEventId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PathSegment {
-    Field(&'static str),
+    Field(String),
     ListElement(ResolvedEventId),
     MapEntry(String),
-    Variant(&'static str),
+    Variant(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ObjectPath {
-    root: &'static str,
+    root: String,
     segments: Vec<PathSegment>,
 }
 
@@ -37,15 +42,15 @@ impl Display for ObjectPath {
 }
 
 impl ObjectPath {
-    pub fn new(root: &'static str) -> Self {
+    pub fn new<'a>(root: &'a str) -> Self {
         Self {
-            root,
+            root: String::from(root),
             segments: Vec::new(),
         }
     }
 
     pub fn field(mut self, name: &'static str) -> Self {
-        self.segments.push(PathSegment::Field(name));
+        self.segments.push(PathSegment::Field(String::from(name)));
         self
     }
 
@@ -60,7 +65,7 @@ impl ObjectPath {
     }
 
     pub fn variant(mut self, name: &'static str) -> Self {
-        self.segments.push(PathSegment::Variant(name));
+        self.segments.push(PathSegment::Variant(String::from(name)));
         self
     }
 
@@ -77,8 +82,8 @@ impl ObjectPath {
             .all(|(a, b)| a == b)
     }
 
-    pub fn root(&self) -> &'static str {
-        self.root
+    pub fn root(&self) -> &str {
+        &self.root
     }
 
     pub fn segments(&self) -> &[PathSegment] {

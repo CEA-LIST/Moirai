@@ -22,6 +22,8 @@ use moirai_protocol::{
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
 use rand::{Rng, seq::IteratorRandom};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::HashMap;
 
@@ -29,6 +31,7 @@ type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, 
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum UWGraph<V, E, No, Lo> {
     UpdateVertex {
         id: V,
