@@ -1994,7 +1994,7 @@ where
     /// Apply the copy of `source`'s migration, broadcasting its events as it
     /// goes, until it is whole or `until` passes; at least one operation
     /// when any is left, so a successor never waits a pass with no history.
-    /// Answers whether the copy is finished.
+    /// Answers whether the copy is whole.
     fn advance_copy(&mut self, source: &LogId, until: Option<Instant>) -> bool {
         let Some(mut job) = self.copies.remove(source) else {
             return true;
@@ -2034,15 +2034,15 @@ where
             }
         }
         self.broadcast_batch(events);
-        let finished = job.finished();
-        if finished && job.failed.is_none() {
+        let whole = job.applied == job.of;
+        if whole {
             eprintln!(
                 "[{}] the copy of model {} into {} is whole: {} operations",
                 self.replica_id, source, job.successor, job.of
             );
         }
         self.copies.insert(source.clone(), job);
-        finished
+        whole
     }
 
     /// One step of every copy still being applied, [`COPY_STEP`] at most in

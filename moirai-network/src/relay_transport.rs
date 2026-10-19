@@ -77,9 +77,11 @@ const MAX_WHOLE_FRAME_BYTES: usize = 768 * 1024;
 const CHUNK_BYTES: usize = 256 * 1024;
 
 /// The longest message the reader joins chunks into: a bound on what one
-/// sender can make this replica hold, the state-transfer ceiling of a
-/// 48 MiB log with room for its envelope.
-const MAX_JOINED_BYTES: usize = 64 * 1024 * 1024;
+/// sender can make this replica hold. Well above the 48 MiB state-transfer
+/// ceiling on the log, because a state transfer also carries the donor's
+/// unstable suffix uncompressed, and a delta-sync batch carries the same
+/// events (about 58,000 of them just after a 5,000-object copy).
+const MAX_JOINED_BYTES: usize = 256 * 1024 * 1024;
 
 /// How long dialling the relay may take.
 ///
