@@ -167,19 +167,21 @@ const STATE_TRANSFER_RETRY: Duration = Duration::from_secs(2);
 /// that delivers it delivers the edit in one step.
 const MAX_STATE_TRANSFER_BYTES: usize = 768 * 1024;
 
-/// Largest serialised log this replica will put in a `StateResponse`.
+/// Largest serialised log this replica will put in a `StateResponse`, and
+/// accept from one.
 ///
 /// A bound on memory, not on frames: a relay session writes a message above
 /// its frame bound as chunk frames under it, reassembled by the receiver
 /// before the node sees the message (SI.13 D2), and a direct link reads a
-/// frame of any length. So a log of a 5,000-object model (about 21 MB,
-/// SI.12 round 4) transfers whole, and the joiner of such a model no longer
-/// falls back to a delta sync that cannot carry the stable prefix.
+/// frame of any length. So the logs of a 5,000-object model and of its copy
+/// transfer whole (measured in SI.13's runs: 21 MB for the copy, 62 to 88 MB
+/// for the cut source, whose stable prefix a delta sync cannot carry), and a
+/// joiner of either no longer falls back to a delta sync.
 ///
-/// Equal to the inflation ceiling a joiner applies
-/// (`state_transfer::MAX_INFLATED_BYTES`): a payload a donor would refuse to
-/// send is one a joiner should refuse to accept.
-const MAX_STATE_TRANSFER_LOG_BYTES: usize = 48 * 1024 * 1024;
+/// The joiner inflates a payload up to this bound and no further
+/// ([`LogPayload::decode_within`]): a payload a donor would refuse to send is
+/// one a joiner should refuse to accept.
+const MAX_STATE_TRANSFER_LOG_BYTES: usize = 128 * 1024 * 1024;
 
 /// How long one pass of the event loop spends applying a migration's copy
 /// once its answer has been sent (SI.13 D1): short, so that every request
@@ -2451,7 +2453,10 @@ where
             self.request_delta_sync(log_id, from);
             return;
         }
-        match payload.decode().and_then(import) {
+        match payload
+            .decode_within(MAX_STATE_TRANSFER_LOG_BYTES as u64)
+            .and_then(import)
+        {
             Some(state) => {
                 let members = snapshot.resolver().len();
                 let Some(log) = self.logs.get_mut(log_id) else {

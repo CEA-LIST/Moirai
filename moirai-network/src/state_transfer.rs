@@ -98,7 +98,8 @@ pub enum LogPayload {
     Deflate(String),
 }
 
-/// Largest log this replica will *inflate* from a `StateResponse`, in bytes.
+/// Largest log [`LogPayload::decode`] will *inflate*, in bytes, for a caller
+/// that names no bound of its own.
 ///
 /// Compression cuts both ways: at the ratios measured above a few megabytes
 /// of base64 deflate expand to something on the order of a gigabyte.
@@ -106,13 +107,14 @@ pub enum LogPayload {
 /// discipline the relay's `read_frame` and the bootnode's `read_body`
 /// already apply, and for the same reason: the socket is unauthenticated.
 ///
-/// 48 MiB since SI.13: a relay session carries a state transfer as chunk
-/// frames (D2), so the bound is on memory rather than on one frame, and a
-/// 5,000-object model's log (about 21 MB) is within it.
-///
-/// Deliberately equal to the donor-side ceiling in `generic.rs`
-/// (`MAX_STATE_TRANSFER_LOG_BYTES`). A payload a donor would refuse to send
-/// is one a joiner should refuse to accept.
+/// A node joining by state transfer names its own bound,
+/// [`LogPayload::decode_within`] its donor-side ceiling
+/// (`MAX_STATE_TRANSFER_LOG_BYTES` in `generic.rs`): a payload a donor would
+/// refuse to send is one a joiner should refuse to accept. Since SI.13 a
+/// relay session carries a state transfer as chunk frames (D2), so that
+/// ceiling bounds memory rather than one frame, and it is set by the size of
+/// a 5,000-object model's logs (21 MB for the copy, 62 to 88 MB for the cut
+/// source).
 const MAX_INFLATED_BYTES: u64 = 48 * 1024 * 1024;
 
 impl LogPayload {
@@ -146,13 +148,20 @@ impl LogPayload {
         }
     }
 
-    /// Recover the exported log, or `None` if this payload cannot be read.
+    /// Recover the exported log, or `None` if this payload cannot be read
+    /// or would inflate past [`MAX_INFLATED_BYTES`].
     ///
     /// `None` rather than an error type because the one caller already has a
     /// defined answer for a log it cannot parse — fall back to a delta sync —
     /// and a peer built from a different model is the likeliest cause either
     /// way.
     pub fn decode(self) -> Option<serde_json::Value> {
+        self.decode_within(MAX_INFLATED_BYTES)
+    }
+
+    /// [`Self::decode`], refusing a payload that would inflate past `limit`
+    /// bytes rather than allocating it.
+    pub fn decode_within(self, limit: u64) -> Option<serde_json::Value> {
         use std::io::Read;
 
         use base64::Engine as _;
@@ -169,10 +178,10 @@ impl LogPayload {
                 // still parse — the same shape as `moirai-bootnode`'s
                 // `read_body`.
                 flate2::read::ZlibDecoder::new(&deflated[..])
-                    .take(MAX_INFLATED_BYTES + 1)
+                    .take(limit.saturating_add(1))
                     .read_to_end(&mut raw)
                     .ok()?;
-                if raw.len() as u64 > MAX_INFLATED_BYTES {
+                if raw.len() as u64 > limit {
                     return None;
                 }
                 serde_json::from_slice(&raw).ok()
