@@ -1010,6 +1010,20 @@ pub struct Migrated {
     pub whole: bool,
 }
 
+/// A migration planned against this node's replica of a model, nothing of
+/// it written yet: the successor, the cut, and the successor's operations.
+struct MigrationPlan<O> {
+    successor: LogId,
+    key: String,
+    metamodel_id: serde_json::Value,
+    cut: O,
+    ops: Vec<O>,
+    /// When planning began.
+    started: Instant,
+    /// How long planning took.
+    planned: Duration,
+}
+
 /// A copy this node planned (SI.13 D1): the successor, the operations of its
 /// plan still to apply, in order, and how far it got.
 struct CopyJob<O> {
@@ -1870,16 +1884,26 @@ where
     }
 
     /// Migrate a hosted model to a new one under the descriptor
-    /// `metamodel_id` names, and apply the whole copy before answering: the
-    /// primitive behind [`Self::migrate_by`], with no deadline.
+    /// `metamodel_id` names, and apply the whole copy before answering:
+    /// [`Self::migrate_by`] with no deadline, which the route uses instead.
+    ///
+    /// Refused as [`Self::migrate_by`] is, and also when an operation of the
+    /// copy was refused, which stopped it: the cut then stands, and the
+    /// source's status reports the stop under `copy.failed`.
     pub fn migrate(
         &mut self,
         log_id: &LogId,
         metamodel_id: serde_json::Value,
     ) -> Result<LogId, MigrateRefused> {
-        let successor = self.begin_migration(log_id, metamodel_id)?;
+        let plan = self.plan_migration(log_id, metamodel_id)?;
+        let successor = self.begin_migration(log_id, plan)?;
         self.advance_copy(log_id, None);
-        Ok(successor)
+        match self.copies.get(log_id).and_then(|job| job.failed.clone()) {
+            Some(failed) => Err(MigrateRefused::Refused(format!(
+                "the cut is written, but the copy into {successor} stopped: {failed}"
+            ))),
+            None => Ok(successor),
+        }
     }
 
     /// Migrate a hosted model to a new one under the descriptor
@@ -1918,7 +1942,19 @@ where
         metamodel_id: serde_json::Value,
         deadline: Instant,
     ) -> Result<Migrated, MigrateRefused> {
-        let model_id = self.begin_migration(log_id, metamodel_id)?;
+        let plan = self.plan_migration(log_id, metamodel_id)?;
+        self.carry_out_migration(log_id, plan, deadline)
+    }
+
+    /// Write a planned migration and apply its copy until `deadline`: the
+    /// part of [`Self::migrate_by`] that writes.
+    fn carry_out_migration(
+        &mut self,
+        log_id: &LogId,
+        plan: MigrationPlan<L::Op>,
+        deadline: Instant,
+    ) -> Result<Migrated, MigrateRefused> {
+        let model_id = self.begin_migration(log_id, plan)?;
         let whole = self.advance_copy(log_id, Some(deadline));
         if let Some(job) = self.copies.get(log_id).filter(|_| !whole) {
             eprintln!(
@@ -1934,14 +1970,14 @@ where
         Ok(Migrated { model_id, whole })
     }
 
-    /// Plan a migration, host the successor, write and broadcast the cut,
-    /// and keep the successor's operations as a copy to apply. See
-    /// [`Self::migrate_by`].
-    fn begin_migration(
-        &mut self,
+    /// Plan a migration against this node's replica of the model, writing
+    /// nothing: the application's hook, with a freshly minted id for the
+    /// successor. See [`Self::migrate_by`].
+    fn plan_migration(
+        &self,
         log_id: &LogId,
         metamodel_id: serde_json::Value,
-    ) -> Result<LogId, MigrateRefused> {
+    ) -> Result<MigrationPlan<L::Op>, MigrateRefused> {
         let (Some(migrate), Some(descriptor_key)) = (self.migrate_fn, self.descriptor_key_fn)
         else {
             return Err(MigrateRefused::NotEnabled);
@@ -1961,7 +1997,34 @@ where
         let started = Instant::now();
         let (cut, ops) =
             migrate(&log.replica, &successor, &held).map_err(MigrateRefused::Refused)?;
-        let planned = started.elapsed();
+        Ok(MigrationPlan {
+            successor,
+            key,
+            metamodel_id,
+            cut,
+            ops,
+            started,
+            planned: started.elapsed(),
+        })
+    }
+
+    /// Host a planned migration's successor, write and broadcast the cut,
+    /// and keep the successor's operations as a copy to apply. See
+    /// [`Self::migrate_by`].
+    fn begin_migration(
+        &mut self,
+        log_id: &LogId,
+        plan: MigrationPlan<L::Op>,
+    ) -> Result<LogId, MigrateRefused> {
+        let MigrationPlan {
+            successor,
+            key,
+            metamodel_id,
+            cut,
+            ops,
+            started,
+            planned,
+        } = plan;
         self.host_log(successor.clone())
             .map_err(|error| MigrateRefused::Refused(error.to_string()))?;
         if let Some(log) = self.logs.get_mut(&successor) {
@@ -3557,8 +3620,36 @@ where
                 deadline,
                 reply,
             } => {
+                // Planned before it is taken, since a plan writes nothing,
+                // and taken only while what remains of the route's deadline
+                // still holds as long again: writing the cut reads the model
+                // as planning did, so the answer comes inside the route's
+                // bound (SI.13, M8). A migration not taken is dropped
+                // unanswered, which the route answers 504, and is never
+                // carried out.
+                if Instant::now() >= deadline {
+                    return;
+                }
+                let plan = match self.plan_migration(&log_id, metamodel_id) {
+                    Ok(plan) => plan,
+                    Err(refused) => {
+                        if reply.take() {
+                            let _ = reply.send(Err(refused));
+                        }
+                        return;
+                    }
+                };
+                if Instant::now() + plan.planned > deadline {
+                    eprintln!(
+                        "[{}] not taking the migration of model {}: planning it took {} ms,                          more than is left of its deadline",
+                        self.replica_id,
+                        log_id,
+                        plan.planned.as_millis()
+                    );
+                    return;
+                }
                 if reply.take() {
-                    let _ = reply.send(self.migrate_by(&log_id, metamodel_id, deadline));
+                    let _ = reply.send(self.carry_out_migration(&log_id, plan, deadline));
                 }
             }
             ControlCmd::Migration { log_id, reply } => {

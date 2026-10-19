@@ -39,7 +39,9 @@ use crate::generic::{
 ///
 /// A migration the loop took is answered by the loop's own deadline, this
 /// one counted from the request: the cut is written, the copy applied until
-/// then, and the rest applied afterwards ([`crate::generic::Migrated`]).
+/// then, and the rest applied afterwards ([`crate::generic::Migrated`]). The
+/// loop takes a migration only while enough of that deadline is left to
+/// write the cut, and drops one it does not take, which is answered 504.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Start the optional HTTP API on the given port.
