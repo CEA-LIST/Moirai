@@ -40,6 +40,19 @@
 //! seen are still applied to the tree, as every received operation is, but
 //! the tree is no longer read: they are in neither the source's read-out nor
 //! the successor, and the status lists them by origin and sequence number.
+//!
+//! # Two cuts of one model (SI.13, D3)
+//!
+//! Two replicas can each migrate the model before either has the other's
+//! cut. A replica that delivers several cuts keeps one by a rule that reads
+//! the cuts alone, so every replica that delivered the same cuts keeps the
+//! same one whatever the order: the greatest Lamport stamp (the sum of the
+//! cut event's version, the events of the model in its causal past, itself
+//! included), then the least origin replica id compared as bytes, then the
+//! least sequence number. The kept cut names the successor, freezes the
+//! documents and decides what is refused; the successors of every other cut
+//! are listed under `superseded`. Keeping the cut that had seen the most
+//! refuses the fewest edits once every replica has every event.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -94,9 +107,14 @@ pub struct ModelLog {
     /// cut had not seen are counted against.
     #[cfg_attr(feature = "serde", serde(default))]
     delivered: BTreeMap<String, u64>,
-    /// The cut, once this replica has delivered one.
+    /// The cut this replica keeps, once it has delivered one: of every cut
+    /// it delivered, the one [`Cut::outranks`] puts first (SI.13, D3).
     #[cfg_attr(feature = "serde", serde(default))]
     cut: Option<Cut>,
+    /// The successors of every other cut this replica delivered, in the
+    /// order it set them aside.
+    #[cfg_attr(feature = "serde", serde(default))]
+    superseded: Vec<String>,
 }
 
 /// A delivered [`ModelOp::Cut`]: the successor, what the cut had seen, and
@@ -109,6 +127,33 @@ struct Cut {
     seen: BTreeMap<String, u64>,
     identified: Value,
     plain: Value,
+    /// The replica that wrote the cut.
+    #[cfg_attr(feature = "serde", serde(default))]
+    origin: String,
+    /// Its sequence number at that replica.
+    #[cfg_attr(feature = "serde", serde(default))]
+    seq: u64,
+    /// Its Lamport stamp: the sum of its version, which is the number of
+    /// events of the model in its causal past, itself included.
+    #[cfg_attr(feature = "serde", serde(default))]
+    stamp: u64,
+}
+
+impl Cut {
+    /// Whether this cut is kept over `other` (D3): the greater stamp, then
+    /// the lesser origin by bytes, then the lesser sequence number.
+    fn outranks(&self, other: &Cut) -> bool {
+        self.stamp
+            .cmp(&other.stamp)
+            .then_with(|| other.origin.as_bytes().cmp(self.origin.as_bytes()))
+            .then_with(|| other.seq.cmp(&self.seq))
+            .is_gt()
+    }
+
+    /// Whether `other` is this very cut, delivered again.
+    fn is(&self, other: &Cut) -> bool {
+        self.origin == other.origin && self.seq == other.seq
+    }
 }
 
 impl ModelLog {
@@ -150,17 +195,24 @@ impl ModelLog {
     }
 
     /// The successor this replica has seen the model migrated to, once it
-    /// has delivered the cut.
+    /// has delivered a cut: that of the cut it keeps (D3).
     pub fn migrated_to(&self) -> Option<&str> {
         self.cut.as_ref().map(|cut| cut.to.as_str())
     }
 
-    /// The migration status (SI.12): `{"migrated_to": null, "refused": []}`
-    /// before the cut; after it, the successor and every event this replica
-    /// has delivered that the cut had not seen, as `{"origin", "seq"}`.
+    /// The successors of the cuts this replica delivered and does not keep.
+    pub fn superseded(&self) -> &[String] {
+        &self.superseded
+    }
+
+    /// The migration status (SI.12, SI.13):
+    /// `{"migrated_to": null, "refused": [], "superseded": []}` before any
+    /// cut; after one, the successor of the cut kept (D3), every event this
+    /// replica has delivered that the kept cut had not seen, as
+    /// `{"origin", "seq"}`, and the successors of every other cut delivered.
     pub fn migration(&self) -> Value {
         let Some(cut) = &self.cut else {
-            return json!({ "migrated_to": Value::Null, "refused": [] });
+            return json!({ "migrated_to": Value::Null, "refused": [], "superseded": [] });
         };
         let refused: Vec<Value> = self
             .delivered
@@ -170,7 +222,7 @@ impl ModelLog {
                 (seen + 1..=*last).map(move |seq| json!({ "origin": origin, "seq": seq }))
             })
             .collect();
-        json!({ "migrated_to": cut.to, "refused": refused })
+        json!({ "migrated_to": cut.to, "refused": refused, "superseded": self.superseded })
     }
 
     /// The identified read once the model is cut: what the migrating
@@ -231,21 +283,15 @@ impl ModelLog {
         }
     }
 
-    /// Take a delivered cut, unless one was taken already.
+    /// Take a delivered cut: keep it when it outranks the cut kept so far
+    /// (D3), and list the successor of the one set aside under `superseded`.
     ///
-    /// Two concurrent migrations of one model are not handled here (SI.12,
-    /// OB2): the first cut a replica delivers is the one it keeps, so two
-    /// replicas that deliver two concurrent cuts in opposite orders name
-    /// different successors and freeze different documents. A rule that
-    /// picks one cut on every replica (the least cut event, say) waits on a
-    /// ruling; until then a node should not offer migration to two writers
-    /// of one model at once.
+    /// The rule reads the cuts alone, their stamps, origins and sequence
+    /// numbers, which every replica reads the same, so replicas that
+    /// delivered the same cuts keep the same one in any delivery order.
     fn take_cut(&mut self, event: &Event<ModelOp>, to: &str, identified: &Value, plain: &Value) {
-        if self.cut.is_some() {
-            return;
-        }
         let version = event.version();
-        let seen = version
+        let seen: BTreeMap<String, u64> = version
             .iter()
             .filter(|(_, seq)| *seq > 0)
             .filter_map(|(idx, seq)| {
@@ -253,12 +299,28 @@ impl ModelLog {
                 Some((origin.to_string(), seq as u64))
             })
             .collect();
-        self.cut = Some(Cut {
+        let id = event.id();
+        let taken = Cut {
             to: to.to_string(),
+            stamp: version.sum() as u64,
             seen,
             identified: identified.clone(),
             plain: plain.clone(),
-        });
+            origin: id.origin_id().to_string(),
+            seq: id.seq() as u64,
+        };
+        match self.cut.take() {
+            None => self.cut = Some(taken),
+            Some(kept) if kept.is(&taken) => self.cut = Some(kept),
+            Some(kept) if taken.outranks(&kept) => {
+                self.superseded.push(kept.to);
+                self.cut = Some(taken);
+            }
+            Some(kept) => {
+                self.superseded.push(taken.to);
+                self.cut = Some(kept);
+            }
+        }
     }
 
     /// Count `event` as delivered from its origin.
