@@ -119,6 +119,18 @@ where
     Raw {
         payload: O,
     },
+    /// One piece of a message too long for one frame on a bounded link
+    /// (SI.13 D2): `data` is the `index`th of `count` consecutive pieces of
+    /// the message's JSON text. A relay session writes a message above its
+    /// frame bound as chunks and reassembles them before the node sees the
+    /// message, so nothing above the transport ever handles one.
+    Chunk {
+        /// Distinguishes one chunked message from the next of one sender.
+        id: u64,
+        index: u32,
+        count: u32,
+        data: String,
+    },
 }
 
 /// Error type for transport operations

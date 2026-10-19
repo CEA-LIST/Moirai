@@ -45,11 +45,12 @@
 //!
 //! # The size of the cut
 //!
-//! The cut carries both documents, so it grows with the model. A node sends
-//! it as one event frame, and a relay reads at most 768 KiB as one frame
-//! (`MAX_STATE_TRANSFER_BYTES` in `moirai-network`): a model whose two reads
-//! together come near that bound would cut a replica that peers behind a
-//! relay never hear the cut from. No claim of SI.12 covers that size.
+//! The cut carries both documents, so it grows with the model (about
+//! 1.24 MB at 5,000 objects). A node sends it as one event message; a relay
+//! session writes a message longer than the relay's frame bound as chunk
+//! frames under it, joined again by the receiver (`moirai-network`'s
+//! `relay_transport.rs`, SI.13 D2), so a replica behind a relay hears a cut
+//! of any size.
 //!
 //! # Who sends the successor's operations
 //!

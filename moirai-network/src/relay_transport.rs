@@ -32,10 +32,24 @@
 //! [`crate::composite`] does it on every reconcile — because that owner is
 //! already looping and a second retry clock here would compete with it.
 //!
+//! # A message longer than a frame (SI.13 D2)
+//!
+//! `moirai-relay` reads at most `MAX_FRAME_BYTES` (1 MiB) as one frame and
+//! ends the session of a sender that writes more. A message whose frame
+//! would pass [`MAX_WHOLE_FRAME_BYTES`] (a migration's cut, a delta-sync
+//! batch, a state transfer) is therefore written as consecutive
+//! [`TransportMessage::Chunk`] frames, each well under the relay's bound, and
+//! the reader thread of the receiving session joins them back into the
+//! message before handing it on, so the node above never sees a chunk. The
+//! relay forwards the chunks as it forwards any frame, unparsed and in order
+//! per sender; a chunk it drops for a slow reader leaves an incomplete set,
+//! which the reader drops when the sender's next set starts, and which the
+//! CRDT's catch-up repairs as it repairs any lost frame.
+//!
 //! [`DirectTransport`]: crate::direct_transport::DirectTransport
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -50,6 +64,22 @@ use crate::transport::{
     TransportMessage, TransportResult,
 };
 use crate::{HashMap, HashSet};
+
+/// The longest frame this transport writes whole: under the relay's
+/// `MAX_FRAME_BYTES` (1 MiB), with room for the envelope around the message.
+/// A longer message goes as chunks (see the module header).
+const MAX_WHOLE_FRAME_BYTES: usize = 768 * 1024;
+
+/// The most JSON text one chunk carries. Escaped into the chunk's `data`
+/// string a byte becomes at most two (`"` and `\\` are the only characters
+/// JSON text holds that need escaping), so a chunk frame stays near half the
+/// relay's bound.
+const CHUNK_BYTES: usize = 256 * 1024;
+
+/// The longest message the reader joins chunks into: a bound on what one
+/// sender can make this replica hold, the state-transfer ceiling of a
+/// 48 MiB log with room for its envelope.
+const MAX_JOINED_BYTES: usize = 64 * 1024 * 1024;
 
 /// How long dialling the relay may take.
 ///
@@ -75,18 +105,6 @@ struct Hello<'a> {
 enum To<'a> {
     One(&'a str),
     Many(&'a [PeerId]),
-}
-
-/// One frame on the way out.
-#[derive(Debug, Serialize)]
-#[serde(bound(serialize = "O: Serialize"))]
-struct Outbound<'a, O>
-where
-    O: Serialize + DeserializeOwned,
-{
-    to: To<'a>,
-    from: &'a str,
-    msg: &'a TransportMessage<O>,
 }
 
 /// One frame on the way in. `to` is ignored: the relay only ever writes frames
@@ -124,6 +142,8 @@ where
     paused_peers: HashSet<PeerId>,
     message_buffer: HashMap<PeerId, VecDeque<TransportMessage<O>>>,
     incoming_rx: Receiver<(PeerId, TransportMessage<O>)>,
+    /// The id of the next chunked message this session writes.
+    next_chunked: u64,
 }
 
 impl<O> RelayTransport<O>
@@ -167,6 +187,7 @@ where
             paused_peers: HashSet::default(),
             message_buffer: HashMap::default(),
             incoming_rx,
+            next_chunked: 0,
         })
     }
 
@@ -212,19 +233,147 @@ where
     /// The array form is why this exists as one call rather than a loop over
     /// [`CrdtTransport::send`]: N recipients cost one upload, which is the
     /// direction that is scarce on a domestic connection.
+    ///
+    /// A message whose frame would pass [`MAX_WHOLE_FRAME_BYTES`] goes as
+    /// chunk frames to the same recipients, one after the other.
     fn write_to(&mut self, to: To<'_>, msg: &TransportMessage<O>) -> TransportResult<()> {
-        let frame = Outbound {
-            to,
-            from: &self.local_id,
-            msg,
+        let text = serde_json::to_string(msg)?;
+        let result = if text.len() <= MAX_WHOLE_FRAME_BYTES {
+            self.write_raw(&to, &text)
+        } else {
+            self.write_chunks(&to, &text)
         };
-        let result = write_frame(&mut self.stream, &frame);
         if result.is_err() {
             // The session is gone. Say so once, here, rather than making every
             // caller infer it from an error it is about to log anyway.
             self.alive.store(false, Ordering::Relaxed);
         }
         result
+    }
+
+    /// One frame whose `msg` is `text`, a message's JSON already written:
+    /// `{"to": ..., "from": ..., "msg": ...}`, the envelope `moirai-relay`
+    /// reads, without serializing the message a second time.
+    fn write_raw(&mut self, to: &To<'_>, text: &str) -> TransportResult<()> {
+        let to = serde_json::to_string(to)?;
+        let from = serde_json::to_string(&self.local_id)?;
+        writeln!(
+            self.stream,
+            "{{\"to\":{to},\"from\":{from},\"msg\":{text}}}"
+        )?;
+        self.stream.flush()?;
+        Ok(())
+    }
+
+    /// `text` as consecutive chunk frames, each holding at most
+    /// [`CHUNK_BYTES`] of it, cut on character boundaries.
+    fn write_chunks(&mut self, to: &To<'_>, text: &str) -> TransportResult<()> {
+        let pieces = split_on_chars(text, CHUNK_BYTES);
+        let id = self.next_chunked;
+        self.next_chunked += 1;
+        let count = u32::try_from(pieces.len())
+            .map_err(|_| TransportError::Other("a message too long to chunk".to_string()))?;
+        for (index, piece) in pieces.into_iter().enumerate() {
+            let chunk = TransportMessage::<O>::Chunk {
+                id,
+                index: index as u32,
+                count,
+                data: piece.to_string(),
+            };
+            let chunk = serde_json::to_string(&chunk)?;
+            self.write_raw(to, &chunk)?;
+        }
+        Ok(())
+    }
+}
+
+/// `text` cut into pieces of at most `most` bytes, each ending on a
+/// character boundary (a character is at most four bytes, so `most` must be
+/// at least four).
+fn split_on_chars(text: &str, most: usize) -> Vec<&str> {
+    let mut pieces = Vec::with_capacity(text.len() / most + 1);
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut end = most.min(rest.len());
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (piece, tail) = rest.split_at(end);
+        pieces.push(piece);
+        rest = tail;
+    }
+    pieces
+}
+
+/// One sender's chunked message as the reader joins it.
+struct Joining {
+    id: u64,
+    count: u32,
+    next: u32,
+    text: String,
+}
+
+/// The chunked messages being joined, one per sender: the relay keeps one
+/// sender's frames in order, so a sender has at most one set open.
+#[derive(Default)]
+struct Joiner {
+    open: HashMap<PeerId, Joining>,
+}
+
+impl Joiner {
+    /// Take one chunk from `from`; answer the whole message's text once its
+    /// last chunk is in. A chunk out of turn drops the set it belongs to.
+    fn take(
+        &mut self,
+        local_id: &str,
+        from: &PeerId,
+        id: u64,
+        index: u32,
+        count: u32,
+        data: String,
+    ) -> Option<String> {
+        if index == 0 {
+            if let Some(dropped) = self.open.remove(from) {
+                eprintln!(
+                    "[{local_id}] dropping an incomplete chunked message from {from} ({} of {} \
+                     chunks)",
+                    dropped.next, dropped.count
+                );
+            }
+            self.open.insert(
+                from.clone(),
+                Joining {
+                    id,
+                    count,
+                    next: 0,
+                    text: String::new(),
+                },
+            );
+        }
+        let joining = self.open.get_mut(from)?;
+        if joining.id != id || joining.next != index || joining.count != count {
+            eprintln!(
+                "[{local_id}] dropping an incomplete chunked message from {from}: chunk {index} \
+                 of message {id} came when chunk {} of message {} was due",
+                joining.next, joining.id
+            );
+            self.open.remove(from);
+            return None;
+        }
+        if joining.text.len() + data.len() > MAX_JOINED_BYTES {
+            eprintln!(
+                "[{local_id}] dropping a chunked message from {from}: it passes {MAX_JOINED_BYTES} \
+                 bytes"
+            );
+            self.open.remove(from);
+            return None;
+        }
+        joining.text.push_str(&data);
+        joining.next += 1;
+        if joining.next < joining.count {
+            return None;
+        }
+        self.open.remove(from).map(|joined| joined.text)
     }
 }
 
@@ -245,9 +394,40 @@ fn spawn_reader_thread<O>(
 {
     thread::spawn(move || {
         let reader = BufReader::new(stream);
+        let mut joiner = Joiner::default();
         for line in reader.lines() {
             match line {
                 Ok(data) => match serde_json::from_str::<Inbound<O>>(&data) {
+                    Ok(Inbound {
+                        from,
+                        msg:
+                            TransportMessage::Chunk {
+                                id,
+                                index,
+                                count,
+                                data,
+                            },
+                    }) => {
+                        let Some(text) = joiner.take(&local_id, &from, id, index, count, data)
+                        else {
+                            continue;
+                        };
+                        match serde_json::from_str::<TransportMessage<O>>(&text) {
+                            Ok(msg) => {
+                                if tx.send((from, msg)).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => eprintln!(
+                                "[{}] Dropping a joined message from {} that will not parse ({} \
+                                 bytes): {}",
+                                local_id,
+                                from,
+                                text.len(),
+                                e
+                            ),
+                        }
+                    }
                     Ok(frame) => {
                         if tx.send((frame.from, frame.msg)).is_err() {
                             break;

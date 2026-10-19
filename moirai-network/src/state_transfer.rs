@@ -87,8 +87,8 @@ where
 /// already accounts for. It also means the encoded form can be *larger* than
 /// the input for something small or incompressible, so [`LogPayload::encode`]
 /// keeps whichever is smaller. That makes the encoded size never exceed the
-/// plain size, which is what lets `MAX_STATE_TRANSFER_BYTES` stay a bound on
-/// the frame as well as on memory.
+/// plain size, which is what lets `MAX_STATE_TRANSFER_LOG_BYTES` stay a bound
+/// on the message as well as on memory.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "encoding", content = "log")]
 pub enum LogPayload {
@@ -100,15 +100,20 @@ pub enum LogPayload {
 
 /// Largest log this replica will *inflate* from a `StateResponse`, in bytes.
 ///
-/// Compression cuts both ways: the relay bounds a frame at 1 MiB, and at the
-/// ratios measured above 1 MiB of base64 deflate expands to something on the
-/// order of a gigabyte. Bounding the reader rather than trusting the sender is
-/// the same discipline the relay's `read_frame` and the bootnode's `read_body`
+/// Compression cuts both ways: at the ratios measured above a few megabytes
+/// of base64 deflate expand to something on the order of a gigabyte.
+/// Bounding the reader rather than trusting the sender is the same
+/// discipline the relay's `read_frame` and the bootnode's `read_body`
 /// already apply, and for the same reason: the socket is unauthenticated.
 ///
-/// Deliberately equal to the donor-side ceiling in `generic.rs`. A payload a
-/// donor would refuse to send is one a joiner should refuse to accept.
-const MAX_INFLATED_BYTES: u64 = 768 * 1024;
+/// 48 MiB since SI.13: a relay session carries a state transfer as chunk
+/// frames (D2), so the bound is on memory rather than on one frame, and a
+/// 5,000-object model's log (about 21 MB) is within it.
+///
+/// Deliberately equal to the donor-side ceiling in `generic.rs`
+/// (`MAX_STATE_TRANSFER_LOG_BYTES`). A payload a donor would refuse to send
+/// is one a joiner should refuse to accept.
+const MAX_INFLATED_BYTES: u64 = 48 * 1024 * 1024;
 
 impl LogPayload {
     /// Encode an exported log, given the serialised form of it that the caller
