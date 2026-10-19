@@ -53,7 +53,7 @@
 //!   every frame it holds before it reads a command), and two calls go to `a`
 //!   one after the other (its HTTP thread serves one request at a time): P1
 //!   migrate `m_small` and P2 create a model in the first window, P3 serve
-//!   `D2_REMOVE` and P4 pause `si13-c` in the second. Each answer must match
+//!   `D2_REMOVE` and P4 pause `si13-b` in the second. Each answer must match
 //!   what `a` does: a call answered as not taken in time (504, or the pause
 //!   route's `success: false`, `timeout`) is never carried out, any other 2xx
 //!   is. `probe_exercised` records whether all four were answered as not
@@ -694,7 +694,12 @@ fn probe(cluster: &Cluster, g: &Generated, m_small: &str, to: &str, run: &mut Ru
             "/api/metamodels".into(),
             D2_REMOVE.to_string(),
         ),
-        ("P4 pause", "/api/pause/si13-c".into(), String::new()),
+        // `si13-b`, the direct peer: a pause of a relayed peer does not
+        // survive a re-dial of the relay session (`composite.rs`,
+        // `ensure_relay_session`, re-routes the old session's peers but not
+        // their pause), which at the base happens after every frame over the
+        // relay's bound, and would hide a pause carried out after a timeout.
+        ("P4 pause", "/api/pause/si13-b".into(), String::new()),
     ];
     let windows = (|| {
         let (_, cal_on_b, cal_busy) = window(cluster, &long, g, to, CALIBRATION_OPS, &[])?;
@@ -829,14 +834,14 @@ fn probe(cluster: &Cluster, g: &Generated, m_small: &str, to: &str, run: &mut Ru
         "M13 P4 pause",
         (|| {
             let paused =
-                cluster.peer_status(A)?.get("si13-c").map(String::as_str) == Some("Paused");
+                cluster.peer_status(A)?.get("si13-b").map(String::as_str) == Some("Paused");
             if paused {
-                let _ = cluster.control(A, "/api/resume/si13-c");
+                let _ = cluster.control(A, "/api/resume/si13-b");
             }
             match (timed_out(*p4, body4), paused) {
                 (true, false) => Ok(()),
                 (true, true) => Err(format!(
-                    "a answered the pause {p4} {body4} (its timeout answer) and then paused si13-c"
+                    "a answered the pause {p4} {body4} (its timeout answer) and then paused si13-b"
                 )),
                 (false, true) if ok(*p4) => Ok(()),
                 (_, paused) => Err(format!(
