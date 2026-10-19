@@ -1020,6 +1020,8 @@ struct CopyJob<O> {
     /// Why the successor's intake refused an operation of the plan, which
     /// stops the copy. Not expected: the plan is the successor's own.
     failed: Option<String>,
+    /// When the migration began, for the log line that reports it whole.
+    started: Instant,
 }
 
 impl<O> CopyJob<O> {
@@ -1918,6 +1920,17 @@ where
     ) -> Result<Migrated, MigrateRefused> {
         let model_id = self.begin_migration(log_id, metamodel_id)?;
         let whole = self.advance_copy(log_id, Some(deadline));
+        if let Some(job) = self.copies.get(log_id).filter(|_| !whole) {
+            eprintln!(
+                "[{}] answering the migration of model {} at its deadline: {} of {} operations \
+                 copied, {} ms after it began",
+                self.replica_id,
+                log_id,
+                job.applied,
+                job.of,
+                job.started.elapsed().as_millis()
+            );
+        }
         Ok(Migrated { model_id, whole })
     }
 
@@ -1945,8 +1958,10 @@ where
             .cloned()
             .ok_or_else(unknown)?;
         let successor = self.mint_model_id(&held);
+        let started = Instant::now();
         let (cut, ops) =
             migrate(&log.replica, &successor, &held).map_err(MigrateRefused::Refused)?;
+        let planned = started.elapsed();
         self.host_log(successor.clone())
             .map_err(|error| MigrateRefused::Refused(error.to_string()))?;
         if let Some(log) = self.logs.get_mut(&successor) {
@@ -1973,12 +1988,14 @@ where
         self.broadcast(TransportMessage::Event { event: cut });
         eprintln!(
             "[{}] migrated model {} to {} under metamodel {}: the cut is written, {} operations \
-             to copy",
+             to copy (planned in {} ms, cut in {} ms)",
             self.replica_id,
             log_id,
             successor,
             metamodel_id,
-            ops.len()
+            ops.len(),
+            planned.as_millis(),
+            (started.elapsed() - planned).as_millis()
         );
         self.copies.insert(
             log_id.clone(),
@@ -1988,6 +2005,7 @@ where
                 pending: ops.into_iter(),
                 applied: 0,
                 failed: None,
+                started,
             },
         );
         Ok(successor)
@@ -2039,8 +2057,13 @@ where
         let whole = job.applied == job.of;
         if whole {
             eprintln!(
-                "[{}] the copy of model {} into {} is whole: {} operations",
-                self.replica_id, source, job.successor, job.of
+                "[{}] the copy of model {} into {} is whole: {} operations, {} ms after the \
+                 migration began",
+                self.replica_id,
+                source,
+                job.successor,
+                job.of,
+                job.started.elapsed().as_millis()
             );
         }
         self.copies.insert(source.clone(), job);
