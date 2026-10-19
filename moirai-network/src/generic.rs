@@ -151,43 +151,44 @@ pub type MigrationOnlyFn<O> = fn(&O) -> Result<(), String>;
 /// retry on an event that will not recur reintroduces ask-once.
 const STATE_TRANSFER_RETRY: Duration = Duration::from_secs(2);
 
+/// Largest frame this node writes as one frame on purpose: a `Batch` frame
+/// above it goes out one `Event` frame per event instead (see
+/// `broadcast_batch`).
+///
+/// # Why there is one
+///
+/// It was the ceiling on one state transfer while a frame had to cross a
+/// relay whole: `moirai-relay` reads at most `MAX_FRAME_BYTES = 1 MiB` as one
+/// frame (`moirai-relay/src/main.rs`) and ends the session of a sender that
+/// writes more. A relay session now carries any message as chunk frames
+/// under that bound (`relay_transport.rs`, SI.13 D2), so the state transfer
+/// has its own, larger ceiling, [`MAX_STATE_TRANSFER_LOG_BYTES`]. This one
+/// stays the bound under which a batch is still one frame, so that a peer
+/// that delivers it delivers the edit in one step.
+const MAX_STATE_TRANSFER_BYTES: usize = 768 * 1024;
+
 /// Largest serialised log this replica will put in a `StateResponse`.
 ///
-/// # Why there has to be one
+/// A bound on memory, not on frames: a relay session writes a message above
+/// its frame bound as chunk frames under it, reassembled by the receiver
+/// before the node sees the message (SI.13 D2), and a direct link reads a
+/// frame of any length. So a log of a 5,000-object model (about 21 MB,
+/// SI.12 round 4) transfers whole, and the joiner of such a model no longer
+/// falls back to a delta sync that cannot carry the stable prefix.
 ///
-/// A `StateResponse` is a single newline-delimited frame, and over a relay the
-/// relay reads it with a cap: `MAX_FRAME_BYTES = 1 MiB` in
-/// `moirai-relay/src/main.rs`, where an over-long frame is an *error* rather
-/// than a truncation, because truncating would feed the remainder back as the
-/// next frame. So the donor's own relay session is what dies, and the joiner —
-/// still with no history — re-asks every [`STATE_TRANSFER_RETRY`] and kills it
-/// again. Without a ceiling here the failure mode of a large model is a loop
-/// that takes the donor off the relay rather than a refusal anybody can act on.
-///
-/// # Why this number
-///
-/// Below the relay's 1 MiB, with the rest left for the `snapshot` beside the
-/// log and the relay envelope around both. It is checked against the log
-/// *before* compression, which is the conservative direction twice over:
-/// [`LogPayload::encode`] keeps whichever of the compressed and plain forms is
-/// smaller, so what goes on the wire is never larger than what is measured
-/// here, and the number is simultaneously a bound on the memory a joiner needs
-/// to hold the log — which compression does not reduce.
-///
-/// Uniform across transports rather than per route: the donor answers a
-/// `StateRequest` without knowing whether the reply will go direct or be
-/// relayed, and a direct connection reads the whole frame into memory with no
-/// cap of its own (`direct_transport.rs`), so a ceiling is wanted there too.
-///
-/// # What it does not fix
-///
-/// A session whose model genuinely exceeds this cannot transfer state at all,
-/// and no ordered feature compacts — see the eg-walker finding — so that is
-/// reachable by session age alone rather than only by model size. Chunking is
-/// the answer and it is phase 3; this makes the failure clean and diagnosable
-/// in the meantime, which is what the joiner's existing `StateUnavailable`
-/// handling was already written for.
-const MAX_STATE_TRANSFER_BYTES: usize = 768 * 1024;
+/// Equal to the inflation ceiling a joiner applies
+/// (`state_transfer::MAX_INFLATED_BYTES`): a payload a donor would refuse to
+/// send is one a joiner should refuse to accept.
+const MAX_STATE_TRANSFER_LOG_BYTES: usize = 48 * 1024 * 1024;
+
+/// How long one pass of the event loop spends applying a migration's copy
+/// once its answer has been sent (SI.13 D1): short, so that every request
+/// the HTTP API sends the loop meanwhile is answered well inside its
+/// deadline.
+const COPY_STEP: Duration = Duration::from_millis(50);
+
+/// How many of a copy's events go out in one batch while it is applied.
+const COPY_BROADCAST_EVERY: usize = 512;
 
 // Alias for these bounds, needed to transport operations over the network (e.g. via HTTP API).
 pub trait NetworkOp: Serialize + DeserializeOwned + Clone + Debug + Send + 'static {}
@@ -346,6 +347,10 @@ where
     /// every adapter-submitted operation once [`Self::enable_migration`]
     /// installed it.
     migration_only_fn: Option<MigrationOnlyFn<L::Op>>,
+    /// The copies this node planned, by the model each migrated (SI.13 D1):
+    /// the successor, the operations still to apply, and how far it got.
+    /// Kept once whole, so the source's status goes on reporting it.
+    copies: BTreeMap<LogId, CopyJob<L::Op>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
@@ -958,6 +963,79 @@ impl Claim {
     }
 }
 
+/// The reply handle of a control command that writes, carrying the
+/// command's [`Claim`] (SI.13, M13).
+///
+/// A registration, a descriptor, a migration, a pause or a resume is settled
+/// with the event loop as an operation is: the loop takes the claim before it
+/// carries the command out, and the HTTP API abandons it when its caller can
+/// wait no longer, so a command answered as not taken in time is never
+/// carried out. The claim travels inside the reply handle rather than beside
+/// it, so a command's variant keeps the fields it had, and `send` is
+/// [`Sender::send`].
+pub(crate) struct Claimed<T> {
+    claim: Claim,
+    sender: Sender<T>,
+}
+
+impl<T> Claimed<T> {
+    /// A handle answering on `sender`, settled through `claim`.
+    pub(crate) fn new(claim: Claim, sender: Sender<T>) -> Self {
+        Self { claim, sender }
+    }
+
+    /// The event loop's side of the claim: `true` when the command is now
+    /// the loop's to carry out, `false` when its adapter gave up on it first.
+    pub(crate) fn take(&self) -> bool {
+        self.claim.take()
+    }
+
+    /// Answer the command.
+    pub(crate) fn send(&self, answer: T) -> Result<(), mpsc::SendError<T>> {
+        self.sender.send(answer)
+    }
+}
+
+/// What a migration answers once the cut is written (SI.13 D1): the
+/// successor, and whether its copy was whole by the route's deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Migrated {
+    /// The successor's id.
+    pub model_id: LogId,
+    /// `true` when every operation of the copy was applied before the
+    /// answer; `false` when the event loop goes on applying it in later
+    /// steps.
+    pub whole: bool,
+}
+
+/// A copy this node planned (SI.13 D1): the successor, the operations of its
+/// plan still to apply, in order, and how far it got.
+struct CopyJob<O> {
+    successor: LogId,
+    pending: std::vec::IntoIter<O>,
+    applied: usize,
+    of: usize,
+    /// Why the successor's intake refused an operation of the plan, which
+    /// stops the copy. Not expected: the plan is the successor's own.
+    failed: Option<String>,
+}
+
+impl<O> CopyJob<O> {
+    /// Whether nothing more will be applied.
+    fn finished(&self) -> bool {
+        self.applied == self.of || self.failed.is_some()
+    }
+
+    /// The progress a status reports under `copy`.
+    fn progress(&self) -> serde_json::Value {
+        let mut progress = json!({ "applied": self.applied, "of": self.of });
+        if let Some(failed) = &self.failed {
+            progress["failed"] = json!(failed);
+        }
+        progress
+    }
+}
+
 /// One operation submitted by an adapter, with a oneshot reply channel.
 pub struct OpEnvelope<O> {
     pub op: O,
@@ -995,17 +1073,17 @@ pub enum Intake<O> {
 pub(crate) enum ControlCmd {
     Pause {
         peer_id: String,
-        reply: Sender<OpResult>,
+        reply: Claimed<OpResult>,
     },
     Resume {
         peer_id: String,
-        reply: Sender<OpResult>,
+        reply: Claimed<OpResult>,
     },
     PauseAll {
-        reply: Sender<OpResult>,
+        reply: Claimed<OpResult>,
     },
     ResumeAll {
-        reply: Sender<OpResult>,
+        reply: Claimed<OpResult>,
     },
     Peers {
         reply: Sender<serde_json::Value>,
@@ -1021,7 +1099,7 @@ pub(crate) enum ControlCmd {
         reply: Sender<serde_json::Value>,
     },
     Leave {
-        reply: Sender<OpResult>,
+        reply: Claimed<OpResult>,
     },
     /// The hosted models, for `GET /api/models`.
     Models {
@@ -1031,7 +1109,7 @@ pub(crate) enum ControlCmd {
     Register {
         model_id: Option<LogId>,
         metamodel_id: serde_json::Value,
-        reply: Sender<Result<Registered, RegisterRefused>>,
+        reply: Claimed<Result<Registered, RegisterRefused>>,
     },
     /// One model's state, with the version it was read at; `None` when the
     /// node does not host it.
@@ -1062,18 +1140,21 @@ pub(crate) enum ControlCmd {
     /// holds, so the HTTP thread asks for the change rather than making it.
     AddMetamodel {
         text: String,
-        reply: Sender<Result<Served, ServeRefused>>,
+        reply: Claimed<Result<Served, ServeRefused>>,
     },
     /// Whether the node hosts a log.
     Hosts {
         log_id: LogId,
         reply: Sender<bool>,
     },
-    /// `POST /api/model/{id}/migrate`. See [`GenericNode::migrate`].
+    /// `POST /api/model/{id}/migrate`. See [`GenericNode::migrate_by`].
     Migrate {
         log_id: LogId,
         metamodel_id: serde_json::Value,
-        reply: Sender<Result<LogId, MigrateRefused>>,
+        /// Until when the loop may go on applying the copy before it
+        /// answers: the route's own deadline.
+        deadline: Instant,
+        reply: Claimed<Result<Migrated, MigrateRefused>>,
     },
     /// `GET /api/model/{id}/migration`: the application's status of one
     /// hosted log.
@@ -1249,6 +1330,7 @@ where
             migrate_fn: None,
             migration_fn: None,
             migration_only_fn: None,
+            copies: BTreeMap::new(),
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
             last_report: None,
@@ -1784,32 +1866,63 @@ where
     }
 
     /// Migrate a hosted model to a new one under the descriptor
+    /// `metamodel_id` names, and apply the whole copy before answering: the
+    /// primitive behind [`Self::migrate_by`], with no deadline.
+    pub fn migrate(
+        &mut self,
+        log_id: &LogId,
+        metamodel_id: serde_json::Value,
+    ) -> Result<LogId, MigrateRefused> {
+        let successor = self.begin_migration(log_id, metamodel_id)?;
+        self.advance_copy(log_id, None);
+        Ok(successor)
+    }
+
+    /// Migrate a hosted model to a new one under the descriptor
     /// `metamodel_id` names: the primitive behind
-    /// `POST /api/model/{id}/migrate`.
+    /// `POST /api/model/{id}/migrate` (SI.12, SI.13 D1).
     ///
     /// The application's hook plans it against this node's replica of the
     /// model, with a freshly minted id for the successor: the cut, and the
-    /// successor's operations. Everything is applied here before anything
-    /// is sent, the cut last, because the cut cannot be taken back: the
-    /// successor is hosted, bound to the descriptor as a created model is,
-    /// and its operations are applied in order; then the cut is applied to
-    /// the model. Only once every one of them was accepted are they
-    /// broadcast, the successor's first, then the cut, which is what every
-    /// replica of the model learns of the successor from. A replica that
-    /// wants the successor joins it by its id, as any model is joined.
+    /// successor's operations. The cut is written first and broadcast, so
+    /// the model is frozen at the very read the copy was planned from and
+    /// every replica learns of the successor from it; the successor is
+    /// hosted, bound to the descriptor as a created model is, and its
+    /// operations are then applied in order and broadcast as they are, until
+    /// the copy is whole or `deadline` passes, whichever is first. The answer
+    /// says which ([`Migrated::whole`]); past the deadline the event loop
+    /// applies the rest in short steps ([`COPY_STEP`]), each followed by
+    /// everything else the loop serves, and the source's status reports the
+    /// progress under `copy` ([`Self::migration_status`]).
     ///
     /// The successor is hosted fresh and this node writes nothing else to it
-    /// first, so its `n`th operation is this node's event `n` on it: the
+    /// until the copy is whole (an adapter's write to it is refused
+    /// meanwhile), so its `n`th operation is this node's event `n` on it: the
     /// plan's links among the copied objects name their targets by those
     /// events (`@<seq>.<step>`), which every replica resolves against the
     /// event's origin, this node.
     ///
     /// Refused, with nothing written, when the model is not hosted, when the
     /// node holds no descriptor for `metamodel_id`, when the hook refuses,
-    /// and when the successor's or the model's own intake refuses one of
-    /// the planned operations: the successor is then dropped again, and
-    /// nothing was sent or applied to the model.
-    pub fn migrate(
+    /// and when the model's own intake refuses the cut. Once the cut is
+    /// written it stands: an operation of the plan the successor's intake
+    /// refused would stop the copy, which the status then reports under
+    /// `copy.failed`.
+    pub fn migrate_by(
+        &mut self,
+        log_id: &LogId,
+        metamodel_id: serde_json::Value,
+        deadline: Instant,
+    ) -> Result<Migrated, MigrateRefused> {
+        let model_id = self.begin_migration(log_id, metamodel_id)?;
+        let whole = self.advance_copy(log_id, Some(deadline));
+        Ok(Migrated { model_id, whole })
+    }
+
+    /// Plan a migration, host the successor, write and broadcast the cut,
+    /// and keep the successor's operations as a copy to apply. See
+    /// [`Self::migrate_by`].
+    fn begin_migration(
         &mut self,
         log_id: &LogId,
         metamodel_id: serde_json::Value,
@@ -1844,48 +1957,145 @@ where
                 confirmed: false,
             });
         }
-        let mut events = Vec::with_capacity(ops.len());
-        for (index, op) in ops.into_iter().enumerate() {
-            match self.apply_local(&successor, op) {
-                Ok(event) => events.push(event),
-                Err(reason) => {
-                    // Applied here alone and sent nowhere: dropping the log
-                    // drops every trace of it.
-                    self.logs.remove(&successor);
-                    return Err(MigrateRefused::Refused(format!(
-                        "operation {} of the successor {successor} was refused, so nothing \
-                         was written: {reason}",
-                        index + 1
-                    )));
-                }
-            }
-        }
         let cut = match self.apply_local(log_id, cut) {
             Ok(cut) => cut,
             Err(reason) => {
+                // Nothing was applied to the successor yet: dropping it drops
+                // every trace of it.
                 self.logs.remove(&successor);
                 return Err(MigrateRefused::Refused(format!(
                     "the cut was refused, so nothing was written: {reason}"
                 )));
             }
         };
-        self.broadcast_batch(events);
         self.broadcast(TransportMessage::Event { event: cut });
         eprintln!(
-            "[{}] migrated model {} to {} under metamodel {}",
-            self.replica_id, log_id, successor, metamodel_id
+            "[{}] migrated model {} to {} under metamodel {}: the cut is written, {} operations \
+             to copy",
+            self.replica_id,
+            log_id,
+            successor,
+            metamodel_id,
+            ops.len()
+        );
+        self.copies.insert(
+            log_id.clone(),
+            CopyJob {
+                successor: successor.clone(),
+                of: ops.len(),
+                pending: ops.into_iter(),
+                applied: 0,
+                failed: None,
+            },
         );
         Ok(successor)
     }
 
-    /// The application's migration status of a hosted log.
+    /// Apply the copy of `source`'s migration, broadcasting its events as it
+    /// goes, until it is whole or `until` passes; at least one operation
+    /// when any is left, so a successor never waits a pass with no history.
+    /// Answers whether the copy is finished.
+    fn advance_copy(&mut self, source: &LogId, until: Option<Instant>) -> bool {
+        let Some(mut job) = self.copies.remove(source) else {
+            return true;
+        };
+        let mut events = Vec::new();
+        while !job.finished() {
+            let Some(op) = job.pending.next() else {
+                break;
+            };
+            match self.apply_local(&job.successor, op) {
+                Ok(event) => {
+                    events.push(event);
+                    job.applied += 1;
+                }
+                Err(reason) => {
+                    eprintln!(
+                        "[{}] the copy of model {} into {} stopped at operation {} of {}: {}",
+                        self.replica_id,
+                        source,
+                        job.successor,
+                        job.applied + 1,
+                        job.of,
+                        reason
+                    );
+                    job.failed = Some(format!(
+                        "operation {} of {} was refused: {reason}",
+                        job.applied + 1,
+                        job.of
+                    ));
+                }
+            }
+            if events.len() >= COPY_BROADCAST_EVERY {
+                self.broadcast_batch(std::mem::take(&mut events));
+            }
+            if until.is_some_and(|until| Instant::now() >= until) {
+                break;
+            }
+        }
+        self.broadcast_batch(events);
+        let finished = job.finished();
+        if finished && job.failed.is_none() {
+            eprintln!(
+                "[{}] the copy of model {} into {} is whole: {} operations",
+                self.replica_id, source, job.successor, job.of
+            );
+        }
+        self.copies.insert(source.clone(), job);
+        finished
+    }
+
+    /// One step of every copy still being applied, [`COPY_STEP`] at most in
+    /// all; called once per pass of the event loop.
+    fn advance_copies(&mut self) {
+        let open: Vec<LogId> = self
+            .copies
+            .iter()
+            .filter(|(_, job)| !job.finished())
+            .map(|(source, _)| source.clone())
+            .collect();
+        if open.is_empty() {
+            return;
+        }
+        let until = Instant::now() + COPY_STEP;
+        for source in open {
+            self.advance_copy(&source, Some(until));
+            if Instant::now() >= until {
+                break;
+            }
+        }
+    }
+
+    /// Why an adapter may not write to `log_id` now: it is the successor of
+    /// a copy this node is still applying, whose plan names its objects by
+    /// this node's own events on it, in order.
+    fn copy_in_progress(&self, log_id: &LogId) -> Option<String> {
+        self.copies
+            .values()
+            .find(|job| job.successor == *log_id && !job.finished())
+            .map(|job| {
+                format!(
+                    "model {log_id} is a migration's copy still being written here ({} of {} \
+                     operations): a local write waits until it is whole",
+                    job.applied, job.of
+                )
+            })
+    }
+
+    /// The application's migration status of a hosted log, with the progress
+    /// of the copy this node planned of it, when it planned one, under
+    /// `copy` (SI.13, M9).
     fn migration_status(&self, log_id: &LogId) -> Result<serde_json::Value, MigrateRefused> {
         let status = self.migration_fn.ok_or(MigrateRefused::NotEnabled)?;
         let log = self
             .logs
             .get(log_id)
             .ok_or_else(|| MigrateRefused::NotHosted(log_id.clone()))?;
-        Ok(status(&log.replica))
+        let mut answer = status(&log.replica);
+        if let (Some(job), Some(fields)) = (self.copies.get(log_id), answer.as_object_mut()) {
+            fields.insert("copy".to_string(), job.progress());
+        }
+        Ok(answer)
     }
 
     /// A fresh id for a model created under `descriptor`: named by the
@@ -2148,15 +2358,15 @@ where
             }
         };
         let log_bytes = raw.len();
-        if log_bytes > MAX_STATE_TRANSFER_BYTES {
+        if log_bytes > MAX_STATE_TRANSFER_LOG_BYTES {
             eprintln!(
                 "[{}] refusing a state transfer of log {} to {}: the log is {} bytes, ceiling is {}",
-                self.replica_id, ours, requester, log_bytes, MAX_STATE_TRANSFER_BYTES
+                self.replica_id, ours, requester, log_bytes, MAX_STATE_TRANSFER_LOG_BYTES
             );
             return TransportMessage::StateUnavailable {
                 reason: format!(
                     "this replica's log is {log_bytes} bytes, above the \
-                     {MAX_STATE_TRANSFER_BYTES} byte ceiling on one state transfer"
+                     {MAX_STATE_TRANSFER_LOG_BYTES} byte ceiling on one state transfer"
                 ),
                 log_id: ours,
             };
@@ -2309,6 +2519,12 @@ where
     fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
         if let Err(reason) = self.check_migration_only(&op) {
+            return OpResult {
+                success: false,
+                message: reason,
+            };
+        }
+        if let Some(reason) = self.copy_in_progress(&log_id) {
             return OpResult {
                 success: false,
                 message: reason,
@@ -2528,6 +2744,9 @@ where
                 );
             }
         }
+        if let Some(reason) = self.copy_in_progress(&log_id) {
+            return answer(BatchOutcome::Refused, 0, Some(0), reason, Some(version));
+        }
         let guard = match self.intake_guard(&log_id) {
             Ok(guard) => guard,
             Err(reason) => {
@@ -2662,10 +2881,10 @@ where
     /// needs nothing new to read it.
     ///
     /// One frame per event instead when the batch frame would be larger than
-    /// [`MAX_STATE_TRANSFER_BYTES`], which is under what a relay reads as one
-    /// frame (see there): delivered whole, a peer is only exposed again to a
-    /// half-applied edit, while an oversized frame would take the sender off
-    /// the relay.
+    /// [`MAX_STATE_TRANSFER_BYTES`] (see there): delivered whole, a peer is
+    /// only exposed again to a half-applied edit. A relay session would carry
+    /// the larger frame as chunks; the bound is kept for the peers that read
+    /// one frame per step.
     ///
     /// [`handle_transport_message`]: GenericNode::handle_transport_message
     fn broadcast_batch(&mut self, mut events: Vec<EventMessage<L::Op>>) {
@@ -2984,6 +3203,9 @@ where
                 self.handle_control_cmd(cmd);
             }
 
+            // --- A migration's copy, one short step at a time ---
+            self.advance_copies();
+
             // --- Peers the bootnode has told us about since the last pass ---
             self.reconcile_discovered_peers();
 
@@ -3146,6 +3368,9 @@ where
     fn handle_control_cmd(&mut self, cmd: ControlCmd) {
         match cmd {
             ControlCmd::Pause { peer_id, reply } => {
+                if !reply.take() {
+                    return;
+                }
                 let result = Self::unit_result_to_op_result(
                     self.transport.pause_peer(&peer_id),
                     format!("Paused peer '{}'", peer_id),
@@ -3154,6 +3379,9 @@ where
                 let _ = reply.send(result);
             }
             ControlCmd::Resume { peer_id, reply } => {
+                if !reply.take() {
+                    return;
+                }
                 let result = match self.transport.resume_peer(&peer_id) {
                     Ok(()) => {
                         let buffered = self.transport.drain_buffer(&peer_id);
@@ -3179,6 +3407,9 @@ where
                 let _ = reply.send(result);
             }
             ControlCmd::PauseAll { reply } => {
+                if !reply.take() {
+                    return;
+                }
                 let result = Self::unit_result_to_op_result(
                     self.transport.pause_all(),
                     "All peers paused".to_string(),
@@ -3187,6 +3418,9 @@ where
                 let _ = reply.send(result);
             }
             ControlCmd::ResumeAll { reply } => {
+                if !reply.take() {
+                    return;
+                }
                 // Collect paused peer IDs first
                 let paused: Vec<String> = self
                     .transport
@@ -3264,7 +3498,9 @@ where
                 metamodel_id,
                 reply,
             } => {
-                let _ = reply.send(self.register(model_id, metamodel_id));
+                if reply.take() {
+                    let _ = reply.send(self.register(model_id, metamodel_id));
+                }
             }
             ControlCmd::QueryLog { log_id, reply } => {
                 let _ = reply.send(self.state_read(&log_id));
@@ -3280,7 +3516,9 @@ where
                 let _ = reply.send(self.bound_descriptor(&log_id));
             }
             ControlCmd::AddMetamodel { text, reply } => {
-                let _ = reply.send(self.add_metamodel(text));
+                if reply.take() {
+                    let _ = reply.send(self.add_metamodel(text));
+                }
             }
             ControlCmd::Hosts { log_id, reply } => {
                 let _ = reply.send(self.logs.contains_key(&log_id));
@@ -3288,14 +3526,20 @@ where
             ControlCmd::Migrate {
                 log_id,
                 metamodel_id,
+                deadline,
                 reply,
             } => {
-                let _ = reply.send(self.migrate(&log_id, metamodel_id));
+                if reply.take() {
+                    let _ = reply.send(self.migrate_by(&log_id, metamodel_id, deadline));
+                }
             }
             ControlCmd::Migration { log_id, reply } => {
                 let _ = reply.send(self.migration_status(&log_id));
             }
             ControlCmd::Leave { reply } => {
+                if !reply.take() {
+                    return;
+                }
                 // A replica has no shutdown path — `run()` never returns and
                 // the process is killed from outside — so departure cannot be
                 // announced on the way out. This is the announcement: stop

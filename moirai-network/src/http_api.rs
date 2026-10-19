@@ -11,7 +11,7 @@ use std::net::TcpListener;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use moirai_protocol::log_id::LogId;
 use serde::de::DeserializeOwned;
@@ -20,20 +20,26 @@ use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
-    BatchEnvelope, BatchOutcome, BatchResult, BoundDescriptor, Claim, ControlCmd, Intake,
-    MigrateRefused, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
+    BatchEnvelope, BatchOutcome, BatchResult, BoundDescriptor, Claim, Claimed, ControlCmd, Intake,
+    MigrateRefused, Migrated, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
     ServedDescriptor, StateRead,
 };
 
 /// How long a request waits for the node's event loop to take it before it
 /// gives up with a 504.
 ///
-/// For an operation or a batch, giving up is settled with the loop through a
-/// [`Claim`]: a 504 is answered only when the loop had not taken the
-/// submission, which it then never applies, and a submission the loop took
-/// in time is answered with what the loop did however long that took. For
-/// every other command a 504 changes nothing, since nothing was to be
-/// applied.
+/// For an operation, a batch and every command that writes (a registration,
+/// a descriptor, a migration, a pause, a resume, a leave), giving up is
+/// settled with the loop through a [`Claim`]: a 504 (on the pause and resume
+/// routes, `{"success": false, "message": "timeout"}`) is answered only when
+/// the loop had not taken the command, which it then never carries out, and
+/// a command the loop took in time is answered with what the loop did. For
+/// every other command, a read, a 504 changes nothing, since nothing was to
+/// be applied.
+///
+/// A migration the loop took is answered by the loop's own deadline, this
+/// one counted from the request: the cut is written, the copy applied until
+/// then, and the rest applied afterwards ([`crate::generic::Migrated`]).
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Start the optional HTTP API on the given port.
@@ -81,11 +87,15 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   cannot say what a model is written in must not guess
 /// - `GET  /api/model/{id}/metrics`   that model's counters, `foreign_log_refusals` included
 /// - `POST /api/model/{id}/migrate`   migrate that model to a new one under the
-///   descriptor `{"metamodel_id": ...}` names (SI.12): 201 with the new model's
-///   id under `model_id`, 422 with the reason when refused, 404 for a model
-///   the node does not host
+///   descriptor `{"metamodel_id": ...}` names (SI.12): once the cut is
+///   written, 201 with the new model's id under `model_id` when its copy is
+///   whole, 202 when the node goes on applying it (SI.13); 422 with the
+///   reason when refused, 404 for a model the node does not host, 504 for a
+///   migration the event loop did not take in time, which it never carries
+///   out. Fields of the body other than `metamodel_id` are ignored
 /// - `GET  /api/model/{id}/migration` that model's migration status, as the
-///   application reads it
+///   application reads it, with `copy: {applied, of}` beside it on the node
+///   that planned the model's copy
 ///
 /// Unscoped endpoints, which answer for the node's default log:
 /// - `POST /api/op`              submit an operation (JSON body = serialized op)
@@ -757,6 +767,23 @@ impl<O: NetworkOp> Api<O> {
         rx.recv_timeout(self.timeout).ok()
     }
 
+    /// One round trip to the event loop for a command that writes, settled
+    /// through a [`Claim`] as a submission is (see [`Self::settle`]): a
+    /// command answered [`Settled::Expired`] is one the loop never carries
+    /// out.
+    fn ask_claimed<R>(&self, make: impl FnOnce(Claimed<R>) -> ControlCmd) -> Settled<R> {
+        let (tx, rx) = mpsc::channel();
+        let claim = Claim::default();
+        if self
+            .ctrl
+            .send(make(Claimed::new(claim.clone(), tx)))
+            .is_err()
+        {
+            return Settled::Gone;
+        }
+        self.settle(&claim, &rx)
+    }
+
     /// Wait for the event loop's answer to a submission, and settle the
     /// deadline with it through `claim`: past the deadline, either this
     /// thread abandons the submission, which the loop will then skip, or
@@ -784,12 +811,17 @@ impl<O: NetworkOp> Api<O> {
         }
     }
 
-    /// A command answered with an [`OpResult`].
-    fn control(&self, make: impl FnOnce(Sender<OpResult>) -> ControlCmd) -> Reply {
-        let result = self.ask(make).unwrap_or(OpResult {
-            success: false,
-            message: "timeout".into(),
-        });
+    /// A command answered with an [`OpResult`], settled through a claim: the
+    /// `timeout` answer is given only for a command the loop never carries
+    /// out.
+    fn control(&self, make: impl FnOnce(Claimed<OpResult>) -> ControlCmd) -> Reply {
+        let result = match self.ask_claimed(make) {
+            Settled::Answered(result) => result,
+            Settled::Expired | Settled::Gone => OpResult {
+                success: false,
+                message: "timeout".into(),
+            },
+        };
         op_result(&result)
     }
 
@@ -837,8 +869,8 @@ impl<O: NetworkOp> Api<O> {
             Ok(text) => text,
             Err(reply) => return reply,
         };
-        match self.ask(|reply| ControlCmd::AddMetamodel { text, reply }) {
-            Some(Ok(served)) => json_value(
+        match self.ask_claimed(|reply| ControlCmd::AddMetamodel { text, reply }) {
+            Settled::Answered(Ok(served)) => json_value(
                 if served.added { 201 } else { 200 },
                 &json!({
                     "added": served.added,
@@ -846,9 +878,9 @@ impl<O: NetworkOp> Api<O> {
                     "metamodels": self.listing_entries(),
                 }),
             ),
-            Some(Err(refused @ ServeRefused::Unreadable(_))) => error(422, refused),
-            Some(Err(refused @ ServeRefused::NotEnabled)) => error(501, refused),
-            None => timeout(),
+            Settled::Answered(Err(refused @ ServeRefused::Unreadable(_))) => error(422, refused),
+            Settled::Answered(Err(refused @ ServeRefused::NotEnabled)) => error(501, refused),
+            Settled::Expired | Settled::Gone => timeout(),
         }
     }
 
@@ -974,12 +1006,12 @@ impl<O: NetworkOp> Api<O> {
             (None, Some(_)) => serde_json::Value::Null,
             (None, None) => return error(400, "`metamodel_id` is required"),
         };
-        match self.ask(|reply| ControlCmd::Register {
+        match self.ask_claimed(|reply| ControlCmd::Register {
             model_id,
             metamodel_id: metamodel_id.clone(),
             reply,
         }) {
-            Some(Ok(registered)) => json_value(
+            Settled::Answered(Ok(registered)) => json_value(
                 if registered.created { 201 } else { 200 },
                 &json!({
                     "model_id": registered.model_id.as_str(),
@@ -987,10 +1019,14 @@ impl<O: NetworkOp> Api<O> {
                     "created": registered.created,
                 }),
             ),
-            Some(Err(refused @ RegisterRefused::AlreadyHosted(_))) => error(409, refused),
-            Some(Err(refused @ RegisterRefused::UnknownMetamodel(_))) => error(422, refused),
-            Some(Err(refused @ RegisterRefused::NotEnabled)) => error(501, refused),
-            None => timeout(),
+            Settled::Answered(Err(refused @ RegisterRefused::AlreadyHosted(_))) => {
+                error(409, refused)
+            }
+            Settled::Answered(Err(refused @ RegisterRefused::UnknownMetamodel(_))) => {
+                error(422, refused)
+            }
+            Settled::Answered(Err(refused @ RegisterRefused::NotEnabled)) => error(501, refused),
+            Settled::Expired | Settled::Gone => timeout(),
         }
     }
 
@@ -1055,7 +1091,9 @@ impl<O: NetworkOp> Api<O> {
         }
     }
 
-    /// `POST /api/model/{id}/migrate`.
+    /// `POST /api/model/{id}/migrate` (SI.13 D1): settled through a claim,
+    /// and answered by the loop once the cut is written, 201 when the copy
+    /// was whole by the deadline and 202 when the loop goes on applying it.
     fn migrate(&self, request: &mut Request, log_id: LogId) -> Reply {
         let body = match read_body(request) {
             Ok(body) => body,
@@ -1069,21 +1107,24 @@ impl<O: NetworkOp> Api<O> {
             return error(400, "`metamodel_id` is required");
         };
         let from = log_id.as_str().to_string();
-        match self.ask(|reply| ControlCmd::Migrate {
+        let deadline = Instant::now() + self.timeout;
+        match self.ask_claimed(|reply| ControlCmd::Migrate {
             log_id,
             metamodel_id: metamodel_id.clone(),
+            deadline,
             reply,
         }) {
-            Some(Ok(successor)) => json_value(
-                201,
+            Settled::Answered(Ok(Migrated { model_id, whole })) => json_value(
+                if whole { 201 } else { 202 },
                 &json!({
-                    "model_id": successor.as_str(),
+                    "model_id": model_id.as_str(),
                     "metamodel_id": metamodel_id,
                     "migrated_from": from,
+                    "copy": if whole { "whole" } else { "in progress" },
                 }),
             ),
-            Some(Err(refused)) => migrate_refused(refused),
-            None => timeout(),
+            Settled::Answered(Err(refused)) => migrate_refused(refused),
+            Settled::Expired | Settled::Gone => timeout(),
         }
     }
 }
