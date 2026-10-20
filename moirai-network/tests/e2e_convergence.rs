@@ -4866,16 +4866,39 @@ fn ceiling_refusals(node: &dyn Node) -> usize {
 /// stable state, so a kilobyte of key is worth six more inserts, and reaching
 /// 768 KiB in single characters means four thousand HTTP round trips and two
 /// more minutes of suite for the same log size.
+///
+/// Amended by SI.13 round 2 (A1). The ceiling is no longer 768 KiB: once a
+/// relay session carried any message as chunk frames under the relay's bound
+/// (SI.13 D2), `state_response_for` measures the serialised log against
+/// `MAX_STATE_TRANSFER_LOG_BYTES`, 128 MiB (`generic.rs`, a bound on memory),
+/// and the 1.1 MB log this scenario used to write is served, not refused. The
+/// scenario keeps its claim, a transfer over the ceiling refused and the relay
+/// alive through the refusal, with a log over the new ceiling: keys of
+/// `KEY_PAD` characters, so that the HTTP round trips stay in the low
+/// thousands. The ceiling is private to `generic.rs`, so it is restated as
+/// `CEILING` and read back: the joiner's refusal quotes the donor's
+/// measured size and its ceiling, and the scenario checks that the ceiling
+/// quoted is the one restated and that the log refused is over it, so a
+/// raised ceiling fails here by name instead of turning the scenario into a
+/// transfer that is served.
 #[test]
 fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
+    /// `MAX_STATE_TRANSFER_LOG_BYTES` in `moirai-network/src/generic.rs`.
+    const CEILING: u64 = 128 * 1024 * 1024;
     /// Inserts applied before the joiner arrives, split between the two donors.
-    /// Measured at roughly 1.4 kB of exported log per operation at the padding
-    /// below, so this is about 1.1 MB against a 768 KiB ceiling — enough margin
-    /// that a change in the log's shape moves the number without moving the
-    /// verdict.
-    const APPLIED: usize = 800;
+    /// Measured at about 100.5 kB of exported log per operation at the padding
+    /// below (SI.13 round 2's probe at `6f334fa`, on host processes: 2,000
+    /// inserts made a log of 201,070,867 bytes, refused 13.6 s after the
+    /// joiner asked, the busiest donor peaking at 825 MB), so this is about
+    /// 201 MB against the 128 MiB ceiling.
+    const APPLIED: usize = 2000;
     /// Characters of padding on every key.
-    const KEY_PAD: usize = 1000;
+    const KEY_PAD: usize = 100_000;
+    /// How long the donors may take to deliver every insert, and the joiner to
+    /// be refused: a donor serialises the whole log to measure it each time
+    /// the joiner asks (every two seconds while it holds no history), and at
+    /// this size a debug build takes seconds to do it.
+    const LARGE_TIMEOUT: Duration = Duration::from_secs(600);
     /// Replicas that hold the session before the joiner arrives.
     const DONORS: [&str; 2] = ["a", "b"];
 
@@ -4900,7 +4923,7 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
     // Nothing here waits on the rendered state: at this key size it is most of a
     // megabyte per replica, and the count is what the ceiling is about anyway.
     for node in rig.nodes() {
-        poll_until(CONVERGE_TIMEOUT, || {
+        poll_until(LARGE_TIMEOUT, || {
             Ok((metric(node, "delivered_ops")? == APPLIED as u64).then_some(()))
         })
         .unwrap_or_else(|e| {
@@ -4921,9 +4944,10 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
     }
 
     let c = rig.node("c");
-    poll_until(CONVERGE_TIMEOUT, || {
-        Ok((ceiling_refusals(c) > 0).then_some(()))
-    })
+    poll_until(
+        LARGE_TIMEOUT,
+        || Ok((ceiling_refusals(c) > 0).then_some(())),
+    )
     .unwrap_or_else(|e| {
         panic!(
             "the joiner was never refused a transfer it cannot be sent{}. Either a \
@@ -4943,6 +4967,28 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
          suffix — a correct answer to the wrong question, and it cannot make a \
          replica with no history causally ready; metrics: {:?}",
         metrics_of(c)
+    );
+    // The ceiling read back (SI.13 round 2, A1): the refusal quotes the donor's
+    // measured size and its ceiling, `this replica's log is <n> bytes, above
+    // the <ceiling> byte ceiling on one state transfer`.
+    let quoted: Vec<(u64, u64)> = c
+        .log_tail(usize::MAX)
+        .lines()
+        .filter_map(|line| {
+            let (_, rest) = line.split_once("this replica's log is ")?;
+            let (size, rest) = rest.split_once(" bytes, above the ")?;
+            let (ceiling, _) = rest.split_once(" byte ceiling on one state transfer")?;
+            Some((size.trim().parse().ok()?, ceiling.trim().parse().ok()?))
+        })
+        .collect();
+    assert!(
+        !quoted.is_empty()
+            && quoted
+                .iter()
+                .all(|(size, ceiling)| *ceiling == CEILING && size > ceiling),
+        "the joiner's refusals must quote the {CEILING} byte ceiling and a log over \
+         it; they quote (size, ceiling) {quoted:?}\n--- c ---\n{}",
+        c.log_tail(LOG_TAIL_LINES)
     );
 
     // --- the relay ---

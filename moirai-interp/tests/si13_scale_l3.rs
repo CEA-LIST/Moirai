@@ -29,7 +29,8 @@
 //!   `b` names nothing.
 //! - M9: `a`'s status reports the copy's progress, every read answered 200
 //!   within 6 s, never going back, reaching the whole copy, which `a`'s
-//!   metrics of `m'` then count.
+//!   metrics of `m'` then count. The first of those reads is K2's, the read
+//!   right after the answer, timed too (SI.13 round 2, OB15).
 //! - concurrent runs: every node resumes (`K3-resume`).
 //! - K3: every node names `m'` and lists the edits concurrent with the cut
 //!   (none in a plain run). K4: every node serves `m` as `a` served it when it
@@ -89,7 +90,7 @@ use si13::generated::{
     Generated, Kind, Step, at_path, generate, insert, leaf, objects, projected, to_d2,
 };
 use si13::si12::{D1, D2, D2_REMOVE, Uml, digest, ids_by_label, labels, project_with, strip_ids};
-use si13::{ANSWER_BOUND, copy_progress, expected13, no_copy};
+use si13::{ANSWER_BOUND, copy_progress, expected13, no_copy, status13};
 
 const SIZE: usize = 5_000;
 const REPS: usize = 2;
@@ -934,10 +935,29 @@ fn one_run(g: &Generated, case: Case, rep: usize) -> Run {
         run.measure("node_log_tails", json!(cluster.tails()));
         return run;
     };
+    // The first read of a's status after the answer, K2's, is one of M9's
+    // reads "from the answer until n == N" and is timed against the same
+    // bound (SI.13 round 2, OB15: round 1 left it untimed, and a single loop
+    // step after the answer hid behind it).
+    let asked = Instant::now();
+    let first_read = cluster.migration_raw(A, &m);
+    let first_took = asked.elapsed();
+    run.measure("first_read_ms", json!(first_took.as_secs_f64() * 1000.0));
+    let first_timed = match &first_read {
+        Ok(_) if first_took > ANSWER_BOUND => Err(format!(
+            "the first read of a's status after the answer took {} ms (M9)",
+            first_took.as_millis()
+        )),
+        Ok(_) => Ok(()),
+        Err(why) => Err(format!(
+            "the first read of a's status after the answer failed after {} ms (M9): {why}",
+            first_took.as_millis()
+        )),
+    };
     run.check(
         "K2",
         (|| {
-            let got = cluster.migration(A, &m)?;
+            let got = status13(&first_read.clone()?);
             let want = expected13(Some(&to), &[], &[]);
             if got != want {
                 return Err(format!("a reads {got}, not {want}"));
@@ -958,7 +978,7 @@ fn one_run(g: &Generated, case: Case, rep: usize) -> Run {
             Ok(())
         })(),
     );
-    let m9 = progress(&cluster, &m, &to, status, &mut run);
+    let m9 = first_timed.and_then(|()| progress(&cluster, &m, &to, status, &mut run));
     run.check(
         "M9",
         m9.and_then(|()| cluster.migration_raw(B, &m).and_then(|raw| no_copy(&raw))),

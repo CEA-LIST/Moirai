@@ -90,6 +90,13 @@ required-features = ["network"]
 name = "si13_scale_l3"
 required-features = ["network"]
 
+# SI.13 round 2: a copy still being written is not migrated, in process (a
+# `GenericNode` with `model_node`'s hooks) and on nodes at 5,000 objects
+# (ignored by default).
+[[test]]
+name = "si13_copy_in_progress"
+required-features = ["network"]
+
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
 # because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither

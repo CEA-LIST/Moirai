@@ -562,10 +562,19 @@ fn si13_l3_a_migration_answers_in_time_reports_progress_and_reaches_a_late_joine
             }
         },
     };
-    // M9: the first read names m' and reports progress; then progress to the end.
+    // M9: the first read names m' and reports progress, answered within the
+    // bound like every read from the answer on (SI.13 round 2, OB15); then
+    // progress to the end.
     out.check("M2, M9: right after the answer, a names m' and reports the copy's progress", {
         (|| {
+            let asked = Instant::now();
             let raw = cluster.migration_raw(A, &m)?;
+            if asked.elapsed() > ANSWER_BOUND {
+                return Err(format!(
+                    "the first read of a's status after the answer took {} ms (M9)",
+                    asked.elapsed().as_millis()
+                ));
+            }
             let got = status13(&raw);
             let want = expected13(Some(&to), &[], &[]);
             if got != want {

@@ -963,7 +963,10 @@ impl Cluster {
     }
 
     /// M10, the nodes' side: every line of a node's log that says its relay
-    /// session closed or failed, or that it dropped a relayed frame.
+    /// session closed or failed, that it dropped a relayed frame, or (SI.13
+    /// round 2, (d)) that it dropped a chunked message: one that joined but
+    /// will not parse, one left incomplete, or one dropped at the receiver's
+    /// memory bound (`relay_transport.rs`, `Joiner::take` and the reader).
     pub fn relay_session_alarms(&self) -> Vec<String> {
         self.nodes
             .iter()
@@ -976,6 +979,9 @@ impl Cluster {
                             || line.contains("Read error on the relay session")
                             || line.contains("Dropping an unparseable relay frame")
                             || line.contains("relay broadcast failed")
+                            || line.contains("Dropping a joined message")
+                            || line.contains("dropping an incomplete chunked message")
+                            || line.contains("dropping a chunked message")
                     })
                     .map(|line| format!("{}: {line}", node.id))
                     .collect::<Vec<_>>()
