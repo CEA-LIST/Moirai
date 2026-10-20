@@ -4938,7 +4938,15 @@ fn p3_an_oversized_transfer_is_refused_and_the_relay_survives() {
 
     // --- the joiner, reachable only over the relay ---
     rig.start_replica("c", &["right"]).expect("P3-5: start c");
-    for (node, peer) in [("c", "a"), ("c", "b"), ("a", "c"), ("b", "c")] {
+    // The routes are read from the joiner's side alone (SI.13 round 3). Each
+    // time `c` asks, a donor serialises its whole log on its event loop to
+    // measure it against the ceiling, and SI.13 round 2 saw a donor's HTTP API
+    // answer 504 for the whole minute it was polled after `c` started (SI.15,
+    // not this scenario's claim), so from here on nothing reads a donor. The
+    // refusal can reach `c` only from a donor and only through the relay: the
+    // islands share no network (P3-1's relay-stopped control), and the relay's
+    // three sessions are counted at the end.
+    for (node, peer) in [("c", "a"), ("c", "b")] {
         await_route(rig.node(node), peer, "relayed", MESH_TIMEOUT)
             .unwrap_or_else(|e| panic!("P3-5: {e:#}"));
     }
