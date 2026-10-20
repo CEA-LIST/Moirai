@@ -125,6 +125,20 @@ pub type MigrateFn<L> = fn(
 /// `GET /api/model/{id}/migration`. See [`GenericNode::enable_migration`].
 pub type MigrationFn<L> = fn(&LogReplica<L>) -> serde_json::Value;
 
+/// The application's rebase hook (SI.14): given a hosted log, the revision of
+/// its descriptor it is to be put under in place, and the names of what the
+/// revision removes, the one operation that does so, written on the log
+/// itself; or the reason it refuses, in which case nothing is written. See
+/// [`GenericNode::enable_rebase`].
+pub type RebaseFn<L> =
+    fn(&LogReplica<L>, &ServedDescriptor, &[String]) -> Result<<L as IsLog>::Op, String>;
+
+/// How many times the descriptor a hosted log is under has changed: a node
+/// serves the model under the descriptor in force, and checks this number
+/// on every pass to know when to look again. See
+/// [`GenericNode::enable_rebase`].
+pub type GenerationFn<L> = fn(&LogReplica<L>) -> u64;
+
 /// The application's check of the operations only a migration writes:
 /// `Err(reason)` refuses an adapter-submitted operation on any log, the
 /// default log and logs with no binding included. See
@@ -349,6 +363,11 @@ where
     /// every adapter-submitted operation once [`Self::enable_migration`]
     /// installed it.
     migration_only_fn: Option<MigrationOnlyFn<L::Op>>,
+    /// The application's rebase hooks, installed together by
+    /// [`Self::enable_rebase`]; `None` until then, and a rebase answers
+    /// [`MigrateRefused::NotEnabled`].
+    rebase_fn: Option<RebaseFn<L>>,
+    generation_fn: Option<GenerationFn<L>>,
     /// The copies this node planned, by the model each migrated (SI.13 D1):
     /// the successor, the operations still to apply, and how far it got.
     /// Kept once finished, without its plan, so the source's status goes on
@@ -421,6 +440,11 @@ struct Binding {
     /// It is what keeps [`GenericNode::resolve_bindings`] from describing
     /// every hosted model's descriptor on every pass of the event loop.
     confirmed: bool,
+    /// The application's generation of the descriptor in force the binding
+    /// follows ([`GenerationFn`]): a rebase puts the model under another
+    /// descriptor, which the binding then follows (SI.14, M21). Zero for a
+    /// log no rebase has moved.
+    generation: u64,
 }
 
 /// Whether a bound log's metamodel is one this node can serve.
@@ -1005,6 +1029,14 @@ impl<T> Claimed<T> {
     }
 }
 
+/// What a rebase answers once this node has delivered it (SI.14, M15): the
+/// model itself, under the revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rebased {
+    /// The model's id, which a rebase keeps.
+    pub model_id: LogId,
+}
+
 /// What a migration answers once the cut is written (SI.13 D1): the
 /// successor, and whether its copy was whole by the route's deadline.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1193,6 +1225,14 @@ pub(crate) enum ControlCmd {
         deadline: Instant,
         reply: Claimed<Result<Migrated, MigrateRefused>>,
     },
+    /// `POST /api/model/{id}/migrate` with `"strategy": "rebase"`. See
+    /// [`GenericNode::rebase`].
+    Rebase {
+        log_id: LogId,
+        metamodel_id: serde_json::Value,
+        drops: Vec<String>,
+        reply: Claimed<Result<Rebased, MigrateRefused>>,
+    },
     /// `GET /api/model/{id}/migration`: the application's status of one
     /// hosted log.
     Migration {
@@ -1367,6 +1407,8 @@ where
             migrate_fn: None,
             migration_fn: None,
             migration_only_fn: None,
+            rebase_fn: None,
+            generation_fn: None,
             copies: BTreeMap::new(),
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
@@ -1584,6 +1626,7 @@ where
                 Ok(served) if served.key == key => BindingState::Held,
                 _ => BindingState::Foreign,
             };
+            let generation = self.generation_of(&log_id);
             if let Some(binding) = self
                 .logs
                 .get_mut(&log_id)
@@ -1591,6 +1634,7 @@ where
             {
                 binding.state = state;
                 binding.confirmed = true;
+                binding.generation = generation;
             }
             match outcome {
                 // The model agrees with the key it was bound under. Said
@@ -1618,6 +1662,16 @@ where
                 ),
             }
         }
+        self.follow_descriptors();
+    }
+
+    /// The application's generation of the descriptor `log_id` is under
+    /// ([`GenerationFn`]); zero without the hook or the log.
+    fn generation_of(&self, log_id: &LogId) -> u64 {
+        match (self.generation_fn, self.logs.get(log_id)) {
+            (Some(generation), Some(log)) => generation(&log.replica),
+            _ => 0,
+        }
     }
 
     /// Bind a log joined by id alone to the descriptor its own history
@@ -1627,6 +1681,7 @@ where
     /// there is nothing to contradict. A descriptor that cannot be served
     /// leaves the binding pending, reported once.
     fn bind_to_history(&mut self, log_id: &LogId, outcome: Result<Served, ServeRefused>) {
+        let generation = self.generation_of(log_id);
         let Some(binding) = self
             .logs
             .get_mut(log_id)
@@ -1635,6 +1690,7 @@ where
             return;
         };
         binding.confirmed = true;
+        binding.generation = generation;
         match outcome {
             Ok(served) => {
                 binding.key = Some(served.key.clone());
@@ -1842,6 +1898,7 @@ where
             // against — for a create too, whose opening operation carries
             // the descriptor it was written from.
             confirmed: false,
+            generation: 0,
         };
         if let Some(log) = self.logs.get_mut(&log_id) {
             log.binding = Some(binding);
@@ -1894,6 +1951,136 @@ where
         self.migrate_fn = Some(migrate);
         self.migration_fn = Some(status);
         self.migration_only_fn = Some(migration_only);
+    }
+
+    /// Install the application's rebase hooks (SI.14): `rebase` plans the
+    /// rebase of a hosted log onto a revision of its descriptor, and
+    /// `generation` tells the node when the descriptor a log is under has
+    /// changed, which a rebase delivered from any replica does. Needs
+    /// [`Self::enable_registration`] too, whose key hook resolves a rebase's
+    /// `metamodel_id`, and [`Self::enable_descriptor_adoption`] with
+    /// [`Self::enable_metamodel_upload`], through which a log's binding
+    /// follows the descriptor in force: the model is listed under it, and
+    /// served it on its metamodel route, on a node that did not hold it too.
+    ///
+    /// Purely additive: without it a rebase answers 501 and nothing else
+    /// changes.
+    pub fn enable_rebase(&mut self, rebase: RebaseFn<L>, generation: GenerationFn<L>) {
+        self.rebase_fn = Some(rebase);
+        self.generation_fn = Some(generation);
+    }
+
+    /// Rebase a hosted model in place onto the revision `metamodel_id`
+    /// names, removing what `drops` names: the primitive behind
+    /// `POST /api/model/{id}/migrate` with `"strategy": "rebase"` (SI.14,
+    /// M15).
+    ///
+    /// The application's hook plans it against this node's replica of the
+    /// model; the operation is written on the model's own log and broadcast,
+    /// and the model's binding follows the revision before this answers, so
+    /// the first read after the answer lists the model under it. Refused,
+    /// with nothing written, when the model is not hosted, when it is the
+    /// successor of a copy this node is still writing, when the node holds
+    /// no descriptor for `metamodel_id`, and when the hook or the model's
+    /// own intake refuses.
+    pub fn rebase(
+        &mut self,
+        log_id: &LogId,
+        metamodel_id: serde_json::Value,
+        drops: &[String],
+    ) -> Result<Rebased, MigrateRefused> {
+        let (Some(rebase), Some(descriptor_key)) = (self.rebase_fn, self.descriptor_key_fn) else {
+            return Err(MigrateRefused::NotEnabled);
+        };
+        let Some(log) = self.logs.get(log_id) else {
+            return Err(MigrateRefused::NotHosted(log_id.clone()));
+        };
+        if let Some(job) = self.copy_writing(log_id) {
+            return Err(MigrateRefused::CopyInProgress(format!(
+                "model {log_id} is a migration's copy still being written here ({} of {} \
+                 operations): it can be migrated once its copy is whole",
+                job.applied, job.of
+            )));
+        }
+        let unknown = || MigrateRefused::UnknownMetamodel(metamodel_id.clone());
+        let key = descriptor_key(&metamodel_id).ok_or_else(unknown)?;
+        let held = self
+            .descriptors()
+            .iter()
+            .find(|held| held.key == key)
+            .cloned()
+            .ok_or_else(unknown)?;
+        let op = rebase(&log.replica, &held, drops).map_err(MigrateRefused::Refused)?;
+        let event = self.apply_local(log_id, op).map_err(|reason| {
+            MigrateRefused::Refused(format!(
+                "the rebase was refused, so nothing was written: {reason}"
+            ))
+        })?;
+        self.broadcast(TransportMessage::Event { event });
+        self.follow_descriptors();
+        eprintln!(
+            "[{}] rebased model {} in place onto metamodel {}",
+            self.replica_id, log_id, held.key
+        );
+        Ok(Rebased {
+            model_id: log_id.clone(),
+        })
+    }
+
+    /// Let every confirmed binding follow the descriptor its log has in
+    /// force, once the application says it changed ([`GenerationFn`]): the
+    /// log's own descriptor is served, and the binding takes its key and its
+    /// listing entry (SI.14, M21). A binding the model's history
+    /// contradicted stays foreign; a descriptor that cannot be served leaves
+    /// the binding where it was, reported once.
+    fn follow_descriptors(&mut self) {
+        let (Some(adopt), Some(generation)) = (self.adopt_fn, self.generation_fn) else {
+            return;
+        };
+        let moved: Vec<(LogId, u64, Option<String>)> =
+            self.logs
+                .iter()
+                .filter_map(|(log_id, log)| {
+                    let binding = log.binding.as_ref().filter(|binding| {
+                        binding.confirmed && binding.state == BindingState::Held
+                    })?;
+                    let now = generation(&log.replica);
+                    (now != binding.generation).then(|| (log_id.clone(), now, adopt(&log.replica)))
+                })
+                .collect();
+        for (log_id, now, text) in moved {
+            let outcome = text.map(|text| self.add_metamodel(text));
+            let Some(binding) = self
+                .logs
+                .get_mut(&log_id)
+                .and_then(|log| log.binding.as_mut())
+            else {
+                continue;
+            };
+            binding.generation = now;
+            match outcome {
+                Some(Ok(served)) => {
+                    eprintln!(
+                        "[{}] model {} is now under metamodel {}{}",
+                        self.replica_id,
+                        log_id,
+                        served.key,
+                        if served.added {
+                            ", now served here"
+                        } else {
+                            ""
+                        }
+                    );
+                    binding.key = Some(served.key);
+                    binding.metamodel_id = served.listing;
+                }
+                Some(Err(refused)) => eprintln!(
+                    "[{}] model {} is now under a descriptor that cannot be served here: {}",
+                    self.replica_id, log_id, refused
+                ),
+                None => {}
+            }
+        }
     }
 
     /// The refusal of an adapter-submitted operation that only a migration
@@ -2069,6 +2256,7 @@ where
                 // Checked by `resolve_bindings` against the descriptor the
                 // successor's first operation carries, as a create is.
                 confirmed: false,
+                generation: 0,
             });
         }
         let cut = match self.apply_local(log_id, cut) {
@@ -2254,6 +2442,7 @@ where
                 metamodel_id: serde_json::Value::Null,
                 state: BindingState::Pending,
                 confirmed: false,
+                generation: 0,
             });
         }
         eprintln!(
@@ -3700,6 +3889,18 @@ where
                 }
                 if reply.take() {
                     let _ = reply.send(self.carry_out_migration(&log_id, plan, deadline));
+                }
+            }
+            ControlCmd::Rebase {
+                log_id,
+                metamodel_id,
+                drops,
+                reply,
+            } => {
+                // One loop step, as a cut is: taken before it is carried
+                // out, and dropped unanswered when its route gave up first.
+                if reply.take() {
+                    let _ = reply.send(self.rebase(&log_id, metamodel_id, &drops));
                 }
             }
             ControlCmd::Migration { log_id, reply } => {

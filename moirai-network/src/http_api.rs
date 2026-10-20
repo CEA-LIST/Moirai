@@ -21,8 +21,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::generic::{
     BatchEnvelope, BatchOutcome, BatchResult, BoundDescriptor, Claim, Claimed, ControlCmd, Intake,
-    MigrateRefused, Migrated, NetworkOp, OpEnvelope, OpResult, RegisterRefused, ServeRefused,
-    ServedDescriptor, StateRead,
+    MigrateRefused, Migrated, NetworkOp, OpEnvelope, OpResult, Rebased, RegisterRefused,
+    ServeRefused, ServedDescriptor, StateRead,
 };
 
 /// How long a request waits for the node's event loop to take it before it
@@ -96,8 +96,15 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   a copy this node is still writing, which can be migrated once the copy
 ///   is whole; 422 with the reason when refused, 404 for a model the node
 ///   does not host, 504 for a migration the event loop did not take in time,
-///   which it never carries out. Fields of the body other than
-///   `metamodel_id` are ignored
+///   which it never carries out. That is strategy copy, which a body with
+///   no `strategy`, or `"strategy": "copy"`, asks for. With
+///   `"strategy": "rebase"` and `"drops": ["<Class>", "<Class>.<feature>",
+///   ...]` (absent meaning none) the model is put under the revision in
+///   place (SI.14): 200 with `{"model_id": <the model's own id>,
+///   "strategy": "rebase", "metamodel_id"}` once this node has delivered the
+///   rebase, 422 with the reason when refused, and 409, 404 and 504 as for
+///   copy. A `strategy` other than these, or `drops` that is not an array of
+///   names, is answered 400. Other fields of the body are ignored
 /// - `GET  /api/model/{id}/migration` that model's migration status, as the
 ///   application reads it, with `copy: {applied, of}` beside it on the node
 ///   that planned the model's copy
@@ -1111,6 +1118,28 @@ impl<O: NetworkOp> Api<O> {
         let Some(metamodel_id) = body.get("metamodel_id").cloned() else {
             return error(400, "`metamodel_id` is required");
         };
+        match body.get("strategy") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(strategy)) if strategy == "copy" => {}
+            Some(serde_json::Value::String(strategy)) if strategy == "rebase" => {
+                let drops = match body.get("drops") {
+                    None | Some(serde_json::Value::Null) => Vec::new(),
+                    Some(serde_json::Value::Array(names)) => {
+                        match names
+                            .iter()
+                            .map(|name| name.as_str().map(str::to_string))
+                            .collect::<Option<Vec<String>>>()
+                        {
+                            Some(names) => names,
+                            None => return error(400, "`drops` is an array of names"),
+                        }
+                    }
+                    Some(_) => return error(400, "`drops` is an array of names"),
+                };
+                return self.rebase(log_id, metamodel_id, drops);
+            }
+            Some(_) => return error(400, "`strategy` is `copy` or `rebase`"),
+        }
         let from = log_id.as_str().to_string();
         let deadline = Instant::now() + self.timeout;
         match self.ask_claimed(|reply| ControlCmd::Migrate {
@@ -1139,6 +1168,29 @@ impl<O: NetworkOp> Api<O> {
                 }
                 json_value(if whole { 201 } else { 202 }, &body)
             }
+            Settled::Answered(Err(refused)) => migrate_refused(refused),
+            Settled::Expired | Settled::Gone => timeout(),
+        }
+    }
+
+    /// `POST /api/model/{id}/migrate` with `"strategy": "rebase"` (SI.14,
+    /// M15): settled through a claim like a copy, and answered once the
+    /// event loop has written, and so delivered, the rebase.
+    fn rebase(&self, log_id: LogId, metamodel_id: serde_json::Value, drops: Vec<String>) -> Reply {
+        match self.ask_claimed(|reply| ControlCmd::Rebase {
+            log_id,
+            metamodel_id: metamodel_id.clone(),
+            drops,
+            reply,
+        }) {
+            Settled::Answered(Ok(Rebased { model_id })) => json_value(
+                200,
+                &json!({
+                    "model_id": model_id.as_str(),
+                    "strategy": "rebase",
+                    "metamodel_id": metamodel_id,
+                }),
+            ),
             Settled::Answered(Err(refused)) => migrate_refused(refused),
             Settled::Expired | Settled::Gone => timeout(),
         }

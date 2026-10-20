@@ -30,6 +30,7 @@ pub mod migrate;
 pub mod network;
 pub mod node;
 pub mod op;
+pub(crate) mod rebase;
 pub mod refs;
 #[cfg(feature = "test_utils")]
 pub mod testing;

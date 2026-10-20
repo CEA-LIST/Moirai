@@ -135,6 +135,16 @@
 //! (`moirai_interp::migrate::adapter_refusal`): a migration writes them, and
 //! nothing else does.
 //!
+//! With `"strategy": "rebase"` (SI.14) the model is put under the revision in
+//! place instead, through [`moirai_interp::migrate::rebase`], and `drops`
+//! names what the revision removes: the answer names the model itself, the
+//! rebase travels on the model's own log carrying the revision's text, and
+//! every node, one that held no copy of the revision included, lists the
+//! model under the revision once it has delivered it and serves the revision
+//! on the model's metamodel route (`ModelLog::descriptor_generation` says
+//! when to look again). A rebase posted on an op route is refused as a cut
+//! is.
+//!
 //! # Conformance: there is no guard here
 //!
 //! The second difference. The generated node installs an intake guard
@@ -194,7 +204,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use moirai_interp::migrate::{adapter_refusal, migrate};
+use moirai_interp::migrate::{adapter_refusal, migrate, rebase};
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
 use moirai_network::dashboard::DashboardConfig;
@@ -328,6 +338,23 @@ fn migrate_model(
     migrate(replica.state(), successor.as_str(), &descriptor.text)
         .map(|migration| (migration.cut, migration.ops))
         .map_err(|why| why.to_string())
+}
+
+/// The rebase of a hosted model onto `descriptor`, removing what `drops`
+/// names, planned against this node's replica of the model (SI.14); see
+/// [`moirai_interp::migrate::rebase`].
+fn rebase_model(
+    replica: &LogReplica<ModelLog>,
+    descriptor: &ServedDescriptor,
+    drops: &[String],
+) -> Result<ModelOp, String> {
+    rebase(replica.state(), &descriptor.text, drops).map_err(|why| why.to_string())
+}
+
+/// How many times the descriptor a hosted model is under has changed:
+/// [`ModelLog::descriptor_generation`].
+fn descriptor_generation(replica: &LogReplica<ModelLog>) -> u64 {
+    replica.state().descriptor_generation()
 }
 
 /// The migration status a hosted model reads: [`ModelLog::migration`].
@@ -591,6 +618,7 @@ fn main() {
     // A cut, or a link in the plan's own-event form, is refused from every
     // adapter: only `POST /api/model/{id}/migrate` writes them.
     node.enable_migration(migrate_model, migration_status, adapter_refusal);
+    node.enable_rebase(rebase_model, descriptor_generation);
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 

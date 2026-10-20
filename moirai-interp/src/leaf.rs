@@ -44,7 +44,7 @@ use moirai_crdt::{
     bag::{Count, CountLog, counts},
     counter::{resettable_counter::Counter, simple_counter::Counter as SimpleCounter},
     flag::{dw_flag::DWFlag, ew_flag::EWFlag},
-    list::eg_walker::List,
+    list::eg_walker::{List, ReadAt},
     map::uw_map::{UWMap, UWMapLog},
     register::{
         mv_register::MVRegister,
@@ -56,8 +56,12 @@ use moirai_crdt::{
 };
 use moirai_protocol::{
     clock::version_vector::Version,
-    crdt::{eval::EvalNested, query::Read},
-    event::Event,
+    crdt::{
+        eval::EvalNested,
+        policy::{FairPolicy, LwwPolicy, Policy},
+        query::Read,
+    },
+    event::{Event, tag::Tag},
     state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::VecLog},
 };
 use moirai_semantics::{FlagWins, LeafRule, MetamodelSemantics, NumKind, SetTie, TieBreak};
@@ -763,6 +767,76 @@ impl LeafLog {
     /// Whether the arm holds nothing.
     pub fn is_default(&self) -> bool {
         dispatch!(self, log => log.is_default())
+    }
+
+    /// The text as it reads at `version`, for a text; `None` for every other
+    /// arm (SI.14, M18). A text never compacts, so any version reads.
+    pub(crate) fn text_at(&self, version: &Version) -> Option<String> {
+        match self {
+            LeafLog::Text(log) => Some(
+                log.execute_query(&ReadAt::<Vec<char>>::new(version))
+                    .into_iter()
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// This text as the register `rule` makes it (SI.14, M18): one write, the
+    /// translation of the text's greatest event by the register's own rule,
+    /// which is the text read at that event's version with it applied,
+    /// tagged with that event. It is what the register holds had every
+    /// character event been written to it as the write of the text it left,
+    /// since the register keeps the greatest tag; and it is a function of the
+    /// events alone, so every replica that holds them holds this write.
+    /// `None` for any arm but a text; an empty register for an empty text.
+    pub(crate) fn text_to_register(&self, rule: LeafRule) -> Option<LeafLog> {
+        let LeafLog::Text(log) = self else {
+            return None;
+        };
+        let mut register = LeafLog::for_rule(rule);
+        let graph = log.unstable().graph();
+        let order = |x: &Tag, y: &Tag| match rule {
+            LeafRule::Register {
+                tie: TieBreak::LastWriterWins,
+            } => LwwPolicy::compare(x, y),
+            LeafRule::Register {
+                tie: TieBreak::Fair,
+            } => FairPolicy::compare(x, y),
+            _ => x.lamport().cmp(y.lamport()),
+        };
+        let Some(greatest) = graph
+            .node_indices()
+            .max_by(|x, y| order(graph[*x].tag(), graph[*y].tag()))
+        else {
+            return Some(register);
+        };
+        // Its version, as far as this text goes: the greatest sequence number
+        // of each origin among the events of the text below it, itself
+        // included, which is every event of the text in its causal past.
+        let top = &graph[greatest];
+        let mut version = Version::new(top.id().idx(), top.id().resolver().clone());
+        let mut below = vec![greatest];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = below.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            let id = graph[node].id();
+            if version.seq_by_idx(id.idx()) < id.seq() {
+                version.set_by_idx(id.idx(), id.seq());
+            }
+            below.extend(graph.neighbors(node));
+        }
+        let text = self.text_at(&version).unwrap_or_default();
+        // An empty register takes any write: nothing can refuse this one.
+        let _ = register.effect(Event::new(
+            top.id().clone(),
+            *top.lamport(),
+            LeafOp::Write(Scalar::Str(text)),
+            version,
+        ));
+        Some(register)
     }
 
     /// The canonical JSON form of this leaf's value.

@@ -147,7 +147,7 @@ fn read_root(sem: &MetamodelSemantics, root: &Node, site: Shaped, form: Form) ->
 type Served<'a> = Option<&'a HashSet<String>>;
 
 /// Every identity an identified document carries under [`ID`].
-fn identities(value: &Value, out: &mut HashSet<String>) {
+pub(crate) fn identities(value: &Value, out: &mut HashSet<String>) {
     match value {
         Value::Object(map) => {
             if let Some(Value::String(id)) = map.get(ID) {
@@ -257,6 +257,10 @@ fn read_in(
             for id in seq.order() {
                 // Only what is there: an id in the ordering with no child
                 // behind it is a hole, and a hole is nothing, not a default.
+                // An entry a rebase hides is not read either (SI.14, M20).
+                if seq.hides(&id) {
+                    continue;
+                }
                 if let Some(child) = seq.children().get(&id)
                     && let Some(value) = read_in(sem, child, Shaped::Bare(site), form, served)
                 {

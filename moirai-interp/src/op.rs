@@ -82,6 +82,25 @@ pub enum ModelOp {
         /// The default read at the cut.
         plain: serde_json::Value,
     },
+    /// Put the log under a revision of its descriptor, in place (SI.14): the
+    /// model keeps its id and every object its identity, and from this
+    /// operation on it is read, and written, under the revision.
+    ///
+    /// The second migration strategy beside [`ModelOp::Cut`]. Its version is
+    /// its event's version: every replica maps what it holds to the
+    /// revision, and translates the operations written concurrently under
+    /// the old descriptor as they arrive (see [`crate::rebase`]). It carries
+    /// the revision's text, as [`ModelOp::Install`] does and for the same
+    /// reason: a replica that holds no copy of the revision gets it here.
+    Rebase {
+        /// The revision's id: the digest its text hashes to.
+        metamodel_id: String,
+        /// The revision, `formatVersion` 2, as text.
+        descriptor: String,
+        /// The classes (`<Class>`) and features (`<Class>.<feature>`, of the
+        /// declaring class) the revision removes, as the request named them.
+        drops: Vec<String>,
+    },
 }
 
 /// One step of the path, or its end.

@@ -73,13 +73,34 @@
 //! check by class cannot resolve, and so get a link of the wrong class past
 //! it. [`adapter_refusal`] is that check, for a node to run on every
 //! operation an adapter submits.
+//!
+//! # Rebase, the second strategy (SI.14)
+//!
+//! [`rebase`] plans the other migration: one [`ModelOp::Rebase`], sent on the
+//! model's own log, which puts the model under the revision in place, its id
+//! and every object's identity kept (see [`crate::rebase`] for what a replica
+//! does with it). It refuses what it cannot translate into the revision by
+//! name, naming it, and writes nothing then:
+//!
+//! - a class or a feature the revision lacks, unless `drops` names it, as
+//!   copy's refusal names it (`<Class>`, or `<Class>.<feature>` of the class
+//!   that declares it); a name in `drops` the revision does not remove;
+//! - a feature whose kind the revision changes;
+//! - a feature whose merge rule it changes, but a text turned into a fair
+//!   or a last-writer-wins register, saying so when copy accepts the
+//!   revision: two rules that read a pair of concurrent operations
+//!   differently cannot map a state some replica has already folded;
+//! - an enumeration whose literals change, since its values are carried by
+//!   position;
+//! - a model already cut, and one whose last rebase not every member has
+//!   delivered yet.
 
 use std::collections::HashMap;
 use std::fmt;
 
 use moirai_semantics::{
-    ClassSlot, FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, NumKind, from_descriptor,
-    metamodel_digest,
+    ClassSlot, FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, NumKind, TieBreak,
+    from_descriptor, metamodel_digest,
 };
 use serde_json::{Map, Value};
 
@@ -138,6 +159,38 @@ pub enum MigrateRefusal {
         /// Why.
         why: String,
     },
+    /// A rebase of the model is not yet delivered by every member (SI.14,
+    /// M23).
+    Rebasing,
+    /// The revision lacks classes or features a rebase's `drops` does not
+    /// name, each `<Class>` or `<Class>.<feature>` (SI.14, M19).
+    Undropped(Vec<String>),
+    /// `drops` names what the revision does not remove (SI.14).
+    NotRemoved(Vec<String>),
+    /// The revision changes what kind of feature one is, which a rebase does
+    /// not map (SI.14, M19).
+    RebaseKind {
+        /// `<Class>.<feature>`.
+        feature: String,
+        /// The source's kind.
+        from: &'static str,
+        /// The revision's.
+        to: &'static str,
+    },
+    /// The revision changes a feature's merge rule otherwise than a text
+    /// into a fair or a last-writer-wins register (SI.14, M19).
+    Rule {
+        /// `<Class>.<feature>`.
+        feature: String,
+        /// The source's rule, in words.
+        from: String,
+        /// The revision's.
+        to: String,
+        /// Whether strategy copy accepts the revision.
+        copy: bool,
+    },
+    /// The revision changes an enumeration's literals (SI.14).
+    Enum(String),
 }
 
 impl fmt::Display for MigrateRefusal {
@@ -160,11 +213,7 @@ impl fmt::Display for MigrateRefusal {
                 f,
                 "the revision lacks {} of the model's metamodel; a rename or a removal is not \
                  a migration this node makes",
-                missing
-                    .iter()
-                    .map(|name| format!("`{name}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                quoted(missing)
             ),
             MigrateRefusal::Kind { feature, from, to } => write!(
                 f,
@@ -176,11 +225,64 @@ impl fmt::Display for MigrateRefusal {
                     "the copy cannot hold `{feature}` as the model reads it: {why}"
                 )
             }
+            MigrateRefusal::Rebasing => write!(
+                f,
+                "a rebase of this model is not yet delivered by every member: it can be migrated \
+                 again once it is"
+            ),
+            MigrateRefusal::Undropped(missing) => write!(
+                f,
+                "the revision lacks {} of the model's metamodel, which `drops` does not name: a \
+                 rebase removes only what the request names, so name each in `drops` to remove \
+                 it and what it holds",
+                quoted(missing)
+            ),
+            MigrateRefusal::NotRemoved(names) => write!(
+                f,
+                "`drops` names {}, which the revision does not remove",
+                quoted(names)
+            ),
+            MigrateRefusal::RebaseKind { feature, from, to } => write!(
+                f,
+                "the revision turns `{feature}` from {from} into {to}, which a rebase does not \
+                 map"
+            ),
+            MigrateRefusal::Rule {
+                feature,
+                from,
+                to,
+                copy,
+            } => {
+                write!(
+                    f,
+                    "the revision turns `{feature}` from {from} into {to}, which a rebase does \
+                     not translate: of the merge rule changes, a rebase translates a text into a \
+                     fair or a last-writer-wins register only"
+                )?;
+                if *copy {
+                    write!(f, "; strategy copy accepts this revision")?;
+                }
+                Ok(())
+            }
+            MigrateRefusal::Enum(name) => write!(
+                f,
+                "the revision changes the literals of the enumeration `{name}`, which a rebase \
+                 does not map"
+            ),
         }
     }
 }
 
 impl std::error::Error for MigrateRefusal {}
+
+/// Names as a refusal lists them: each in backquotes, comma-separated.
+fn quoted(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Plan the migration of `source` to a new model `model_id` under
 /// `descriptor`, the revision's text. See the module header.
@@ -191,6 +293,9 @@ pub fn migrate(
 ) -> Result<Migration, MigrateRefusal> {
     if let Some(to) = source.migrated_to() {
         return Err(MigrateRefusal::Migrated { to: to.to_string() });
+    }
+    if source.in_window() {
+        return Err(MigrateRefusal::Rebasing);
     }
     let from = source.semantics().ok_or(MigrateRefusal::NoTable)?;
     let parsed: Value = serde_json::from_str(descriptor)
@@ -239,6 +344,11 @@ pub fn adapter_refusal(op: &ModelOp) -> Result<(), String> {
             "a cut is written by a migration (`POST /api/model/{id}/migrate`) and by nothing else"
                 .to_string(),
         ),
+        ModelOp::Rebase { .. } => Err(
+            "a rebase is written by a migration (`POST /api/model/{id}/migrate` with `\"strategy\": \
+             \"rebase\"`) and by nothing else"
+                .to_string(),
+        ),
         ModelOp::Instance(op) if crate::log::holds_own_target(op) => Err(
             "a link target `@<seq>.<step>` names an object by its writer's own event, which only \
              a migration's plan does: name the object by its served identity"
@@ -268,6 +378,28 @@ fn revision(from: &MetamodelSemantics, to: &MetamodelSemantics) -> Result<(), Mi
             to: to.ns_uri.to_string(),
         });
     }
+    if let Some((feature, from_rule, to_rule)) = shared(from, to)
+        .into_iter()
+        .find(|(_, from_rule, to_rule)| kind(from_rule) != kind(to_rule))
+    {
+        return Err(MigrateRefusal::Kind {
+            feature,
+            from: kind(from_rule),
+            to: kind(to_rule),
+        });
+    }
+    let missing = lacks(from, to);
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(MigrateRefusal::Lacks(missing))
+    }
+}
+
+/// The classes and the features of `from` that `to` lacks, `<Class>` or
+/// `<Class>.<feature>` of the declaring class; a class's own features are not
+/// listed beside it.
+fn lacks(from: &MetamodelSemantics, to: &MetamodelSemantics) -> Vec<String> {
     let mut missing = Vec::new();
     for class in &from.classes {
         let Some(revised) = to.classes.iter().find(|other| other.name == class.name) else {
@@ -275,30 +407,242 @@ fn revision(from: &MetamodelSemantics, to: &MetamodelSemantics) -> Result<(), Mi
             continue;
         };
         for feature in &class.declared {
-            let name = format!("{}.{}", class.name, feature.name);
-            let seen = revised
+            if !revised
                 .visible
                 .iter()
-                .find(|(visible, _, _)| *visible == feature.name);
-            let Some((_, owner, declared)) = seen else {
-                missing.push(name);
-                continue;
-            };
-            if let Some(rule) = to.rule(*owner, *declared)
-                && kind(rule) != kind(&feature.merge)
+                .any(|(visible, _, _)| *visible == feature.name)
             {
-                return Err(MigrateRefusal::Kind {
-                    feature: name,
-                    from: kind(&feature.merge),
-                    to: kind(rule),
-                });
+                missing.push(format!("{}.{}", class.name, feature.name));
             }
         }
     }
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(MigrateRefusal::Lacks(missing))
+    missing
+}
+
+/// Every feature both descriptors have, as `<Class>.<feature>` of the class
+/// of `from` that declares it, with its rule in each.
+fn shared<'a>(
+    from: &'a MetamodelSemantics,
+    to: &'a MetamodelSemantics,
+) -> Vec<(String, &'a MergeRule, &'a MergeRule)> {
+    let mut shared = Vec::new();
+    for class in &from.classes {
+        let Some(revised) = to.classes.iter().find(|other| other.name == class.name) else {
+            continue;
+        };
+        for feature in &class.declared {
+            let Some((_, owner, declared)) = revised
+                .visible
+                .iter()
+                .find(|(visible, _, _)| *visible == feature.name)
+            else {
+                continue;
+            };
+            if let Some(rule) = to.rule(*owner, *declared) {
+                shared.push((
+                    format!("{}.{}", class.name, feature.name),
+                    &feature.merge,
+                    rule,
+                ));
+            }
+        }
+    }
+    shared
+}
+
+/// Plan the rebase of `source` onto `descriptor`, the revision's text,
+/// removing the classes and features `drops` names (SI.14, M16): the one
+/// operation the migrating replica sends on the model's own log. See the
+/// module header for what it refuses; nothing is written then.
+pub fn rebase(
+    source: &ModelLog,
+    descriptor: &str,
+    drops: &[String],
+) -> Result<ModelOp, MigrateRefusal> {
+    if let Some(to) = source.migrated_to() {
+        return Err(MigrateRefusal::Migrated { to: to.to_string() });
+    }
+    if source.in_window() {
+        return Err(MigrateRefusal::Rebasing);
+    }
+    let from = source.semantics().ok_or(MigrateRefusal::NoTable)?;
+    let to = revise(from, descriptor, drops)?;
+    Ok(ModelOp::Rebase {
+        metamodel_id: to.digest,
+        descriptor: descriptor.to_string(),
+        drops: drops.to_vec(),
+    })
+}
+
+/// `descriptor` as a table, held to what a rebase from `from` translates
+/// with `drops` removed (M19).
+pub(crate) fn revise(
+    from: &MetamodelSemantics,
+    descriptor: &str,
+    drops: &[String],
+) -> Result<MetamodelSemantics, MigrateRefusal> {
+    let parsed: Value = serde_json::from_str(descriptor)
+        .map_err(|err| MigrateRefusal::Descriptor(format!("it is not JSON: {err}")))?;
+    let to = from_descriptor(&parsed).map_err(|err| MigrateRefusal::Descriptor(err.to_string()))?;
+    if from.ns_uri != to.ns_uri {
+        return Err(MigrateRefusal::OtherMetamodel {
+            from: from.ns_uri.to_string(),
+            to: to.ns_uri.to_string(),
+        });
+    }
+    let missing = lacks(from, &to);
+    let not_removed: Vec<String> = drops
+        .iter()
+        .filter(|name| !missing.contains(name))
+        .cloned()
+        .collect();
+    if !not_removed.is_empty() {
+        return Err(MigrateRefusal::NotRemoved(not_removed));
+    }
+    let undropped: Vec<String> = missing
+        .into_iter()
+        .filter(|name| !drops.contains(name))
+        .collect();
+    if !undropped.is_empty() {
+        return Err(MigrateRefusal::Undropped(undropped));
+    }
+    // An enumeration's value is carried by its slot and its literal's
+    // position, which every leaf and operation keeps as it is.
+    for literals in &from.enums {
+        match to.enums.get(literals.slot.index()) {
+            Some(revised)
+                if revised.name == literals.name && revised.literals == literals.literals => {}
+            _ => return Err(MigrateRefusal::Enum(literals.name.to_string())),
+        }
+    }
+    for (feature, from_rule, to_rule) in shared(from, &to) {
+        if kind(from_rule) != kind(to_rule) {
+            return Err(MigrateRefusal::RebaseKind {
+                feature,
+                from: kind(from_rule),
+                to: kind(to_rule),
+            });
+        }
+        if !translates(from, from_rule, &to, to_rule, drops) {
+            return Err(MigrateRefusal::Rule {
+                feature,
+                from: words(from, from_rule),
+                to: words(&to, to_rule),
+                copy: revision(from, &to).is_ok(),
+            });
+        }
+    }
+    let roots = |sem: &MetamodelSemantics| -> Vec<String> {
+        Target::Roots
+            .allowed(sem)
+            .iter()
+            .map(|name| name.to_string())
+            .collect()
+    };
+    let revised_roots = roots(&to);
+    if roots(from)
+        .iter()
+        .any(|root| !drops.contains(root) && !revised_roots.contains(root))
+    {
+        return Err(MigrateRefusal::Rule {
+            feature: "the model root".to_string(),
+            from: "these roots".to_string(),
+            to: "fewer".to_string(),
+            copy: revision(from, &to).is_ok(),
+        });
+    }
+    Ok(to)
+}
+
+/// Whether a rebase translates the rule `rule` of `from` into `revised` of
+/// `to`: the same rule by name (a containment's or a reference's target
+/// named, a containment's concrete classes all kept but those `drops`
+/// removes), or a text into a fair or a last-writer-wins register.
+fn translates(
+    from: &MetamodelSemantics,
+    rule: &MergeRule,
+    to: &MetamodelSemantics,
+    revised: &MergeRule,
+    drops: &[String],
+) -> bool {
+    let name = |sem: &MetamodelSemantics, class: ClassSlot| {
+        sem.classes
+            .get(class.index())
+            .map(|class| class.name.to_string())
+    };
+    match (rule, revised) {
+        (
+            MergeRule::Attribute {
+                shape,
+                leaf: LeafRule::Text,
+            },
+            MergeRule::Attribute {
+                shape: revised_shape,
+                leaf:
+                    LeafRule::Register {
+                        tie: TieBreak::Fair | TieBreak::LastWriterWins,
+                    },
+            },
+        ) => shape == revised_shape,
+        (MergeRule::Attribute { .. }, MergeRule::Attribute { .. }) => rule == revised,
+        (
+            MergeRule::Containment { shape, target },
+            MergeRule::Containment {
+                shape: revised_shape,
+                target: revised_target,
+            },
+        ) => {
+            let kept = Target::Class(*revised_target).allowed(to);
+            shape == revised_shape
+                && name(from, *target) == name(to, *revised_target)
+                && Target::Class(*target).allowed(from).iter().all(|class| {
+                    drops.iter().any(|dropped| **dropped == **class) || kept.contains(class)
+                })
+        }
+        (
+            MergeRule::Reference { many, target },
+            MergeRule::Reference {
+                many: revised_many,
+                target: revised_target,
+            },
+        )
+        | (
+            MergeRule::IdentityReference { many, target },
+            MergeRule::IdentityReference {
+                many: revised_many,
+                target: revised_target,
+            },
+        ) => many == revised_many && name(from, *target) == name(to, *revised_target),
+        (MergeRule::Unsupported { reason }, MergeRule::Unsupported { reason: revised }) => {
+            reason == revised
+        }
+        _ => false,
+    }
+}
+
+/// A rule in words, for a refusal.
+fn words(sem: &MetamodelSemantics, rule: &MergeRule) -> String {
+    match rule {
+        MergeRule::Attribute { leaf, .. } => match leaf {
+            LeafRule::Text => "a text".to_string(),
+            LeafRule::Flag {
+                wins: moirai_semantics::FlagWins::Enable,
+            } => "an enable-wins flag".to_string(),
+            LeafRule::Flag {
+                wins: moirai_semantics::FlagWins::Disable,
+            } => "a disable-wins flag".to_string(),
+            LeafRule::Register { tie } => format!("a register ({tie:?})"),
+            LeafRule::Counter { .. } => "a counter".to_string(),
+            LeafRule::Enum { .. } => "an enumeration register".to_string(),
+            LeafRule::OptionalRegister { .. } => "an optional register".to_string(),
+        },
+        MergeRule::Containment { target, .. } => format!(
+            "a containment of `{}`",
+            sem.classes
+                .get(target.index())
+                .map_or("?", |class| &*class.name)
+        ),
+        other => kind(other).to_string(),
     }
 }
 

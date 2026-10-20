@@ -53,6 +53,23 @@
 //! documents and decides what is refused; the successors of every other cut
 //! are listed under `superseded`. Keeping the cut that had seen the most
 //! refuses the fewest edits once every replica has every event.
+//!
+//! # The rebase (SI.14)
+//!
+//! [`ModelOp::Rebase`] is the one way a log changes table: it puts the model
+//! under a revision of its descriptor in place ([`crate::rebase`]), the
+//! revision's text travelling inside it as `Install`'s does. Cuts and rebases
+//! are ordered by the one rule above (M22): a replica keeps the greatest of
+//! the migrations it delivered. A rebase kept puts the model under its
+//! revision and holds the model under the old descriptor beside it until
+//! every member has been heard to deliver the rebase; an instance operation
+//! is then routed by the rebase it was written under, the greatest its
+//! writer had delivered (R2): one written under the rebase kept is applied
+//! as written, one written under the old descriptor concurrently with it is
+//! applied to the old model and translated, and any other was written under
+//! a migration set aside and is discarded, listed in the status. A cut that
+//! outranks the rebase in force puts the model back under the old
+//! descriptor, frozen at the cut's documents.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -62,6 +79,7 @@ use std::sync::Arc;
 use moirai_protocol::{
     clock::version_vector::Version,
     event::Event,
+    replica::ReplicaIdx,
     state::{effect_context::EffectContext, log::IsLog},
 };
 use moirai_semantics::{MetamodelSemantics, from_descriptor};
@@ -70,9 +88,11 @@ use serde_json::{Value, json};
 #[cfg(feature = "sink")]
 use moirai_protocol::state::sink::SinkCollector;
 
+use crate::eval::{identities, read_identified};
 use crate::leaf::LeafOp;
 use crate::node::{At, Ctx, Emit, Mode, Node, Refusal, Shaped, Site, Target, apply, check};
 use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
+use crate::rebase::{Revision, Translated};
 
 /// What a model says it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +136,179 @@ pub struct ModelLog {
     /// same array whatever order they set them aside in.
     #[cfg_attr(feature = "serde", serde(default))]
     superseded: Vec<String>,
+    /// Every rebase this replica delivered (SI.14), by origin and sequence
+    /// number, so that replicas that delivered the same rebases hold the
+    /// same list whatever order they delivered them in.
+    #[cfg_attr(feature = "serde", serde(default))]
+    rebases: Vec<Rebase>,
+    /// The rebase whose revision `sem`, `header`, `descriptor` and `root`
+    /// are under, by origin and sequence number; `None` while they are under
+    /// the descriptor the model was opened with.
+    #[cfg_attr(feature = "serde", serde(default))]
+    in_force: Option<(String, u64)>,
+    /// The model under the descriptor the rebase in force replaced, kept
+    /// until every member has delivered the rebase (SI.14, M23): what the
+    /// operations written under that descriptor concurrently with the rebase
+    /// are applied to before they are translated, and what another rebase
+    /// that outranks this one is mapped from.
+    #[cfg_attr(feature = "serde", serde(default))]
+    held: Option<Box<Form>>,
+    /// What the rebase in force hid, dropped and discarded (M20, M22).
+    #[cfg_attr(feature = "serde", serde(default))]
+    report: Report,
+    /// The instance operations delivered and not yet causally stable, with
+    /// their causal past: a rebase delivered later lists those written
+    /// concurrently with it that it drops, or that it discards. An operation
+    /// stable here is in the causal past of every migration still to be
+    /// delivered, so it is let go of then. Not serialized: a joiner by state
+    /// transfer during a rebase's window is not claimed (SI.14, L1).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pending: Vec<Pending>,
+    /// Per member, the greatest sequence number per origin of the events in
+    /// the causal past of the events delivered from that member: the
+    /// replica's matrix-clock row of the member, as its deliveries set it,
+    /// which says whom a rebase still waits for (SI.14, R3).
+    #[cfg_attr(feature = "serde", serde(default))]
+    heard: BTreeMap<String, BTreeMap<String, u64>>,
+    /// The members of the log, sorted, as the delivered events' member table
+    /// names them.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    members: Vec<String>,
+    /// This replica: the first member of its own table, which every
+    /// bootstrap interns before any other.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    me: Option<String>,
+    /// How many times the descriptor in force changed here: a node watches
+    /// it to serve the model under the descriptor in force (SI.14, M21). A
+    /// count of this replica's own changes, which depend on its delivery
+    /// order, so not part of the state that travels.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    generation: u64,
+}
+
+/// The model under one descriptor: the table, what the model says it is,
+/// the descriptor's text, and the tree.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct Form {
+    sem: Arc<MetamodelSemantics>,
+    header: ModelHeader,
+    descriptor: String,
+    root: Node,
+}
+
+/// A delivered [`ModelOp::Rebase`] (SI.14).
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct Rebase {
+    /// The replica that wrote it, and its sequence number there.
+    origin: String,
+    seq: u64,
+    /// Its Lamport stamp, the sum of its version, as a cut's (M22).
+    stamp: u64,
+    /// Its causal past, as the greatest sequence number per origin: its
+    /// version, the base it is defined by (R1).
+    seen: BTreeMap<String, u64>,
+    /// The rebase in force for its writer when it wrote it, which its
+    /// revision is a revision of: `None` for the descriptor the model was
+    /// opened with.
+    under: Option<(String, u64)>,
+    /// The revision's digest, its text, and its table.
+    to: String,
+    descriptor: String,
+    sem: Arc<MetamodelSemantics>,
+}
+
+impl Rebase {
+    fn id(&self) -> (String, u64) {
+        (self.origin.clone(), self.seq)
+    }
+
+    fn rank(&self) -> (u64, &str, u64) {
+        (self.stamp, &self.origin, self.seq)
+    }
+}
+
+/// What the rebase in force hid, dropped and discarded, as the status lists
+/// them (M20, M22): each list sorted, so that replicas that delivered the
+/// same events hold the same lists whatever order they delivered them in.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct Report {
+    /// The identities of the objects the old read served at the rebase's
+    /// version and the revision's read does not, sorted.
+    hidden: Vec<String>,
+    /// The operations written concurrently under the old descriptor whose
+    /// path reaches a removed class or feature, by origin, sequence number
+    /// and the first removed name on the path.
+    dropped: Vec<(String, u64, String)>,
+    /// The operations written under a migration that does not stand.
+    discarded: Vec<(String, u64)>,
+}
+
+/// One delivered instance operation, as long as a migration still to be
+/// delivered may have been written concurrently with it, with the rebase it
+/// was written under.
+#[derive(Clone, Debug)]
+struct Pending {
+    origin: String,
+    seq: u64,
+    /// The rebase it was written under ([`Rebase::under`]).
+    under: Option<(String, u64)>,
+    op: InstanceOp,
+}
+
+/// Which migration a replica keeps of those it delivered (M22).
+enum Kept<'a> {
+    Nothing,
+    Cut(&'a Cut),
+    Rebase(&'a Rebase),
+}
+
+/// SI.13's D3 order, over migration operations of both kinds (SI.14, M22):
+/// whether `a` is kept over `b`, by the greater stamp, then the lesser
+/// origin by bytes, then the lesser sequence number.
+fn outranks(a: (u64, &str, u64), b: (u64, &str, u64)) -> bool {
+    a.0.cmp(&b.0)
+        .then_with(|| b.1.as_bytes().cmp(a.1.as_bytes()))
+        .then_with(|| b.2.cmp(&a.2))
+        .is_gt()
+}
+
+/// A version as the greatest sequence number per origin, by replica id.
+fn seen(version: &Version) -> BTreeMap<String, u64> {
+    version
+        .iter()
+        .filter(|(_, seq)| *seq > 0)
+        .filter_map(|(idx, seq)| {
+            let origin = version.resolver().resolve(idx)?;
+            Some((origin.to_string(), seq as u64))
+        })
+        .collect()
+}
+
+/// Put `item` into the sorted `list`, once.
+fn insert_sorted<T: Ord>(list: &mut Vec<T>, item: T) {
+    if let Err(at) = list.binary_search(&item) {
+        list.insert(at, item);
+    }
+}
+
+/// Whether the event `origin@seq` is in the causal past `seen`.
+fn within(seen: &BTreeMap<String, u64>, origin: &str, seq: u64) -> bool {
+    seen.get(origin).is_some_and(|last| seq <= *last)
+}
+
+/// Whether a served identity, `<origin>@<seq>[:<n>].<step>`, was created by
+/// an event in the causal past `seen`.
+fn created_within(identity: &str, seen: &BTreeMap<String, u64>) -> bool {
+    let Some((origin, rest)) = identity.rsplit_once('@') else {
+        return false;
+    };
+    rest.split(['.', ':'])
+        .next()
+        .and_then(|seq| seq.parse::<u64>().ok())
+        .is_some_and(|seq| within(seen, origin, seq))
 }
 
 /// A delivered [`ModelOp::Cut`]: the successor, what the cut had seen, and
@@ -144,11 +337,11 @@ impl Cut {
     /// Whether this cut is kept over `other` (D3): the greater stamp, then
     /// the lesser origin by bytes, then the lesser sequence number.
     fn outranks(&self, other: &Cut) -> bool {
-        self.stamp
-            .cmp(&other.stamp)
-            .then_with(|| other.origin.as_bytes().cmp(self.origin.as_bytes()))
-            .then_with(|| other.seq.cmp(&self.seq))
-            .is_gt()
+        outranks(self.rank(), other.rank())
+    }
+
+    fn rank(&self) -> (u64, &str, u64) {
+        (self.stamp, &self.origin, self.seq)
     }
 
     /// Whether `other` is this very cut, delivered again.
@@ -198,7 +391,7 @@ impl ModelLog {
     /// The successor this replica has seen the model migrated to, once it
     /// has delivered a cut: that of the cut it keeps (D3).
     pub fn migrated_to(&self) -> Option<&str> {
-        self.cut.as_ref().map(|cut| cut.to.as_str())
+        self.kept_cut().map(|cut| cut.to.as_str())
     }
 
     /// The successors of the cuts this replica delivered and does not keep.
@@ -206,36 +399,131 @@ impl ModelLog {
         &self.superseded
     }
 
-    /// The migration status (SI.12, SI.13):
-    /// `{"migrated_to": null, "refused": [], "superseded": []}` before any
-    /// cut; after one, the successor of the cut kept (D3), every event this
-    /// replica has delivered that the kept cut had not seen, as
-    /// `{"origin", "seq"}`, and the successors of every other cut delivered.
+    /// The migration status (SI.12, SI.13, SI.14).
+    ///
+    /// Before any migration
+    /// `{"migrated_to": null, "refused": [], "superseded": [], "strategy":
+    /// null, "superseded_rebases": [], "rebase": null}`. Once a cut is kept
+    /// (D3, M22): the successor of the cut kept, every event this replica
+    /// has delivered that the kept cut had not seen, as `{"origin", "seq"}`,
+    /// the successors of every other cut delivered, and every rebase
+    /// delivered under `superseded_rebases`. Once a rebase is kept:
+    /// `strategy` `"rebase"`, no successor and nothing refused, the
+    /// successors of every cut delivered under `superseded`, every other
+    /// rebase under `superseded_rebases`, and under `rebase` the rebase kept
+    /// (`origin`, `seq`, `to` its revision's digest), what it hid, dropped
+    /// and discarded, whether the old descriptor is still held, and the
+    /// members not yet heard to deliver it (M17, M20, M22, M23).
     pub fn migration(&self) -> Value {
-        let Some(cut) = &self.cut else {
-            return json!({ "migrated_to": Value::Null, "refused": [], "superseded": [] });
+        let rebases = |except: Option<&Rebase>| -> Vec<Value> {
+            let mut ids: Vec<(&str, u64)> = self
+                .rebases
+                .iter()
+                .filter(|rebase| except.is_none_or(|kept| kept.id() != rebase.id()))
+                .map(|rebase| (rebase.origin.as_str(), rebase.seq))
+                .collect();
+            ids.sort_unstable();
+            ids.into_iter()
+                .map(|(origin, seq)| json!({ "origin": origin, "seq": seq }))
+                .collect()
         };
-        let refused: Vec<Value> = self
-            .delivered
-            .iter()
-            .flat_map(|(origin, last)| {
-                let seen = cut.seen.get(origin).copied().unwrap_or(0);
-                (seen + 1..=*last).map(move |seq| json!({ "origin": origin, "seq": seq }))
-            })
-            .collect();
-        json!({ "migrated_to": cut.to, "refused": refused, "superseded": self.superseded })
+        match self.kept() {
+            Kept::Nothing => json!({
+                "migrated_to": Value::Null,
+                "refused": [],
+                "superseded": [],
+                "strategy": Value::Null,
+                "superseded_rebases": [],
+                "rebase": Value::Null,
+            }),
+            Kept::Cut(cut) => {
+                let refused: Vec<Value> = self
+                    .delivered
+                    .iter()
+                    .flat_map(|(origin, last)| {
+                        let seen = cut.seen.get(origin).copied().unwrap_or(0);
+                        (seen + 1..=*last).map(move |seq| json!({ "origin": origin, "seq": seq }))
+                    })
+                    .collect();
+                json!({
+                    "migrated_to": cut.to,
+                    "refused": refused,
+                    "superseded": self.superseded,
+                    "strategy": "copy",
+                    "superseded_rebases": rebases(None),
+                    "rebase": Value::Null,
+                })
+            }
+            Kept::Rebase(kept) => {
+                let mut superseded: Vec<&str> = self
+                    .cut
+                    .iter()
+                    .map(|cut| cut.to.as_str())
+                    .chain(self.superseded.iter().map(String::as_str))
+                    .collect();
+                superseded.sort_unstable();
+                superseded.dedup();
+                let waiting = self.waiting_for(kept);
+                let dropped: Vec<Value> = self
+                    .report
+                    .dropped
+                    .iter()
+                    .map(|(origin, seq, feature)| {
+                        json!({ "origin": origin, "seq": seq, "feature": feature })
+                    })
+                    .collect();
+                let discarded: Vec<Value> = self
+                    .report
+                    .discarded
+                    .iter()
+                    .map(|(origin, seq)| json!({ "origin": origin, "seq": seq }))
+                    .collect();
+                json!({
+                    "migrated_to": Value::Null,
+                    "refused": [],
+                    "superseded": superseded,
+                    "strategy": "rebase",
+                    "superseded_rebases": rebases(Some(kept)),
+                    "rebase": {
+                        "origin": kept.origin,
+                        "seq": kept.seq,
+                        "to": kept.to,
+                        "hidden": self.report.hidden,
+                        "dropped": dropped,
+                        "discarded": discarded,
+                        "d1_held": !waiting.is_empty(),
+                        "waiting_for": waiting,
+                    },
+                })
+            }
+        }
+    }
+
+    /// How many times the descriptor in force changed (SI.14): a rebase kept
+    /// puts the model under its revision, and a cut that outranks it puts
+    /// the model back. A node watches this to serve the descriptor in force
+    /// on the model's metamodel route and to list the model under it.
+    pub fn descriptor_generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Whether a rebase of the model is in its window: some member has not
+    /// been heard to deliver it, and the model under the descriptor it
+    /// replaced is still held (SI.14, M23).
+    pub(crate) fn in_window(&self) -> bool {
+        self.held.is_some()
     }
 
     /// The identified read once the model is cut: what the migrating
     /// replica served when it cut.
     #[cfg(feature = "network")]
     pub(crate) fn frozen_identified(&self) -> Option<&Value> {
-        self.cut.as_ref().map(|cut| &cut.identified)
+        self.kept_cut().map(|cut| &cut.identified)
     }
 
     /// The default read once the model is cut.
     pub(crate) fn frozen_plain(&self) -> Option<&Value> {
-        self.cut.as_ref().map(|cut| &cut.plain)
+        self.kept_cut().map(|cut| &cut.plain)
     }
 
     /// Where the model sits: one object of whichever class the descriptor
@@ -252,7 +540,7 @@ impl ModelLog {
     /// kind of operation, comes back with a sentence naming the class or the
     /// feature.
     pub fn refusal(&self, op: &ModelOp) -> Result<(), Refusal> {
-        if let Some(cut) = &self.cut {
+        if let Some(cut) = self.kept_cut() {
             return Err(Refusal::Migrated { to: cut.to.clone() });
         }
         match op {
@@ -279,8 +567,28 @@ impl ModelLog {
             // Accepted from any local writer, because the replica that sends
             // a migration's plan is one. A node's adapter intake must refuse
             // a hand-built cut before it gets here: see
-            // [`crate::migrate::adapter_refusal`].
-            ModelOp::Cut { .. } => self.sem.as_ref().map(|_| ()).ok_or(Refusal::NoTable),
+            // [`crate::migrate::adapter_refusal`]. Not while a rebase is in
+            // its window (SI.14).
+            ModelOp::Cut { .. } => {
+                self.sem.as_ref().ok_or(Refusal::NoTable)?;
+                if self.in_window() {
+                    return Err(Refusal::Rebasing);
+                }
+                Ok(())
+            }
+            // The same, and the revision held to what a rebase translates
+            // ([`crate::migrate::rebase`]).
+            ModelOp::Rebase {
+                descriptor, drops, ..
+            } => {
+                let sem = self.sem.as_deref().ok_or(Refusal::NoTable)?;
+                if self.in_window() {
+                    return Err(Refusal::Rebasing);
+                }
+                crate::migrate::revise(sem, descriptor, drops)
+                    .map(|_| ())
+                    .map_err(|why| Refusal::Rebase(why.to_string()))
+            }
         }
     }
 
@@ -292,14 +600,7 @@ impl ModelLog {
     /// delivered the same cuts keep the same one in any delivery order.
     fn take_cut(&mut self, event: &Event<ModelOp>, to: &str, identified: &Value, plain: &Value) {
         let version = event.version();
-        let seen: BTreeMap<String, u64> = version
-            .iter()
-            .filter(|(_, seq)| *seq > 0)
-            .filter_map(|(idx, seq)| {
-                let origin = version.resolver().resolve(idx)?;
-                Some((origin.to_string(), seq as u64))
-            })
-            .collect();
+        let seen = seen(version);
         let id = event.id();
         let taken = Cut {
             to: to.to_string(),
@@ -342,6 +643,455 @@ impl ModelLog {
                 self.delivered.insert(id.origin_id().to_string(), seq);
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Rebase (SI.14)
+    // -----------------------------------------------------------------
+
+    /// The migration this replica keeps of those it delivered, cuts and
+    /// rebases alike, by [`outranks`] (M22).
+    fn kept(&self) -> Kept<'_> {
+        let rebase = self.rebases.iter().reduce(|kept, other| {
+            if outranks(other.rank(), kept.rank()) {
+                other
+            } else {
+                kept
+            }
+        });
+        match (&self.cut, rebase) {
+            (None, None) => Kept::Nothing,
+            (Some(cut), None) => Kept::Cut(cut),
+            (None, Some(rebase)) => Kept::Rebase(rebase),
+            (Some(cut), Some(rebase)) if outranks(cut.rank(), rebase.rank()) => Kept::Cut(cut),
+            (Some(_), Some(rebase)) => Kept::Rebase(rebase),
+        }
+    }
+
+    /// The cut this replica keeps, when it keeps one.
+    fn kept_cut(&self) -> Option<&Cut> {
+        match self.kept() {
+            Kept::Cut(cut) => Some(cut),
+            _ => None,
+        }
+    }
+
+    /// The rebase an event of causal past `seen` was written under: the one
+    /// its writer kept of the rebases it had delivered, which is the
+    /// greatest of them, a cut that outranked it leaving its writer nothing
+    /// to write.
+    fn under(&self, seen: &BTreeMap<String, u64>) -> Option<(String, u64)> {
+        self.rebases
+            .iter()
+            .filter(|rebase| within(seen, &rebase.origin, rebase.seq))
+            .reduce(|kept, other| {
+                if outranks(other.rank(), kept.rank()) {
+                    other
+                } else {
+                    kept
+                }
+            })
+            .map(Rebase::id)
+    }
+
+    /// Note what delivering `event` says: the members, this replica, and
+    /// what the event's origin had delivered when it wrote it (R3).
+    fn hear(&mut self, event: &Event<ModelOp>) {
+        let version = event.version();
+        let resolver = version.resolver();
+        if self.members.len() != resolver.len() {
+            self.members = (0..resolver.len())
+                .filter_map(|idx| resolver.resolve(ReplicaIdx(idx)).map(str::to_string))
+                .collect();
+            self.members.sort_unstable();
+        }
+        if self.me.is_none() {
+            self.me = resolver.resolve(ReplicaIdx(0)).map(str::to_string);
+        }
+        let row = self
+            .heard
+            .entry(event.id().origin_id().to_string())
+            .or_default();
+        for (idx, seq) in version.iter().filter(|(_, seq)| *seq > 0) {
+            let Some(origin) = resolver.resolve(idx) else {
+                continue;
+            };
+            let seq = seq as u64;
+            match row.get_mut(origin) {
+                Some(last) => *last = (*last).max(seq),
+                None => {
+                    row.insert(origin.to_string(), seq);
+                }
+            }
+        }
+    }
+
+    /// The members other than this replica not yet heard to deliver
+    /// `rebase`: no event of theirs this replica delivered is the rebase or
+    /// has it in its causal past (R3, M23). Sorted.
+    fn waiting_for(&self, rebase: &Rebase) -> Vec<String> {
+        self.members
+            .iter()
+            .filter(|member| self.me.as_ref() != Some(*member))
+            .filter(|member| {
+                !self
+                    .heard
+                    .get(*member)
+                    .is_some_and(|row| within(row, &rebase.origin, rebase.seq))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Take a delivered rebase. One whose revision is not a table is a
+    /// peer's mistake: counted, and not a migration here.
+    fn take_rebase(&mut self, event: &Event<ModelOp>, metamodel_id: &str, descriptor: &str) {
+        let id = event.id();
+        let (origin, seq) = (id.origin_id().to_string(), id.seq() as u64);
+        if self
+            .rebases
+            .iter()
+            .any(|rebase| rebase.origin == origin && rebase.seq == seq)
+        {
+            return;
+        }
+        let Ok(sem) = parse(descriptor) else {
+            self.unresolved += 1;
+            return;
+        };
+        let seen = seen(event.version());
+        let under = self.under(&seen);
+        let at = self.rebases.partition_point(|rebase| {
+            (rebase.origin.as_str(), rebase.seq) < (origin.as_str(), seq)
+        });
+        self.rebases.insert(
+            at,
+            Rebase {
+                origin,
+                seq,
+                stamp: event.version().sum() as u64,
+                seen,
+                under,
+                to: metamodel_id.to_string(),
+                descriptor: descriptor.to_string(),
+                sem: Arc::new(sem),
+            },
+        );
+    }
+
+    /// Put the model under the migration kept, once a migration was
+    /// delivered: under the revision of a rebase kept, back under the old
+    /// descriptor for a cut that outranks the rebase that was in force.
+    fn settle(&mut self) {
+        match self.kept() {
+            Kept::Nothing => {}
+            Kept::Cut(_) => {
+                if self.in_force.is_some() {
+                    if let Some(held) = self.held.take() {
+                        self.put(*held);
+                    }
+                    self.in_force = None;
+                    self.report = Report::default();
+                    self.generation += 1;
+                }
+            }
+            Kept::Rebase(rebase) => {
+                if self.in_force.as_ref() != Some(&rebase.id()) {
+                    let rebase = rebase.clone();
+                    self.rebase_to(&rebase);
+                }
+            }
+        }
+    }
+
+    /// The model, in force, under one descriptor.
+    fn put(&mut self, form: Form) {
+        self.sem = Some(form.sem);
+        self.header = Some(form.header);
+        self.descriptor = Some(form.descriptor);
+        self.root = form.root;
+    }
+
+    /// The model in force, taken out.
+    fn take_form(&mut self) -> Option<Form> {
+        let form = Form {
+            sem: self.sem.take()?,
+            header: self.header.take()?,
+            descriptor: self.descriptor.take()?,
+            root: std::mem::take(&mut self.root),
+        };
+        Some(form)
+    }
+
+    /// Put the model under `rebase`'s revision (M17, M18, M20): the model
+    /// under the descriptor it replaced, mapped by name, and that model held
+    /// beside it. What the rebase hid, and of the operations delivered so
+    /// far, those it drops and those it discards, are listed.
+    fn rebase_to(&mut self, rebase: &Rebase) {
+        // A rebase of the revision in force, written once its writer had
+        // heard every member deliver that one (SI.14, L6): the old
+        // descriptor is no longer wanted.
+        if rebase.under.is_some() && rebase.under == self.in_force {
+            self.held = None;
+        }
+        let base = match self.held.take() {
+            Some(held) => *held,
+            None => match self.take_form() {
+                Some(form) => form,
+                None => return,
+            },
+        };
+        let revision = Revision::new(&base.sem, &rebase.sem);
+        let root = revision.map_root(&base.root);
+        let mut before = HashSet::new();
+        identities(&read_identified(&base.sem, &base.root), &mut before);
+        let mut after = HashSet::new();
+        identities(&read_identified(&rebase.sem, &root), &mut after);
+        let mut hidden: Vec<String> = before
+            .difference(&after)
+            .filter(|identity| created_within(identity, &rebase.seen))
+            .cloned()
+            .collect();
+        hidden.sort_unstable();
+        let mut report = Report {
+            hidden,
+            ..Report::default()
+        };
+        for pending in &self.pending {
+            if pending.under == rebase.under {
+                if !within(&rebase.seen, &pending.origin, pending.seq)
+                    && let Some(name) = revision.first_removed(&pending.op)
+                {
+                    insert_sorted(
+                        &mut report.dropped,
+                        (pending.origin.clone(), pending.seq, name),
+                    );
+                }
+            } else if pending.under != Some(rebase.id()) {
+                insert_sorted(&mut report.discarded, (pending.origin.clone(), pending.seq));
+            }
+        }
+        self.put(Form {
+            sem: Arc::clone(&rebase.sem),
+            header: ModelHeader {
+                model_id: base.header.model_id.clone(),
+                metamodel_id: rebase.to.clone(),
+            },
+            descriptor: rebase.descriptor.clone(),
+            root,
+        });
+        self.held = Some(Box::new(base));
+        self.in_force = Some(rebase.id());
+        self.report = report;
+        self.generation += 1;
+    }
+
+    /// Let go of the old descriptor once every member has been heard to
+    /// deliver the rebase in force: no operation written under it can
+    /// arrive any more (M23). Nothing but a delivery moves this.
+    fn close_window(&mut self) {
+        if self.held.is_none() {
+            return;
+        }
+        if let Kept::Rebase(rebase) = self.kept()
+            && self.in_force == Some(rebase.id())
+            && self.waiting_for(rebase).is_empty()
+        {
+            self.held = None;
+        }
+    }
+
+    /// Apply a delivered instance operation by the migration it was written
+    /// under (R2, M22): as written when that is the migration kept, or when
+    /// none was delivered; applied to the old model and translated when it
+    /// was written under the descriptor the rebase kept replaced; not at all
+    /// when it was written under a migration set aside.
+    fn route(&mut self, event: &Event<ModelOp>, op: &InstanceOp, out: &mut Out<'_>) {
+        let Some(sem) = self.sem.clone() else {
+            self.unresolved += 1;
+            return;
+        };
+        // The rebase it was written under: none while none was delivered.
+        let under = if self.rebases.is_empty() {
+            None
+        } else {
+            self.under(&seen(event.version()))
+        };
+        let id = event.id();
+        let (origin, seq) = (id.origin_id().to_string(), id.seq() as u64);
+        let (kept, kept_under) = match self.kept() {
+            Kept::Nothing => (None, None),
+            Kept::Cut(_) => (Some(None), None),
+            Kept::Rebase(rebase) => (Some(Some(rebase.id())), rebase.under.clone()),
+        };
+        self.pending.push(Pending {
+            origin: origin.clone(),
+            seq,
+            under: under.clone(),
+            op: op.clone(),
+        });
+        let plain = match kept {
+            None => true,
+            // Frozen: the tree is not read, and it takes what the old
+            // descriptor routes, which a rebase that outranks the cut maps.
+            Some(None) => under.is_none(),
+            Some(Some(kept)) if under.as_ref() == Some(&kept) => true,
+            Some(Some(_)) if under == kept_under => {
+                self.late(event, op, out);
+                false
+            }
+            Some(Some(_)) => {
+                insert_sorted(&mut self.report.discarded, (origin, seq));
+                false
+            }
+        };
+        if plain && !apply_instance(&sem, &mut self.root, event, op, How::Written, out.emit()) {
+            self.unresolved += 1;
+        }
+    }
+
+    /// An operation written under the descriptor the rebase in force
+    /// replaced, delivered after the rebase: applied to the old model as
+    /// written, then translated into the revision (M18), or dropped by its
+    /// path (M20).
+    fn late(&mut self, event: &Event<ModelOp>, op: &InstanceOp, out: &mut Out<'_>) {
+        let (Some(held), Some(sem)) = (self.held.as_deref_mut(), self.sem.clone()) else {
+            self.unresolved += 1;
+            return;
+        };
+        let from = Arc::clone(&held.sem);
+        let revision = Revision::new(&from, &sem);
+        let mut translated = revision.translate(op, None);
+        let text = RefCell::new(None);
+        let how = match translated {
+            Translated::NeedsText => How::Reading(&text),
+            _ => How::Written,
+        };
+        #[cfg(feature = "sink")]
+        let mut scratch = SinkCollector::new();
+        let emit = Emit::new(
+            #[cfg(feature = "sink")]
+            out.path.clone(),
+            #[cfg(feature = "sink")]
+            &mut scratch,
+        );
+        if !apply_instance(&from, &mut held.root, event, op, how, emit) {
+            self.unresolved += 1;
+            return;
+        }
+        if matches!(translated, Translated::NeedsText) {
+            translated = revision.translate(op, text.borrow().as_deref());
+        }
+        let id = event.id();
+        let (origin, seq) = (id.origin_id().to_string(), id.seq() as u64);
+        match translated {
+            Translated::Nothing(name) => {
+                insert_sorted(&mut self.report.dropped, (origin, seq, name))
+            }
+            Translated::Op(translated, dropped) => {
+                if let Some(name) = dropped {
+                    insert_sorted(&mut self.report.dropped, (origin, seq, name));
+                }
+                if !apply_instance(
+                    &sem,
+                    &mut self.root,
+                    event,
+                    &translated,
+                    How::Translated,
+                    out.emit(),
+                ) {
+                    self.unresolved += 1;
+                }
+            }
+            Translated::NeedsText => self.unresolved += 1,
+        }
+    }
+}
+
+/// How [`apply_instance`] applies an operation.
+#[derive(Clone, Copy)]
+enum How<'a> {
+    /// As written: checked first, so that one this table cannot route
+    /// leaves the model exactly as it was.
+    Written,
+    /// As written, the text it writes reported to the cell.
+    Reading(&'a RefCell<Option<String>>),
+    /// Translated from the descriptor a rebase replaced: not checked, since
+    /// it routed as written, and its positions count every entry.
+    Translated,
+}
+
+/// Apply one instance operation of `event` to `root` under `sem`; `false`
+/// when it did not route, which the caller counts.
+fn apply_instance(
+    sem: &MetamodelSemantics,
+    root: &mut Node,
+    event: &Event<ModelOp>,
+    op: &InstanceOp,
+    how: How<'_>,
+    emit: Emit<'_>,
+) -> bool {
+    let removed = RefCell::new(HashSet::new());
+    let mut ctx = Ctx::top(event.id(), event.lamport(), event.version())
+        .silently(links(op))
+        .reporting(&removed);
+    match how {
+        How::Written => {}
+        How::Reading(text) => ctx = ctx.reading_text(text),
+        How::Translated => ctx = ctx.translated(),
+    }
+    // Asked before anything is written, so that an operation this table
+    // cannot route leaves the model exactly as it was.
+    if !matches!(how, How::Translated)
+        && check(
+            sem,
+            Some(root),
+            ModelLog::site(),
+            op,
+            &At::root(),
+            Mode::Routing,
+        )
+        .is_err()
+    {
+        return false;
+    }
+    let outcome = apply(
+        sem,
+        root,
+        ModelLog::site(),
+        ctx,
+        op.clone(),
+        &At::root(),
+        emit,
+    );
+    // SI.05: a removal takes away the links to what it removed that it had
+    // seen, wherever in the model they are held.
+    let removed = removed.into_inner();
+    if !removed.is_empty() && crate::refs::has_identity_references(sem) {
+        root.drop_links(&removed, event.version());
+    }
+    outcome.is_ok()
+}
+
+/// Where the effects of one delivered operation are reported, with the
+/// `sink` feature on; nothing without it.
+struct Out<'s> {
+    #[cfg(feature = "sink")]
+    path: moirai_protocol::state::object_path::ObjectPath,
+    #[cfg(feature = "sink")]
+    sink: &'s mut SinkCollector,
+    #[cfg(not(feature = "sink"))]
+    _marker: std::marker::PhantomData<&'s ()>,
+}
+
+impl Out<'_> {
+    fn emit(&mut self) -> Emit<'_> {
+        Emit::new(
+            #[cfg(feature = "sink")]
+            self.path.clone(),
+            #[cfg(feature = "sink")]
+            self.sink,
+        )
     }
 }
 
@@ -407,7 +1157,7 @@ fn resolve_own(op: &InstanceOp, origin: &str) -> Option<InstanceOp> {
 /// Whether the operation ends in a link or an unlink of a reference by
 /// identity: the operations that reach their source without touching it
 /// (see [`crate::refs`]).
-fn links(op: &InstanceOp) -> bool {
+pub(crate) fn links(op: &InstanceOp) -> bool {
     match op {
         InstanceOp::Field(_, inner) | InstanceOp::Variant(_, inner) => links(inner),
         InstanceOp::Seq(SeqOp::Update { op, .. })
@@ -458,7 +1208,16 @@ impl IsLog for ModelLog {
             Some(sink) => sink,
             None => &mut discarded,
         };
+        let mut out = Out {
+            #[cfg(feature = "sink")]
+            path,
+            #[cfg(feature = "sink")]
+            sink,
+            #[cfg(not(feature = "sink"))]
+            _marker: std::marker::PhantomData,
+        };
         self.note_delivered(&event);
+        self.hear(&event);
         match event.op() {
             ModelOp::Cut {
                 migrated_to,
@@ -467,16 +1226,36 @@ impl IsLog for ModelLog {
             } => {
                 if self.sem.is_none() {
                     self.unresolved += 1;
-                    return;
+                } else {
+                    self.take_cut(&event, migrated_to, identified, plain);
+                    self.settle();
                 }
-                self.take_cut(&event, migrated_to, identified, plain);
+            }
+            ModelOp::Rebase {
+                metamodel_id,
+                descriptor,
+                ..
+            } => {
+                if self.sem.is_none() {
+                    self.unresolved += 1;
+                } else {
+                    self.take_rebase(&event, metamodel_id, descriptor);
+                    self.settle();
+                }
             }
             ModelOp::Install {
                 model_id,
                 metamodel_id,
                 descriptor,
             } => {
-                if let Some(header) = &self.header {
+                // The descriptor the log was opened with, which a rebase in
+                // its window holds beside the revision.
+                let opened = self
+                    .held
+                    .as_ref()
+                    .map(|held| &held.header)
+                    .or(self.header.as_ref());
+                if let Some(header) = opened {
                     // Two replicas opened one log at once. Identical
                     // installations are the same table twice and are simply
                     // the second one landing; a different one is a peer this
@@ -485,85 +1264,51 @@ impl IsLog for ModelLog {
                     if header.metamodel_id != *metamodel_id {
                         self.unresolved += 1;
                     }
-                    return;
-                }
-                match parse(descriptor) {
-                    Ok(sem) => {
-                        self.sem = Some(Arc::new(sem));
-                        self.descriptor = Some(descriptor.clone());
-                        self.header = Some(ModelHeader {
-                            model_id: model_id.clone(),
-                            metamodel_id: metamodel_id.clone(),
-                        });
-                        self.root = Node::for_shaped(Self::site());
+                } else {
+                    match parse(descriptor) {
+                        Ok(sem) => {
+                            self.sem = Some(Arc::new(sem));
+                            self.descriptor = Some(descriptor.clone());
+                            self.header = Some(ModelHeader {
+                                model_id: model_id.clone(),
+                                metamodel_id: metamodel_id.clone(),
+                            });
+                            self.root = Node::for_shaped(Self::site());
+                        }
+                        // A descriptor that will not parse is a peer's
+                        // mistake and not this replica's crash.
+                        Err(_) => self.unresolved += 1,
                     }
-                    // A descriptor that will not parse is a peer's mistake and
-                    // not this replica's crash.
-                    Err(_) => self.unresolved += 1,
                 }
             }
             ModelOp::Instance(op) => {
-                let Some(sem) = self.sem.clone() else {
-                    self.unresolved += 1;
-                    return;
-                };
                 let op = match resolve_own(op, event.id().origin_id()) {
                     Some(resolved) => Cow::Owned(resolved),
                     None => Cow::Borrowed(op),
                 };
-                let op = op.as_ref();
-                let removed = RefCell::new(HashSet::new());
-                let ctx = Ctx::top(event.id(), event.lamport(), event.version())
-                    .silently(links(op))
-                    .reporting(&removed);
-                // Asked before anything is written, so that an operation this
-                // table cannot route leaves the model exactly as it was.
-                if check(
-                    &sem,
-                    Some(&self.root),
-                    Self::site(),
-                    op,
-                    &At::root(),
-                    Mode::Routing,
-                )
-                .is_err()
-                {
-                    self.unresolved += 1;
-                    return;
-                }
-                let outcome = apply(
-                    &sem,
-                    &mut self.root,
-                    Self::site(),
-                    ctx,
-                    op.clone(),
-                    &At::root(),
-                    Emit::new(
-                        #[cfg(feature = "sink")]
-                        path,
-                        #[cfg(feature = "sink")]
-                        sink,
-                    ),
-                );
-                if outcome.is_err() {
-                    self.unresolved += 1;
-                }
-                // SI.05: a removal takes away the links to what it removed
-                // that it had seen, wherever in the model they are held.
-                let removed = removed.into_inner();
-                if !removed.is_empty() && crate::refs::has_identity_references(&sem) {
-                    self.root.drop_links(&removed, event.version());
-                }
+                self.route(&event, op.as_ref(), &mut out);
             }
         }
+        self.close_window();
     }
 
     fn stabilize(&mut self, version: &Version) {
         self.root.stabilize(version);
+        if let Some(held) = self.held.as_deref_mut() {
+            held.root.stabilize(version);
+        }
+        if !self.pending.is_empty() {
+            let stable = seen(version);
+            self.pending
+                .retain(|pending| !within(&stable, &pending.origin, pending.seq));
+        }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
         self.root.redundant_by_parent(version, conservative);
+        if let Some(held) = self.held.as_deref_mut() {
+            held.root.redundant_by_parent(version, conservative);
+        }
     }
 
     fn is_default(&self) -> bool {

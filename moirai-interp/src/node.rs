@@ -208,6 +208,13 @@ pub enum Refusal {
         /// The successor's model id.
         to: String,
     },
+    /// A rebase of the model is still in its window (SI.14): some member has
+    /// not been heard to deliver it, and until every one has, the model is
+    /// not migrated again.
+    Rebasing,
+    /// A rebase the model's metamodel cannot take, and why (SI.14); see
+    /// [`crate::migrate::rebase`].
+    Rebase(String),
 }
 
 impl fmt::Display for Refusal {
@@ -317,6 +324,12 @@ impl fmt::Display for Refusal {
                 "this model was migrated to `{to}` and is read-only from the cut on: write to \
                  `{to}` instead"
             ),
+            Refusal::Rebasing => write!(
+                f,
+                "a rebase of this model is not yet delivered by every member: it can be \
+                 migrated again once it is"
+            ),
+            Refusal::Rebase(why) => write!(f, "the rebase was refused: {why}"),
         }
     }
 }
@@ -830,6 +843,20 @@ pub struct SeqNode {
     /// id. See [`children_serde`].
     #[cfg_attr(feature = "serde", serde(with = "children_serde"))]
     pub(crate) children: HashMap<EventId, Node>,
+    /// The entries a rebase hides (SI.14, M20): inserted with an object of a
+    /// class the revision in force removes. They stay in `positions`, so a
+    /// position written under the old descriptor, which counted them, still
+    /// means what it meant to its writer; they hold no child, no read serves
+    /// them, and a position written under the revision does not count them.
+    ///
+    /// Kept in the order of the resolved id, so that two replicas holding one
+    /// state serialize it to the same bytes, and absent from the bytes while
+    /// empty, which is every sequence no rebase has hidden an entry of.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub(crate) hidden: Vec<EventId>,
 }
 
 /// A sequence's ordering half: the eg-walker graph, and its current order
@@ -1020,6 +1047,16 @@ pub(crate) struct Ctx<'a> {
     /// can let go of the links to them it had seen once the operation is
     /// applied. `None` where nobody listens.
     pub removed: Option<&'a RefCell<HashSet<String>>>,
+    /// The operation was written under the descriptor a rebase replaced and
+    /// translated (SI.14): its positions count every entry of a sequence,
+    /// those the rebase hides included, as they did for its writer. Every
+    /// other operation's positions count the entries the descriptor in force
+    /// serves, which is every entry of a sequence no rebase hid one of.
+    pub raw: bool,
+    /// Where a write into a text reports the text as it reads at the
+    /// operation's own version, the operation applied (SI.14, M18). `None`
+    /// where nobody listens.
+    pub text: Option<&'a RefCell<Option<String>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -1032,6 +1069,22 @@ impl<'a> Ctx<'a> {
             step: 0,
             silent: false,
             removed: None,
+            raw: false,
+            text: None,
+        }
+    }
+
+    /// The same context, for an operation translated from the descriptor a
+    /// rebase replaced: its positions count every entry.
+    pub(crate) fn translated(self) -> Self {
+        Ctx { raw: true, ..self }
+    }
+
+    /// The same context, with the text a write reaches reported to `text`.
+    pub(crate) fn reading_text(self, text: &'a RefCell<Option<String>>) -> Self {
+        Ctx {
+            text: Some(text),
+            ..self
         }
     }
 
@@ -1203,6 +1256,28 @@ impl SeqNode {
     /// The children, by the id of the operation that inserted them.
     pub fn children(&self) -> &HashMap<EventId, Node> {
         &self.children
+    }
+
+    /// Whether a rebase hides the entry `id` inserted (SI.14, M20).
+    pub(crate) fn hides(&self, id: &EventId) -> bool {
+        self.hidden.contains(id)
+    }
+
+    /// The entries in read order, less those a rebase hides: what a position
+    /// written under the descriptor in force counts.
+    fn served_order(&self) -> Vec<EventId> {
+        self.order_ref()
+            .iter()
+            .filter(|id| !self.hides(id))
+            .cloned()
+            .collect()
+    }
+
+    /// Hide the entry `id` inserted, once.
+    pub(crate) fn hide(&mut self, id: &EventId) {
+        if !self.hides(id) {
+            insert_resolved(&mut self.hidden, id.clone(), |id| id);
+        }
     }
 }
 
@@ -1829,7 +1904,17 @@ pub(crate) fn check(
                 Some(Node::Seq(seq)) => Some(seq),
                 _ => None,
             };
-            let order = seq.map(SeqNode::order_ref).unwrap_or_default();
+            // SI.14: a position written under the revision in force counts
+            // only the entries it serves.
+            let served;
+            let order: &[EventId] = match seq {
+                Some(seq) if !seq.hidden.is_empty() => {
+                    served = seq.served_order();
+                    &served
+                }
+                Some(seq) => seq.order_ref(),
+                None => &[],
+            };
             // A position means what it meant in the state its writer saw, and
             // only a local writer's state is this one. A peer's position is
             // resolved against its own version when it is applied, and out of
@@ -2100,8 +2185,16 @@ pub(crate) fn apply(
                     got: "something else",
                 });
             };
+            // SI.14: once a rebase hides entries here, a position written
+            // under the revision counts only the entries it serves.
+            let served = !ctx.raw && !seq.hidden.is_empty();
             match seq_op {
                 SeqOp::Insert { pos, op } => {
+                    let pos = if served {
+                        served_insert(seq, ctx, pos, at)?
+                    } else {
+                        pos
+                    };
                     // `nested_list.rs:104-112`: the new child is keyed by the
                     // id of the operation that inserted it, and that id is
                     // what the ordering graph carries as its content.
@@ -2112,6 +2205,13 @@ pub(crate) fn apply(
                             content: ctx.id.clone(),
                         }),
                     );
+                    // A translated insert of an object of a class the rebase
+                    // removed (SI.14, M20): the entry is in the order, as it
+                    // was for its writer, and holds nothing anyone reads.
+                    if matches!(site, Site::Object(_)) && matches!(*op, InstanceOp::New) {
+                        seq.hide(ctx.id);
+                        return Ok(());
+                    }
                     let mut emit = emit.list_element(ctx.id.clone());
                     emit.create();
                     let child = seq
@@ -2121,7 +2221,11 @@ pub(crate) fn apply(
                     apply(sem, child, Shaped::Bare(site), ctx, *op, at, emit)
                 }
                 SeqOp::Update { pos, op } => {
-                    let target = target_at(seq, ctx, pos, at)?;
+                    let (pos, target) = if served {
+                        served_target(seq, ctx, pos, at)?
+                    } else {
+                        (pos, target_at(seq, ctx, pos, at)?)
+                    };
                     let mut emit = emit.list_element(target.clone());
                     // A link passes through without updating the position:
                     // it is no write into the child, and an update here would
@@ -2137,7 +2241,11 @@ pub(crate) fn apply(
                     apply(sem, child, Shaped::Bare(site), ctx, *op, at, emit)
                 }
                 SeqOp::Delete { pos } => {
-                    let target = target_at(seq, ctx, pos, at)?;
+                    let (pos, target) = if served {
+                        served_target(seq, ctx, pos, at)?
+                    } else {
+                        (pos, target_at(seq, ctx, pos, at)?)
+                    };
                     emit.list_element(target.clone()).delete();
                     positions_effect(&mut seq.positions, ctx.event(List::Delete { pos }));
                     // `uw_map.rs:150-152`: the child is reset, not dropped,
@@ -2309,7 +2417,11 @@ pub(crate) fn apply(
                     class: at.class.clone(),
                     feature: at.feature.clone(),
                     mismatch,
-                })
+                })?;
+            if let Some(text) = ctx.text {
+                *text.borrow_mut() = leaf.text_at(ctx.version);
+            }
+            Ok(())
         }
         Shaped::Bare(Site::Object(_)) => {
             let (InstanceOp::Variant(class, inner), Node::Slot(slot)) = (op, node) else {
@@ -2407,19 +2519,76 @@ fn apply_object(
 /// list as it is now, so the cached order answers; any other replays the
 /// graph at the operation's version.
 fn target_at(seq: &SeqNode, ctx: Ctx<'_>, pos: usize, at: &At) -> Result<EventId, Refusal> {
-    let replayed: Vec<EventId>;
-    let order = if seq.positions.is_after_everything(ctx.version) {
-        seq.order_ref()
-    } else {
-        replayed = seq.positions.inner().eval(&ReadAt::new(ctx.version));
-        &replayed
-    };
+    let order = order_at(seq, ctx);
     order.get(pos).cloned().ok_or_else(|| Refusal::OutOfBounds {
         class: at.class.clone(),
         feature: at.feature.clone(),
         pos,
         len: order.len(),
     })
+}
+
+/// The order a position resolves in, as the operation's own writer saw it:
+/// the cached order for an operation that saw everything the list holds, a
+/// replay of the graph at the operation's version for any other.
+fn order_at<'s>(seq: &'s SeqNode, ctx: Ctx<'_>) -> std::borrow::Cow<'s, [EventId]> {
+    if seq.positions.is_after_everything(ctx.version) {
+        std::borrow::Cow::Borrowed(seq.order_ref())
+    } else {
+        std::borrow::Cow::Owned(seq.positions.inner().eval(&ReadAt::new(ctx.version)))
+    }
+}
+
+/// The entry a position written under the revision in force names (SI.14,
+/// F6): the `pos`th of the entries the writer saw that no rebase hides,
+/// answered with its place among every entry, which is what the ordering
+/// graph is told.
+fn served_target(
+    seq: &SeqNode,
+    ctx: Ctx<'_>,
+    pos: usize,
+    at: &At,
+) -> Result<(usize, EventId), Refusal> {
+    let order = order_at(seq, ctx);
+    let served: Vec<(usize, &EventId)> = order
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| !seq.hides(id))
+        .collect();
+    served
+        .get(pos)
+        .map(|(raw, id)| (*raw, (*id).clone()))
+        .ok_or_else(|| Refusal::OutOfBounds {
+            class: at.class.clone(),
+            feature: at.feature.clone(),
+            pos,
+            len: served.len(),
+        })
+}
+
+/// Where an insert written under the revision in force goes among every
+/// entry (SI.14, F6): right after the served entry before it, at the front
+/// for the first position.
+fn served_insert(seq: &SeqNode, ctx: Ctx<'_>, pos: usize, at: &At) -> Result<usize, Refusal> {
+    if pos == 0 {
+        return Ok(0);
+    }
+    let order = order_at(seq, ctx);
+    let served: Vec<usize> = order
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| !seq.hides(id))
+        .map(|(raw, _)| raw)
+        .collect();
+    if pos > served.len() {
+        return Err(Refusal::OutOfBounds {
+            class: at.class.clone(),
+            feature: at.feature.clone(),
+            pos,
+            len: served.len(),
+        });
+    }
+    Ok(served[pos - 1] + 1)
 }
 
 /// Put an object of this class in the slot if there is not one already,

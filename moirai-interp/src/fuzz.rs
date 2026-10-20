@@ -470,6 +470,15 @@ impl DeepSizeOf for ModelOp {
                     + identified.to_string().len()
                     + plain.to_string().len()
             }
+            ModelOp::Rebase {
+                metamodel_id,
+                descriptor,
+                drops,
+            } => {
+                metamodel_id.deep_size_of_children(context)
+                    + descriptor.deep_size_of_children(context)
+                    + drops.deep_size_of_children(context)
+            }
         }
     }
 }
@@ -551,7 +560,9 @@ impl DeepSizeOf for ObjectNode {
 
 impl DeepSizeOf for SeqNode {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
-        self.positions.deep_size_of_children(context) + self.children.deep_size_of_children(context)
+        self.positions.deep_size_of_children(context)
+            + self.children.deep_size_of_children(context)
+            + self.hidden.deep_size_of_children(context)
     }
 }
 
