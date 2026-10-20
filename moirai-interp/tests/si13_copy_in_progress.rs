@@ -38,9 +38,11 @@
 //! - `si13_r2_c2_...`, on `model_node` processes (L2/L3, ignored by
 //!   default, a load step): SI.12 round 4's 5,000-object model written on
 //!   `si13-a` (release build), whose migration answers 202 at about 5 s with
-//!   the copy about half written (SI.13 round 1: 202 in every 5,000-object
-//!   run, the copy whole about 5 s after the answer); the test asks `a` to
-//!   migrate `m'` the moment the 202 arrives. Then `si13-b`, a direct peer that
+//!   part of the copy still to apply (SI.13 round 1: 202 in every
+//!   5,000-object run; this test's red run at `6f334fa`: 14,611 of 17,136
+//!   operations copied at the answer, about 0.8 s of copy left); the test
+//!   asks `a` to migrate `m'` the moment the 202 arrives (that run: taken 17
+//!   operations later). Then `si13-b`, a direct peer that
 //!   never held `m`, joins `m'` once the copy is whole and must serve `a`'s
 //!   copy and name no successor for it (a replica read-back of "no cut").
 //!
@@ -514,10 +516,21 @@ fn si13_r2_c1_in_process_a_copy_in_progress_is_not_migrated() {
                     let m_copy = read(&client, port, &format!("/api/model/{m}/migration"))
                         .map(|status| status["copy"].clone())
                         .unwrap_or(Value::Null);
-                    Err(format!(
-                        "the route answered {status}: {text} (409 or 422 naming the copy \
-                         expected); m's copy then reads {m_copy}"
-                    ))
+                    let whole = m_copy.get("failed").is_none()
+                        && m_copy["applied"].is_u64()
+                        && m_copy["applied"] == m_copy["of"];
+                    Err(if (200..300).contains(status) && whole {
+                        format!(
+                            "not exercised: the route answered {status}: {text} with the copy of \
+                             m already whole ({m_copy}), so the request reached the loop after \
+                             its first pass"
+                        )
+                    } else {
+                        format!(
+                            "the route answered {status}: {text} (409 or 422 naming the copy \
+                             expected); m's copy then reads {m_copy}"
+                        )
+                    })
                 }
             }
         },
