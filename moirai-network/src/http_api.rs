@@ -91,10 +91,13 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// - `POST /api/model/{id}/migrate`   migrate that model to a new one under the
 ///   descriptor `{"metamodel_id": ...}` names (SI.12): once the cut is
 ///   written, 201 with the new model's id under `model_id` when its copy is
-///   whole, 202 when the node goes on applying it (SI.13); 422 with the
-///   reason when refused, 404 for a model the node does not host, 504 for a
-///   migration the event loop did not take in time, which it never carries
-///   out. Fields of the body other than `metamodel_id` are ignored
+///   whole, 202 when the node goes on applying it (SI.13), or when it stopped
+///   (`copy: "stopped"`, the reason under `failed`); 409 for a model that is
+///   a copy this node is still writing, which can be migrated once the copy
+///   is whole; 422 with the reason when refused, 404 for a model the node
+///   does not host, 504 for a migration the event loop did not take in time,
+///   which it never carries out. Fields of the body other than
+///   `metamodel_id` are ignored
 /// - `GET  /api/model/{id}/migration` that model's migration status, as the
 ///   application reads it, with `copy: {applied, of}` beside it on the node
 ///   that planned the model's copy
@@ -1116,15 +1119,26 @@ impl<O: NetworkOp> Api<O> {
             deadline,
             reply,
         }) {
-            Settled::Answered(Ok(Migrated { model_id, whole })) => json_value(
-                if whole { 201 } else { 202 },
-                &json!({
+            Settled::Answered(Ok(Migrated {
+                model_id,
+                whole,
+                stopped,
+            })) => {
+                let mut body = json!({
                     "model_id": model_id.as_str(),
                     "metamodel_id": metamodel_id,
                     "migrated_from": from,
-                    "copy": if whole { "whole" } else { "in progress" },
-                }),
-            ),
+                    "copy": match (whole, &stopped) {
+                        (true, _) => "whole",
+                        (false, None) => "in progress",
+                        (false, Some(_)) => "stopped",
+                    },
+                });
+                if let Some(failed) = stopped {
+                    body["failed"] = json!(failed);
+                }
+                json_value(if whole { 201 } else { 202 }, &body)
+            }
             Settled::Answered(Err(refused)) => migrate_refused(refused),
             Settled::Expired | Settled::Gone => timeout(),
         }
@@ -1137,6 +1151,7 @@ fn migrate_refused(refused: MigrateRefused) -> Reply {
         MigrateRefused::NotEnabled => 501,
         MigrateRefused::NotHosted(_) => 404,
         MigrateRefused::UnknownMetamodel(_) | MigrateRefused::Refused(_) => 422,
+        MigrateRefused::CopyInProgress(_) => 409,
     };
     error(status, refused)
 }

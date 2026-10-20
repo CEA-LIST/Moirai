@@ -351,7 +351,8 @@ where
     migration_only_fn: Option<MigrationOnlyFn<L::Op>>,
     /// The copies this node planned, by the model each migrated (SI.13 D1):
     /// the successor, the operations still to apply, and how far it got.
-    /// Kept once whole, so the source's status goes on reporting it.
+    /// Kept once finished, without its plan, so the source's status goes on
+    /// reporting it.
     copies: BTreeMap<LogId, CopyJob<L::Op>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
@@ -832,6 +833,11 @@ pub enum MigrateRefused {
     UnknownMetamodel(serde_json::Value),
     /// The application refused the migration, and said why.
     Refused(String),
+    /// The model is the successor of a copy this node is still writing
+    /// (SI.13, M14): migrating it now would cut it short of the copy, so it
+    /// can be migrated once the copy is whole. Says which copy and how far
+    /// it got.
+    CopyInProgress(String),
 }
 
 impl Display for MigrateRefused {
@@ -843,6 +849,7 @@ impl Display for MigrateRefused {
                 write!(f, "this node holds no descriptor for metamodel {id}")
             }
             Self::Refused(why) => write!(f, "the migration was refused: {why}"),
+            Self::CopyInProgress(why) => write!(f, "the migration was refused: {why}"),
         }
     }
 }
@@ -1006,8 +1013,11 @@ pub struct Migrated {
     pub model_id: LogId,
     /// `true` when every operation of the copy was applied before the
     /// answer; `false` when the event loop goes on applying it in later
-    /// steps.
+    /// steps, or when it stopped.
     pub whole: bool,
+    /// Why the copy stopped before the answer, when an operation of it was
+    /// refused: the cut stands, and nothing more of the copy is applied.
+    pub stopped: Option<String>,
 }
 
 /// A migration planned against this node's replica of a model, nothing of
@@ -1024,17 +1034,26 @@ struct MigrationPlan<O> {
     planned: Duration,
 }
 
-/// A copy this node planned (SI.13 D1): the successor, the operations of its
-/// plan still to apply, in order, and how far it got.
+/// A copy this node planned (SI.13 D1): the successor and how far it got,
+/// and, while it is still being written, the operations of its plan still
+/// to apply. Once finished only the first four fields are kept, so the plan
+/// and any operations it never applied are freed.
 struct CopyJob<O> {
     successor: LogId,
-    pending: std::vec::IntoIter<O>,
     applied: usize,
     of: usize,
     /// Why the successor's intake refused an operation of the plan, which
     /// stops the copy. Not expected: the plan is the successor's own.
     failed: Option<String>,
-    /// When the migration began, for the log line that reports it whole.
+    /// `None` once the copy is finished.
+    writing: Option<Writing<O>>,
+}
+
+/// The part of a [`CopyJob`] kept only while it is being written.
+struct Writing<O> {
+    /// The operations of the plan still to apply, in order.
+    pending: std::vec::IntoIter<O>,
+    /// When the migration began, for the log lines that report it.
     started: Instant,
 }
 
@@ -1930,12 +1949,14 @@ where
     /// events (`@<seq>.<step>`), which every replica resolves against the
     /// event's origin, this node.
     ///
-    /// Refused, with nothing written, when the model is not hosted, when the
-    /// node holds no descriptor for `metamodel_id`, when the hook refuses,
-    /// and when the model's own intake refuses the cut. Once the cut is
-    /// written it stands: an operation of the plan the successor's intake
-    /// refused would stop the copy, which the status then reports under
-    /// `copy.failed`.
+    /// Refused, with nothing written, when the model is not hosted, when it
+    /// is the successor of a copy this node is still writing (it can be
+    /// migrated once that copy is whole), when the node holds no descriptor
+    /// for `metamodel_id`, when the hook refuses, and when the model's own
+    /// intake refuses the cut. Once the cut is written it stands: an
+    /// operation of the plan the successor's intake refused would stop the
+    /// copy, which the status then reports under `copy.failed` and the
+    /// answer under [`Migrated::stopped`].
     pub fn migrate_by(
         &mut self,
         log_id: &LogId,
@@ -1956,7 +1977,8 @@ where
     ) -> Result<Migrated, MigrateRefused> {
         let model_id = self.begin_migration(log_id, plan)?;
         let whole = self.advance_copy(log_id, Some(deadline));
-        if let Some(job) = self.copies.get(log_id).filter(|_| !whole) {
+        let job = self.copies.get(log_id);
+        if let Some((job, writing)) = job.and_then(|job| Some((job, job.writing.as_ref()?))) {
             eprintln!(
                 "[{}] answering the migration of model {} at its deadline: {} of {} operations \
                  copied, {} ms after it began",
@@ -1964,10 +1986,15 @@ where
                 log_id,
                 job.applied,
                 job.of,
-                job.started.elapsed().as_millis()
+                writing.started.elapsed().as_millis()
             );
         }
-        Ok(Migrated { model_id, whole })
+        let stopped = job.and_then(|job| job.failed.clone());
+        Ok(Migrated {
+            model_id,
+            whole,
+            stopped,
+        })
     }
 
     /// Plan a migration against this node's replica of the model, writing
@@ -1985,6 +2012,13 @@ where
         let Some(log) = self.logs.get(log_id) else {
             return Err(MigrateRefused::NotHosted(log_id.clone()));
         };
+        if let Some(job) = self.copy_writing(log_id) {
+            return Err(MigrateRefused::CopyInProgress(format!(
+                "model {log_id} is a migration's copy still being written here ({} of {} \
+                 operations): it can be migrated once its copy is whole",
+                job.applied, job.of
+            )));
+        }
         let unknown = || MigrateRefused::UnknownMetamodel(metamodel_id.clone());
         let key = descriptor_key(&metamodel_id).ok_or_else(unknown)?;
         let held = self
@@ -2065,10 +2099,12 @@ where
             CopyJob {
                 successor: successor.clone(),
                 of: ops.len(),
-                pending: ops.into_iter(),
                 applied: 0,
                 failed: None,
-                started,
+                writing: Some(Writing {
+                    pending: ops.into_iter(),
+                    started,
+                }),
             },
         );
         Ok(successor)
@@ -2082,9 +2118,14 @@ where
         let Some(mut job) = self.copies.remove(source) else {
             return true;
         };
+        let Some(mut writing) = job.writing.take() else {
+            let whole = job.applied == job.of;
+            self.copies.insert(source.clone(), job);
+            return whole;
+        };
         let mut events = Vec::new();
         while !job.finished() {
-            let Some(op) = job.pending.next() else {
+            let Some(op) = writing.pending.next() else {
                 break;
             };
             match self.apply_local(&job.successor, op) {
@@ -2126,8 +2167,11 @@ where
                 source,
                 job.successor,
                 job.of,
-                job.started.elapsed().as_millis()
+                writing.started.elapsed().as_millis()
             );
+        }
+        if !job.finished() {
+            job.writing = Some(writing);
         }
         self.copies.insert(source.clone(), job);
         whole
@@ -2158,16 +2202,21 @@ where
     /// a copy this node is still applying, whose plan names its objects by
     /// this node's own events on it, in order.
     fn copy_in_progress(&self, log_id: &LogId) -> Option<String> {
+        self.copy_writing(log_id).map(|job| {
+            format!(
+                "model {log_id} is a migration's copy still being written here ({} of {} \
+                 operations): a local write waits until it is whole",
+                job.applied, job.of
+            )
+        })
+    }
+
+    /// The copy this node is still writing into `log_id`, when `log_id` is
+    /// the successor of one.
+    fn copy_writing(&self, log_id: &LogId) -> Option<&CopyJob<L::Op>> {
         self.copies
             .values()
             .find(|job| job.successor == *log_id && !job.finished())
-            .map(|job| {
-                format!(
-                    "model {log_id} is a migration's copy still being written here ({} of {} \
-                     operations): a local write waits until it is whole",
-                    job.applied, job.of
-                )
-            })
     }
 
     /// The application's migration status of a hosted log, with the progress
@@ -3641,7 +3690,8 @@ where
                 };
                 if Instant::now() + plan.planned > deadline {
                     eprintln!(
-                        "[{}] not taking the migration of model {}: planning it took {} ms,                          more than is left of its deadline",
+                        "[{}] not taking the migration of model {}: planning it took {} ms, \
+                         more than is left of its deadline",
                         self.replica_id,
                         log_id,
                         plan.planned.as_millis()
