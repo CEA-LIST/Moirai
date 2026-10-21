@@ -184,10 +184,12 @@ where
             }
             idx
         };
+        let mut state = L::new();
+        state.hosted_by(&id);
         Self {
             id,
             tcsb: T::new(idx, interner, log_id),
-            state: L::new(),
+            state,
         }
     }
 }
@@ -246,6 +248,7 @@ where
     pub fn adopt(&mut self, snapshot: StateSnapshot<L::Op>, state: L) {
         self.tcsb.adopt(snapshot);
         self.state = state;
+        self.state.hosted_by(&self.id);
     }
 
     fn deliver(&mut self, event: Event<L::Op>) {
@@ -282,7 +285,7 @@ where
     pub fn bootstrap_with_state_and_log_id(
         id: ReplicaIdOwned,
         members: &[&ReplicaId],
-        state: L,
+        mut state: L,
         log_id: LogId,
     ) -> Self {
         assert!(
@@ -300,6 +303,7 @@ where
             }
             idx
         };
+        state.hosted_by(&id);
         Self {
             id,
             tcsb: T::new(idx, interner, log_id),

@@ -7,6 +7,7 @@ use crate::{
         query::{QueryOperation, Read},
     },
     event::Event,
+    replica::ReplicaId,
     state::effect_context::EffectContext,
 };
 
@@ -21,6 +22,14 @@ pub trait IsLog: Default {
     fn new() -> Self {
         Self::default()
     }
+
+    /// Tell the log which replica hosts it.
+    ///
+    /// A replica calls it when it is bootstrapped and again when it adopts a
+    /// donor's state. The member table cannot say which member is local: an
+    /// adoption rebuilds it in the donor's order, donor first. Most logs do not
+    /// need to know, so the default ignores it.
+    fn hosted_by(&mut self, _replica: &ReplicaId) {}
 
     /// Prepare a client command as the operation stored and replicated by this log.
     fn prepare(&self, command: Self::Command) -> Self::Op;
@@ -84,6 +93,10 @@ impl<L: IsLog> IsLog for Box<L> {
 
     fn new() -> Self {
         Box::new(L::new())
+    }
+
+    fn hosted_by(&mut self, replica: &ReplicaId) {
+        (**self).hosted_by(replica);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {
@@ -156,6 +169,10 @@ impl<L: IsLog> IsLog for BoxedLog<L> {
 
     fn new() -> Self {
         Self(Box::new(L::new()))
+    }
+
+    fn hosted_by(&mut self, replica: &ReplicaId) {
+        self.0.as_mut().hosted_by(replica);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {

@@ -256,6 +256,10 @@ where
     type Op = L::Op;
     type Rejection = L::Rejection;
 
+    fn hosted_by(&mut self, replica: &crate::replica::ReplicaId) {
+        self.inner.hosted_by(replica);
+    }
+
     fn prepare(&self, command: Self::Command) -> Self::Op {
         self.inner.prepare(command)
     }

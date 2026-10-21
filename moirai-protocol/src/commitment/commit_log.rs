@@ -41,6 +41,10 @@ where
     type Op = CommitOp<L::Op>;
     type Rejection = L::Rejection;
 
+    fn hosted_by(&mut self, replica: &crate::replica::ReplicaId) {
+        self.child.hosted_by(replica);
+    }
+
     /// A user command is prepared by the child log, and then annotated with the current leader vote from the oracle.
     fn prepare(&self, command: Self::Command) -> Self::Op {
         CommitOp::new(

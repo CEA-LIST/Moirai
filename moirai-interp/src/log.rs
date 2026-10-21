@@ -81,7 +81,7 @@ use std::sync::Arc;
 use moirai_protocol::{
     clock::version_vector::Version,
     event::Event,
-    replica::ReplicaIdx,
+    replica::{ReplicaId, ReplicaIdx},
     state::{effect_context::EffectContext, log::IsLog},
 };
 use moirai_semantics::{MetamodelSemantics, from_descriptor};
@@ -188,8 +188,10 @@ pub struct ModelLog {
     /// names them.
     #[cfg_attr(feature = "serde", serde(skip))]
     members: Vec<String>,
-    /// This replica: the first member of its own table, which every
-    /// bootstrap interns before any other.
+    /// This replica, as the replica hosting the log names itself
+    /// ([`IsLog::hosted_by`]) when it is bootstrapped and when it adopts a
+    /// donor's state. Not read off the member table: an adoption rebuilds that
+    /// in the donor's order, donor first (SI.14, round 3).
     #[cfg_attr(feature = "serde", serde(skip))]
     me: Option<String>,
     /// How many times the descriptor in force changed here: a node watches
@@ -725,8 +727,8 @@ impl ModelLog {
             .map(Rebase::id)
     }
 
-    /// Note what delivering `event` says: the members, this replica, and
-    /// what the event's origin had delivered when it wrote it (R3).
+    /// Note what delivering `event` says: the members, and what the event's
+    /// origin had delivered when it wrote it (R3).
     fn hear(&mut self, event: &Event<ModelOp>) {
         let version = event.version();
         let resolver = version.resolver();
@@ -735,9 +737,6 @@ impl ModelLog {
                 .filter_map(|idx| resolver.resolve(ReplicaIdx(idx)).map(str::to_string))
                 .collect();
             self.members.sort_unstable();
-        }
-        if self.me.is_none() {
-            self.me = resolver.resolve(ReplicaIdx(0)).map(str::to_string);
         }
         let row = self
             .heard
@@ -1223,6 +1222,10 @@ impl IsLog for ModelLog {
     /// it stopped at, and `send` now hands that to the caller instead of a
     /// bare `None`.
     type Rejection = Refusal;
+
+    fn hosted_by(&mut self, replica: &ReplicaId) {
+        self.me = Some(replica.to_string());
+    }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {
         command
