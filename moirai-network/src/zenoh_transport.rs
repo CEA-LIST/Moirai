@@ -188,17 +188,7 @@ where
             .into_iter()
             .filter(|peer| *peer != local_id)
             .collect();
-        eprintln!(
-            "[{local_id}] Zenoh transport in session `{session_id}`, listening on {:?}",
-            session
-                .info()
-                .locators()
-                .wait()
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        );
-        Ok(Self {
+        let transport = Self {
             local_id,
             session_id: session_id.to_string(),
             session,
@@ -209,7 +199,13 @@ where
             live: BTreeSet::new(),
             paused: BTreeSet::new(),
             buffers: HashMap::default(),
-        })
+        };
+        eprintln!(
+            "[{}] Zenoh transport in session `{session_id}`, listening on {:?}",
+            transport.local_id,
+            transport.locators()
+        );
+        Ok(transport)
     }
 
     /// The session's listening locators as Zenoh reports them, with the real
@@ -224,8 +220,14 @@ where
             .collect()
     }
 
-    fn key(&self, kind: &str) -> String {
-        format!("moirai/{}/{kind}/{}", self.session_id, self.local_id)
+    /// Where a broadcast goes while no peer is paused.
+    fn all_key(&self) -> String {
+        format!("moirai/{}/all/{}", self.session_id, self.local_id)
+    }
+
+    /// Where a frame for `peer` alone goes.
+    fn to_key(&self, peer: &str) -> String {
+        format!("moirai/{}/to/{peer}/{}", self.session_id, self.local_id)
     }
 
     fn put(&self, key: String, payload: ZBytes) -> TransportResult<()> {
@@ -265,18 +267,16 @@ where
         if !self.live.contains(peer) {
             return Err(TransportError::PeerNotFound(peer.clone()));
         }
-        let key = format!("moirai/{}/to/{peer}/{}", self.session_id, self.local_id);
-        self.put(key, Self::encode(&msg)?)
+        self.put(self.to_key(peer), Self::encode(&msg)?)
     }
 
     fn broadcast(&mut self, msg: TransportMessage<O>) -> TransportResult<()> {
         let payload = Self::encode(&msg)?;
         if self.paused.is_empty() {
-            return self.put(self.key("all"), payload);
+            return self.put(self.all_key(), payload);
         }
         for peer in self.live.difference(&self.paused) {
-            let key = format!("moirai/{}/to/{peer}/{}", self.session_id, self.local_id);
-            if let Err(e) = self.put(key, payload.clone()) {
+            if let Err(e) = self.put(self.to_key(peer), payload.clone()) {
                 eprintln!("[{}] Failed to send to {peer}: {e}", self.local_id);
             }
         }
