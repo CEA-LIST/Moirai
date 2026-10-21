@@ -121,6 +121,11 @@ pub struct ModelLog {
     /// serves and that the digest is taken over. Serialized with the table so
     /// that a joiner by state transfer has it too.
     descriptor: Option<String>,
+    /// The descriptor the log was opened with, once a rebase has put the
+    /// model under another; `None` while `descriptor` is still that one.
+    /// What a node checks the key a model was joined under against (SI.14).
+    #[cfg_attr(feature = "serde", serde(default))]
+    opened: Option<String>,
     root: Node,
     unresolved: u64,
     /// The greatest sequence number delivered from each origin, by replica
@@ -164,6 +169,13 @@ pub struct ModelLog {
     /// stable here is in the causal past of every migration still to be
     /// delivered, so it is let go of then. Not serialized: a joiner by state
     /// transfer during a rebase's window is not claimed (SI.14, L1).
+    ///
+    /// The cost: every instance operation is held here, a copy beside the
+    /// one the broadcast layer keeps until it is stable, whether or not a
+    /// migration is ever written, since one concurrent with it can still
+    /// arrive. So it is as long as the unstable part of the history, and
+    /// grows without bound while a member stays silent (NW.05), as that part
+    /// does.
     #[cfg_attr(feature = "serde", serde(skip))]
     pending: Vec<Pending>,
     /// Per member, the greatest sequence number per origin of the events in
@@ -219,6 +231,10 @@ struct Rebase {
     to: String,
     descriptor: String,
     sem: Arc<MetamodelSemantics>,
+    /// What its writer's read served at its version that the revision's
+    /// does not, as the operation carries it ([`ModelOp::Rebase`]).
+    #[cfg_attr(feature = "serde", serde(default))]
+    hidden: Vec<String>,
 }
 
 impl Rebase {
@@ -301,18 +317,6 @@ fn within(seen: &BTreeMap<String, u64>, origin: &str, seq: u64) -> bool {
     seen.get(origin).is_some_and(|last| seq <= *last)
 }
 
-/// Whether a served identity, `<origin>@<seq>[:<n>].<step>`, was created by
-/// an event in the causal past `seen`.
-fn created_within(identity: &str, seen: &BTreeMap<String, u64>) -> bool {
-    let Some((origin, rest)) = identity.rsplit_once('@') else {
-        return false;
-    };
-    rest.split(['.', ':'])
-        .next()
-        .and_then(|seq| seq.parse::<u64>().ok())
-        .is_some_and(|seq| within(seen, origin, seq))
-}
-
 /// A delivered [`ModelOp::Cut`]: the successor, what the cut had seen, and
 /// the two documents served from then on.
 #[derive(Clone, Debug)]
@@ -363,8 +367,9 @@ impl ModelLog {
         self.header.as_ref()
     }
 
-    /// The descriptor this log was opened with, verbatim, once it has been
-    /// opened.
+    /// The descriptor in force, verbatim, once the log has been opened: the
+    /// one it was opened with, or the revision of the rebase in force
+    /// (SI.14).
     ///
     /// The text and not the table, because this is what a node serves on
     /// `GET /api/model/{id}/metamodel` and what its digest is taken over. It
@@ -374,6 +379,13 @@ impl ModelLog {
     /// re-derived the digest from these bytes.
     pub fn descriptor(&self) -> Option<&str> {
         self.descriptor.as_deref()
+    }
+
+    /// The descriptor this log was opened with, verbatim, once it has been
+    /// opened, whatever rebase has put it under since: what the key a model
+    /// was joined under names, which a rebase does not contradict (SI.14).
+    pub fn opened_descriptor(&self) -> Option<&str> {
+        self.opened.as_deref().or(self.descriptor.as_deref())
     }
 
     /// The model.
@@ -514,6 +526,23 @@ impl ModelLog {
     /// replaced is still held (SI.14, M23).
     pub(crate) fn in_window(&self) -> bool {
         self.held.is_some()
+    }
+
+    /// The identities of the objects this replica's read serves that the
+    /// read of the same model under `to`, a revision of the table in force,
+    /// does not, sorted: what a rebase written here to `to` hides (M20).
+    pub(crate) fn hidden_by(&self, to: &MetamodelSemantics) -> Vec<String> {
+        let Some(from) = self.sem.as_deref() else {
+            return Vec::new();
+        };
+        let root = Revision::new(from, to).map_root(&self.root);
+        let mut before = HashSet::new();
+        identities(&read_identified(from, &self.root), &mut before);
+        let mut after = HashSet::new();
+        identities(&read_identified(to, &root), &mut after);
+        let mut hidden: Vec<String> = before.difference(&after).cloned().collect();
+        hidden.sort_unstable();
+        hidden
     }
 
     /// The identified read once the model is cut: what the migrating
@@ -747,7 +776,13 @@ impl ModelLog {
 
     /// Take a delivered rebase. One whose revision is not a table is a
     /// peer's mistake: counted, and not a migration here.
-    fn take_rebase(&mut self, event: &Event<ModelOp>, metamodel_id: &str, descriptor: &str) {
+    fn take_rebase(
+        &mut self,
+        event: &Event<ModelOp>,
+        metamodel_id: &str,
+        descriptor: &str,
+        hidden: &[String],
+    ) {
         let id = event.id();
         let (origin, seq) = (id.origin_id().to_string(), id.seq() as u64);
         if self
@@ -777,6 +812,7 @@ impl ModelLog {
                 to: metamodel_id.to_string(),
                 descriptor: descriptor.to_string(),
                 sem: Arc::new(sem),
+                hidden: hidden.to_vec(),
             },
         );
     }
@@ -843,20 +879,17 @@ impl ModelLog {
                 None => return,
             },
         };
+        // The first rebase here is taken from the model as it was opened.
+        if self.opened.is_none() {
+            self.opened = Some(base.descriptor.clone());
+        }
         let revision = Revision::new(&base.sem, &rebase.sem);
         let root = revision.map_root(&base.root);
-        let mut before = HashSet::new();
-        identities(&read_identified(&base.sem, &base.root), &mut before);
-        let mut after = HashSet::new();
-        identities(&read_identified(&rebase.sem, &root), &mut after);
-        let mut hidden: Vec<String> = before
-            .difference(&after)
-            .filter(|identity| created_within(identity, &rebase.seen))
-            .cloned()
-            .collect();
-        hidden.sort_unstable();
+        // Read at the rebase's version, by its writer: the old model held
+        // here may already hold an operation concurrent with the rebase, a
+        // removal of an object the rebase hid among them (M20).
         let mut report = Report {
-            hidden,
+            hidden: rebase.hidden.clone(),
             ..Report::default()
         };
         for pending in &self.pending {
@@ -1236,12 +1269,13 @@ impl IsLog for ModelLog {
             ModelOp::Rebase {
                 metamodel_id,
                 descriptor,
+                hidden,
                 ..
             } => {
                 if self.sem.is_none() {
                     self.unresolved += 1;
                 } else {
-                    self.take_rebase(&event, metamodel_id, descriptor);
+                    self.take_rebase(&event, metamodel_id, descriptor, hidden);
                     self.settle();
                 }
             }

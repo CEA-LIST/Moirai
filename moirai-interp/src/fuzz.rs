@@ -474,10 +474,12 @@ impl DeepSizeOf for ModelOp {
                 metamodel_id,
                 descriptor,
                 drops,
+                hidden,
             } => {
                 metamodel_id.deep_size_of_children(context)
                     + descriptor.deep_size_of_children(context)
                     + drops.deep_size_of_children(context)
+                    + hidden.deep_size_of_children(context)
             }
         }
     }

@@ -100,6 +100,15 @@ pub enum ModelOp {
         /// The classes (`<Class>`) and features (`<Class>.<feature>`, of the
         /// declaring class) the revision removes, as the request named them.
         drops: Vec<String>,
+        /// The identities of the objects the writer's read served when it
+        /// wrote the rebase, at the rebase's version, that the revision's
+        /// read of the same model does not, sorted (SI.14, M20). Carried
+        /// rather than recomputed where the rebase lands, as a cut carries its
+        /// documents: a replica that delivered a removal concurrent with the
+        /// rebase before it no longer holds the object the rebase hid, and
+        /// would list a different set.
+        #[cfg_attr(feature = "serde", serde(default))]
+        hidden: Vec<String>,
     },
 }
 

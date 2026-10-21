@@ -467,10 +467,14 @@ pub fn rebase(
     }
     let from = source.semantics().ok_or(MigrateRefusal::NoTable)?;
     let to = revise(from, descriptor, drops)?;
+    // This replica's model is the model at the rebase's version: the
+    // rebase's causal past is what it has delivered.
+    let hidden = source.hidden_by(&to);
     Ok(ModelOp::Rebase {
         metamodel_id: to.digest,
         descriptor: descriptor.to_string(),
         drops: drops.to_vec(),
+        hidden,
     })
 }
 
