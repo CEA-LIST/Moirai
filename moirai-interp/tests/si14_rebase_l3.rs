@@ -894,3 +894,402 @@ fn si14_l3_rebase_in_place_on_three_nodes() {
         panic!("si14-l3: {why}\n{}", cluster.tails());
     }
 }
+
+// ---------------------------------------------------------------------------
+// RH on nodes that joined by state transfer (round 3)
+// ---------------------------------------------------------------------------
+
+impl Cluster {
+    /// The three nodes of [`Cluster::start`], serving the same descriptors,
+    /// in a scratch directory of their own, so that this test and the one
+    /// above never share one when a run takes them in parallel.
+    fn start_window(binary: &Path) -> Result<Self, String> {
+        let scratch = std::env::temp_dir().join(format!("moirai-si14-w-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        let mut specs = Vec::new();
+        for (id, served) in [
+            (
+                NAMES[A],
+                vec![
+                    ("d1", D1),
+                    ("d2", D2),
+                    ("d2-drop", D2_DROP),
+                    ("d2-flag", D2_FLAG),
+                    ("d2-kind", D2_KIND),
+                    ("d2-rename", D2_RENAME),
+                ],
+            ),
+            (NAMES[B], vec![("d1", D1), ("d2", D2)]),
+            (NAMES[C], vec![("d1", D1)]),
+        ] {
+            let dir = scratch.join(format!("{id}-metamodels"));
+            fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+            for (name, text) in served {
+                fs::write(dir.join(format!("{name}.json")), text).map_err(|err| err.to_string())?;
+            }
+            let dir = dir.to_string_lossy().into_owned();
+            specs.push(launch::NodeSpec::new(
+                id,
+                &[("LOG_ID", LOG_ID), ("METAMODEL_DIR", dir.as_str())],
+            ));
+        }
+        let nodes: Vec<Node> = launch::launch(binary, &scratch, &specs)?
+            .into_iter()
+            .map(|node| Node {
+                id: node.id,
+                http: node.http,
+                child: node.child,
+                log: node.log,
+            })
+            .collect();
+        let pids: Vec<String> = nodes
+            .iter()
+            .map(|node| format!("{} pid {}", node.id, node.child.id()))
+            .collect();
+        println!("SI14-L3-W nodes: {}", pids.join(", "));
+        let cluster = Cluster {
+            nodes,
+            scratch,
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|err| err.to_string())?,
+        };
+        cluster.await_health()?;
+        cluster.await_mesh()?;
+        Ok(cluster)
+    }
+}
+
+/// Whether `node`'s log says it adopted `donor`'s state for `model`: the
+/// line a `model_node` prints when it installs a state transfer.
+fn adopted_from(node: &Node, model: &str, donor: &str) -> bool {
+    let line = format!("adopted state from {donor} for log {model}");
+    fs::read_to_string(&node.log)
+        .unwrap_or_default()
+        .lines()
+        .any(|text| text.contains(&line))
+}
+
+/// What a node's `rebase.waiting_for`, `got`, says wrongly against R3's
+/// `want`: the node naming itself, a member it has not heard deliver the
+/// rebase left out, a member it has heard named.
+fn waiting_mismatch(node: usize, got: &Value, want: &[&str]) -> String {
+    let got: Vec<String> = got
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut notes = Vec::new();
+    if got.iter().any(|member| member == NAMES[node]) {
+        notes.push(format!("{} names itself", NAMES[node]));
+    }
+    for member in want {
+        if !got.iter().any(|named| named == member) {
+            notes.push(format!("{member} left out"));
+        }
+    }
+    for member in &got {
+        if member != NAMES[node] && !want.contains(&member.as_str()) {
+            notes.push(format!("{member} named, already heard"));
+        }
+    }
+    if notes.is_empty() {
+        "waiting_for as R3 gives; another key differs".to_string()
+    } else {
+        notes.join(", ")
+    }
+}
+
+/// The window on nodes that joined `m` by state transfer before any
+/// migration, the joins made deterministic (round 3).
+///
+/// - W1, the joins: `a` creates `m` under D1 and writes the running example
+///   while `b` and `c` host nothing of it. `b` pauses `c` and joins `m` by
+///   its id: its log is empty, its one connected peer hosting `m` is `a`, so
+///   it takes `a`'s state; then `c`, pausing `b`, does the same. Each
+///   joiner's log must say it adopted `si14-a`'s state for `m`.
+/// - W2: every node pauses every peer; `a`, having no rebase, adds
+///   `persistent` to `Car` under D1; `b` rebases `m` to D2 (`si14-b@1`). The
+///   first status read on `b`: D1 held, waiting for `si14-a` and `si14-c`.
+/// - W3: `b` and `c` resume each other, `a` stays cut off. `c` delivers the
+///   rebase and serves D2, which it held nowhere else (RF); `c` waits for
+///   `si14-a`, `b` for `si14-a` and `si14-c`, and both still do 20 s later.
+/// - W4: every node resumes. `a` delivers the rebase, `b` and `c` translate
+///   `a`'s late edit; then `a` writes `ha` on `Sedan` under D2 and `c` stays
+///   silent. `a` and `b` wait for `si14-c`; `c`, having heard `a` and `b`
+///   deliver the rebase, holds D1 no longer, within the convergence bound.
+/// - W5: `c` writes `hc` under D2: every node drops D1, one document.
+///
+/// Every status is R3 computed from the schedule: no node names itself, and
+/// every member a node has not heard deliver the rebase is named, the donor
+/// `si14-a` included. A status that differs is recorded and the schedule
+/// goes on, so that one run reports every failing read; anything else that
+/// fails stops the run.
+fn window_after_state_transfer(cluster: &Cluster) -> Result<(), String> {
+    let d1 = Uml::new(D1);
+    let d2 = Uml::new(D2);
+    let mut failures: Vec<String> = Vec::new();
+
+    // W1: the running example on a alone, then two joins by state transfer.
+    let m = cluster.register(A, None, &digest(D1))?;
+    cluster.submit(
+        A,
+        &m,
+        &d1.structure(),
+        "set-up: W1, the running example on a",
+    )?;
+    let ids = ids_by_label(&cluster.identified(A, &m)?);
+    cluster.submit(
+        A,
+        &m,
+        &d1.links(&ids),
+        "set-up: W1, the running example on a",
+    )?;
+    let base = labels(&cluster.identified(A, &m)?);
+    cluster
+        .serves(A, &m, &base, Rev::D1, &Rev::D1.running_example())
+        .map_err(|why| format!("set-up: W1: {why}"))?;
+    for (joiner, other) in [(B, C), (C, B)] {
+        cluster.control(joiner, &format!("/api/pause/{}", NAMES[other]))?;
+        cluster.register(joiner, Some(&m), &digest(D1))?;
+        cluster.until(
+            &format!("set-up: W1, {} joins m", NAMES[joiner]),
+            &[joiner],
+            |node| cluster.serves(node, &m, &base, Rev::D1, &Rev::D1.running_example()),
+        )?;
+        if !adopted_from(&cluster.nodes[joiner], &m, NAMES[A]) {
+            return Err(format!(
+                "set-up: W1: {} serves m, but its log does not say it adopted si14-a's state for \
+                 m; this test needs the join to be a state transfer:\n{}",
+                NAMES[joiner],
+                launch::tail(&cluster.nodes[joiner].log, 40)
+            ));
+        }
+        cluster.control(joiner, &format!("/api/resume/{}", NAMES[other]))?;
+    }
+    cluster.await_mesh()?;
+    for node in [A, B, C] {
+        if cluster.status(node, &m)? != quiet() {
+            return Err(format!(
+                "set-up: W1: {} names a migration of m before any",
+                NAMES[node]
+            ));
+        }
+    }
+    println!("SI14-L3 W1: si14-b and si14-c joined {m} by state transfers from si14-a");
+
+    // W2: the partition; a's late edit; b's rebase.
+    cluster.pause_all()?;
+    cluster.submit(
+        A,
+        &m,
+        &[d1.leaf(CAR, "stereotype", LeafOp::Add(Scalar::text("persistent")))],
+        "W2: a's edit under D1",
+    )?;
+    let (status, answer) = cluster.migrate(
+        B,
+        &m,
+        json!({ "metamodel_id": digest(D2), "strategy": "rebase" }),
+    )?;
+    if !(200..300).contains(&status)
+        || answer["model_id"] != json!(m)
+        || answer["strategy"] != json!("rebase")
+    {
+        return Err(format!(
+            "SI.14 (M15): b's rebase of {m} answered {status} {answer}: a rebase names the model \
+             itself and the strategy `rebase`"
+        ));
+    }
+    // b wrote nothing in m before (a join writes nothing): its rebase is
+    // si14-b@1.
+    let first: [(usize, &[&str]); 1] = [(B, &[NAMES[A], NAMES[C]])];
+    for (node, waiting) in first {
+        let got = cluster.status(node, &m)?;
+        let want = rebase_status(NAMES[B], 1, Rev::D2, Vec::new(), waiting);
+        if got != want {
+            failures.push(format!(
+                "W2 (M15, M23, R3): {}, which joined m by si14-a's state transfer, reads {got} on \
+                 the first read after its own rebase; R3 gives {want} ({})",
+                NAMES[node],
+                waiting_mismatch(node, &got["rebase"]["waiting_for"], waiting)
+            ));
+        }
+    }
+    cluster
+        .serves(B, &m, &base, Rev::D2, &Rev::D2.running_example())
+        .map_err(|why| format!("W2 (RA): {why}"))?;
+    let mut on_a = Rev::D1.running_example();
+    add_to_set(&mut on_a, "Car", "stereotype", &["persistent"]);
+    cluster
+        .serves(A, &m, &base, Rev::D1, &on_a)
+        .map_err(|why| format!("W2: cut off, {why}"))?;
+    cluster
+        .serves(C, &m, &base, Rev::D1, &Rev::D1.running_example())
+        .map_err(|why| format!("W2: cut off, {why}"))?;
+    for node in [A, C] {
+        if cluster.status(node, &m)? != quiet() {
+            return Err(format!("W2: {}, cut off, names a migration", NAMES[node]));
+        }
+    }
+    println!("SI14-L3 W2: b rebased {m} to D2 in place; a edited m under D1, cut off");
+
+    // W3: b and c hear each other; a stays cut off.
+    cluster.control(B, &format!("/api/resume/{}", NAMES[C]))?;
+    cluster.control(C, &format!("/api/resume/{}", NAMES[B]))?;
+    cluster.until(
+        "W3 (RF): si14-c delivers b's rebase and serves m under D2",
+        &[C],
+        |node| cluster.serves(node, &m, &base, Rev::D2, &Rev::D2.running_example()),
+    )?;
+    let window: [(usize, &[&str]); 2] = [(B, &[NAMES[A], NAMES[C]]), (C, &[NAMES[A]])];
+    let mut as_r3 = true;
+    for (node, waiting) in window {
+        let got = cluster.status(node, &m)?;
+        let want = rebase_status(NAMES[B], 1, Rev::D2, Vec::new(), waiting);
+        if got != want {
+            as_r3 = false;
+            failures.push(format!(
+                "W3 (M23, R3): {} reads {got} once b and c hear each other, si14-a cut off; R3 \
+                 gives {want} ({})",
+                NAMES[node],
+                waiting_mismatch(node, &got["rebase"]["waiting_for"], waiting)
+            ));
+        }
+    }
+    if as_r3 {
+        let watched = Instant::now();
+        'watch: while watched.elapsed() < WINDOW_HOLD {
+            for (node, waiting) in window {
+                let got = cluster.status(node, &m)?;
+                let want = rebase_status(NAMES[B], 1, Rev::D2, Vec::new(), waiting);
+                if got != want {
+                    failures.push(format!(
+                        "W3 (M23): {} moved {:?} into the window with si14-a silent: {got}, not \
+                         {want}",
+                        NAMES[node],
+                        watched.elapsed()
+                    ));
+                    break 'watch;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    println!(
+        "SI14-L3 W3: c delivered b's rebase; b and c read their window with si14-a cut off{}",
+        if as_r3 { ", watched for the hold" } else { "" }
+    );
+
+    // W4: every node resumes; a writes under D2, c silent.
+    cluster.resume_all()?;
+    let mut doc = Rev::D2.running_example();
+    add_to_set(&mut doc, "Car", "stereotype", &["persistent"]);
+    cluster.until(
+        "W4 (RB): every node serves m under D2 with a's late edit",
+        &[A, B, C],
+        |node| cluster.serves(node, &m, &base, Rev::D2, &doc),
+    )?;
+    cluster.submit(
+        A,
+        &m,
+        &[d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("ha")))],
+        "W4: a's edit under D2",
+    )?;
+    add_to_set(&mut doc, "Sedan", "stereotype", &["ha"]);
+    cluster.until(
+        "W4: every node serves a's edit under D2",
+        &[A, B, C],
+        |node| cluster.serves(node, &m, &base, Rev::D2, &doc),
+    )?;
+    let silent: [(usize, &[&str]); 3] = [(A, &[NAMES[C]]), (B, &[NAMES[C]]), (C, &[])];
+    for (node, waiting) in silent {
+        let want = rebase_status(NAMES[B], 1, Rev::D2, Vec::new(), waiting);
+        if let Err(why) = cluster.until(
+            &format!(
+                "W4 (RH, M23): {} reads the window R3 gives, si14-c silent",
+                NAMES[node]
+            ),
+            &[node],
+            |node| {
+                let got = cluster.status(node, &m)?;
+                if got == want {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} reads {got}; R3 gives {want} ({})",
+                        NAMES[node],
+                        waiting_mismatch(node, &got["rebase"]["waiting_for"], waiting)
+                    ))
+                }
+            },
+        ) {
+            failures.push(why);
+        }
+    }
+    println!("SI14-L3 W4: every node translated a's late edit and served a's write under D2");
+
+    // W5: c writes under D2; every member heard on every node.
+    cluster.submit(
+        C,
+        &m,
+        &[d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hc")))],
+        "W5: c's edit under D2",
+    )?;
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hc"]);
+    let stable = rebase_status(NAMES[B], 1, Rev::D2, Vec::new(), &[]);
+    if let Err(why) = cluster.until(
+        "W5 (RH): every node drops D1 once every member is heard",
+        &[A, B, C],
+        |node| {
+            cluster.serves(node, &m, &base, Rev::D2, &doc)?;
+            let got = cluster.status(node, &m)?;
+            if got == stable {
+                Ok(())
+            } else {
+                Err(format!("{} reads {got}, not {stable}", NAMES[node]))
+            }
+        },
+    ) {
+        failures.push(why);
+    }
+    let same = cluster.identified(A, &m)?;
+    for node in [B, C] {
+        if cluster.identified(node, &m)? != same {
+            failures.push(format!(
+                "W5: {} serves another document than si14-a",
+                NAMES[node]
+            ));
+        }
+    }
+    if failures.is_empty() {
+        println!(
+            "SI14-L3 W5: nodes that joined by state transfer named every member not yet heard, \
+             never themselves, and all three dropped D1 once every member was heard"
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "SI.14 (RH, M23, R3) on nodes that joined by state transfer, {} failing reads:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ))
+    }
+}
+
+/// SI.14 at L3, round 3: RH on nodes that joined by state transfer.
+#[test]
+fn si14_l3_window_on_nodes_that_joined_by_state_transfer() {
+    let binary = node_binary().unwrap_or_else(|why| panic!("si14-l3-w: no node binary: {why}"));
+    let cluster = match Cluster::start_window(&binary) {
+        Ok(cluster) => cluster,
+        Err(why) => panic!("si14-l3-w: set-up: {why}"),
+    };
+    if let Err(why) = window_after_state_transfer(&cluster) {
+        panic!("si14-l3-w: {why}\n{}", cluster.tails());
+    }
+}

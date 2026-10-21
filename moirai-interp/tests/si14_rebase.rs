@@ -1398,3 +1398,291 @@ fn si14_rh_d1_is_held_until_the_rebase_is_stable_and_names_whom_it_waits_for() {
         "SI14-RH: D1 held while a member had not been heard from, dropped once stable, on a, b and c"
     );
 }
+
+// ---------------------------------------------------------------------------
+// RH on a replica that joined by state transfer (round 3)
+// ---------------------------------------------------------------------------
+
+/// The members of the round-3 window test: `a`, `b`, `c`, and `j`, which
+/// joins by state transfer.
+const JOIN_MEMBERS: [&str; 4] = ["a", "b", "c", "j"];
+
+/// [`check`], answering what it found wrong instead of stopping there, so
+/// that one run reports every failing step of a schedule.
+fn checked(failures: &mut Vec<String>, replica: &Rep, base: &Base, want: &Want, at: &str) {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        check(replica, base, want, at)
+    }));
+    if let Err(panic) = outcome {
+        let why = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|why| why.to_string()))
+            .unwrap_or_else(|| format!("{at}: a check failed"));
+        failures.push(why);
+    }
+}
+
+/// RH, round 3: the window on a replica that joined the model by state
+/// transfer before any migration, as a node joining by id does at N1 of the
+/// three-node test.
+///
+/// Four replicas, `a`, `b`, `c` and `j`, each bootstrapped with the members
+/// a, b, c, j and each interning itself first. `a` writes the running
+/// example (`a@1` to `a@70`), delivered to `b` and `c`. `j` holds nothing
+/// and takes `b`'s state as a node's state transfer does: `b`'s snapshot,
+/// and `b`'s log exported and imported as JSON. Adopting it rebuilds `j`'s
+/// member table in `b`'s order, `b` first. Every later event reaches every
+/// replica by causal delivery:
+///
+/// 1. `a` rebases to D2 (`a@71`); `c` and `j` deliver it, `b` does not. `j`
+///    waits for `b` and `c`, `c` for `b` and `j`, `a` for `b`, `c` and `j`.
+/// 2. `b`, not having it, adds `persistent` to `Car` under D1 (`b@1`), which
+///    nobody delivers yet.
+/// 3. `c` writes `hc` on `Sedan` under D2 (`c@1`), which `a` and `j`
+///    deliver; `j` writes `hj` on `Sedan` under D2 (`j@1`), which `a` and `c`
+///    deliver. `a`, `c` and `j` have heard every member but `b` deliver the
+///    rebase: each waits for `b` alone and holds D1.
+/// 4. `a`, `c` and `j` deliver `b@1`, a late D1 edit, and translate it.
+/// 5. `b` delivers `a@71`, `c@1` and `j@1`, and writes `hb` on `Sedan` under
+///    D2 (`b@2`), which `a`, `c` and `j` deliver: the rebase is stable on all
+///    four, D1 dropped everywhere, one document.
+///
+/// The status at every step is R3 computed from the schedule: no replica
+/// names itself, and every member a replica has not heard deliver the
+/// rebase is named, the donor `b` included. Every step is checked, and
+/// every failing check is reported.
+#[test]
+fn si14_rh_join_a_replica_that_joined_by_state_transfer_waits_for_every_other_member() {
+    let log_id = moirai_protocol::log_id::LogId::generate();
+    let mut reps: Vec<Rep> = JOIN_MEMBERS
+        .iter()
+        .map(|id| Rep::bootstrap_with_log_id(id.to_string(), &JOIN_MEMBERS, log_id.clone()))
+        .collect();
+    let uml = Uml::new(D1);
+    let mut sent = 0u64;
+    let mut write = |reps: &mut Vec<Rep>, op: ModelOp| {
+        let message = send(&mut reps[A], op, "RH-join: building the running example");
+        reps[B].receive(message.clone());
+        reps[C].receive(message);
+        sent += 1;
+    };
+    write(&mut reps, install(MODEL, D1));
+    for op in uml.structure() {
+        write(&mut reps, op);
+    }
+    let ids = ids_by_label(&identified(&reps[A]));
+    for op in uml.links(&ids) {
+        write(&mut reps, op);
+    }
+    assert_eq!(sent, 70, "premise: the running example is a@1 to a@70");
+
+    // j joins by a state transfer from b, as a node's does.
+    let snapshot = reps[B].snapshot();
+    let exported =
+        <ModelLog as moirai_network::state_transfer::TransferableLog>::export_log(reps[B].state());
+    let text = serde_json::to_string(&exported).expect("premise: b's exported log serializes");
+    let imported = <ModelLog as moirai_network::state_transfer::TransferableLog>::import_log(
+        serde_json::from_str(&text).expect("premise: and parses back"),
+    )
+    .expect("premise: j imports b's exported log");
+    let mut j = reps.pop().expect("premise: four replicas");
+    j.adopt(snapshot, imported);
+    let reps: [Rep; 3] = reps
+        .try_into()
+        .unwrap_or_else(|_| panic!("premise: a, b and c"));
+    let doc = identified(&reps[A]);
+    let mut base = Base {
+        labels: labels(&doc),
+        ids: ids_by_label(&doc),
+        identified: doc,
+        plain: plain(&reps[A]),
+        reps,
+    };
+    let d1_doc = Rev::D1.running_example();
+    let before = Want::Live {
+        rev: Rev::D1,
+        docs: vec![d1_doc.clone()],
+        status: quiet(),
+    };
+    for (name, replica) in [
+        ("a", &base.reps[A]),
+        ("b", &base.reps[B]),
+        ("c", &base.reps[C]),
+        ("j", &j),
+    ] {
+        check(
+            replica,
+            &base,
+            &before,
+            &format!("RH-join premise on {name}, j having adopted b's state"),
+        );
+    }
+
+    let d1 = Uml::new(D1);
+    let d2 = Uml::new(D2);
+    let status = |waiting: &[&str]| {
+        RebaseStatus {
+            origin: "a".into(),
+            seq: 71,
+            to: Rev::D2.digest(),
+            waiting_for: waiting.iter().map(|s| s.to_string()).collect(),
+            ..RebaseStatus::default()
+        }
+        .render()
+    };
+    let live = |doc: &Value, waiting: &[&str]| Want::Live {
+        rev: Rev::D2,
+        docs: vec![doc.clone()],
+        status: status(waiting),
+    };
+    let mut failures: Vec<String> = Vec::new();
+    let mut doc = Rev::D2.running_example();
+
+    // 1. a rebases; c and j deliver it, b does not.
+    let op = rebase_op(&base.reps[A], Rev::D2, &[]);
+    let r = send(&mut base.reps[A], op, "RH-join: a's rebase");
+    base.reps[C].receive(r.clone());
+    j.receive(r.clone());
+    checked(
+        &mut failures,
+        &j,
+        &base,
+        &live(&doc, &["b", "c"]),
+        "RH-join step 1 on j, joined by b's state transfer, having heard a deliver the rebase",
+    );
+    checked(
+        &mut failures,
+        &base.reps[C],
+        &base,
+        &live(&doc, &["b", "j"]),
+        "RH-join step 1 on c",
+    );
+    checked(
+        &mut failures,
+        &base.reps[A],
+        &base,
+        &live(&doc, &["b", "c", "j"]),
+        "RH-join step 1 on a",
+    );
+
+    // 2. b, not having the rebase, writes under D1.
+    let eb1 = send(
+        &mut base.reps[B],
+        d1.leaf(CAR, "stereotype", LeafOp::Add(Scalar::text("persistent"))),
+        "RH-join: b's edit under D1, concurrent with the rebase",
+    );
+    let mut on_b = d1_doc.clone();
+    add_to_set(&mut on_b, "Car", "stereotype", &["persistent"]);
+    checked(
+        &mut failures,
+        &base.reps[B],
+        &base,
+        &Want::Live {
+            rev: Rev::D1,
+            docs: vec![on_b],
+            status: quiet(),
+        },
+        "RH-join step 2 on b, under D1 without the rebase",
+    );
+
+    // 3. c and j write under D2; a, c and j hear each other.
+    let ec = send(
+        &mut base.reps[C],
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hc"))),
+        "RH-join: c's edit under D2",
+    );
+    base.reps[A].receive(ec.clone());
+    j.receive(ec.clone());
+    let ej = send(
+        &mut j,
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hj"))),
+        "RH-join: j's edit under D2",
+    );
+    base.reps[A].receive(ej.clone());
+    base.reps[C].receive(ej.clone());
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hc", "hj"]);
+    for (name, replica) in [("j", &j), ("c", &base.reps[C]), ("a", &base.reps[A])] {
+        checked(
+            &mut failures,
+            replica,
+            &base,
+            &live(&doc, &["b"]),
+            &format!(
+                "RH-join step 3 on {name}, having heard every member but b deliver the rebase"
+            ),
+        );
+    }
+
+    // 4. b's late D1 edit reaches a, c and j.
+    base.reps[A].receive(eb1.clone());
+    base.reps[C].receive(eb1.clone());
+    j.receive(eb1);
+    add_to_set(&mut doc, "Car", "stereotype", &["persistent"]);
+    for (name, replica) in [("j", &j), ("c", &base.reps[C]), ("a", &base.reps[A])] {
+        checked(
+            &mut failures,
+            replica,
+            &base,
+            &live(&doc, &["b"]),
+            &format!(
+                "RH-join step 4 on {name}, having translated b's late D1 edit while waiting for b"
+            ),
+        );
+    }
+
+    // 5. b delivers everything and writes under D2.
+    base.reps[B].receive(r);
+    base.reps[B].receive(ec);
+    base.reps[B].receive(ej);
+    checked(
+        &mut failures,
+        &base.reps[B],
+        &base,
+        &live(&doc, &[]),
+        "RH-join step 5 on b, having heard a, c and j deliver the rebase",
+    );
+    let eb2 = send(
+        &mut base.reps[B],
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hb"))),
+        "RH-join: b's edit under D2",
+    );
+    base.reps[A].receive(eb2.clone());
+    base.reps[C].receive(eb2.clone());
+    j.receive(eb2);
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hb"]);
+    for (name, replica) in [
+        ("j", &j),
+        ("a", &base.reps[A]),
+        ("b", &base.reps[B]),
+        ("c", &base.reps[C]),
+    ] {
+        checked(
+            &mut failures,
+            replica,
+            &base,
+            &live(&doc, &[]),
+            &format!("RH-join step 5 on {name}, the rebase stable on all four"),
+        );
+    }
+    let on_a = identified(&base.reps[A]);
+    for (name, replica) in [("b", &base.reps[B]), ("c", &base.reps[C]), ("j", &j)] {
+        let other = identified(replica);
+        if other != on_a {
+            failures.push(format!(
+                "RH-join (RB, RH): {name} and a delivered every event and serve two documents: \
+                 {other} | {on_a}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "SI.14 (RH, M23, R3) on a replica that joined by state transfer, {} failing checks:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    println!(
+        "SI14-RH-join: j, joined by b's state transfer, waited for b and c, then for b alone, \
+         translated b's late edit and dropped D1 once stable; one document on a, b, c and j"
+    );
+}
