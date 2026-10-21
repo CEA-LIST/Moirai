@@ -30,12 +30,16 @@
 //!     under D1's digest by `a`'s state. On `c` (J1) the running example
 //!     under D2, listed under D2's digest, D2 served; (J3) the status `a`
 //!     reads but waiting for `si16-b` alone, D1 held; (J2) an edit only D1
-//!     routes refused, as on `a`; (J4) all of it unchanged for 20 s.
+//!     routes (on the model under D1 that `c` holds) refused, as on `a`;
+//!     (J4) all of it unchanged for 20 s. Then (J2) `c` writes an edit only
+//!     D2 routes, `Car` made a leaf (spec, round 2, R12): `a` delivers it
+//!     and hears `c` deliver the rebase, so it waits for `si16-b` alone.
 //!   - W4: every node resumes; `b`'s late edits reach `a` and `c`, which
-//!     translate them (J5): one document with `Doors` and `persistent`; `c`
-//!     still waits for `si16-b`.
-//!   - W5: `b` writes `hb` under D2: `c` lets D1 go (J4); `a` and `b` wait
-//!     for `si16-c`.
+//!     translate them (J5): one document with `Doors`, `persistent` and
+//!     `isLeaf`; `c` and `a` still wait for `si16-b`; `b`, which delivers
+//!     the rebase and `c`'s edit, waits for no one.
+//!   - W5: `b` writes `hb` under D2: `c` lets D1 go (J4); `a` waits for no
+//!     one.
 //!   - W6: `c` writes `hc` under D2 (J2): all three wait for no one, list
 //!     `m` under D2, serve D2 and one document (J6).
 //! - `si16_l3_s`, a join after the rebase is stable on every member: the
@@ -52,9 +56,24 @@
 //!   - S4: `si16-d` starts, pauses `si16-b` and `si16-c`, and joins `m` by
 //!     its id alone (no metamodel) by `a`'s state. On `d` (J1) listed under
 //!     D2_DROP's digest, D2_DROP served, the document; (J3) the status the
-//!     others read; (J2) an edit only D1 routes refused, as on `a`.
+//!     others read; (J2) two edits only D1 routes refused, as on `a`: a
+//!     character into `wheels`'s value, and a new `TaggedValue` on `Car`,
+//!     which D1's table routes on the model in force (spec, round 2, R10).
 //!   - S5: `d` writes `hd` under D2_DROP (J2): all four list `m` under
 //!     D2_DROP, serve it, wait for no one, one document (J6).
+//! - `si16_l3_r`, a join that lets D1 go at the adoption (spec, round 2),
+//!   two nodes: `si16-a` as above, `si16-b` serving D1 alone. A node's
+//!   members are itself and its peers, so `a` waits for `si16-b` alone.
+//!   - R1: `a` writes the running example on `m` under D1.
+//!   - R2: `a` rebases `m` to D2: it waits for `si16-b` and holds D1.
+//!   - R3: `b` joins `m` under D1's digest by `a`'s state. On `b` (J1)
+//!     listed under D2, D2 served; (J3) waiting for no one; (J4) D1 let go
+//!     at the adoption, read through its intake of a migration (a rebase
+//!     back to D1, refused either way, as `Rebasing` exactly while D1 is
+//!     held); `a` still waits for `si16-b` and holds D1; (J2) an edit only
+//!     D1 routes refused, as on `a`.
+//!   - R4: `b` writes `hb` under D2 (J2): `a` hears it and lets D1 go; both
+//!     wait for no one, list `m` under D2, serve D2, one document (J6).
 //!
 //! What the three nodes other than the joiner read between the fourth
 //! node's join and its first write is not read: they admit a member then,
@@ -177,24 +196,70 @@ fn served(id: &str) -> Vec<(&'static str, &'static str)> {
 
 /// The metamodel directory of node `id`, written under `scratch`.
 fn metamodel_dir(scratch: &Path, id: &str) -> Result<String, String> {
+    descriptor_dir(scratch, id, &served(id))
+}
+
+/// A metamodel directory of node `id` holding `descriptors`, by file name,
+/// written under `scratch`.
+fn descriptor_dir(
+    scratch: &Path,
+    id: &str,
+    descriptors: &[(&str, &str)],
+) -> Result<String, String> {
     let dir = scratch.join(format!("{id}-metamodels"));
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    for (name, text) in served(id) {
+    for (name, text) in descriptors {
         fs::write(dir.join(format!("{name}.json")), text).map_err(|err| err.to_string())?;
     }
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// The sentence a node's refusal of a migration holds while the model is in
+/// a rebase's window (`MigrateRefusal::Rebasing`, answered 422 under
+/// `error`): what R reads the window by (spec, round 2, R14).
+const WINDOW_REFUSAL: &str = "not yet delivered by every member";
+
+/// The sentence the same refusal holds once the window is closed, for a
+/// rebase from D2 back to D1: what D2 has that D1 lacks, which `drops` does
+/// not name (`MigrateRefusal::Undropped`).
+const D2_ADDS_REFUSAL: &str = "the revision lacks `Class.isLeaf`, `Comment`, \
+                               `ModelElement.ownedComments` of the model's metamodel";
+
 impl Cluster {
     /// `si16-a`, `si16-b` and `si16-c`, meshed by static peers (NW.02's
     /// launcher), in a scratch directory of the test's own.
     fn start(binary: &Path, tag: &str) -> Result<Self, String> {
+        Self::start_with(binary, tag, &NAMES[..3], served)
+    }
+
+    /// R's two nodes (spec, round 2): `si16-a`, serving what it serves in
+    /// the other scenarios, and `si16-b`, serving D1 alone, meshed by static
+    /// peers. A node's members are itself and its peers, so each has the
+    /// other alone to wait for.
+    fn start_pair(binary: &Path, tag: &str) -> Result<Self, String> {
+        Self::start_with(binary, tag, &NAMES[..2], |id| {
+            if id == NAMES[A] {
+                served(id)
+            } else {
+                vec![("d1", D1)]
+            }
+        })
+    }
+
+    /// The nodes `ids`, each serving `serves(id)`, meshed by static peers
+    /// (NW.02's launcher), in a scratch directory of the test's own.
+    fn start_with(
+        binary: &Path,
+        tag: &str,
+        ids: &[&str],
+        serves: impl Fn(&str) -> Vec<(&'static str, &'static str)>,
+    ) -> Result<Self, String> {
         let scratch =
             std::env::temp_dir().join(format!("moirai-si16-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
         let mut specs = Vec::new();
-        for id in &NAMES[..3] {
-            let dir = metamodel_dir(&scratch, id)?;
+        for id in ids {
+            let dir = descriptor_dir(&scratch, id, &serves(id))?;
             specs.push(launch::NodeSpec::new(
                 id,
                 &[("LOG_ID", LOG_ID), ("METAMODEL_DIR", dir.as_str())],
@@ -225,7 +290,8 @@ impl Cluster {
             failures: Vec::new(),
         };
         cluster.await_health()?;
-        cluster.await_mesh(&[A, B, C], 2)?;
+        let all: Vec<usize> = (0..ids.len()).collect();
+        cluster.await_mesh(&all, ids.len() - 1)?;
         Ok(cluster)
     }
 
@@ -789,6 +855,51 @@ impl Cluster {
         Ok(false)
     }
 
+    /// Whether `node` holds D1 for `model`, read through its intake of a
+    /// migration (spec, round 2, R14): a rebase of `model` back to D1, which
+    /// every node here serves, refused (422) whether or not the window is
+    /// open, so nothing is written: as the window's (`WINDOW_REFUSAL`)
+    /// exactly while the node holds D1, and otherwise for what D1 lacks of
+    /// D2 (`D2_ADDS_REFUSAL`). Any other answer is a set-up failure.
+    fn holds_d1(&self, node: usize, model: &str) -> Result<bool, String> {
+        let body = json!({ "metamodel_id": digest(D1), "strategy": "rebase" });
+        let (status, answer) = self.post(
+            node,
+            &format!("/api/model/{model}/migrate"),
+            body.to_string(),
+        )?;
+        let reason = answer["error"].as_str().unwrap_or_default();
+        match status {
+            422 if reason.contains(WINDOW_REFUSAL) => Ok(true),
+            422 if reason.contains(D2_ADDS_REFUSAL) => Ok(false),
+            _ => Err(format!(
+                "set-up: the window read on {}: a rebase of {model} back to D1 answered {status} \
+                 {answer}; it is refused (422), as the window's while D1 is held and otherwise \
+                 for what D1 lacks of D2, and nothing is written",
+                NAMES[node]
+            )),
+        }
+    }
+
+    /// J4 on the joiner (SI.14's M23 on the donor): `node` holds D1 exactly
+    /// when `held` says so. A mismatch is recorded; a read that fails is a
+    /// set-up failure.
+    fn window_is(&mut self, node: usize, model: &str, held: bool, at: &str) -> Result<(), String> {
+        let reads = self.holds_d1(node, model)?;
+        if reads != held {
+            let word = |held: bool| if held { "held" } else { "let go" };
+            self.record(Err(format!(
+                "{at} (J4, the window): {} reads D1 {} (a rebase back to D1 {} as the \
+                 window's); the schedule gives D1 {}",
+                NAMES[node],
+                word(reads),
+                if reads { "refused" } else { "not refused" },
+                word(held)
+            )));
+        }
+        Ok(())
+    }
+
     fn finish(self, done: &str, tag: &str) {
         if self.failures.is_empty() {
             println!("{done}");
@@ -931,6 +1042,26 @@ fn window(cluster: &mut Cluster) -> Result<(), String> {
             ""
         }
     );
+    // J2's acceptance half on the joiner (spec, round 2, R12): an edit only
+    // D2 routes, which c writes; a delivers it and hears c deliver the
+    // rebase. A refusal ends the schedule here.
+    let leaf = d2.leaf(CAR, "isLeaf", LeafOp::Enable);
+    if !cluster.accepts(C, &m, &leaf, "W3, an edit only D2 routes")? {
+        return Ok(());
+    }
+    set(&mut doc, "Car", "isLeaf", json!(true));
+    let outcome = cluster.until("W3 (J2): c's edit on a and c", &[A, C], |node| {
+        cluster.doc_is(node, &m, &base, &doc)
+    });
+    cluster.record(outcome);
+    let heard = kept(A, 71, Rev::D2, &none, &[B]);
+    let outcome = cluster.until("W3 on si16-a, having heard si16-c", &[A], |node| {
+        cluster.status_is(node, &m, &heard, "W3, after c's edit")
+    });
+    cluster.record(outcome);
+    let outcome = cluster.status_is(C, &m, &on_c, "W3, after its own edit");
+    cluster.record(outcome);
+    println!("SI16-L3 W3: c wrote under D2; a heard it");
 
     // W4: every node resumes; b's late edits are translated.
     cluster.resume_all()?;
@@ -940,7 +1071,7 @@ fn window(cluster: &mut Cluster) -> Result<(), String> {
         cluster.doc_is(node, &m, &base, &doc)
     });
     cluster.record(outcome);
-    for (node, waiting) in [(C, vec![B]), (A, vec![B, C]), (B, vec![C])] {
+    for (node, waiting) in [(C, vec![B]), (A, vec![B]), (B, vec![])] {
         let want = kept(A, 71, Rev::D2, &none, &waiting);
         let outcome = cluster.until(
             &format!("W4 (J3, J4) on {}", NAMES[node]),
@@ -963,8 +1094,8 @@ fn window(cluster: &mut Cluster) -> Result<(), String> {
         cluster.doc_is(node, &m, &base, &doc)
     });
     cluster.record(outcome);
-    for (node, waiting) in [(C, vec![]), (A, vec![C]), (B, vec![C])] {
-        let want = kept(A, 71, Rev::D2, &none, &waiting);
+    let want = kept(A, 71, Rev::D2, &none, &[]);
+    for node in [C, A, B] {
         let outcome = cluster.until(
             &format!("W5 (J3, J4) on {}", NAMES[node]),
             &[node],
@@ -1129,6 +1260,16 @@ fn stable(cluster: &mut Cluster, binary: &Path) -> Result<(), String> {
         "S4",
     );
     cluster.record(outcome);
+    // An edit D1's table routes on the model in force and D2_DROP's does
+    // not: a new TaggedValue on Car (spec, round 2, R10).
+    let outcome = cluster.refuses_as(
+        D,
+        A,
+        &m,
+        &d1.insert(CAR, "taggedValue", 0, "TaggedValue"),
+        "S4, a new TaggedValue on Car",
+    );
+    cluster.record(outcome);
     println!("SI16-L3 S4: d joined {m} after the rebase was stable, by a's state");
 
     // S5: d writes under D2_DROP; one document on four nodes.
@@ -1184,5 +1325,111 @@ fn si16_l3_s_a_node_that_joins_after_the_rebase_is_stable() {
          stable: listed and served under D2_DROP, wheels hidden and si16-c@1 dropped as the \
          others list them, waited for no one; one document on four nodes",
         "s",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R, a join that lets D1 go at the adoption
+// ---------------------------------------------------------------------------
+
+fn release(cluster: &mut Cluster) -> Result<(), String> {
+    let d1 = Uml::new(D1);
+    let d2 = Uml::new(D2);
+    let none = Lists::default();
+
+    // R1: the running example on a.
+    let (m, base) = running_example(cluster)?;
+
+    // R2: a's rebase: a waits for si16-b alone and holds D1 (set-up).
+    cluster.rebase(
+        A,
+        &m,
+        json!({ "metamodel_id": digest(D2), "strategy": "rebase" }),
+    )?;
+    let mut doc = Rev::D2.running_example();
+    cluster
+        .doc_is(A, &m, &base, &doc)
+        .map_err(|why| format!("set-up: R2 on si16-a: {why}"))?;
+    let waiting = kept(A, 71, Rev::D2, &none, &[B]);
+    cluster
+        .status_is(A, &m, &waiting, "R2")
+        .map_err(|why| format!("set-up: {why}"))?;
+    if !cluster.holds_d1(A, &m)? {
+        return Err(format!(
+            "set-up: R2: si16-a, the donor, does not hold D1 for {m} while it waits for si16-b; \
+             this point needs a donor that holds it"
+        ));
+    }
+    println!("SI16-L3 R2: a rebased {m} to D2 (si16-a@71) and holds D1, waiting for si16-b alone");
+
+    // R3: b joins m under D1's digest by a's state, and lets D1 go there.
+    cluster.join(B, A, &m, Some(&digest(D1)), &base, &doc, true, "R3")?;
+    let outcome = cluster.until("R3 (J1) on si16-b", &[B], |node| {
+        cluster.bound_to(node, &m, Rev::D2)
+    });
+    cluster.record(outcome);
+    let stable = kept(A, 71, Rev::D2, &none, &[]);
+    let outcome = cluster.status_is(B, &m, &stable, "R3, the first read after the join");
+    cluster.record(outcome);
+    cluster.window_is(B, &m, false, "R3, right after the join")?;
+    let outcome = cluster.status_is(A, &m, &waiting, "R3, the donor");
+    cluster.record(outcome);
+    cluster.window_is(A, &m, true, "R3, the donor")?;
+    let outcome = cluster.refuses_as(B, A, &m, &d1.name_char(CAR, 3, 's'), "R3");
+    cluster.record(outcome);
+    println!("SI16-L3 R3: b joined {m} by a's state while a held D1 for b alone");
+
+    // R4: b writes under D2; a hears it and lets D1 go.
+    let hb = d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hb")));
+    if !cluster.accepts(B, &m, &hb, "R4")? {
+        return Ok(());
+    }
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hb"]);
+    let both = [A, B];
+    let outcome = cluster.until("R4 (J6): b's edit on both", &both, |node| {
+        cluster.doc_is(node, &m, &base, &doc)
+    });
+    cluster.record(outcome);
+    let outcome = cluster.until("R4 (J3): both", &both, |node| {
+        cluster.status_is(node, &m, &stable, "R4")
+    });
+    cluster.record(outcome);
+    for node in both {
+        cluster.window_is(node, &m, false, "R4")?;
+    }
+    let outcome = cluster.until("R4 (J1)", &both, |node| cluster.bound_to(node, &m, Rev::D2));
+    cluster.record(outcome);
+    if (cluster.identified(B, &m)?, cluster.plain(B, &m)?)
+        != (cluster.identified(A, &m)?, cluster.plain(A, &m)?)
+    {
+        cluster.record(Err(
+            "R4 (J6): si16-b serves another document than si16-a".to_string()
+        ));
+    }
+    println!("SI16-L3 R4: b wrote under D2; a let D1 go");
+    Ok(())
+}
+
+/// SI.16 at L3, R: a node that joins a rebased model while its donor holds
+/// D1 for it alone, and lets D1 go at the adoption.
+#[test]
+fn si16_l3_r_a_node_that_joins_when_its_donor_waits_for_it_alone() {
+    let binary = node_binary().unwrap_or_else(|why| panic!("si16-l3-r: no node binary: {why}"));
+    let mut cluster = match Cluster::start_pair(&binary, "r") {
+        Ok(cluster) => cluster,
+        Err(why) => panic!("si16-l3-r: set-up: {why}"),
+    };
+    if let Err(why) = release(&mut cluster) {
+        panic!(
+            "si16-l3-r: {why}\n(recorded so far: {:?})\n{}",
+            cluster.failures,
+            cluster.tails()
+        );
+    }
+    cluster.finish(
+        "SI16-L3 R: si16-b joined the rebased model by si16-a's state while si16-a held D1 for it \
+         alone: listed and served under D2, waited for no one and let D1 go at the adoption; \
+         si16-a let D1 go once it heard si16-b; one document",
+        "r",
     );
 }

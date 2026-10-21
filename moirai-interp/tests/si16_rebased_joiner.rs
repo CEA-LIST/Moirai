@@ -30,7 +30,12 @@
 //!   origin, as on any member.
 //! - J4, the window. During the rebase's window the joiner holds `D1` until
 //!   the rebase is causally stable on it, moved by deliveries alone, and
-//!   lets it go then (`d1_held` false).
+//!   lets it go then (`d1_held` false). In R the rebase is stable on the
+//!   joiner the moment it adopts, and `d1_held` is read off `waiting_for`,
+//!   so R reads whether `D1` is held where the replica shows it: its intake
+//!   of a migration, which `moirai_interp::migrate::rebase` refuses as
+//!   `MigrateRefusal::Rebasing` exactly while `D1` is held (spec, round 2,
+//!   R14). A rebase back to `D1` is refused either way, and nothing is sent.
 //! - J5, late edits. An edit written under `D1` concurrently with the rebase
 //!   that reaches the joiner after its join is translated into `D2` and kept,
 //!   as on the other members: `unresolved()` stays 0 and the joiner reads
@@ -38,7 +43,7 @@
 //! - J6, convergence. Once every event is delivered everywhere, one document
 //!   on every member, the joiner included, in both reads.
 //!
-//! Three schedules, each scripted, with a check on every replica a step
+//! Four schedules, each scripted, with a check on every replica a step
 //! touches, every expectation computed by hand from the schedule:
 //!
 //! - W, a join during the window: `c` writes two edits under `D1`, `a`
@@ -53,8 +58,20 @@
 //!   `b` to `D2_DROP`, equal stamps, `a`'s kept), `c` delivers both and `j`
 //!   adopts `c`'s state, so the superseded rebase and the discarded edit
 //!   come over in the state.
+//! - R, a join that lets `D1` go at the adoption (spec, round 2): the donor
+//!   `b` still holds `D1`, waiting for `j` alone, every other member having
+//!   written under `D2` after delivering the rebase, so `j` has heard every
+//!   member but itself deliver it the moment it adopts `b`'s state.
 //!
-//! In every schedule the donor delivered the rebase without writing anything
+//! J2's refusal half is checked with edits that only `D1` routes: in W and
+//! G `D1`'s table routes them on the model under `D1` the joiner holds in
+//! its window (no edit written under `D1` routes on a model under `D2`,
+//! whose root object `D1`'s table reads as an abstract class); in S, whose
+//! revision keeps `D1`'s slots for all it keeps, a new `TaggedValue` on
+//! `Car` is routed by `D1`'s table on the model in force and refused by
+//! `D2_DROP`'s (spec, round 2, R10).
+//!
+//! In W, S and G the donor delivered the rebase without writing anything
 //! after it, so the rule of J3 on the donor is the one each check reads. A
 //! failing check is recorded and the schedule goes on; the test fails at its
 //! end listing every failing check. A premise that fails stops it at once.
@@ -69,7 +86,7 @@ mod si14;
 use std::collections::BTreeMap;
 
 use moirai_interp::leaf::{LeafOp, Scalar};
-use moirai_interp::migrate::rebase;
+use moirai_interp::migrate::{MigrateRefusal, rebase};
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::query::QueryableLog;
 use moirai_network::state_transfer::TransferableLog;
@@ -96,6 +113,11 @@ const B: usize = 1;
 const C: usize = 2;
 const J: usize = 3;
 const IDS: [&str; 4] = ["a", "b", "c", "j"];
+
+/// What D2 has that D1 lacks, as a rebase from D2 back to D1 names it
+/// (`<Class>` or `<Class>.<feature>` of the declaring class, in D2's slot
+/// order): what R's window read is refused with once D1 is let go.
+const D2_ADDS: [&str; 3] = ["Class.isLeaf", "Comment", "ModelElement.ownedComments"];
 
 fn identified(replica: &Rep) -> Value {
     <ModelLog as QueryableLog>::query_identified_state_json(replica)
@@ -330,6 +352,44 @@ impl World {
                 "{} {at} on j (J2): the intake answers (accepted, refused) {on_joiner:?}, as {} \
                  answers {on_reference:?}",
                 self.schedule, IDS[reference]
+            ));
+        }
+    }
+
+    /// Whether replica `index` holds `D1`, read through its intake of a
+    /// migration (spec, round 2, R14): `rebase` refuses one as
+    /// `MigrateRefusal::Rebasing` exactly while the replica holds the model
+    /// under the descriptor the rebase in force replaced. A rebase back to
+    /// `D1`, refused either way: otherwise because `D1` lacks what `D2` adds,
+    /// which `drops` does not name. Nothing is sent; any other answer is a
+    /// premise that fails.
+    fn holds_d1(&self, index: usize) -> bool {
+        match rebase(self.reps[index].state(), D1, &[]) {
+            Err(MigrateRefusal::Rebasing) => true,
+            Err(MigrateRefusal::Undropped(missing)) if missing == D2_ADDS => false,
+            other => panic!(
+                "premise: {}: a rebase of {}'s model back to D1 is refused, as `Rebasing` while \
+                 D1 is held and otherwise naming what D1 lacks of D2 ({D2_ADDS:?}); it answered \
+                 {other:?}",
+                self.schedule, IDS[index]
+            ),
+        }
+    }
+
+    /// The window on replica `index` (J4 on `j`, SI.14's M23 on the others):
+    /// `D1` held exactly when `held` says so. A mismatch is recorded.
+    fn window(&mut self, index: usize, held: bool, at: &str) {
+        let reads = self.holds_d1(index);
+        if reads != held {
+            let word = |held: bool| if held { "held" } else { "let go" };
+            self.failures.push(format!(
+                "{} {at} on {} (J4, the window): D1 {} (a rebase back to D1 {} as `Rebasing`); \
+                 the schedule gives D1 {}",
+                self.schedule,
+                IDS[index],
+                word(reads),
+                if reads { "refused" } else { "not refused" },
+                word(held)
             ));
         }
     }
@@ -578,7 +638,9 @@ fn si16_w_a_replica_that_joins_during_the_window_holds_d1_translates_and_lets_it
 ///    `c` deliver the rebase, which is stable on `b`, and lets D1 go. `a`
 ///    delivers `c@1` and `c@2` and waits for `b`.
 /// 5. `j` adopts `b`'s state: D2_DROP, `wheels` hidden, `c@1` dropped,
-///    waiting for no one, D1 not held. The intake answers as `b`'s.
+///    waiting for no one, D1 not held. The intake answers as `b`'s, for a
+///    character into `wheels`'s value and for a new `TaggedValue` on `Car`,
+///    which D1's table routes on the model in force.
 /// 6. `j` writes `hj` on `Sedan` (`j@1`), which `a`, `b`, `c` deliver; `j`
 ///    still waits for no one.
 /// 7. `b` writes `hb` (`b@1`), which `a`, `c`, `j` deliver: one document.
@@ -677,6 +739,14 @@ fn si16_s_a_replica_that_joins_after_the_rebase_is_stable_lists_what_the_others_
         &drop_uml.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("x"))),
         &d1.leaf(CAR_WHEELS, "value", LeafOp::InsertChar { pos: 0, ch: '9' }),
         "step 5",
+    );
+    // An edit D1's table routes on the model in force and D2_DROP's does
+    // not: a new TaggedValue on Car (spec, round 2, R10).
+    w.intake(
+        B,
+        &drop_uml.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("x"))),
+        &d1.insert(CAR, "taggedValue", 0, "TaggedValue"),
+        "step 5, a new TaggedValue on Car",
     );
 
     // 6. j writes under D2_DROP.
@@ -893,5 +963,121 @@ fn si16_g_a_replica_that_joins_after_two_concurrent_rebases_lists_the_superseded
         "SI16-G: j joined by c's state after two concurrent rebases, listed b@1 superseded and \
          b@2 discarded as the others do, waited for b alone, then for no one; one document on a, \
          b, c and j",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R, a join that lets D1 go at the adoption
+// ---------------------------------------------------------------------------
+
+/// R: the donor still holds D1, waiting for the joiner alone, and every
+/// other member's delivery of the rebase is in the donor's state, so the
+/// joiner has heard every member but itself deliver the rebase the moment it
+/// adopts that state: the rebase is causally stable on the joiner at the
+/// adoption, and the joiner lets D1 go there (`ModelLog::adopted_from`),
+/// while the donor holds D1 until it hears the joiner (spec, round 2).
+///
+/// Members a, b, c, j on every replica.
+///
+/// 1. `a` rebases to D2 (`a@71`); `b` and `c` deliver it.
+/// 2. `b` writes `hb` on `Sedan` under D2 (`b@1`), which `a` and `c`
+///    deliver; then `c` writes `hc` (`c@1`), which `a` and `b` deliver. `a`,
+///    `b` and `c` each wait for `j` alone and hold D1.
+/// 3. `j` adopts `b`'s state: D2, the document `b` serves, waiting for no
+///    one and D1 let go (J3, J4); `b` still waits for `j` and holds D1. The
+///    intake answers as `b`'s.
+/// 4. `j` writes `hj` on `Sedan` (`j@1`), which `a`, `b`, `c` deliver: the
+///    rebase is stable everywhere, D1 let go everywhere, one document.
+#[test]
+fn si16_r_a_replica_that_joins_once_every_other_member_is_heard_lets_d1_go_at_the_adoption() {
+    let all = ["a", "b", "c", "j"];
+    let mut w = World::new("R", |_| all.to_vec());
+    let d1 = Uml::new(D1);
+    let d2 = Uml::new(D2);
+    let none = Lists::default();
+    let status = |waiting: &[&str]| kept("a", 71, Rev::D2, &none, waiting);
+
+    // 1. a's rebase; b and c deliver it.
+    let op = rebase_op(&w.reps[A], Rev::D2, &[]);
+    let r = w.send(A, op, ("a", 71), "a's rebase to D2");
+    w.deliver(&[B, C], &r);
+    let mut doc = Rev::D2.running_example();
+    w.check(A, Rev::D2, &doc, &status(&["b", "c", "j"]), "step 1");
+    w.check(B, Rev::D2, &doc, &status(&["c", "j"]), "step 1");
+    w.check(C, Rev::D2, &doc, &status(&["b", "j"]), "step 1");
+
+    // 2. b and c write under D2: a, b and c each wait for j alone.
+    let hb = w.send(
+        B,
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hb"))),
+        ("b", 1),
+        "b's `hb` under D2",
+    );
+    w.deliver(&[A, C], &hb);
+    let hc = w.send(
+        C,
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hc"))),
+        ("c", 1),
+        "c's `hc` under D2",
+    );
+    w.deliver(&[A, B], &hc);
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hb", "hc"]);
+    for index in [A, B, C] {
+        w.check(
+            index,
+            Rev::D2,
+            &doc,
+            &status(&["j"]),
+            "step 2, waiting for j alone",
+        );
+    }
+    assert!(
+        w.holds_d1(B),
+        "premise: R step 2: b, the donor, holds D1 while it waits for j (a rebase back to D1 \
+         refused as `Rebasing`)"
+    );
+
+    // 3. j adopts b's state, and lets D1 go there.
+    w.join(B);
+    w.check(
+        J,
+        Rev::D2,
+        &doc,
+        &status(&[]),
+        "step 3, right after adopting b's state",
+    );
+    w.window(J, false, "step 3, right after adopting b's state");
+    w.check(B, Rev::D2, &doc, &status(&["j"]), "step 3, the donor");
+    w.window(B, true, "step 3, the donor");
+    w.intake(
+        B,
+        &d2.rename_door("Gate"),
+        &d1.name_char(DOOR, 4, 'x'),
+        "step 3",
+    );
+
+    // 4. j writes under D2: stable everywhere.
+    let hj = w.send(
+        J,
+        d2.leaf(SEDAN, "stereotype", LeafOp::Add(Scalar::text("hj"))),
+        ("j", 1),
+        "j's `hj` under D2",
+    );
+    w.deliver(&[A, B, C], &hj);
+    add_to_set(&mut doc, "Sedan", "stereotype", &["hj"]);
+    for index in [A, B, C, J] {
+        w.check(
+            index,
+            Rev::D2,
+            &doc,
+            &status(&[]),
+            "step 4, stable everywhere",
+        );
+        w.window(index, false, "step 4, stable everywhere");
+    }
+    w.one_document();
+    w.finish(
+        "SI16-R: j joined by b's state while b held D1 for j alone, waited for no one and let D1 \
+         go at the adoption; b let it go once it heard j; one document on a, b, c and j",
     );
 }
