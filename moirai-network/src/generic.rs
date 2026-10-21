@@ -91,8 +91,13 @@ pub type DescribeFn = fn(&str) -> Result<ServedDescriptor, String>;
 /// name is whatever the application reads out of it.
 pub type NameFn = fn(&ServedDescriptor) -> Option<String>;
 
-/// The application's look inside a bound log: the descriptor's text, once
-/// the log carries one, or `None` while it does not.
+/// The application's look inside a bound log: the text of the descriptor
+/// the log was opened with, once the log carries one, or `None` while it
+/// does not. The one a binding's key is checked against: a rebase (SI.14)
+/// that put the log under another descriptor since is the log's own, and
+/// the binding follows it through the descriptor in force that
+/// [`GenericNode::enable_rebase`]'s hook reads, without being read as a
+/// contradiction of the key.
 ///
 /// The node calls this on every pass for each bound log it has not yet
 /// compared with the model's own history — every join under a metamodel it
@@ -368,6 +373,9 @@ where
     /// [`MigrateRefused::NotEnabled`].
     rebase_fn: Option<RebaseFn<L>>,
     generation_fn: Option<GenerationFn<L>>,
+    /// The descriptor in force in a log, which a confirmed binding follows;
+    /// [`AdoptFn`]'s shape, read after a rebase rather than at the opening.
+    in_force_fn: Option<AdoptFn<L>>,
     /// The copies this node planned, by the model each migrated (SI.13 D1):
     /// the successor, the operations still to apply, and how far it got.
     /// Kept once finished, without its plan, so the source's status goes on
@@ -1411,6 +1419,7 @@ where
             migration_only_fn: None,
             rebase_fn: None,
             generation_fn: None,
+            in_force_fn: None,
             copies: BTreeMap::new(),
             dashboard: None,
             ops_by_event: OpsByEvent::default(),
@@ -1628,7 +1637,9 @@ where
                 Ok(served) if served.key == key => BindingState::Held,
                 _ => BindingState::Foreign,
             };
-            let generation = self.generation_of(&log_id);
+            // Confirmed against the descriptor the log was opened with, and
+            // left at generation zero: `follow_descriptors` below moves it
+            // to the descriptor in force when a rebase was delivered first.
             if let Some(binding) = self
                 .logs
                 .get_mut(&log_id)
@@ -1636,7 +1647,6 @@ where
             {
                 binding.state = state;
                 binding.confirmed = true;
-                binding.generation = generation;
             }
             match outcome {
                 // The model agrees with the key it was bound under. Said
@@ -1667,15 +1677,6 @@ where
         self.follow_descriptors();
     }
 
-    /// The application's generation of the descriptor `log_id` is under
-    /// ([`GenerationFn`]); zero without the hook or the log.
-    fn generation_of(&self, log_id: &LogId) -> u64 {
-        match (self.generation_fn, self.logs.get(log_id)) {
-            (Some(generation), Some(log)) => generation(&log.replica),
-            _ => 0,
-        }
-    }
-
     /// Bind a log joined by id alone to the descriptor its own history
     /// brought, as `add_metamodel` described it: the key is the one the
     /// application derived from the bytes, and the listing entry becomes
@@ -1683,7 +1684,6 @@ where
     /// there is nothing to contradict. A descriptor that cannot be served
     /// leaves the binding pending, reported once.
     fn bind_to_history(&mut self, log_id: &LogId, outcome: Result<Served, ServeRefused>) {
-        let generation = self.generation_of(log_id);
         let Some(binding) = self
             .logs
             .get_mut(log_id)
@@ -1692,7 +1692,6 @@ where
             return;
         };
         binding.confirmed = true;
-        binding.generation = generation;
         match outcome {
             Ok(served) => {
                 binding.key = Some(served.key.clone());
@@ -1965,11 +1964,23 @@ where
     /// follows the descriptor in force: the model is listed under it, and
     /// served it on its metamodel route, on a node that did not hold it too.
     ///
+    /// `in_force` reads the descriptor a log is under now, where the
+    /// adoption hook ([`AdoptFn`]) reads the one it was opened with: a
+    /// binding is confirmed against the latter, so a join under the opening
+    /// descriptor's key that catches up past a rebase is not foreign, and
+    /// then follows the former.
+    ///
     /// Purely additive: without it a rebase answers 501 and nothing else
     /// changes.
-    pub fn enable_rebase(&mut self, rebase: RebaseFn<L>, generation: GenerationFn<L>) {
+    pub fn enable_rebase(
+        &mut self,
+        rebase: RebaseFn<L>,
+        generation: GenerationFn<L>,
+        in_force: AdoptFn<L>,
+    ) {
         self.rebase_fn = Some(rebase);
         self.generation_fn = Some(generation);
+        self.in_force_fn = Some(in_force);
     }
 
     /// Rebase a hosted model in place onto the revision `metamodel_id`
@@ -2036,7 +2047,7 @@ where
     /// contradicted stays foreign; a descriptor that cannot be served leaves
     /// the binding where it was, reported once.
     fn follow_descriptors(&mut self) {
-        let (Some(adopt), Some(generation)) = (self.adopt_fn, self.generation_fn) else {
+        let (Some(adopt), Some(generation)) = (self.in_force_fn, self.generation_fn) else {
             return;
         };
         let moved: Vec<(LogId, u64, Option<String>)> =

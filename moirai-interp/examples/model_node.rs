@@ -303,7 +303,17 @@ fn descriptor_key(metamodel_id: &Value) -> Option<String> {
 /// and so re-describes it through [`describe_descriptor`] above — which
 /// recomputes the digest from the bytes, so a peer cannot make this node
 /// serve a descriptor under a digest it does not hash to.
+///
+/// The descriptor the log was opened with, which is what a key names: a
+/// rebase since (SI.14) is followed through [`descriptor_in_force`].
 fn adopt_descriptor(replica: &LogReplica<ModelLog>) -> Option<String> {
+    replica.state().opened_descriptor().map(str::to_string)
+}
+
+/// The descriptor a hosted model is under now, which a rebase changes
+/// (SI.14): what the node lists the model under and serves on its metamodel
+/// route.
+fn descriptor_in_force(replica: &LogReplica<ModelLog>) -> Option<String> {
     replica.state().descriptor().map(str::to_string)
 }
 
@@ -618,7 +628,7 @@ fn main() {
     // A cut, or a link in the plan's own-event form, is refused from every
     // adapter: only `POST /api/model/{id}/migrate` writes them.
     node.enable_migration(migrate_model, migration_status, adapter_refusal);
-    node.enable_rebase(rebase_model, descriptor_generation);
+    node.enable_rebase(rebase_model, descriptor_generation, descriptor_in_force);
     // No `enable_op_guard`: `ModelLog::is_enabled` is the structural check.
     // See the header.
 
