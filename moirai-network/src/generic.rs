@@ -434,8 +434,9 @@ struct Binding {
     /// described and its key compared with this one, nothing here knows
     /// whether the claim is true. `false` at registration for a create and a
     /// join alike, and set once the comparison has been made — after which
-    /// there is nothing left to compare, because one log holds one metamodel
-    /// for its whole life.
+    /// there is nothing left to compare: one log is opened under one
+    /// metamodel, and the one way it changes afterwards, a rebase (SI.14),
+    /// is the log's own, which the binding then follows (`generation`).
     ///
     /// It is what keeps [`GenericNode::resolve_bindings`] from describing
     /// every hosted model's descriptor on every pass of the event loop.
@@ -500,9 +501,10 @@ enum BindingState {
     /// is not. See [`BoundDescriptor::Disputed`].
     ///
     /// Terminal, and it exists so that a disagreement is reported once
-    /// instead of on every pass of the event loop: one log holds one
-    /// metamodel for its whole life, so a descriptor that did not match will
-    /// not be replaced by one that does.
+    /// instead of on every pass of the event loop: one log is opened under
+    /// one metamodel, so a descriptor that did not match will not be
+    /// replaced by one that does; a rebase does not make a foreign binding
+    /// follow it.
     Foreign,
 }
 

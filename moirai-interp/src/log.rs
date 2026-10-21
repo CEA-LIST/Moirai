@@ -13,9 +13,11 @@
 //!   wrote, so a peer catching up by delta replays it first;
 //! - the table is a field of this struct and serializes with it, so a joiner
 //!   by state transfer gets it without replaying anything;
-//! - one log has one table for its whole life, so two replicas of one log
-//!   cannot disagree about the schema, which is why the design's `Bind`
-//!   cross-check is not built in this phase (decision D3).
+//! - one log is opened with one table, so two replicas of one log cannot
+//!   disagree about the schema, which is why the design's `Bind`
+//!   cross-check is not built in this phase (decision D3). The one way a
+//!   log changes table afterwards is its own operation, a rebase (SI.14,
+//!   below), which every replica that keeps it applies the same way.
 //!
 //! # Two refusals, and only one of them is a refusal
 //!
