@@ -7,7 +7,7 @@ use crate::{
         query::{QueryOperation, Read},
     },
     event::Event,
-    replica::ReplicaId,
+    replica::{ReplicaId, ReplicaIdOwned},
     state::effect_context::EffectContext,
 };
 
@@ -30,6 +30,17 @@ pub trait IsLog: Default {
     /// adoption rebuilds it in the donor's order, donor first. Most logs do not
     /// need to know, so the default ignores it.
     fn hosted_by(&mut self, _replica: &ReplicaId) {}
+
+    /// Tell the log that its state was taken over from `donor`'s, and which
+    /// members the hosting replica knows once it has adopted it.
+    ///
+    /// A replica calls it from [`Replica::adopt`](crate::replica::Replica::adopt),
+    /// after [`IsLog::hosted_by`]. The matrix clock the replica adopts holds
+    /// the donor's row of every member and, as the donor's own row,
+    /// everything the donor delivered; a log that keeps its own record of
+    /// what each member has delivered rebuilds it here to match. Most logs
+    /// keep none, so the default ignores it.
+    fn adopted_from(&mut self, _donor: &ReplicaId, _members: &[ReplicaIdOwned]) {}
 
     /// Prepare a client command as the operation stored and replicated by this log.
     fn prepare(&self, command: Self::Command) -> Self::Op;
@@ -97,6 +108,10 @@ impl<L: IsLog> IsLog for Box<L> {
 
     fn hosted_by(&mut self, replica: &ReplicaId) {
         (**self).hosted_by(replica);
+    }
+
+    fn adopted_from(&mut self, donor: &ReplicaId, members: &[ReplicaIdOwned]) {
+        (**self).adopted_from(donor, members);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {
@@ -173,6 +188,10 @@ impl<L: IsLog> IsLog for BoxedLog<L> {
 
     fn hosted_by(&mut self, replica: &ReplicaId) {
         self.0.as_mut().hosted_by(replica);
+    }
+
+    fn adopted_from(&mut self, donor: &ReplicaId, members: &[ReplicaIdOwned]) {
+        self.0.as_mut().adopted_from(donor, members);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {

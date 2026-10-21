@@ -45,6 +45,14 @@ where
         self.child.hosted_by(replica);
     }
 
+    fn adopted_from(
+        &mut self,
+        donor: &crate::replica::ReplicaId,
+        members: &[crate::replica::ReplicaIdOwned],
+    ) {
+        self.child.adopted_from(donor, members);
+    }
+
     /// A user command is prepared by the child log, and then annotated with the current leader vote from the oracle.
     fn prepare(&self, command: Self::Command) -> Self::Op {
         CommitOp::new(

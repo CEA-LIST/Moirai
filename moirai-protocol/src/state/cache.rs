@@ -260,6 +260,14 @@ where
         self.inner.hosted_by(replica);
     }
 
+    fn adopted_from(
+        &mut self,
+        donor: &crate::replica::ReplicaId,
+        members: &[crate::replica::ReplicaIdOwned],
+    ) {
+        self.inner.adopted_from(donor, members);
+    }
+
     fn prepare(&self, command: Self::Command) -> Self::Op {
         self.inner.prepare(command)
     }

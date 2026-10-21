@@ -167,8 +167,9 @@ pub struct ModelLog {
     /// their causal past: a rebase delivered later lists those written
     /// concurrently with it that it drops, or that it discards. An operation
     /// stable here is in the causal past of every migration still to be
-    /// delivered, so it is let go of then. Not serialized: a joiner by state
-    /// transfer during a rebase's window is not claimed (SI.14, L1).
+    /// delivered, so it is let go of then. Not serialized: a migration that
+    /// reaches a joiner by state transfer after its join is not claimed
+    /// (SI.16, L4).
     ///
     /// The cost: every instance operation is held here, a copy beside the
     /// one the broadcast layer keeps until it is stable, whether or not a
@@ -185,7 +186,8 @@ pub struct ModelLog {
     #[cfg_attr(feature = "serde", serde(default))]
     heard: BTreeMap<String, BTreeMap<String, u64>>,
     /// The members of the log, sorted, as the delivered events' member table
-    /// names them.
+    /// names them, or as the hosting replica's does once it has adopted a
+    /// donor's state ([`IsLog::adopted_from`]).
     #[cfg_attr(feature = "serde", serde(skip))]
     members: Vec<String>,
     /// This replica, as the replica hosting the log names itself
@@ -197,7 +199,9 @@ pub struct ModelLog {
     /// How many times the descriptor in force changed here: a node watches
     /// it to serve the model under the descriptor in force (SI.14, M21). A
     /// count of this replica's own changes, which depend on its delivery
-    /// order, so not part of the state that travels.
+    /// order, so not part of the state that travels: a joiner by state
+    /// transfer counts the adoption as one change when the state it adopted
+    /// is under a rebase's revision (SI.16).
     #[cfg_attr(feature = "serde", serde(skip))]
     generation: u64,
 }
@@ -1225,6 +1229,30 @@ impl IsLog for ModelLog {
 
     fn hosted_by(&mut self, replica: &ReplicaId) {
         self.me = Some(replica.to_string());
+    }
+
+    /// Rebuild what a joiner by state transfer keeps of its own and the
+    /// donor's log does not carry (SI.16): the members, as the hosting
+    /// replica's member table names them after the adoption; the donor's row,
+    /// everything the donor delivered, as the matrix clock the replica
+    /// adopted holds it (its R2), so the donor is heard to deliver whatever
+    /// its state holds; and one change of the descriptor in force when that
+    /// state is under a rebase's revision, so that a node serving the model
+    /// moves its binding off the descriptor the log was opened with.
+    fn adopted_from(&mut self, donor: &ReplicaId, members: &[String]) {
+        let mut members = members.to_vec();
+        members.sort_unstable();
+        members.dedup();
+        self.members = members;
+        let row = self.heard.entry(donor.to_string()).or_default();
+        for (origin, seq) in &self.delivered {
+            let last = row.entry(origin.clone()).or_default();
+            *last = (*last).max(*seq);
+        }
+        if self.in_force.is_some() {
+            self.generation += 1;
+        }
+        self.close_window();
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Op {

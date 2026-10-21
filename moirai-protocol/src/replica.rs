@@ -246,9 +246,11 @@ where
     /// silently reject them as duplicates forever.
     #[cfg(feature = "serde")]
     pub fn adopt(&mut self, snapshot: StateSnapshot<L::Op>, state: L) {
+        let donor = snapshot.origin_id().to_owned();
         self.tcsb.adopt(snapshot);
         self.state = state;
         self.state.hosted_by(&self.id);
+        self.state.adopted_from(&donor, &self.tcsb.members());
     }
 
     fn deliver(&mut self, event: Event<L::Op>) {
