@@ -114,6 +114,18 @@ required-features = ["network"]
 name = "si14_rebase_l3"
 required-features = ["network"]
 
+# SI.16's oracle: a replica or a node that joins by state transfer a model
+# whose history holds a rebase (SI.14), during the rebase's window and after
+# it is stable, in process on real `ModelLog` replicas and on `model_node`
+# processes. Both read through `QueryableLog` and `TransferableLog`.
+[[test]]
+name = "si16_rebased_joiner"
+required-features = ["network"]
+
+[[test]]
+name = "si16_rebased_joiner_l3"
+required-features = ["network"]
+
 [features]
 # `serde` because the table travels inside the log (decision D2), `test_utils`
 # because the PO-Log lengths of `ip11` are read through `IsLogTest`. Neither
