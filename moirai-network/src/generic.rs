@@ -30,7 +30,7 @@ use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_protocol::state::log::IsLog;
 
-use crate::composite::CompositeTransport;
+use crate::any_transport::AnyTransport;
 use crate::dashboard::{now_ms, DashboardConfig, DashboardSink, EventRecord, SnapshotRecord};
 use crate::discovery::{Discovery, DiscoveryConfig};
 use crate::query::QueryableLog;
@@ -38,9 +38,10 @@ use crate::state_transfer::{LogPayload, TransferableLog};
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
 use crate::HashMap;
 
-/// A replica over the transport that routes per peer. The alias to build a node
-/// with unless there is a reason not to.
-pub type Node<L> = GenericNode<L, CompositeTransport<<L as IsLog>::Op>>;
+/// A replica over the transport `MOIRAI_TRANSPORT` names: TCP, routed per
+/// peer, unless it says `zenoh`. The alias to build a node with unless there
+/// is a reason not to.
+pub type Node<L> = GenericNode<L, AnyTransport<<L as IsLog>::Op>>;
 
 /// Former name of [`Node`], from when TCP was the only way to reach a peer.
 #[deprecated(
@@ -176,7 +177,7 @@ impl<T> NetworkOp for T where T: Serialize + DeserializeOwned + Clone + Debug + 
 /// A generic network node.
 ///
 /// `L` is the CRDT **log** type (e.g. `JsonLog`).
-/// `T` is the transport backend (e.g. [`CompositeTransport`]).
+/// `T` is the transport backend (e.g. [`CompositeTransport`](crate::composite::CompositeTransport)).
 ///
 /// The [`Node`] type alias is the usual choice.
 ///
@@ -3165,12 +3166,13 @@ where
 // Convenience constructor
 // =============================================================================
 
-impl<L: IsLog<Command = <L as IsLog>::Op>> GenericNode<L, CompositeTransport<L::Op>>
+impl<L: IsLog<Command = <L as IsLog>::Op>> GenericNode<L, AnyTransport<L::Op>>
 where
     L::Op: NetworkOp,
 {
-    /// Create a node over the routing composite (convenience wrapper around
-    /// [`with_transport`]).
+    /// Create a node over the transport `MOIRAI_TRANSPORT` names, the routing
+    /// composite when it is unset (convenience wrapper around
+    /// [`with_transport`]). Panics if the transport variables are refused.
     ///
     /// * `replica_id` — unique identifier for this replica.
     /// * `members` — all replica IDs in the cluster (including self).
@@ -3184,8 +3186,8 @@ where
         listen_port: u16,
         peer_addresses: HashMap<String, String>,
     ) -> Self {
-        let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
-            .expect("Failed to create TCP transport");
+        let transport = AnyTransport::from_env(replica_id.clone(), listen_port, peer_addresses)
+            .expect("Failed to create the transport");
         Self::with_transport(replica_id, members, transport)
     }
 
@@ -3202,8 +3204,8 @@ where
         peer_addresses: HashMap<String, String>,
         log_id: LogId,
     ) -> Self {
-        let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
-            .expect("Failed to create TCP transport");
+        let transport = AnyTransport::from_env(replica_id.clone(), listen_port, peer_addresses)
+            .expect("Failed to create the transport");
         Self::with_transport_and_log_id(replica_id, members, transport, log_id)
     }
 
@@ -3226,8 +3228,8 @@ where
         log_id: LogId,
     ) -> Self {
         let transport =
-            CompositeTransport::with_listener(replica_id.clone(), listener, peer_addresses)
-                .expect("Failed to create TCP transport");
+            AnyTransport::from_env_with_listener(replica_id.clone(), listener, peer_addresses)
+                .expect("Failed to create the transport");
         Self::with_transport_and_log_id(replica_id, members, transport, log_id)
     }
 }

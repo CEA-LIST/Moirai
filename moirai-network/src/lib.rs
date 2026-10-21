@@ -20,10 +20,16 @@
 //! - `relay_transport.rs` - one multiplexed session to a relay, for peers that
 //!   cannot be dialled at all
 //! - `tcp_transport.rs` - deprecated shim for the old name of `DirectTransport`
+//! - `zenoh_transport.rs` - one Zenoh session per node, keys and presence of
+//!   the NW.14 note (feature `zenoh`, on by default)
+//! - `any_transport.rs` - TCP or Zenoh, what a `Node` is built with
+//! - `transport_config.rs` - `MOIRAI_TRANSPORT` and the Zenoh session's
+//!   configuration
 //!
 //! Future transports (WebRTC, WebSocket) can implement the same trait.
 
 // --- Generic layer (always available) ---
+pub mod any_transport;
 pub mod composite;
 pub mod dashboard;
 pub mod direct_transport;
@@ -35,7 +41,10 @@ pub mod relay_transport;
 pub mod state_transfer;
 pub mod tcp_transport;
 pub mod transport;
+pub mod transport_config;
 pub mod workload;
+#[cfg(feature = "zenoh")]
+pub mod zenoh_transport;
 
 pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSet<V> = rustc_hash::FxHashSet<V>;
