@@ -39,6 +39,15 @@
 //!   surrounding whitespace ignored. It waits up to 60 s for the file to
 //!   appear and exits non-zero naming the path if it does not
 //!
+//! Under `MOIRAI_TRANSPORT=zenoh` the Zenoh session binds the replication
+//! port itself, and Zenoh dials no peer after its session opens. With `PEERS`
+//! the session binds `LISTEN_PORT` and dials the peers in one open, and
+//! `PORTS_FILE` reports the port it listens on. With a fixed `LISTEN_PORT`
+//! and `PEERS_FILE`, the port is reported as configured and bound by the
+//! session once the peers are read. Only `LISTEN_PORT=0` with `PEERS_FILE`
+//! reserves the kernel's port, reports it, and releases it to the session;
+//! if the session cannot bind it again the node exits non-zero naming it.
+//!
 //! # Where the HTTP API listens, and whom it answers (NW.11)
 //!
 //! - `HTTP_BIND_ADDR` — the IP address the HTTP listener binds, on both the
@@ -184,10 +193,12 @@ use std::time::{Duration, Instant};
 
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::HashMap;
+use moirai_network::any_transport::AnyTransport;
 use moirai_network::dashboard::DashboardConfig;
 use moirai_network::discovery::DiscoveryConfig;
 use moirai_network::generic::{LogReplica, Node, ServedDescriptor};
 use moirai_network::transport::TransportError;
+use moirai_network::transport_config::{TransportConfig, TransportKind};
 use moirai_protocol::log_id::LogId;
 use moirai_semantics::{from_descriptor, metamodel_digest};
 use serde_json::{Value, json};
@@ -385,6 +396,185 @@ fn await_peers_file(path: &Path) -> Option<String> {
     }
 }
 
+/// The HTTP listener, bound now when its port must be known before the API
+/// serves (port 0, or a `PORTS_FILE` to write), with the port it holds; a
+/// fixed HTTP port without `PORTS_FILE` is bound where the API is started.
+fn bind_http_early(
+    replica_id: &str,
+    addr: IpAddr,
+    http_port: Option<u16>,
+    ports_file: Option<&Path>,
+) -> (Option<TcpListener>, Option<u16>) {
+    let listener = match http_port {
+        Some(port) if port == 0 || ports_file.is_some() => Some(bind_http(replica_id, addr, port)),
+        _ => None,
+    };
+    let port = listener.as_ref().map(bound_port).or(http_port);
+    (listener, port)
+}
+
+/// Write `PORTS_FILE`, when there is one, or end the process naming it.
+fn report_ports(
+    ports_file: Option<&Path>,
+    replica_id: &str,
+    listen_port: u16,
+    http_port: Option<u16>,
+) {
+    if let Some(path) = ports_file
+        && let Err(err) = write_ports_file(path, replica_id, listen_port, http_port)
+    {
+        eprintln!(
+            "[{replica_id}] cannot write PORTS_FILE `{}`: {err}",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+}
+
+/// The peers a node is given: their addresses (`id → host:port`) and every
+/// member of the log, this node first.
+struct Peers {
+    addresses: HashMap<String, String>,
+    members: Vec<String>,
+}
+
+/// The members as the node constructors take them.
+fn member_refs(members: &[String]) -> Vec<&str> {
+    members.iter().map(String::as_str).collect()
+}
+
+/// Parse `PEERS=id:host:port,...`, or the same text from `PEERS_FILE`, which
+/// the harness writes once every node of its session has reported.
+fn read_peers(replica_id: &str, peers_file: Option<&Path>) -> Peers {
+    let peers_str = match peers_file {
+        Some(path) => match await_peers_file(path) {
+            Some(text) => text.trim().to_string(),
+            None => {
+                eprintln!(
+                    "[{replica_id}] PEERS_FILE `{}` did not appear within {} s",
+                    path.display(),
+                    PEERS_FILE_TIMEOUT.as_secs()
+                );
+                std::process::exit(1);
+            }
+        },
+        None => env::var("PEERS").unwrap_or_default(),
+    };
+    let mut addresses: HashMap<String, String> = HashMap::default();
+    let mut members: Vec<String> = vec![replica_id.to_string()];
+    for spec in peers_str.split(',').filter(|s| !s.is_empty()) {
+        let parts: Vec<&str> = spec.split(':').collect();
+        if parts.len() >= 3 {
+            let peer_id = parts[0].to_string();
+            let addr = format!("{}:{}", parts[1], parts[2]);
+            members.push(peer_id.clone());
+            addresses.insert(peer_id, addr);
+        }
+    }
+    Peers { addresses, members }
+}
+
+/// What the transport set-up hands the rest of `main`.
+struct Started {
+    node: Node<ModelLog>,
+    listen_port: u16,
+    http_listener: Option<TcpListener>,
+    http_port: Option<u16>,
+}
+
+/// The transport under `MOIRAI_TRANSPORT=zenoh`, or the end of the process
+/// with a message naming the port the session could not open on.
+fn zenoh_or_exit(
+    replica_id: &str,
+    listen_port: u16,
+    opened: Result<AnyTransport<ModelOp>, TransportError>,
+) -> AnyTransport<ModelOp> {
+    opened.unwrap_or_else(|err| {
+        eprintln!(
+            "[{replica_id}] cannot open the Zenoh session listening on port {listen_port}: {err}"
+        );
+        std::process::exit(1);
+    })
+}
+
+/// The node under Zenoh, whose session binds the replication port itself.
+///
+/// - Peers known at start (`PEERS`, any `LISTEN_PORT`): one session binds
+///   `LISTEN_PORT` and dials every peer in the same open, and `PORTS_FILE`
+///   reports the port that session listens on. Nothing else ever binds it.
+/// - A fixed `LISTEN_PORT` with `PEERS_FILE`: the port is reported as
+///   configured, nothing is bound on it, and the session binds it once the
+///   peers are read.
+/// - `LISTEN_PORT=0` with `PEERS_FILE` (NW.02's test launcher): the port must
+///   be reported before the peers are known, and Zenoh 1.10.1 dials no peer
+///   after its session opens, so the kernel's choice is reserved, reported,
+///   released and bound again by the session. A port taken in between ends
+///   the process, naming it (a known limit of that protocol only).
+fn start_zenoh(
+    replica_id: &str,
+    listen_port: u16,
+    http_bind: IpAddr,
+    http_port: Option<u16>,
+    ports_file: Option<&Path>,
+    peers_file: Option<&Path>,
+    log_id: LogId,
+) -> Started {
+    let id = replica_id.to_string();
+    let (transport, members, listen_port, http_listener, http_port) = match peers_file {
+        None => {
+            let Peers { addresses, members } = read_peers(replica_id, None);
+            let opened = AnyTransport::from_env(id.clone(), listen_port, addresses);
+            let transport = zenoh_or_exit(replica_id, listen_port, opened);
+            let listen_port = match transport.session_port() {
+                Some(port) => port,
+                None if listen_port != 0 => listen_port,
+                None => {
+                    eprintln!(
+                        "[{replica_id}] the Zenoh session lists no locator, so the port the \
+                         kernel chose for LISTEN_PORT=0 is unknown; give a fixed LISTEN_PORT"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let (http_listener, http_port) =
+                bind_http_early(replica_id, http_bind, http_port, ports_file);
+            report_ports(ports_file, replica_id, listen_port, http_port);
+            (transport, members, listen_port, http_listener, http_port)
+        }
+        Some(path) if listen_port != 0 => {
+            let (http_listener, http_port) =
+                bind_http_early(replica_id, http_bind, http_port, ports_file);
+            report_ports(ports_file, replica_id, listen_port, http_port);
+            let Peers { addresses, members } = read_peers(replica_id, Some(path));
+            let opened = AnyTransport::from_env(id.clone(), listen_port, addresses);
+            let transport = zenoh_or_exit(replica_id, listen_port, opened);
+            (transport, members, listen_port, http_listener, http_port)
+        }
+        Some(path) => {
+            let listener = TcpListener::bind("0.0.0.0:0").unwrap_or_else(|err| {
+                eprintln!("[{replica_id}] cannot reserve a replication port: {err}");
+                std::process::exit(1);
+            });
+            let listen_port = bound_port(&listener);
+            let (http_listener, http_port) =
+                bind_http_early(replica_id, http_bind, http_port, ports_file);
+            report_ports(ports_file, replica_id, listen_port, http_port);
+            let Peers { addresses, members } = read_peers(replica_id, Some(path));
+            let opened = AnyTransport::from_env_with_listener(id.clone(), listener, addresses);
+            let transport = zenoh_or_exit(replica_id, listen_port, opened);
+            (transport, members, listen_port, http_listener, http_port)
+        }
+    };
+    let node =
+        Node::<ModelLog>::with_transport_and_log_id(id, &member_refs(&members), transport, log_id);
+    Started {
+        node,
+        listen_port,
+        http_listener,
+        http_port,
+    }
+}
+
 fn main() {
     let replica_id = env::var("REPLICA_ID").unwrap_or_else(|_| "replica-a".to_string());
     let listen_port: u16 = env::var("LISTEN_PORT")
@@ -412,70 +602,60 @@ fn main() {
         }
     };
 
-    // The replication listener, and the HTTP one when its port must be known
-    // before the API serves, are bound here, so that a port of 0 is chosen by
-    // the kernel in the bind that keeps it. A fixed HTTP port without
-    // `PORTS_FILE` is bound where the API is started, as it always was. Both
-    // bind `HTTP_BIND_ADDR`.
-    let listener = TcpListener::bind(format!("0.0.0.0:{listen_port}"))
-        .map_err(TransportError::from)
-        .expect("Failed to create TCP transport");
-    let listen_port = bound_port(&listener);
-    let http_listener = match http_port {
-        Some(port) if port == 0 || ports_file.is_some() => {
-            Some(bind_http(&replica_id, http_bind, port))
-        }
-        _ => None,
-    };
-    let http_port = http_listener.as_ref().map(bound_port).or(http_port);
+    // Which transport the node runs on decides how its replication port is
+    // bound; a variable the transport refuses ends the process here, naming
+    // it, before anything is bound.
+    let kind = TransportConfig::from_env()
+        .unwrap_or_else(|err| {
+            eprintln!("[{replica_id}] {err}");
+            std::process::exit(1);
+        })
+        .kind();
 
-    if let Some(path) = &ports_file
-        && let Err(err) = write_ports_file(path, &replica_id, listen_port, http_port)
-    {
-        eprintln!(
-            "[{replica_id}] cannot write PORTS_FILE `{}`: {err}",
-            path.display()
-        );
-        std::process::exit(1);
-    }
-
-    // Parse PEERS=id:host:port,..., or the same text from PEERS_FILE, which
-    // the harness writes once every node of its session has reported.
-    let peers_str = match &peers_file {
-        Some(path) => match await_peers_file(path) {
-            Some(text) => text.trim().to_string(),
-            None => {
-                eprintln!(
-                    "[{replica_id}] PEERS_FILE `{}` did not appear within {} s",
-                    path.display(),
-                    PEERS_FILE_TIMEOUT.as_secs()
-                );
-                std::process::exit(1);
+    let Started {
+        mut node,
+        listen_port,
+        http_listener,
+        http_port,
+    } = match kind {
+        TransportKind::Tcp => {
+            // The replication listener, and the HTTP one when its port must be
+            // known before the API serves, are bound here, so that a port of 0
+            // is chosen by the kernel in the bind that keeps it. A fixed HTTP
+            // port without `PORTS_FILE` is bound where the API is started, as
+            // it always was. Both bind `HTTP_BIND_ADDR`.
+            let listener = TcpListener::bind(format!("0.0.0.0:{listen_port}"))
+                .map_err(TransportError::from)
+                .expect("Failed to create TCP transport");
+            let listen_port = bound_port(&listener);
+            let (http_listener, http_port) =
+                bind_http_early(&replica_id, http_bind, http_port, ports_file.as_deref());
+            report_ports(ports_file.as_deref(), &replica_id, listen_port, http_port);
+            let Peers { addresses, members } = read_peers(&replica_id, peers_file.as_deref());
+            let node = Node::<ModelLog>::with_listener_and_log_id(
+                replica_id.clone(),
+                &member_refs(&members),
+                listener,
+                addresses,
+                log_id,
+            );
+            Started {
+                node,
+                listen_port,
+                http_listener,
+                http_port,
             }
-        },
-        None => env::var("PEERS").unwrap_or_default(),
-    };
-    let mut peer_addresses: HashMap<String, String> = HashMap::default();
-    let mut all_members: Vec<String> = vec![replica_id.clone()];
-    for spec in peers_str.split(',').filter(|s| !s.is_empty()) {
-        let parts: Vec<&str> = spec.split(':').collect();
-        if parts.len() >= 3 {
-            let peer_id = parts[0].to_string();
-            let addr = format!("{}:{}", parts[1], parts[2]);
-            all_members.push(peer_id.clone());
-            peer_addresses.insert(peer_id, addr);
         }
-    }
-
-    let member_refs: Vec<&str> = all_members.iter().map(|s| s.as_str()).collect();
-
-    let mut node = Node::<ModelLog>::with_listener_and_log_id(
-        replica_id.clone(),
-        &member_refs,
-        listener,
-        peer_addresses,
-        log_id,
-    );
+        TransportKind::Zenoh => start_zenoh(
+            &replica_id,
+            listen_port,
+            http_bind,
+            http_port,
+            ports_file.as_deref(),
+            peers_file.as_deref(),
+            log_id,
+        ),
+    };
 
     node.enable_state_query();
     node.enable_state_transfer();

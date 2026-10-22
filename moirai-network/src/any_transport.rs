@@ -65,6 +65,17 @@ where
         Self::build(local_id, Listen::Listener(listener), peer_addresses)
     }
 
+    /// The port a Zenoh session listens on, from its locators (see
+    /// `ZenohTransport::listen_port`); `None` under TCP, or when the session
+    /// lists no locator.
+    pub fn session_port(&self) -> Option<u16> {
+        match self {
+            AnyTransport::Tcp(_) => None,
+            #[cfg(feature = "zenoh")]
+            AnyTransport::Zenoh(t) => t.listen_port(),
+        }
+    }
+
     fn build(
         local_id: PeerId,
         listen: Listen,

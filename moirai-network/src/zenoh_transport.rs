@@ -270,6 +270,26 @@ where
             .collect()
     }
 
+    /// The port the session listens on, read from its locators: the port the
+    /// kernel chose after a bind to port 0. `None` when the session lists no
+    /// locator, as it does on 0.0.0.0 in a namespace whose only address is
+    /// loopback, which Zenoh leaves out.
+    pub fn listen_port(&self) -> Option<u16> {
+        self.session
+            .info()
+            .locators()
+            .wait()
+            .iter()
+            .find_map(|locator| {
+                locator
+                    .address()
+                    .as_str()
+                    .parse::<std::net::SocketAddr>()
+                    .ok()
+                    .map(|addr| addr.port())
+            })
+    }
+
     /// Where a broadcast goes while no peer is paused.
     fn all_key(&self) -> String {
         format!("moirai/{}/all/{}", self.session_id, self.local_id)
