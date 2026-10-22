@@ -258,14 +258,15 @@ pub struct Pending {
 
 /// Spawn `id` as NW.02's launcher does (`nw02/launch.rs`), with `env` on
 /// top: ports chosen by the kernel and reported in `PORTS_FILE`, peers read
-/// from `PEERS_FILE`.
+/// from `PEERS_FILE`. The node is killed if dropped before it is handed over
+/// ([`Spawned`]).
 pub fn spawn(
     binary: &Path,
     scratch: &Path,
     id: &str,
     transport: Transport,
     env: &[(String, String)],
-) -> Result<Pending, String> {
+) -> Result<Spawned, String> {
     let log = scratch.join(format!(
         "{id}.{}.log",
         RUN_SEQ.fetch_add(1, Ordering::Relaxed)
@@ -296,14 +297,14 @@ pub fn spawn(
         .stderr(Stdio::from(err_out))
         .spawn()
         .map_err(|e| format!("spawning {id}: {e}"))?;
-    Ok(Pending {
+    Ok(Spawned(Some(Pending {
         id: id.to_string(),
         child,
         log,
         ports,
         peers,
         transport,
-    })
+    })))
 }
 
 impl Pending {
@@ -367,6 +368,46 @@ impl Pending {
             transport: self.transport,
             child: Some(self.child),
             log: self.log,
+        }
+    }
+}
+
+/// A node [`spawn`] started, read as its [`Pending`] until it is handed over
+/// as a [`Node`]: killed and reaped if dropped before, so a test that panics
+/// while its node is pending leaves no process behind (round 3, R3.2: in
+/// round 2 a node left pending by `b` outlived its red test and kept the
+/// cargo lock it had inherited). NW.02's launcher and `p5::Started` guard the
+/// nodes they start the same way.
+pub struct Spawned(Option<Pending>);
+
+impl Spawned {
+    /// Hand the node over; the [`Node`] kills it when dropped.
+    pub fn into_node(mut self, reported: &Reported) -> Node {
+        self.0.take().expect("handed over once").into_node(reported)
+    }
+}
+
+impl std::ops::Deref for Spawned {
+    type Target = Pending;
+
+    fn deref(&self) -> &Pending {
+        self.0.as_ref().expect("handed over once")
+    }
+}
+
+impl std::ops::DerefMut for Spawned {
+    fn deref_mut(&mut self) -> &mut Pending {
+        self.0.as_mut().expect("handed over once")
+    }
+}
+
+impl Drop for Spawned {
+    fn drop(&mut self) {
+        if let Some(pending) = self.0.as_mut() {
+            // A child already reaped by `try_wait` is not signalled again
+            // (std keeps its status), so a reused pid is never hit.
+            let _ = pending.child.kill();
+            let _ = pending.child.wait();
         }
     }
 }

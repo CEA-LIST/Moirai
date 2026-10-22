@@ -56,8 +56,8 @@ fn ok<T>(what: &str, result: Result<T, String>) -> T {
 /// With `merged_may_have_opened_it`, an `Install` refused because the log
 /// already holds the table is passed over: under multicast scouting the
 /// other cluster's `Install` may arrive first, which is the merge itself.
-/// On the default configuration the refusal is an error, since only this
-/// cluster's own `Install` could have opened the log.
+/// On the default configuration the refusal is P7's leak, asserted in
+/// [`refused_install`]: only the other cluster's `Install` could open it.
 fn open_and_write(
     cluster: &Cluster,
     node: usize,
@@ -72,7 +72,7 @@ fn open_and_write(
                 cluster.nodes[node].id
             );
         }
-        Err(why) => return Err(why),
+        Err(why) => return Err(refused_install(cluster, node, why)),
     }
     for op in si01::Uml::new().named_class(0, name) {
         cluster.submit_default(node, &op)?;
@@ -201,4 +201,25 @@ fn p7_two_clusters_with_multicast_scouting_merge() {
             );
         }
     }
+}
+
+/// P7 (Q1), round 3 (Cam's ruling R3.1, vault `spec/items/NW.16a.md`):
+/// `open_and_write` hands here every refusal of a node's own cluster's
+/// `Install` but the one its first arm passes over under multicast scouting.
+/// On the default configuration a refusal because the shared default log
+/// already holds a metamodel means the other cluster's `Install` reached
+/// that node, the leak P7 forbids, asserted at a line of its own. Any other
+/// refusal is handed back as it was, a set-up failure. What the node serves
+/// and lists as peers is read for the message only and cannot fail the test.
+fn refused_install(cluster: &Cluster, node: usize, why: String) -> String {
+    let id = &cluster.nodes[node].id;
+    assert!(
+        !why.contains("already holds a metamodel"),
+        "P7 (Q1): on the default configuration {id} refused its own cluster's Install because \
+         the shared default log already holds a metamodel, so the other cluster's Install \
+         reached it; {id} then serves {:?} and lists as peers {:?}; the refusal: {why}",
+        cluster.default_names(node),
+        cluster.peers_of(node)
+    );
+    why
 }
