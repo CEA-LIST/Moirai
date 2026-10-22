@@ -176,7 +176,7 @@ impl TransportConfig {
     /// - `ZENOH_CONFIG`: the file, as is; neither the port nor the peers are
     ///   added.
     /// - `ZENOH_MODE=client`: client mode, connecting to `ZENOH_ROUTER` only,
-    ///   listening on nothing.
+    ///   listening on nothing, and retrying the router until it answers.
     /// - Otherwise peer mode, listening on `tcp/0.0.0.0:<listen_port>` and
     ///   connecting to `ZENOH_ROUTER`, if any, and every peer. Gossip is on,
     ///   one hop, only with a router, so the router can introduce the peers.
@@ -234,6 +234,15 @@ impl TransportConfig {
         set("scouting/gossip/enabled", json(&gossip))?;
         if gossip {
             set("scouting/gossip/multihop", json(&false))?;
+        }
+        if self.client {
+            // Zenoh's client defaults (`timeout_ms` 0, `exit_on_failure`
+            // true) try the router once and fail the open, so a client
+            // started before its router would exit. A peer's defaults wait
+            // for it: -1 and false. The open then returns once the router
+            // answers.
+            set("connect/timeout_ms", json(&-1))?;
+            set("connect/exit_on_failure", json(&false))?;
         }
         set(
             "transport/link/tx/queue/congestion_control/block/wait_before_close",
