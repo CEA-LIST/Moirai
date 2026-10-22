@@ -40,6 +40,18 @@ pub const DEFAULT_TRANSPORT: TransportKind = TransportKind::Tcp;
 /// answer a Ledgera scout (note 6.1).
 pub const MOIRAI_SCOUTING_ADDRESS: &str = "224.0.0.224:7450";
 
+/// How long, in microseconds, a blocking put may wait for a free batch
+/// before Zenoh drops it and closes the link
+/// (`transport/link/tx/queue/congestion_control/block/wait_before_close`).
+///
+/// Every put of `crate::zenoh_transport::ZenohTransport` blocks, and Zenoh
+/// gives a message one deadline from its first wait, never moved, so this
+/// bounds the time to queue a whole state transfer. The largest one
+/// `model_node` sends at this cut was measured at 1,217,035 bytes (vault
+/// `spec/items/NW.16a.md`, section 7a); 30 s carries it on a link of about
+/// 0.32 Mbit/s, where Zenoh's default of 5 s needs about 1.95 Mbit/s.
+pub const WAIT_BEFORE_CLOSE_US: u64 = 30_000_000;
+
 /// A variable that was refused, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportConfigError(String);
@@ -170,7 +182,8 @@ impl TransportConfig {
     ///   one hop, only with a router, so the router can introduce the peers.
     ///
     /// Multicast scouting is off unless `ZENOH_SCOUTING=multicast`, which
-    /// puts it on [`MOIRAI_SCOUTING_ADDRESS`].
+    /// puts it on [`MOIRAI_SCOUTING_ADDRESS`]. A blocking put waits at most
+    /// [`WAIT_BEFORE_CLOSE_US`] for a free batch.
     #[cfg(feature = "zenoh")]
     pub fn zenoh_config(
         &self,
@@ -222,6 +235,10 @@ impl TransportConfig {
         if gossip {
             set("scouting/gossip/multihop", json(&false))?;
         }
+        set(
+            "transport/link/tx/queue/congestion_control/block/wait_before_close",
+            json(&WAIT_BEFORE_CLOSE_US),
+        )?;
         Ok(config)
     }
 }

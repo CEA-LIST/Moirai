@@ -8,6 +8,7 @@
 //! | `moirai/<session>/all/<sender>` | `broadcast` while no peer is paused |
 //! | `moirai/<session>/to/<recipient>/<sender>` | `send`, and `broadcast` while a peer is paused, once per live unpaused peer |
 //! | `moirai/<session>/node/<peer>` | one liveliness token per node |
+//! | `moirai/<session>/node/<peer>/<zid>` | one liveliness token per session of a node, `<zid>` its Zenoh id |
 //!
 //! Frames are `TransportMessage` in JSON, carried as they are: nothing here
 //! reads a frame's variant, except the two it produces from presence, `Hello`
@@ -28,7 +29,16 @@
 //! - Pause flags and buffers are this transport's bookkeeping, with
 //!   `DirectTransport`'s semantics; a pause touches no Zenoh link (note 5.6).
 //!   A broadcast during a pause is one put per live unpaused peer, never one
-//!   put on `all`, which the paused peer would also receive.
+//!   put on `all`, which the paused peer would also receive; a failed put
+//!   fails the broadcast, as it fails a `send`.
+//! - A peer's `Hello` stands for its arrival and is handled as a frame from
+//!   it: kept in its buffer while it is paused.
+//! - Zenoh reports a key declared by two sessions once, alive at the first
+//!   declaration and gone at the last (note Z7), so a node restarted with
+//!   the same id inside the old session's lease would go unseen on the node
+//!   key alone. Each session also declares a token of its own, under its
+//!   Zenoh id; one appearing beside another live one of the same peer is a
+//!   successor, and yields a `Hello` again.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -53,10 +63,11 @@ where
 {
     /// A frame, and the sender named by its key's last chunk.
     Frame(PeerId, TransportMessage<O>),
-    /// A peer's token appeared.
-    Up(PeerId),
-    /// A peer's token went away.
-    Down(PeerId),
+    /// A token of a peer appeared: its node token (`None`), or the token of
+    /// one of its sessions (`Some(zid)`).
+    Up(PeerId, Option<String>),
+    /// A token of a peer went away.
+    Down(PeerId, Option<String>),
 }
 
 /// A `CrdtTransport` over one Zenoh session.
@@ -69,12 +80,16 @@ where
     session: Session,
     /// Held so the declarations live as long as the transport.
     _subscribers: Vec<Subscriber<()>>,
-    _token: LivelinessToken,
+    _tokens: Vec<LivelinessToken>,
     incoming: Receiver<Inbound<O>>,
     /// The `PEERS` ids, and every id seen by token since.
     known: BTreeSet<PeerId>,
-    /// The ids whose token is live, as `try_recv` has seen them so far.
+    /// The ids with at least one live token, as `try_recv` has seen them so
+    /// far.
     live: BTreeSet<PeerId>,
+    /// The live tokens of each id in `live`: `None` for its node token,
+    /// `Some(zid)` for a session's.
+    tokens: HashMap<PeerId, BTreeSet<Option<String>>>,
     paused: BTreeSet<PeerId>,
     buffers: HashMap<PeerId, VecDeque<TransportMessage<O>>>,
 }
@@ -88,6 +103,18 @@ fn is_key_chunk(id: &str) -> bool {
 /// The last chunk of a key expression.
 fn last_chunk(key: &str) -> &str {
     key.rsplit('/').next().unwrap_or_default()
+}
+
+/// The peer, and the session if any, a token key names below `prefix`
+/// (`moirai/<session>/node/`): `<peer>` or `<peer>/<zid>`.
+fn token_owner(key: &str, prefix: &str) -> Option<(PeerId, Option<String>)> {
+    let mut chunks = key.strip_prefix(prefix)?.split('/');
+    let peer = chunks.next().filter(|peer| !peer.is_empty())?.to_string();
+    match (chunks.next(), chunks.next()) {
+        (None, _) => Some((peer, None)),
+        (Some(zid), None) => Some((peer, Some(zid.to_string()))),
+        (Some(_), Some(_)) => None,
+    }
 }
 
 fn zenoh_error(what: &str, e: zenoh::Error) -> TransportError {
@@ -157,32 +184,44 @@ where
             subscribers.push(subscriber);
         }
 
-        let presence = format!("moirai/{session_id}/node/*");
+        let node_prefix = format!("moirai/{session_id}/node/");
+        let presence = format!("{node_prefix}**");
         let me = local_id.clone();
         let subscriber = session
             .liveliness()
             .declare_subscriber(&presence)
             .history(true)
             .callback(move |sample: Sample| {
-                let peer = last_chunk(sample.key_expr().as_str()).to_string();
+                let Some((peer, zid)) = token_owner(sample.key_expr().as_str(), &node_prefix)
+                else {
+                    return;
+                };
                 if peer == me {
                     return;
                 }
                 let _ = tx.send(match sample.kind() {
-                    SampleKind::Put => Inbound::Up(peer),
-                    SampleKind::Delete => Inbound::Down(peer),
+                    SampleKind::Put => Inbound::Up(peer, zid),
+                    SampleKind::Delete => Inbound::Down(peer, zid),
                 });
             })
             .wait()
             .map_err(|e| zenoh_error(&format!("subscribe to the tokens {presence}"), e))?;
         subscribers.push(subscriber);
 
-        // Last, so that a peer answering this token reaches the subscribers.
-        let token = session
-            .liveliness()
-            .declare_token(format!("moirai/{session_id}/node/{local_id}"))
-            .wait()
-            .map_err(|e| zenoh_error("declare the token", e))?;
+        // Last, so that a peer answering these tokens reaches the
+        // subscribers: this session's own, then the node's.
+        let mut tokens = Vec::new();
+        for key in [
+            format!("moirai/{session_id}/node/{local_id}/{}", session.zid()),
+            format!("moirai/{session_id}/node/{local_id}"),
+        ] {
+            let token = session
+                .liveliness()
+                .declare_token(&key)
+                .wait()
+                .map_err(|e| zenoh_error(&format!("declare the token {key}"), e))?;
+            tokens.push(token);
+        }
 
         let known = known_peers
             .into_iter()
@@ -193,10 +232,11 @@ where
             session_id: session_id.to_string(),
             session,
             _subscribers: subscribers,
-            _token: token,
+            _tokens: tokens,
             incoming,
             known,
             live: BTreeSet::new(),
+            tokens: HashMap::default(),
             paused: BTreeSet::new(),
             buffers: HashMap::default(),
         };
@@ -206,6 +246,16 @@ where
             transport.locators()
         );
         Ok(transport)
+    }
+
+    /// Close the session now: its tokens go, and every later put fails with
+    /// an error. The transport still answers every call, with an error
+    /// where a put is needed; dropping it afterwards closes nothing more.
+    pub fn close(&self) -> TransportResult<()> {
+        self.session
+            .close()
+            .wait()
+            .map_err(|e| zenoh_error("close the session", e))
     }
 
     /// The session's listening locators as Zenoh reports them, with the real
@@ -248,6 +298,34 @@ where
     fn all_peers(&self) -> BTreeSet<PeerId> {
         self.known.union(&self.live).cloned().collect()
     }
+
+    /// Record a token of `peer` that appeared; answers whether it is an
+    /// arrival: the peer's first live token, or a session of its own beside
+    /// another live session of the peer (a successor with the same id).
+    fn token_up(&mut self, peer: &PeerId, zid: Option<String>) -> bool {
+        let tokens = self.tokens.entry(peer.clone()).or_default();
+        let first = tokens.is_empty();
+        let successor = zid.is_some() && tokens.iter().any(|t| t.is_some() && *t != zid);
+        if !tokens.insert(zid) {
+            return false;
+        }
+        self.known.insert(peer.clone());
+        self.live.insert(peer.clone());
+        first || successor
+    }
+
+    /// Record a token of `peer` that went; answers whether it was the
+    /// peer's last.
+    fn token_down(&mut self, peer: &PeerId, zid: &Option<String>) -> bool {
+        let Some(tokens) = self.tokens.get_mut(peer) else {
+            return false;
+        };
+        if !tokens.remove(zid) || !tokens.is_empty() {
+            return false;
+        }
+        self.tokens.remove(peer);
+        self.live.remove(peer)
+    }
 }
 
 impl<O> CrdtTransport for ZenohTransport<O>
@@ -275,12 +353,15 @@ where
         if self.paused.is_empty() {
             return self.put(self.all_key(), payload);
         }
+        // Every live unpaused peer is tried; the first failure is answered.
+        let mut failed = None;
         for peer in self.live.difference(&self.paused) {
             if let Err(e) = self.put(self.to_key(peer), payload.clone()) {
                 eprintln!("[{}] Failed to send to {peer}: {e}", self.local_id);
+                failed.get_or_insert(e);
             }
         }
-        Ok(())
+        failed.map_or(Ok(()), Err)
     }
 
     fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage<O>)>> {
@@ -293,18 +374,21 @@ where
                 }
             };
             match inbound {
-                Inbound::Up(peer) => {
-                    self.known.insert(peer.clone());
-                    if self.live.insert(peer.clone()) {
+                Inbound::Up(peer, zid) => {
+                    if self.token_up(&peer, zid) {
                         let hello = TransportMessage::Hello {
                             id: peer.clone(),
                             metadata: None,
                         };
-                        return Ok(Some((peer, hello)));
+                        if self.paused.contains(&peer) {
+                            self.buffers.entry(peer).or_default().push_back(hello);
+                        } else {
+                            return Ok(Some((peer, hello)));
+                        }
                     }
                 }
-                Inbound::Down(peer) => {
-                    if self.live.remove(&peer) {
+                Inbound::Down(peer, zid) => {
+                    if self.token_down(&peer, &zid) {
                         let goodbye = TransportMessage::Goodbye { id: peer.clone() };
                         return Ok(Some((peer, goodbye)));
                     }
@@ -399,9 +483,15 @@ impl<O> Drop for ZenohTransport<O>
 where
     O: Serialize + DeserializeOwned,
 {
-    /// Close the session, so the token goes now. Nothing else holds the
-    /// session: the callbacks hold only the channel's sender.
+    /// Close the session, so the tokens go now, unless [`close`] already
+    /// did. Nothing else holds the session: the callbacks hold only the
+    /// channel's sender.
+    ///
+    /// [`close`]: ZenohTransport::close
     fn drop(&mut self) {
+        if self.session.is_closed() {
+            return;
+        }
         if let Err(e) = self.session.close().wait() {
             eprintln!("[{}] Closing the Zenoh session: {e}", self.local_id);
         }
