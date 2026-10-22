@@ -331,18 +331,42 @@ fn frames_from_outside_arrive_under_the_sender_named_by_the_key() {
     }
 }
 
-/// Frames the slow receiver is sent per phase, and the filler that makes
-/// each one about 60 kB of JSON: 90 MB a phase, more than loopback's socket
-/// buffers and Zenoh's queues hold.
+/// Frames a puts in each phase, and the filler that makes each one about
+/// 60 kB of JSON: one frame to a Zenoh batch (at most 65,535 bytes, so never
+/// fragmented), 90 MB a phase.
 const CONGESTED_FRAMES: usize = 1500;
 const CONGESTED_FILLER: usize = 60_000;
-/// What the slow receiver spends on each sample before taking the next.
+/// What the slow receiver spends on each sample once its gate is open.
 const SLOW_RECEIVER_DELAY: Duration = Duration::from_millis(1);
+/// How long the slow receiver's callbacks stay shut at the start of each
+/// phase. Zenoh 1.10.1 closes a link whose `Block` put has waited 5 s for a
+/// free batch (`wait_before_close`), or that has read nothing for its 10 s
+/// lease; 2 s keeps a held put well under both, so the link stays up.
+const GATE: Duration = Duration::from_secs(2);
+/// The congestion witness: in each phase the put in progress when the gate
+/// opened was held at least this long. Only a full transmission queue holds a
+/// put that long; under `Drop` that put would have been dropped after 1 ms.
+const HELD_AT_LEAST: Duration = Duration::from_secs(1);
+/// The slow receiver's TCP receive buffer, set on its listener so that what
+/// the link holds while the gate is shut does not grow with the kernel's
+/// autotuning (the kernel doubles it, to 128 KiB).
+const SLOW_SO_RCVBUF: u32 = 65_536;
+
+/// When the slow receiver's gate opens; `None` before the first phase.
+type Gate = Arc<Mutex<Option<Instant>>>;
 
 fn slow_receiver(
+    gate: Gate,
     got: Arc<Mutex<Vec<(String, String)>>>,
 ) -> impl Fn(Sample) + Send + Sync + 'static {
     move |sample: Sample| {
+        // Shut until the gate opens. Zenoh runs this callback on the link's
+        // receive task, which reads one batch at a time, so nothing more is
+        // read from the link meanwhile.
+        let open_at = *gate.lock().unwrap();
+        if let Some(open_at) = open_at {
+            thread::sleep(open_at.saturating_duration_since(Instant::now()));
+        }
         thread::sleep(SLOW_RECEIVER_DELAY);
         let key = sample.key_expr().as_str().to_string();
         let tag = payload_text(&sample.payload().to_bytes())
@@ -353,25 +377,49 @@ fn slow_receiver(
 }
 
 /// A congested live link loses no put (`CongestionControl::Block`, note
-/// 5.4). A raw receiver `slow` takes 1 ms per sample, so a's queue to it
-/// fills; under Zenoh's default for a put, `Drop`, the put waits 1 ms and is
-/// dropped while the link stays up, and nothing in Moirai asks again. Three
-/// phases, one per put a node makes: a send, a broadcast with nobody paused,
-/// and a broadcast while another peer is paused.
+/// 5.4), on each of the three puts a node makes: a send, a broadcast with
+/// nobody paused, and a broadcast while another peer is paused.
+///
+/// The receiver congests the link, not the sender's speed: a raw receiver
+/// `slow` holds its callbacks shut for `GATE` at the start of each phase,
+/// while a puts 1500 frames of about 60 kB, built before the phase, through
+/// the transport. What the link holds before a put finds no free batch is
+/// bounded: a's transmission queue (two batches), a's TCP send buffer (at
+/// most the third field of `tcp_wmem`, 4 MiB on the bench), slow's TCP
+/// receive buffer (fixed here, 128 KiB) and the batch slow is reading, about
+/// 4.6 MB or 77 frames, against 90 MB a phase.
+///
+/// Under `Block` the next put waits for a batch until the gate opens, and
+/// every frame arrives. Under `Drop`, Zenoh's default for a put, it waits
+/// 1 ms, is dropped, marks the queue congested, and every put after it is
+/// dropped at once until a batch comes back, which needs the gate open; the
+/// put still returns `Ok`, and nothing in Moirai asks again.
+///
+/// The witness: in each phase the put in progress when the gate opened was
+/// held at least `HELD_AT_LEAST`. Without it the run did not congest the link
+/// and cannot tell `Block` from `Drop`. It is checked after every claim
+/// assertion, so a lost frame is reported as lost whatever the witness says.
 #[test]
 fn a_congested_link_loses_no_put() {
     let s = fresh_session("q");
-    let slow = raw_session(&[]);
+    let mut slow_config = loopback_peer(&[]);
+    slow_config
+        .insert_json5("transport/link/tcp/so_rcvbuf", &SLOW_SO_RCVBUF.to_string())
+        .expect("slow's TCP receive buffer");
+    let slow = zenoh::open(slow_config)
+        .wait()
+        .expect("open the slow receiver");
     let slow_at = raw_locator(&slow);
+    let gate: Gate = Arc::default();
     let got: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let _to = slow
         .declare_subscriber(format!("moirai/{s}/to/slow/*"))
-        .callback(slow_receiver(Arc::clone(&got)))
+        .callback(slow_receiver(Arc::clone(&gate), Arc::clone(&got)))
         .wait()
         .expect("slow's to subscriber");
     let _all = slow
         .declare_subscriber(format!("moirai/{s}/all/*"))
-        .callback(slow_receiver(Arc::clone(&got)))
+        .callback(slow_receiver(Arc::clone(&gate), Arc::clone(&got)))
         .wait()
         .expect("slow's all subscriber");
     let _token = slow
@@ -393,9 +441,18 @@ fn a_congested_link_loses_no_put() {
             .is_connected(&id("slow"))),
         "a never saw slow's token"
     );
+    println!(
+        "NW15 congested: gate {GATE:?}, slow's so_rcvbuf {SLOW_SO_RCVBUF}, tcp_wmem {}",
+        std::fs::read_to_string("/proc/sys/net/ipv4/tcp_wmem")
+            .map(|v| v.trim().to_string())
+            .unwrap_or_else(|e| format!("unread ({e})"))
+    );
     let filler = "w".repeat(CONGESTED_FILLER);
     let to_slow = format!("moirai/{s}/to/slow/a");
     let all_a = format!("moirai/{s}/all/a");
+    // Per phase, the put in progress when the gate opened: its index and how
+    // long it was held.
+    let mut witness: Vec<(&str, Option<(usize, Duration)>)> = Vec::new();
     for (phase, key) in [
         ("send", &to_slow),
         ("broadcast", &all_a),
@@ -404,15 +461,32 @@ fn a_congested_link_loses_no_put() {
         if phase == "paused-broadcast" {
             a.pause_peer(&id("x")).expect("pause x");
         }
+        // Built before the phase, so the timed loop does what a node does: a
+        // send or a broadcast, which encodes its frame and puts it.
+        let outgoing: Vec<TransportMessage<String>> = (0..CONGESTED_FRAMES)
+            .map(|i| raw(&format!("{phase}|{i:05}|{filler}")))
+            .collect();
         let start = Instant::now();
-        for i in 0..CONGESTED_FRAMES {
-            let frame = raw(&format!("{phase}|{i:05}|{filler}"));
+        let open_at = start + GATE;
+        *gate.lock().unwrap() = Some(open_at);
+        let mut across = None;
+        let mut longest = (0, Duration::ZERO);
+        for (i, frame) in outgoing.into_iter().enumerate() {
+            let began = Instant::now();
             let sent = if phase == "send" {
                 a.send(&id("slow"), frame)
             } else {
                 a.broadcast(frame)
             };
+            let returned = Instant::now();
             sent.unwrap_or_else(|e| panic!("{phase} {i} failed: {e}"));
+            let held = returned.duration_since(began);
+            if held > longest.1 {
+                longest = (i, held);
+            }
+            if began < open_at && returned >= open_at {
+                across = Some((i, held));
+            }
         }
         let puts_took = start.elapsed();
         let prefix = format!("{phase}|");
@@ -441,9 +515,13 @@ fn a_congested_link_loses_no_put() {
             .cloned()
             .collect();
         let distinct: BTreeSet<&String> = frames.iter().map(|(_, tag)| tag).collect();
+        let in_put_order = frames.windows(2).all(|w| w[0].1 < w[1].1);
         println!(
-            "NW15 congested {phase}: puts returned after {puts_took:?}, {} of {CONGESTED_FRAMES} \
-             received after {:?}",
+            "NW15 congested {phase}: puts returned after {puts_took:?}, longest put #{} held \
+             {:?}, put in progress at the gate's opening {across:?}, {} of {CONGESTED_FRAMES} \
+             received after {:?}, in put order {in_put_order}",
+            longest.0,
+            longest.1,
             frames.len(),
             start.elapsed()
         );
@@ -456,6 +534,16 @@ fn a_congested_link_loses_no_put() {
         );
         let keys: BTreeSet<&String> = frames.iter().map(|(k, _)| k).collect();
         assert_eq!(keys, BTreeSet::from([key]), "the keys of phase {phase}");
+        witness.push((phase, across));
+    }
+    for (phase, across) in witness {
+        let held_long = matches!(across, Some((_, held)) if held >= HELD_AT_LEAST);
+        assert!(
+            held_long,
+            "NW15 WITNESS: in phase {phase} no put was held across the gate's opening for \
+             {HELD_AT_LEAST:?} (the put in progress then: {across:?}), so the link was not \
+             congested and this run cannot tell Block from Drop"
+        );
     }
 }
 
