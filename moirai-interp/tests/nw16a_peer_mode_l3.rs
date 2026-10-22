@@ -257,7 +257,9 @@ fn p4(transport: Transport) {
         }
         assert!(
             seen_from("a") && seen_from("b"),
-            "NW16A OBSERVER WITNESS: a and b resumed c, which makes each ask c for a sync of              the model, and the observer saw no such SyncRequest from {}; this run cannot see              a greeting",
+            "NW16A OBSERVER WITNESS: a and b resumed c, which makes each ask c for a sync of \
+             the model, and the observer saw no such SyncRequest from {}; this run cannot see \
+             a greeting",
             if seen_from("a") { "b" } else { "a" }
         );
     }

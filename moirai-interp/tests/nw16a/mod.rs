@@ -135,7 +135,8 @@ pub fn guard_scouting(extra: &[(String, String)]) -> Result<(), String> {
     ] {
         if std::env::var_os(name).is_some() && !extra.iter().any(|(k, _)| k == name) {
             return Err(format!(
-                "the test process carries {name}, which every node would inherit; NW.16a sets                  the Zenoh variables per test"
+                "the test process carries {name}, which every node would inherit; NW.16a sets \
+                 the Zenoh variables per test"
             ));
         }
     }
@@ -145,7 +146,8 @@ pub fn guard_scouting(extra: &[(String, String)]) -> Result<(), String> {
     {
         isolated().map_err(|why| {
             format!(
-                "refusing to start a node with multicast scouting outside an isolated network                  namespace ({why}); run the spec's container command"
+                "refusing to start a node with multicast scouting outside an isolated network \
+                 namespace ({why}); run the spec's container command"
             )
         })?;
     }
