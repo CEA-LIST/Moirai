@@ -24,16 +24,17 @@
 //! # Ports chosen by the kernel, for test harnesses
 //!
 //! `LISTEN_PORT=0` and `HTTP_PORT=0` bind whatever port the kernel gives, in
-//! the bind that keeps it, so no other process can take it in between (NW.02).
-//! Two variables let a harness learn those ports and mesh the nodes; the
-//! docker stack sets neither, and a node with fixed ports and neither set
-//! behaves exactly as it always has.
+//! the bind that keeps it, so no other process can take it in between (NW.02;
+//! under Zenoh, one exception below). Two variables let a harness learn those
+//! ports and mesh the nodes; the docker stack sets neither, and a node with
+//! fixed ports and neither set behaves exactly as it always has.
 //!
 //! - `PORTS_FILE` — once the replication listener and, with `HTTP_PORT`, the
-//!   HTTP API are bound, and before any peer is read or dialled, the node
-//!   writes `{"replica_id", "pid", "listen_port", "http_port"}` there (the
-//!   ports it holds; `http_port` null without `HTTP_PORT`), beside the path
-//!   and renamed onto it so it appears whole
+//!   HTTP API are bound, and under TCP before any peer is read or dialled, the
+//!   node writes `{"replica_id", "pid", "listen_port", "http_port"}` there
+//!   (the ports it holds; `http_port` null without `HTTP_PORT`), beside the
+//!   path and renamed onto it so it appears whole. Under Zenoh with `PEERS`
+//!   it is written once the session is open, the peers dialled in that open
 //! - `PEERS_FILE` — the node takes its peers from that file instead of
 //!   `PEERS`, which it then ignores: the same `id:host:port,...` text,
 //!   surrounding whitespace ignored. It waits up to 60 s for the file to
@@ -47,6 +48,18 @@
 //! session once the peers are read. Only `LISTEN_PORT=0` with `PEERS_FILE`
 //! reserves the kernel's port, reports it, and releases it to the session;
 //! if the session cannot bind it again the node exits non-zero naming it.
+//! The port after a bind to 0 is read from the session's locators; in a
+//! namespace whose only address is loopback the session lists none, and the
+//! node then exits non-zero if it must report the port (`PORTS_FILE`), and
+//! runs otherwise.
+//!
+//! `ZENOH_ROUTER` names a router (`moirai-router`) that introduces the node
+//! to its peers; `PEERS` may then be empty. With `ZENOH_MODE=client` beside
+//! it the node listens on no replication port, whatever `LISTEN_PORT` says,
+//! sends everything through the router, and waits for the router to answer
+//! before it opens; its `PORTS_FILE` names `LISTEN_PORT` as given, which it
+//! does not hold, so a client with `PORTS_FILE` needs a non-zero
+//! `LISTEN_PORT`.
 //!
 //! # Where the HTTP API listens, and whom it answers (NW.11)
 //!
@@ -525,13 +538,17 @@ fn start_zenoh(
             let Peers { addresses, members } = read_peers(replica_id, None);
             let opened = AnyTransport::from_env(id.clone(), listen_port, addresses);
             let transport = zenoh_or_exit(replica_id, listen_port, opened);
+            // A session on 0.0.0.0 lists no locator in a namespace whose only
+            // address is loopback. Without `PORTS_FILE` nobody reads the port,
+            // so the node runs; with it, the port it must report is unknown.
             let listen_port = match transport.session_port() {
                 Some(port) => port,
-                None if listen_port != 0 => listen_port,
+                None if listen_port != 0 || ports_file.is_none() => listen_port,
                 None => {
                     eprintln!(
                         "[{replica_id}] the Zenoh session lists no locator, so the port the \
-                         kernel chose for LISTEN_PORT=0 is unknown; give a fixed LISTEN_PORT"
+                         kernel chose for LISTEN_PORT=0 is unknown and cannot be written to \
+                         PORTS_FILE; give a fixed LISTEN_PORT"
                     );
                     std::process::exit(1);
                 }
