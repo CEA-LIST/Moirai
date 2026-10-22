@@ -42,6 +42,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",
 ] }
+# NW.16a's loopback tests read Zenoh from outside the nodes: a raw session
+# that must see a node's liveliness token at the port the node reported, and
+# an observer of the frames nodes put. The same pin and features as
+# `moirai-network`'s, so the lock gains no package.
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"] }
 
 # The interpreted node: one binary that hosts a model of any metamodel it
 # holds a descriptor for. Needs the network layer, so it is built only when
