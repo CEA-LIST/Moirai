@@ -1986,6 +1986,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-router"
+version = "0.1.0"
+dependencies = [
+ "zenoh",
+]
+
+[[package]]
 name = "moirai-semantics"
 version = "0.1.0"
 dependencies = [

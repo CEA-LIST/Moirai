@@ -8,6 +8,7 @@ members = [
     "moirai-network",
     "moirai-bootnode",
     "moirai-relay",
+    "moirai-router",
     "moirai-semantics",
     "moirai-interp",
     "moirai-dashboard",
