@@ -12,5 +12,5 @@ pub mod register;
 pub mod set;
 pub mod utils;
 
-type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
-type HashSet<V> = rustc_hash::FxHashSet<V>;
+type FxHashMap<K, V> = rustc_hash::FxHashMap<K, V>;
+type FxHashSet<V> = rustc_hash::FxHashSet<V>;

@@ -1,5 +1,7 @@
 use std::fmt::{Display, Formatter};
 
+use rustc_hash::FxHashSet;
+
 use crate::{
     crdt::{
         eval::Eval,
@@ -9,11 +11,7 @@ use crate::{
     },
     event::tagged_op::TaggedOp,
     replica::ReplicaId,
-    state::{
-        stable_state::IsStableState,
-        unstable_state::{IsUnstableCore, IsUnstablePrune},
-    },
-    utils::hashmap::HashSet,
+    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
 };
 
 #[derive(Debug, Clone)]
@@ -38,7 +36,7 @@ impl Display for MembershipRejection {
 }
 
 impl ReplicatedDataType for Membership {
-    type StableState = HashSet<ReplicaId>;
+    type StableState = FxHashSet<ReplicaId>;
     type Rejection = MembershipRejection;
 
     const DISABLE_R_WHEN_R: bool = false;
@@ -74,13 +72,6 @@ impl ReplicatedDataType for Membership {
         false
     }
 
-    fn stabilize(
-        _tagged_op: &TaggedOp<Self>,
-        _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstablePrune<Self>,
-    ) {
-    }
-
     fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
     where
         Q: QueryOperation,
@@ -99,7 +90,7 @@ where
         stable: &Self::StableState,
         unstable: &U,
     ) -> Result<(), Self::Rejection> {
-        let members: HashSet<ReplicaId> = Self::execute_query(&Read::new(), stable, unstable);
+        let members: FxHashSet<ReplicaId> = Self::execute_query(&Read::new(), stable, unstable);
 
         match op {
             Membership::Join(id) if members.contains(id) => {
@@ -113,9 +104,9 @@ where
     }
 }
 
-impl IsStableState<Membership> for HashSet<ReplicaId> {
+impl IsStableState<Membership> for FxHashSet<ReplicaId> {
     fn is_default(&self) -> bool {
-        self == &HashSet::default()
+        self == &FxHashSet::default()
     }
 
     fn apply(&mut self, value: Membership) {
@@ -141,15 +132,15 @@ impl IsStableState<Membership> for HashSet<ReplicaId> {
     }
 }
 
-impl<U> Eval<Read<HashSet<ReplicaId>>, U> for Membership
+impl<U> Eval<Read<FxHashSet<ReplicaId>>, U> for Membership
 where
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<ReplicaId>>,
+        _q: &Read<FxHashSet<ReplicaId>>,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<ReplicaId>> as QueryOperation>::Response {
+    ) -> <Read<FxHashSet<ReplicaId>> as QueryOperation>::Response {
         let mut members = stable.clone();
 
         for tagged_op in unstable.iter() {

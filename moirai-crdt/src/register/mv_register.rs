@@ -18,7 +18,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use crate::HashSet;
+use crate::FxHashSet;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -71,17 +71,17 @@ where
 {
 }
 
-impl<V, U> Eval<Read<HashSet<V>>, U> for MVRegister<V>
+impl<V, U> Eval<Read<FxHashSet<V>>, U> for MVRegister<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
+        _q: &Read<FxHashSet<V>>,
         stable: &<MVRegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
-        let mut set = HashSet::<V>::default();
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
+        let mut set = FxHashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
             if let MVRegister::Write(v) = o {
                 set.insert(v.clone());
@@ -118,7 +118,7 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        HashSet,
+        FxHashSet,
         register::mv_register::MVRegister,
         utils::{
             membership::{triplet, twins},
@@ -135,7 +135,7 @@ mod tests {
 
         assert_eq!(
             replica_a.query(&Read::new()),
-            HashSet::from_iter(["a"].iter().cloned())
+            FxHashSet::from_iter(["a"].iter().cloned())
         );
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
 
@@ -245,11 +245,11 @@ mod tests {
             None,
             None,
         )];
-        let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
+        let config = FuzzerConfig::<Log, Read<FxHashSet<i32>>>::new(
             "mv_register",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
-        fuzzer::<Log, Read<HashSet<i32>>>(config);
+        fuzzer::<Log, Read<FxHashSet<i32>>>(config);
     }
 }

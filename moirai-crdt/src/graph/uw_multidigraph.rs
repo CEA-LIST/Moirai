@@ -23,7 +23,7 @@ use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
 use rand::{Rng, seq::IteratorRandom};
 
-use crate::HashMap;
+use crate::FxHashMap;
 
 type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, E), El>>;
 
@@ -59,8 +59,8 @@ where
     Vl: IsLog,
     El: IsLog,
 {
-    vertices: HashMap<V, Vl>,
-    arcs: HashMap<(V, V, E), El>,
+    vertices: FxHashMap<V, Vl>,
+    arcs: FxHashMap<(V, V, E), El>,
 }
 
 #[derive(Clone, Debug)]
@@ -268,8 +268,8 @@ where
 {
     fn default() -> Self {
         Self {
-            arcs: HashMap::default(),
-            vertices: HashMap::default(),
+            arcs: FxHashMap::default(),
+            vertices: FxHashMap::default(),
         }
     }
 }
@@ -287,7 +287,7 @@ where
         _q: &Read<LabeledMultidigraph<V, E, VLabel, ELabel>>,
     ) -> <Read<LabeledMultidigraph<V, E, VLabel, ELabel>> as QueryOperation>::Response {
         let mut graph = LabeledMultidigraph::new();
-        let mut node_idx = HashMap::default();
+        let mut node_idx = FxHashMap::default();
         for (v, child) in self.vertices.iter() {
             if child.is_default() {
                 continue;

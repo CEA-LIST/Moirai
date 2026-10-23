@@ -19,7 +19,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
-use crate::HashSet;
+use crate::FxHashSet;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -33,7 +33,7 @@ impl<V> ReplicatedDataType for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
-    type StableState = HashSet<V>;
+    type StableState = FxHashSet<V>;
     type Rejection = Infallible;
 
     fn redundant_itself<'a>(
@@ -79,16 +79,16 @@ where
 {
 }
 
-impl<V, U> Eval<Read<HashSet<V>>, U> for AWSet<V>
+impl<V, U> Eval<Read<FxHashSet<V>>, U> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
+        _q: &Read<FxHashSet<V>>,
         stable: &<AWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
         let mut set = stable.clone();
         for o in unstable.iter() {
             if let AWSet::Add(v) = o.op() {
@@ -116,7 +116,7 @@ where
     }
 }
 
-impl<V> IsStableState<AWSet<V>> for HashSet<V>
+impl<V> IsStableState<AWSet<V>> for FxHashSet<V>
 where
     V: Clone + Eq + Hash + Debug,
 {
@@ -193,7 +193,7 @@ mod tests {
     };
 
     use crate::{
-        HashSet,
+        FxHashSet,
         set::aw_set::AWSet,
         utils::{membership::twins_log, set_from_slice},
     };
@@ -262,7 +262,7 @@ mod tests {
         let event = replica_a.send(AWSet::Clear).unwrap();
         replica_b.receive(event);
 
-        let result = HashSet::default();
+        let result = FxHashSet::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }
@@ -449,13 +449,13 @@ mod tests {
         .with_log_size(replica_zero.clone())
         .without_log_stabilization();
 
-        let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>::new(
+        let config = FuzzerConfig::<VecLog<AWSet<usize>>, Read<FxHashSet<usize>>>::new(
             "aw_set",
             vec![run.clone()],
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<VecLog<AWSet<usize>>, Read<HashSet<usize>>>(config);
+        fuzzer::<VecLog<AWSet<usize>>, Read<FxHashSet<usize>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -493,13 +493,13 @@ mod tests {
         .with_replica_size(replica_zero.clone())
         .without_log_stabilization();
 
-        let config = FuzzerConfig::<Log, Read<HashSet<usize>>>::new(
+        let config = FuzzerConfig::<Log, Read<FxHashSet<usize>>>::new(
             "aw_set_commitment",
             vec![run],
             Predicate::new(Read::new(), |a, b| a == b),
         )
         .with_omega_oracle();
 
-        fuzzer::<Log, Read<HashSet<usize>>>(config);
+        fuzzer::<Log, Read<FxHashSet<usize>>>(config);
     }
 }

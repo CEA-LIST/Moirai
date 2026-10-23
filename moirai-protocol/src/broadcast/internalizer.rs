@@ -6,11 +6,9 @@ use std::{
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use elsa::FrozenVec;
+use rustc_hash::FxHashMap;
 
-use crate::{
-    replica::{ReplicaId, ReplicaIdx},
-    utils::hashmap::HashMap,
-};
+use crate::replica::{ReplicaId, ReplicaIdx};
 
 /// Append-only storage for replica IDs.
 ///
@@ -139,7 +137,7 @@ impl Debug for Translator {
 #[derive(Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Interner {
-    str_to_int: HashMap<ReplicaId, ReplicaIdx>,
+    str_to_int: FxHashMap<ReplicaId, ReplicaIdx>,
     int_to_str: Resolver,
     /// Each process keep a translation of its indices to the one of the other (matrix).
     /// Indices of the Vec = other process mapping
@@ -156,7 +154,7 @@ impl Default for Interner {
 impl Interner {
     pub fn new() -> Self {
         Self {
-            str_to_int: HashMap::default(),
+            str_to_int: FxHashMap::default(),
             int_to_str: Resolver {
                 inner: Rc::new(ReplicaIds::new()),
             },

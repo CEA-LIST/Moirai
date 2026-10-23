@@ -22,7 +22,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
-use crate::HashSet;
+use crate::FxHashSet;
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -33,7 +33,7 @@ pub enum RWSet<V> {
 }
 
 // TODO: maybe two hashsets is better?
-impl<V> IsStableState<RWSet<V>> for (HashSet<V>, Vec<RWSet<V>>)
+impl<V> IsStableState<RWSet<V>> for (FxHashSet<V>, Vec<RWSet<V>>)
 where
     V: Clone + Eq + Hash + Debug,
 {
@@ -84,7 +84,7 @@ impl<V> ReplicatedDataType for RWSet<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
-    type StableState = (HashSet<V>, Vec<RWSet<V>>);
+    type StableState = (FxHashSet<V>, Vec<RWSet<V>>);
     type Rejection = Infallible;
 
     fn redundant_itself<'a>(
@@ -127,7 +127,7 @@ where
         Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
     }
 
-    fn stabilize<'a>(
+    fn on_stabilize<'a>(
         tagged_op: &TaggedOp<Self>,
         stable: &mut Self::StableState,
         unstable: &mut impl IsUnstablePrune<Self>,
@@ -177,18 +177,18 @@ where
 {
 }
 
-impl<V, U> Eval<Read<HashSet<V>>, U> for RWSet<V>
+impl<V, U> Eval<Read<FxHashSet<V>>, U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
+        _q: &Read<FxHashSet<V>>,
         stable: &<RWSet<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
         let mut set = stable.0.clone();
-        let mut removed = HashSet::default();
+        let mut removed = FxHashSet::default();
 
         for o in unstable.iter().map(|t| t.op()) {
             match o {
@@ -291,7 +291,7 @@ mod tests {
     };
 
     use crate::{
-        HashSet,
+        FxHashSet,
         map::uw_map::{UWMap, UWMapLog},
         set::rw_set::RWSet,
         utils::{
@@ -313,7 +313,7 @@ mod tests {
         let event = replica_a.send(RWSet::Clear).unwrap();
         replica_b.receive(event);
 
-        let result = HashSet::default();
+        let result = FxHashSet::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
         assert_eq!(replica_a.query(&Contains("a")), false);
@@ -489,10 +489,10 @@ mod tests {
         replica_a.receive(spacer_b);
         replica_b.receive(spacer_a);
 
-        let read_a: HashSet<&str> = replica_a
+        let read_a: FxHashSet<&str> = replica_a
             .query(&Get::new(&"k", Read::new()))
             .unwrap_or_default();
-        let read_b: HashSet<&str> = replica_b
+        let read_b: FxHashSet<&str> = replica_b
             .query(&Get::new(&"k", Read::new()))
             .unwrap_or_default();
         let result = set_from_slice(&[]);
@@ -535,10 +535,10 @@ mod tests {
                 .unwrap();
             replica_a.receive(spacer_b);
             replica_b.receive(spacer_a);
-            let read_a: HashSet<&str> = replica_a
+            let read_a: FxHashSet<&str> = replica_a
                 .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
-            let read_b: HashSet<&str> = replica_b
+            let read_b: FxHashSet<&str> = replica_b
                 .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
             if read_a != read_b {
@@ -592,12 +592,12 @@ mod tests {
         let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None);
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<VecLog<RWSet<String>>, Read<HashSet<String>>>::new(
+        let config = FuzzerConfig::<VecLog<RWSet<String>>, Read<FxHashSet<String>>>::new(
             "rw_set",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<VecLog<RWSet<String>>, Read<HashSet<String>>>(config);
+        fuzzer::<VecLog<RWSet<String>>, Read<FxHashSet<String>>>(config);
     }
 }

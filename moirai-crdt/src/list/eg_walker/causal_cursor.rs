@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::BinaryHeap};
 
 use moirai_protocol::{event::id::EventId, state::unstable_state::CausalReplay};
 
-use crate::HashMap;
+use crate::FxHashMap;
 
 /// Events that must be undone and redone to move the prepared document to a
 /// new causal frontier.
@@ -56,14 +56,14 @@ where
     U: CausalReplay<O>,
 {
     #[allow(clippy::mutable_key_type)]
-    let mut sides: HashMap<EventId, Side> = HashMap::default();
+    let mut sides: FxHashMap<EventId, Side> = FxHashMap::default();
     let mut queue = BinaryHeap::new();
     let mut shared_count = 0usize;
 
     #[allow(clippy::mutable_key_type)]
     fn enqueue<O, U>(
         state: &U,
-        sides: &mut HashMap<EventId, Side>,
+        sides: &mut FxHashMap<EventId, Side>,
         queue: &mut BinaryHeap<QueueEntry>,
         shared_count: &mut usize,
         event_id: EventId,

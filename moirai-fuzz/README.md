@@ -44,7 +44,8 @@ Times use `Duration` internally and integer nanoseconds in JSON (`*_ns`). The te
 
 ### Other
 
-- **Stability Progress (SP):** Keep track of a replica's stability progresses.
+- **Stability Progress (SP):** Keep track of a replica's stability progresses (how many stabilizations during the execution, how frequently they occur).
+- **Commitment Progress (CP):** Keep track of a replica's commitment progresses (how many commitments during the execution, how frequently they occur). Only when a commitment oracle is used.
 
 ## Derived Metrics
 
@@ -66,68 +67,3 @@ Times use `Duration` internally and integer nanoseconds in JSON (`*_ns`). The te
 - Final log size (per replica), with tree structure of the nested logs.
 - Sampled peak replica size
 - Sampled peak root-log size, retaining the nested footprint tree
-
-> Note: the following sections are written using AI-assisted drafting.
-
-## Meaning of asymmetric reachability
-
-`reachability[r][peer]` currently enables an **interaction initiated by `r`**:
-both pulling missing updates _from_ `peer` and pushing `r`'s new update _to_
-`peer`. It is not a directed packet-delivery matrix: a pull also needs a reply
-in the opposite direction. Both endpoints must be online during normal execution.
-
-For example, with `reachability[A][B] = true` and
-`reachability[B][A] = false`:
-
-| Selected replica | Anti-entropy                        | Immediate delivery of the new update |
-| ---------------- | ----------------------------------- | ------------------------------------ |
-| A                | A pulls from B (updates flow B → A) | A → B                                |
-| B                | B does not pull from A              | No B → A push                        |
-
-Use symmetric matrices to model communication partitions. Asymmetric masks
-model asymmetric _interaction initiation_, not realistic one-way network links.
-This section documents the existing behavior; it does not change scheduling.
-
-## Sampling and phases
-
-Log stabilization and causal-stability recording are independent:
-`without_log_stabilization()` suppresses forwarding TCSB causal frontiers to the
-root log, while `with_track_stability(...)` records those frontiers regardless of
-whether they are applied. Neither builder changes the other's setting, so their
-order does not matter. `with_log_stabilization()` re-enables forwarding;
-`without_track_stability()` disables the recording. Commitment-driven child
-stabilization is unaffected. Tables label the metric **Causal stability** and
-show **Log stabilization** separately in the configuration. The JSON field is
-`disable_log_stabilization`; old reports using `disable_stability` still load.
-
-Each sample is tagged `execution`, `final_convergence`, or `validation` (the final convergence queries). Derived statistics include all phases (callers can use raw samples to analyze phases separately). Log-size samples use effect IDs, with distinct `effect`/`stability` boundaries. A stability snapshot reuses the preceding effect's ID and sampling decision.
-
-Per-replica statistics include sample counts. Run means have two explicit interpretations: `avg_response_time`/`avg_effect_time` pool all recorded samples, whereas `avg_replica_response_time`/`avg_replica_effect_time` weight each replica with at least one sample equally. Replicas with zero samples do not contribute to either mean. Durations are rounded down to whole nanoseconds.
-
-Whole-replica sizing walks the underlying replica ID, TCSB, and unwrapped log with one shared `DeepSizeOf` context, counting shared `Rc`/`Arc` allocations once. Observer layouts, sampling configuration, RNGs, and recorder buffers are excluded. Sizes remain allocation-footprint estimates, not process RSS or allocator bookkeeping measurements.
-
-### Container footprint display
-
-Commitment-log trees expose the application child, the leader-vote log
-(`POLog<LeaderVote, EventHistory<LeaderVote>>`), and the
-`CommitmentProtocol<Omega>` state as separate children. The protocol node includes
-the candidate-support table. Observer wrappers and recorder storage remain
-excluded. These are inclusive component footprints, so shared allocations can
-appear in more than one child; the root remains the independently deduplicated
-total, rather than a sum of its displayed children.
-
-Terminal footprint trees show at most **five individual children per node**, choosing the largest inclusive footprints and displaying them in descending size order. Equal sizes retain their original tree order. Remaining siblings are summarized in one branch, for example `└── … 2 341 more children — Σ 1.200 MB`. The same limit applies recursively to every displayed node, including repeated child types in maps, lists, and other containers. Sorting affects presentation only, not the captured tree.
-
-Summary sizes sum only the omitted direct children's inclusive footprints: their descendants are already included and are not added again. These sums are **not** deduplicated allocation totals; shared allocations can overlap, so do not add summaries to the root size. Root and individual node sizes remain the original inclusive measurements. Rendering is also limited to 40 tree lines and eight child levels; when either limit is reached, omitted children still receive a count-and-size summary. The complete trees in reports and JSON are unchanged.
-
-This reduces terminal output only, not the cost of capturing footprint trees.
-
-## Concurrency calculation
-
-For each issued event, the non-origin components of its version vector count its causal predecessors from other replicas. Summing these counts gives the number of comparable cross-origin event pairs, with each pair counted once. If replica `r` issued `n_r` events, the total number of cross-origin pairs is `sum_{r < s}(n_r * n_s)`. ICR is the fraction of these pairs that are incomparable, or zero when there are no such pairs.
-
-Counts use `u128` and are accumulated while events are appended. For `N` events and `R` replicas, ICR counting takes `O(N * R)` time and `O(R)` additional memory. Every send must be included once, starting at sequence one for each origin, with causal dependencies appended first.
-
-`avg_concurrent_updates` is `2 * concurrent_pairs / N`: each concurrent pair contributes one partner to each of its two updates. This counts concurrency across the complete execution. An empty execution has no average. Both concurrency metrics are computed when execution-graph capture is enabled and are independent of replica metric sampling.
-
-DOT export first performs transitive reduction: redundant edges are removed without changing events or causal reachability. Reduction uses per-origin causal clocks, taking `O(N * R^2)` time and `O(N * R)` temporary memory. A progress bar is shown for graphs with at least 1,000 updates when display is enabled. Repeated exports reuse the reduced graph unless another update was appended.

@@ -134,10 +134,7 @@ where
                 );
             }
             NestedList::Delete { pos } => {
-                let positions_at_version =
-                    self.positions.eval(&ReadAt::new(event.version())).expect(
-                        "NestedList invariant: delivered delete predates the positions checkpoint",
-                    );
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
@@ -151,10 +148,7 @@ where
                 );
             }
             NestedList::Update { pos, op } => {
-                let positions_at_version =
-                    self.positions.eval(&ReadAt::new(event.version())).expect(
-                        "NestedList invariant: delivered update predates the positions checkpoint",
-                    );
+                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
@@ -321,7 +315,7 @@ mod tests {
     #[cfg(feature = "test_utils")]
     use crate::list::eg_walker::List;
     use crate::{
-        HashMap,
+        FxHashMap,
         counter::resettable_counter::Counter,
         list::nested_list::{NestedList, NestedListLog},
         map::uw_map::{UWMap, UWMapLog},
@@ -631,7 +625,7 @@ mod tests {
             .send(UWMap::Update("a", NestedList::update(0, Counter::Inc(1))))
             .unwrap();
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("a", vec![11, 5]);
         assert_eq!(replica_a.query(&Read::new()), result);
 
@@ -648,7 +642,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("a", vec![100]);
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);

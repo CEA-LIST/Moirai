@@ -1,3 +1,5 @@
+//! A trait for boxing and unboxing values.
+
 pub trait Boxer<Boxed> {
     fn boxer(self) -> Boxed;
 

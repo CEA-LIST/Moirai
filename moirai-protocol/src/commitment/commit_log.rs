@@ -69,9 +69,10 @@ where
         self.leader_log.effect(vote_event, ctx);
 
         // Compute the new supports
-        let deltas = self
-            .leader_log
-            .execute_query(&NewSupports::new(vote_event_id));
+        let deltas = self.leader_log.execute_query(&NewSupports::new(
+            vote_event_id,
+            self.protocol.last_committed().cloned(),
+        ));
 
         // Gather the new anchors
         let candidate_anchors = self.protocol.apply_support_deltas(deltas);
@@ -91,24 +92,18 @@ where
             && self.protocol.advance_commitment(&candidate)
         {
             let frontier = CausalFrontier::from(&candidate);
+
+            self.protocol
+                .prune_support(&frontier, self.leader_log.unstable());
+
             self.child.stabilize(&frontier);
-            self.leader_log.stabilize(&frontier);
+            self.leader_log
+                .stabilize(&CommitmentLog::<L>::strict_past_frontier(frontier));
         }
     }
 
-    fn stabilize(&mut self, frontier: &CausalFrontier) {
-        let mut committed = self
-            .protocol
-            .last_committed()
-            .cloned()
-            .unwrap_or_else(|| CausalFrontier::new(frontier.resolver().clone()));
-        let previous = committed.clone();
-        committed.join(frontier);
-
-        if committed != previous {
-            self.protocol.update_last_committed(committed.clone());
-            self.child.stabilize(&committed);
-        }
+    fn stabilize(&mut self, _frontier: &CausalFrontier) {
+        // Causal stability and commitment are conflicting
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -153,6 +148,18 @@ where
     /// Read-only access to commitment state, including candidate support.
     pub fn protocol(&self) -> &CommitmentProtocol<Omega> {
         &self.protocol
+    }
+
+    pub fn strict_past_frontier(frontier: CausalFrontier) -> CausalFrontier {
+        let mut new_frontier = CausalFrontier::new(frontier.resolver().clone());
+
+        for (idx, value) in frontier.iter() {
+            if value > 0 {
+                new_frontier.set_by_idx(idx, value - 1);
+            }
+        }
+
+        new_frontier
     }
 }
 

@@ -23,7 +23,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
-use crate::HashMap;
+use crate::FxHashMap;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -40,7 +40,7 @@ where
     K: Clone + Eq + Hash,
     L: IsLog,
 {
-    children: HashMap<K, L>,
+    children: FxHashMap<K, L>,
 }
 
 impl<K, L> Default for UWMapLog<K, L>
@@ -64,7 +64,7 @@ where
         Self::default()
     }
 
-    pub fn children(&self) -> &HashMap<K, L> {
+    pub fn children(&self) -> &FxHashMap<K, L> {
         &self.children
     }
 
@@ -169,7 +169,7 @@ where
     }
 }
 
-impl<K, L, V> EvalNested<Read<HashMap<K, V>>> for UWMapLog<K, L>
+impl<K, L, V> EvalNested<Read<FxHashMap<K, V>>> for UWMapLog<K, L>
 where
     L: IsLog + EvalNested<Read<V>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
@@ -177,9 +177,9 @@ where
 {
     fn execute_query(
         &self,
-        _q: &Read<HashMap<K, V>>,
-    ) -> <Read<HashMap<K, V>> as QueryOperation>::Response {
-        let mut map: HashMap<K, V> = HashMap::default();
+        _q: &Read<FxHashMap<K, V>>,
+    ) -> <Read<FxHashMap<K, V>> as QueryOperation>::Response {
+        let mut map: FxHashMap<K, V> = FxHashMap::default();
         for (k, v) in &self.children {
             let val: V = v.execute_query(&Read::new());
             if val != V::default() {
@@ -278,7 +278,7 @@ mod tests {
     };
 
     use crate::{
-        HashMap,
+        FxHashMap,
         counter::resettable_counter::Counter,
         list::{
             eg_walker::List,
@@ -326,7 +326,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
         assert_eq!(map, replica_a.query(&Read::new()));
@@ -345,7 +345,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(String::from("a"), 10);
         assert_eq!(map, replica_a.query(&Read::new()));
         assert_eq!(map, replica_b.query(&Read::new()));
@@ -388,7 +388,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -424,7 +424,7 @@ mod tests {
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -452,7 +452,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -481,7 +481,7 @@ mod tests {
         let event = replica_a.send(UWMap::Remove("b".to_string())).unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -597,7 +597,7 @@ mod tests {
         replica_c.receive(event_b_1.clone());
         replica_c.receive(event_a_2.clone());
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             "scores".to_string(),
             vec![
@@ -635,7 +635,7 @@ mod tests {
         let event_b = replica_b.send(UWMap::Remove("doc".to_string())).unwrap();
         replica_a.receive(event_b);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }
@@ -657,8 +657,8 @@ mod tests {
         let _ = replica_a.send(UWMap::Clear).unwrap();
 
         assert_eq!(
-            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
-            HashMap::default()
+            replica_a.query(&Read::<FxHashMap<String, Vec<char>>>::new()),
+            FxHashMap::default()
         );
     }
 
@@ -688,7 +688,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_c);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("doc".to_string(), vec!['A']);
 
         assert_eq!(replica_a.query(&Read::new()), result);
@@ -734,7 +734,7 @@ mod tests {
         replica_b.receive(event_c_1);
         replica_b.receive(event_c_2);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
 
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_c.query(&Read::new()), result);
@@ -755,13 +755,13 @@ mod tests {
         let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 1_000, None, None);
         let runs = vec![run.clone(); 1];
 
-        let config = FuzzerConfig::<UWMapNested, Read<HashMap<String, String>>>::new(
+        let config = FuzzerConfig::<UWMapNested, Read<FxHashMap<String, String>>>::new(
             "uw_map",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<UWMapNested, Read<HashMap<String, String>>>(config);
+        fuzzer::<UWMapNested, Read<FxHashMap<String, String>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -776,10 +776,10 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        use crate::{HashSet, set::rw_set::RWSet};
+        use crate::{FxHashSet, set::rw_set::RWSet};
 
         type UWMapNested = UWMapLog<String, VecLog<RWSet<i32>>>;
-        type Value = Read<HashMap<String, HashSet<i32>>>;
+        type Value = Read<FxHashMap<String, FxHashSet<i32>>>;
 
         let replica_zero =
             MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));

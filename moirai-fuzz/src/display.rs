@@ -447,10 +447,15 @@ fn add_metric_row(table: &mut Table, category: &str, metric: &str, value: String
 }
 
 fn add_tree_metric_row(table: &mut Table, category: &str, metric: &str, value: String) {
+    let alignment = if value == not_available() {
+        CellAlignment::Right
+    } else {
+        CellAlignment::Left
+    };
     table.add_row(vec![
         Cell::new(category),
         Cell::new(metric),
-        Cell::new(value).set_alignment(CellAlignment::Left),
+        Cell::new(value).set_alignment(alignment),
     ]);
 }
 

@@ -39,7 +39,7 @@ pub trait IsLog: Default {
         Self::execute_query(self, q)
     }
 
-    /// Stabilize the log at a component-wise causal frontier.
+    /// Stabilize the log at a component-wise causally stable frontier.
     fn stabilize(&mut self, frontier: &CausalFrontier);
 
     /// Prune the log by removing events that are redundant.

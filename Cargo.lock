@@ -502,7 +502,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "moirai-crdt"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bitrep",
  "deepsize",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "moirai-fuzz"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bimap",
  "chrono",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "moirai-macros"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "deepsize",
  "moirai-fuzz",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "moirai-protocol"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bimap",
  "castaway",

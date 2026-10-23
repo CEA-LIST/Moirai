@@ -286,7 +286,7 @@ macro_rules! typed_graph {
             ::std::primitive::usize,
         )> {
             let mut constraints = ::std::vec::Vec::new();
-            let mut seen_edge_types: $crate::HashSet<TypedGraphEdgeType> =
+            let mut seen_edge_types: $crate::FxHashSet<TypedGraphEdgeType> =
                 ::std::default::Default::default();
             $(
                 if let $vertex::$src(_) = vertex {
@@ -316,7 +316,7 @@ macro_rules! typed_graph {
             let mut addable = ::std::vec::Vec::new();
             let mut removable = ::std::vec::Vec::new();
 
-            let existing_edges: $crate::HashSet<($vertex, $vertex, $edge)> = graph
+            let existing_edges: $crate::FxHashSet<($vertex, $vertex, $edge)> = graph
                 .edge_indices()
                 .filter_map(|ei| {
                     let (si, ti) = graph.edge_endpoints(ei)?;
@@ -331,7 +331,7 @@ macro_rules! typed_graph {
             for source_idx in graph.node_indices() {
                 let source = &graph[source_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<
+                let mut outgoing_by_type: $crate::FxHashMap<
                     TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
@@ -450,7 +450,7 @@ macro_rules! typed_graph {
             for node_idx in graph.node_indices() {
                 let source = &graph[node_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<
+                let mut outgoing_by_type: $crate::FxHashMap<
                     TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
@@ -726,7 +726,7 @@ macro_rules! typed_graph {
                     .collect();
 
                 let mut graph = ::petgraph::graph::DiGraph::new();
-                let mut node_index: $crate::HashMap<$vertex, _> =
+                let mut node_index: $crate::FxHashMap<$vertex, _> =
                     ::std::default::Default::default();
 
                 // First add all vertices
@@ -742,7 +742,7 @@ macro_rules! typed_graph {
 
                 // Collect deduplicated arc candidates
                 // TODO: if the backend log is ordered, we could add arcs in one pass and skip this deduplication step
-                let mut deduped_arcs: $crate::HashMap<
+                let mut deduped_arcs: $crate::FxHashMap<
                     ($vertex, $vertex, $edge),
                     ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
                 > = ::std::default::Default::default();
@@ -794,7 +794,7 @@ macro_rules! typed_graph {
                 // MAX enforcement per (source, edge_type) group
                 // We assume that their can exist at most one arc of a given type between a given source and target,
                 // so we only need to enforce MAX constraints per (source, edge_type) group
-                let mut groups: $crate::HashMap<
+                let mut groups: $crate::FxHashMap<
                     ($vertex, TypedGraphEdgeType),
                     ::std::vec::Vec<::std::primitive::usize>,
                 > = ::std::default::Default::default();

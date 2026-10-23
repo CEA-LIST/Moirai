@@ -8,10 +8,7 @@ pub mod vec;
 use std::range::Range;
 
 use crate::{
-    clock::{
-        causal_frontier::CausalFrontier,
-        version_vector::{Seq, Version},
-    },
+    clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
 };
@@ -20,12 +17,6 @@ use crate::{
 /// Core services include appending, retrieving and iterating over tagged operations.
 /// As such, it is "grow-only".
 pub trait IsUnstableCore<O> {
-    /// Earliest retained causal cut. Older or concurrent versions cannot be
-    /// reconstructed from the stable snapshot and this history.
-    fn retention_boundary(&self) -> Option<&CausalFrontier> {
-        None
-    }
-
     /// Append an event to the unstable state.
     fn append(&mut self, event: Event<O>);
     /// Get a tagged operation from the unstable state by its ID.
@@ -102,8 +93,6 @@ pub trait IsUnstableDelivery<O>: IsUnstableCore<O> {
 
 /// Service for replaying events in an unstable state.
 /// Requires the unstable state to support core, causal, and delivery services.
-/// Iteration must be topological and agree with delivery ranks: every retained
-/// parent precedes its children, including after pruning or checkpointing.
 pub trait CausalReplay<O>: IsUnstableCore<O> + IsUnstableCausal<O> + IsUnstableDelivery<O> {}
 
 impl<O, T> CausalReplay<O> for T where

@@ -115,9 +115,7 @@ fn read_at_uses_stable_document() {
     replica_a.send(List::delete(1)).unwrap();
 
     assert_eq!(
-        replica_a
-            .query(&ReadAt::<Vec<char>>::new(&insert_version))
-            .unwrap(),
+        replica_a.query(&ReadAt::<Vec<char>>::new(&insert_version)),
         vec!['a', 'X', 'b', 'c']
     );
     assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
@@ -189,7 +187,7 @@ fn replay_preserves_positions_across_overlapping_deletes_and_updates() {
     for (replica, (version, expected)) in [&a, &b, &c].into_iter().zip(historical) {
         assert_eq!(replica.query(&Read::<String>::new()), "XYac");
         assert_eq!(
-            replica.query(&ReadAt::<Vec<char>>::new(&version)).unwrap(),
+            replica.query(&ReadAt::<Vec<char>>::new(&version)),
             expected.chars().collect::<Vec<_>>()
         );
     }
@@ -354,12 +352,6 @@ fn in_paper() {
 
     let e4_version = e4.event().version();
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hi");
-    assert_eq!(
-        replica_a
-            .query(&ReadAt::<Vec<char>>::new(e4_version))
-            .unwrap(),
-        vec!['H', 'i']
-    );
 
     // e5: Delete(1) (remove 'i') on other branch
     let e5 = replica_b.send(List::delete(1)).unwrap();
@@ -383,11 +375,7 @@ fn in_paper() {
     replica_a.receive(e8.clone());
 
     // Final result should be "Hey!"
-    assert!(
-        replica_a
-            .query(&ReadAt::<Vec<char>>::new(e4_version))
-            .is_err()
-    );
+    assert_eq!(replica_a.query(&ReadAt::new(e4_version)), vec!['H', 'i']);
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hey!");
     assert_eq!(
         &replica_a.query(&Read::<String>::new()),
@@ -562,7 +550,7 @@ fn regression_2() {
     assert_eq!(state_b, result);
 }
 
-/// Check cached values after concurrent edits and automatic checkpointing.
+/// Simulate a long sequence of operations to test caching and performance.
 #[cfg(feature = "test_utils")]
 #[test]
 fn caching() {
@@ -595,23 +583,42 @@ fn caching() {
         }
     }
 
-    assert!(replica_a.state().inner().retention_boundary().is_some());
-    let expected = replica_a.query(&Read::<String>::new());
-    for _ in 0..2 {
-        assert_eq!(
-            replica_a.state().read_ref().iter().collect::<String>(),
-            expected
-        );
-    }
-    replica_a.send(List::insert('A', 0)).unwrap();
-    assert_eq!(
-        replica_a.state().read_ref().iter().collect::<String>(),
-        format!("A{expected}")
+    let time = std::time::Instant::now();
+    let _ = replica_a
+        .state()
+        .read_ref()
+        .iter()
+        .cloned()
+        .collect::<String>();
+    let elapsed_no_caching = time.elapsed();
+
+    let time = std::time::Instant::now();
+    let _ = replica_a
+        .state()
+        .read_ref()
+        .iter()
+        .cloned()
+        .collect::<String>();
+    let elapsed_with_caching_1 = time.elapsed();
+
+    let _ = replica_a.send(List::insert('A', 0)).unwrap();
+
+    let time = std::time::Instant::now();
+    let _ = replica_a
+        .state()
+        .read_ref()
+        .iter()
+        .cloned()
+        .collect::<String>();
+    let elapsed_with_caching_2 = time.elapsed();
+
+    println!(
+        "Elapsed without caching: {:?}, with caching 1: {:?}, with caching 2: {:?}",
+        elapsed_no_caching, elapsed_with_caching_1, elapsed_with_caching_2
     );
-    assert_eq!(
-        replica_a.query(&Read::<String>::new()),
-        format!("A{expected}")
-    );
+
+    assert!(elapsed_with_caching_1 * 100 < elapsed_no_caching);
+    assert!(elapsed_with_caching_2 * 100 < elapsed_no_caching);
 }
 
 #[cfg(feature = "fuzz")]
@@ -641,4 +648,35 @@ fn fuzz_list() {
     );
 
     fuzzer::<GraphLog<List<char>>, Read<String>>(config);
+}
+
+#[cfg(feature = "fuzz")]
+#[test]
+#[ignore]
+fn fuzz_list_commitment() {
+    use std::num::NonZeroUsize;
+
+    use moirai_fuzz::{
+        config::{ChurnConfig, FuzzerConfig, MetricsSampling, Predicate, RunConfig},
+        fuzzer::fuzzer,
+    };
+    use moirai_protocol::commitment::commit_log::CommitmentLog;
+
+    type Log = CommitmentLog<GraphLog<List<char>>>;
+
+    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 2_000, None, None)
+        .with_effect_time(MetricsSampling::every_replica(
+            NonZeroUsize::new(1).unwrap(),
+        ))
+        .without_log_stabilization();
+    let runs = vec![run; 1];
+
+    let config = FuzzerConfig::<Log, Read<String>>::new(
+        "list_commitment",
+        runs,
+        Predicate::new(Read::new(), |a, b| a == b),
+    )
+    .with_omega_oracle();
+
+    fuzzer::<Log, Read<String>>(config);
 }

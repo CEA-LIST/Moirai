@@ -1,6 +1,7 @@
 use std::{convert::Infallible, range::Range};
 
 use crate::{
+    clock::causal_frontier::CausalFrontier,
     crdt::{
         eval::Eval,
         query::QueryOperation,
@@ -11,7 +12,7 @@ use crate::{
     replica::{ReplicaId, ReplicaIdx},
     state::{
         stable_state::IsStableState,
-        unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
+        unstable_state::{IsUnstableCausal, IsUnstableCore},
     },
 };
 
@@ -25,8 +26,8 @@ impl ReplicatedDataType for LeaderVote {
     type StableState = ();
     type Rejection = Infallible;
 
-    const DISABLE_R_WHEN_R: bool = false;
-    const DISABLE_R_WHEN_NOT_R: bool = false;
+    const DISABLE_R_WHEN_R: bool = true;
+    const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_STABILIZE: bool = false;
 
     fn redundant_itself<'a>(
@@ -56,13 +57,6 @@ impl ReplicatedDataType for LeaderVote {
         _new_tagged_op: &TaggedOp<Self>,
     ) -> bool {
         false
-    }
-
-    fn stabilize(
-        _tagged_op: &TaggedOp<Self>,
-        _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstablePrune<Self>,
-    ) {
     }
 
     fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
@@ -103,7 +97,7 @@ impl<U> UsesUnstableService<U> for LeaderVote where U: IsUnstableCore<Self> {}
 
 fn supports<U>(log: &U, event_id: &EventId, supporter: ReplicaIdx) -> bool
 where
-    U: IsUnstableCausal<LeaderVote>,
+    U: IsUnstableCausal<LeaderVote> + ?Sized,
 {
     let previous = log.previous(event_id, supporter);
     let next = log.next(event_id, supporter);
@@ -143,11 +137,15 @@ pub struct SupportDelta {
 #[derive(Debug, Clone)]
 pub struct NewSupports {
     observer: EventId,
+    last_committed: Option<CausalFrontier>,
 }
 
 impl NewSupports {
-    pub fn new(observer: EventId) -> Self {
-        Self { observer }
+    pub fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
+        Self {
+            observer,
+            last_committed,
+        }
     }
 }
 
@@ -180,7 +178,19 @@ where
         unstable
             .newly_observed_by(&q.observer)
             .into_iter()
-            .filter(|candidate| supports(unstable, candidate.id(), supporter))
+            .filter(|candidate| {
+                if let Some(last_committed) = &q.last_committed {
+                    if last_committed.contains(candidate.id()) {
+                        return false;
+                    }
+                    if let Some(version) = unstable.version(candidate.id())
+                        && !version.includes_frontier(last_committed)
+                    {
+                        return false;
+                    }
+                }
+                supports(unstable, candidate.id(), supporter)
+            })
             .map(|candidate| SupportDelta {
                 candidate: candidate.id().clone(),
                 supporter,

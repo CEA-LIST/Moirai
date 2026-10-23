@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     broadcast::{
@@ -13,7 +14,6 @@ use crate::{
     clock::{causal_frontier::CausalFrontier, matrix_clock::MatrixClock, version_vector::Version},
     event::{Event, id::EventId, lamport::Lamport},
     replica::{ReplicaId, ReplicaIdx},
-    utils::hashmap::{HashMap, HashSet},
 };
 
 /// Services of the Tagged Causal Stable Broadcast communication protocol.
@@ -46,11 +46,11 @@ pub struct Tcsb<O> {
     replica_idx: ReplicaIdx,
     /// Received events not yet causally ready.
     /// It contains only events from other replicas than the local one.
-    inbox: HashMap<EventId, Event<O>>,
+    inbox: FxHashMap<EventId, Event<O>>,
     /// Events waiting to be broadcast.
     /// It contains events from all replicas, including the local one.
     /// Organized by replica index and then by sequence number for efficient range queries.
-    outbox: HashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
+    outbox: FxHashMap<ReplicaIdx, BTreeMap<usize, Event<O>>>,
     /// The matrix clock tracks the latest known version of each replica, including the local one.
     matrix_clock: MatrixClock,
     /// Component-wise cut containing every event delivered by all replicas.
@@ -68,8 +68,8 @@ where
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
         Self {
-            inbox: HashMap::default(),
-            outbox: HashMap::default(),
+            inbox: FxHashMap::default(),
+            outbox: FxHashMap::default(),
             matrix_clock: MatrixClock::new(replica_idx, resolver.clone()),
             last_stable_version: CausalFrontier::new(resolver.clone()),
             interner,
@@ -164,7 +164,7 @@ where
 
     fn since(&self) -> SinceMessage {
         #[allow(clippy::mutable_key_type)]
-        let except: HashSet<EventId> = self.inbox.keys().cloned().collect();
+        let except: FxHashSet<EventId> = self.inbox.keys().cloned().collect();
         let version = self.matrix_clock.origin_version().clone();
         let since = Since::new(version, except);
         SinceMessage::new(since, self.interner.resolver().clone())
@@ -286,7 +286,7 @@ where
         );
 
         #[allow(clippy::mutable_key_type)]
-        let except: HashSet<EventId> = since
+        let except: FxHashSet<EventId> = since
             .except()
             .iter()
             .map(|e_id| {

@@ -25,7 +25,7 @@ use petgraph::visit::EdgeRef;
 #[cfg(feature = "fuzz")]
 use rand::seq::IteratorRandom;
 
-use crate::{HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -201,8 +201,8 @@ where
             _ => Ordering::Equal,
         });
         let mut graph = DiGraph::new();
-        let mut node_index = HashMap::default();
-        let mut edge_index: HashSet<(&V, &V, &E)> = HashSet::default();
+        let mut node_index = FxHashMap::default();
+        let mut edge_index: FxHashSet<(&V, &V, &E)> = FxHashSet::default();
         for o in ops {
             match o {
                 Graph::AddVertex(v) => {

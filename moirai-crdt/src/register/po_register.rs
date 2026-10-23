@@ -18,7 +18,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use crate::HashSet;
+use crate::FxHashSet;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -71,18 +71,18 @@ where
 {
 }
 
-impl<V, U> Eval<Read<HashSet<V>>, U> for PORegister<V>
+impl<V, U> Eval<Read<FxHashSet<V>>, U> for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
     U: IsUnstableCore<Self>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
+        _q: &Read<FxHashSet<V>>,
         stable: &<PORegister<V> as ReplicatedDataType>::StableState,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
         // The set can contain only incomparable values
-        let mut set = HashSet::<V>::default();
+        let mut set = FxHashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|to| to.op())) {
             if let PORegister::Write(v) = o {
                 // We add the value if there is no v' in the set that is superior to v
@@ -140,7 +140,7 @@ mod tests {
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        use crate::HashSet;
+        use crate::FxHashSet;
 
         type Log = VecLog<PORegister<i32>>;
         let runs = vec![RunConfig::new(
@@ -150,12 +150,12 @@ mod tests {
             None,
             None,
         )];
-        let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
+        let config = FuzzerConfig::<Log, Read<FxHashSet<i32>>>::new(
             "po_register",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
-        fuzzer::<Log, Read<HashSet<i32>>>(config);
+        fuzzer::<Log, Read<FxHashSet<i32>>>(config);
     }
 
     #[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]

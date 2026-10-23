@@ -24,16 +24,6 @@ pub struct CacheCell<V> {
     value: OnceCell<V>,
 }
 
-#[cfg(feature = "test_utils")]
-impl<V: deepsize::DeepSizeOf> deepsize::DeepSizeOf for CacheCell<V> {
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        // OnceCell stores V inline. Measure only its children and never populate
-        // an empty cache as a side effect of measuring it.
-        self.get()
-            .map_or(0, |value| value.deep_size_of_children(context))
-    }
-}
-
 impl<V> CacheCell<V> {
     pub fn new() -> Self {
         Self {
@@ -77,6 +67,16 @@ impl<V> Clone for CacheCell<V> {
         // Cache contents are derived from the log and can be recomputed. Cloning a log starts
         // with an empty cache to avoid adding a `V: Clone` bound to log clones.
         Self::new()
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<V: deepsize::DeepSizeOf> deepsize::DeepSizeOf for CacheCell<V> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        // OnceCell stores V inline. Measure only its children and never populate
+        // an empty cache as a side effect of measuring it.
+        self.get()
+            .map_or(0, |value| value.deep_size_of_children(context))
     }
 }
 

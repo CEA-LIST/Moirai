@@ -11,7 +11,7 @@ use super::{
     document::Document,
     item::{ItemId, LifeDot},
 };
-use crate::HashMap;
+use crate::FxHashMap;
 
 /// Targets are resolved once in the operation's parent version, then reused
 /// whenever replay crosses that event again.
@@ -125,7 +125,7 @@ where
     let mut document = Document::new(stable);
     let mut prepared_head = None;
     #[allow(clippy::mutable_key_type)]
-    let mut effects = HashMap::<EventId, AppliedEffect>::default();
+    let mut effects = FxHashMap::<EventId, AppliedEffect>::default();
 
     for event in events {
         let parents = unstable.direct_predecessors(event.id());

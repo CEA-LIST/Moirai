@@ -107,18 +107,7 @@ where
         <O as UsesUnstableService<EventGraph<O>>>::is_enabled(op, &self.stable, &self.unstable)
     }
 
-    fn stabilize(&mut self, frontier: &CausalFrontier) {
-        let prefix_len = self.unstable.stable_critical_prefix(frontier);
-        if prefix_len > 0
-            && let Some(snapshot) = O::checkpoint(&self.stable, &self.unstable, prefix_len)
-        {
-            // Build both replacements before committing either one.
-            let retained = self.unstable.after_checkpoint(prefix_len);
-            self.stable = snapshot;
-            self.unstable = retained;
-        }
-        self.unstable.stabilize(frontier);
-    }
+    fn stabilize(&mut self, _frontier: &CausalFrontier) {}
 }
 
 impl<O> Default for GraphLog<O>
@@ -145,27 +134,11 @@ where
         &self.unstable
     }
 
-    /// Start a new history from a supplied baseline. To restore flushed history,
-    /// use `from_checkpoint` so its retention boundary is preserved as well.
     pub fn from_stable(stable: <O as ReplicatedDataType>::StableState) -> Self {
         Self {
             stable,
             unstable: Default::default(),
         }
-    }
-
-    /// Restore a snapshot together with its retention boundary. The frontier
-    /// must use the same replica mapping as subsequent events and queries;
-    /// the broadcast layer must also be restored to at least this causal cut.
-    pub fn from_checkpoint(stable: O::StableState, boundary: CausalFrontier) -> Self {
-        Self {
-            stable,
-            unstable: EventGraph::from_checkpoint(boundary),
-        }
-    }
-
-    pub fn retention_boundary(&self) -> Option<&CausalFrontier> {
-        self.unstable.retention_boundary()
     }
 }
 

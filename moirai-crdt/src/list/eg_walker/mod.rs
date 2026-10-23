@@ -11,7 +11,7 @@ mod item;
 mod presence_state;
 mod replay;
 
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -126,8 +126,7 @@ where
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
-    // Per-operation folding is unsafe for positional operations. GraphLog uses
-    // the whole-prefix checkpoint hook instead.
+    // Per-operation folding is unsafe for positional operations.
     const DISABLE_STABILIZE: bool = true;
 }
 
@@ -136,24 +135,11 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn checkpoint(
-        stable: &Self::StableState,
-        unstable: &U,
-        prefix_len: usize,
-    ) -> Option<Self::StableState> {
-        Some(replay_document(stable, unstable, unstable.iter().take(prefix_len)).materialize())
-    }
-
-    /// Validate positional operations against the current visible document.
-    ///
-    /// EgWalker operations store user-facing positions, so enablement is checked by
-    /// reading the current state and comparing the requested position with its
-    /// length.
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
         unstable: &U,
-    ) -> Result<(), Self::Rejection> {
+    ) -> Result<(), ListRejection> {
         let state_len = Self::visible_len(stable, unstable);
         match op {
             List::Insert { pos, .. } => {
@@ -192,8 +178,6 @@ where
         if !conservative {
             return CausalReset::Prune;
         }
-        check_retained(version, unstable.retention_boundary())
-            .expect("Eg-Walker invariant: causal reset predates retained history");
         let predecessors = unstable.predecessors(version);
         let len = replay_document(stable, unstable, predecessors).visible_len();
         CausalReset::Inject(vec![List::DeleteRange { start: 0, len }])
@@ -206,7 +190,7 @@ where
     U: CausalReplay<Self>,
 {
     fn execute_query(_q: &Read<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
-        replay_document(stable, unstable, unstable.iter()).materialize()
+        replay_document(stable, unstable, unstable.iter()).to_list()
     }
 }
 
@@ -231,11 +215,6 @@ where
 }
 
 /// Read the list at a historical version.
-///
-/// The unstable log supplies the predecessor events for the requested version,
-/// and the same replay algorithm is used on that restricted stream.
-/// Returns `HistoryCompacted` if the version does not include the checkpoint.
-/// Versions must use this replica's local index mapping.
 pub struct ReadAt<V> {
     version: Version,
     _marker: std::marker::PhantomData<V>,
@@ -251,7 +230,7 @@ impl<V> ReadAt<V> {
 }
 
 impl<V> QueryOperation for ReadAt<V> {
-    type Response = Result<V, HistoryCompacted>;
+    type Response = V;
 
     #[cfg(feature = "test_utils")]
     fn name() -> &'static str {
@@ -269,47 +248,28 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn execute_query(
-        q: &ReadAt<Vec<V>>,
-        stable: &Self::StableState,
-        unstable: &U,
-    ) -> Result<Vec<V>, HistoryCompacted> {
-        check_retained(&q.version, unstable.retention_boundary())?;
+    fn execute_query(q: &ReadAt<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
         let predecessors = unstable.predecessors(&q.version);
-        Ok(replay_document(stable, unstable, predecessors).materialize())
+        replay_document(stable, unstable, predecessors).to_list()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HistoryCompacted {
-    pub boundary: CausalFrontier,
+pub struct HistoryStabilized {
+    pub frontier: CausalFrontier,
 }
 
-impl Display for HistoryCompacted {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for HistoryStabilized {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "history before or concurrent with checkpoint {} has been compacted",
-            self.boundary
+            "history before or concurrent with frontier {} has been pruned.",
+            self.frontier
         )
     }
 }
 
-impl std::error::Error for HistoryCompacted {}
-
-fn check_retained(
-    version: &Version,
-    boundary: Option<&CausalFrontier>,
-) -> Result<(), HistoryCompacted> {
-    if let Some(boundary) = boundary
-        && !version.includes_frontier(boundary)
-    {
-        return Err(HistoryCompacted {
-            boundary: boundary.clone(),
-        });
-    }
-    Ok(())
-}
+impl std::error::Error for HistoryStabilized {}
 
 impl<V> IsStableState<List<V>> for Vec<V>
 where
@@ -407,6 +367,3 @@ where
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod flushing_tests;

@@ -11,7 +11,7 @@ use moirai_protocol::{crdt::query::Read, utils::boxer::Boxer};
 use rand::Rng;
 
 use crate::{
-    HashMap,
+    FxHashMap,
     counter::resettable_counter::Counter,
     flag::ew_flag::EWFlag,
     list::{
@@ -25,7 +25,7 @@ union! {
     Json = Number(Counter<f64>, VecLog::<Counter<f64>> => f64)
         | Boolean(EWFlag, VecLog::<EWFlag> => bool)
         | String(List<char>, GraphLog::<List<char>> => String)
-        | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog> => HashMap<String, JsonValue>)
+        | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog> => FxHashMap<String, JsonValue>)
         | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog> => Vec<JsonValue>)
 }
 

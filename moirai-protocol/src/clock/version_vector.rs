@@ -110,7 +110,6 @@ impl Version {
     /// # Complexity
     /// Checks that the views are identical.
     /// Then runs in `O(n)` time complexity with `n` being the number of members in the view
-    // TODO: lsv has an origin_id
     pub fn join(&mut self, other: &Self) {
         // if `self` dominate `other`, then no need to merge.
         if EventId::from(other).is_predecessor_of(self) {

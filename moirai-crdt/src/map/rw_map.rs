@@ -23,7 +23,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
-use crate::{HashMap, set::rw_set::RWSet};
+use crate::{FxHashMap, set::rw_set::RWSet};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
@@ -41,7 +41,7 @@ where
     L: IsLog,
 {
     set: VecLog<RWSet<K>>,
-    children: HashMap<K, L>,
+    children: FxHashMap<K, L>,
 }
 
 impl<K, L> Default for RWMapLog<K, L>
@@ -66,7 +66,7 @@ where
         Self::default()
     }
 
-    pub fn children(&self) -> &HashMap<K, L> {
+    pub fn children(&self) -> &FxHashMap<K, L> {
         &self.children
     }
 
@@ -199,7 +199,7 @@ where
     }
 }
 
-impl<K, L, V> EvalNested<Read<HashMap<K, V>>> for RWMapLog<K, L>
+impl<K, L, V> EvalNested<Read<FxHashMap<K, V>>> for RWMapLog<K, L>
 where
     L: IsLog + EvalNested<Read<V>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
@@ -207,9 +207,9 @@ where
 {
     fn execute_query(
         &self,
-        _q: &Read<HashMap<K, V>>,
-    ) -> <Read<HashMap<K, V>> as QueryOperation>::Response {
-        let mut map: HashMap<K, V> = HashMap::default();
+        _q: &Read<FxHashMap<K, V>>,
+    ) -> <Read<FxHashMap<K, V>> as QueryOperation>::Response {
+        let mut map: FxHashMap<K, V> = FxHashMap::default();
         for (k, v) in &self.children {
             if self.set.execute_query(&Contains(k.clone())) {
                 let val = v.execute_query(&Read::new());
@@ -313,7 +313,7 @@ mod tests {
     };
 
     use crate::{
-        HashMap,
+        FxHashMap,
         counter::resettable_counter::Counter,
         list::eg_walker::List,
         map::rw_map::{RWMap, RWMapLog},
@@ -336,7 +336,7 @@ mod tests {
         replica_a.receive(update);
         replica_b.receive(remove);
 
-        let expected: HashMap<String, i32> = HashMap::default();
+        let expected: FxHashMap<String, i32> = FxHashMap::default();
         assert_eq!(replica_a.query(&Read::new()), expected);
         assert_eq!(replica_b.query(&Read::new()), expected);
         assert_eq!(replica_a.query(&Get::new(&key, Read::new())), None);
@@ -356,7 +356,7 @@ mod tests {
             .unwrap();
         replica_a.receive(update);
 
-        let mut expected = HashMap::default();
+        let mut expected = FxHashMap::default();
         expected.insert(key.clone(), 7);
 
         assert_eq!(replica_a.query(&Read::new()), expected);
@@ -383,7 +383,7 @@ mod tests {
         let event_b = replica_b.send(RWMap::Remove("doc".to_string())).unwrap();
         replica_a.receive(event_b);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }
@@ -405,8 +405,8 @@ mod tests {
         let _ = replica_a.send(RWMap::Clear).unwrap();
 
         assert_eq!(
-            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
-            HashMap::default()
+            replica_a.query(&Read::<FxHashMap<String, Vec<char>>>::new()),
+            FxHashMap::default()
         );
     }
 
@@ -443,7 +443,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_c);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("doc".to_string(), vec!['A']);
 
         assert_eq!(replica_a.query(&Read::new()), result);
@@ -488,7 +488,7 @@ mod tests {
         replica_b.receive(event_c_1);
         replica_b.receive(event_c_2);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
 
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_c.query(&Read::new()), result);
@@ -563,8 +563,8 @@ mod tests {
         replica_b.receive(event_a_6);
 
         assert_eq!(
-            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
-            replica_b.query(&Read::<HashMap<String, Vec<char>>>::new())
+            replica_a.query(&Read::<FxHashMap<String, Vec<char>>>::new()),
+            replica_b.query(&Read::<FxHashMap<String, Vec<char>>>::new())
         );
     }
 
@@ -581,13 +581,13 @@ mod tests {
             RunConfig::new(ChurnConfig::new(0.6, 0.4), 2, 8, None, None).with_execution_graph();
         let runs = vec![run.clone(); 10_000];
 
-        let config = FuzzerConfig::<ListMap, Read<HashMap<String, String>>>::new(
+        let config = FuzzerConfig::<ListMap, Read<FxHashMap<String, String>>>::new(
             "rw_map",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<ListMap, Read<HashMap<String, String>>>(config);
+        fuzzer::<ListMap, Read<FxHashMap<String, String>>>(config);
     }
 
     #[cfg(feature = "fuzz")]
@@ -599,10 +599,10 @@ mod tests {
             fuzzer::fuzzer,
         };
 
-        use crate::{HashSet, set::aw_set::AWSet};
+        use crate::{FxHashSet, set::aw_set::AWSet};
 
         type RWMapNested = RWMapLog<String, VecLog<AWSet<i32>>>;
-        type Value = Read<HashMap<String, HashSet<i32>>>;
+        type Value = Read<FxHashMap<String, FxHashSet<i32>>>;
 
         let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 50, None, None);
         let runs = vec![run.clone(); 1_000];

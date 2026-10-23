@@ -1,14 +1,15 @@
 use std::{fmt::Debug, range::Range};
 
+use rustc_hash::FxHashMap;
+
 use crate::{
     clock::version_vector::{Seq, Version},
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{IsUnstableCore, IsUnstablePrune},
-    utils::hashmap::HashMap,
 };
 
-impl<O> IsUnstableCore<O> for HashMap<EventId, TaggedOp<O>>
+impl<O> IsUnstableCore<O> for FxHashMap<EventId, TaggedOp<O>>
 where
     O: Debug + Clone,
 {
@@ -60,19 +61,19 @@ where
     }
 }
 
-impl<O> IsUnstablePrune<O> for HashMap<EventId, TaggedOp<O>>
+impl<O> IsUnstablePrune<O> for FxHashMap<EventId, TaggedOp<O>>
 where
     O: Debug + Clone,
 {
     fn remove(&mut self, event_id: &EventId) {
-        HashMap::remove(self, event_id);
+        FxHashMap::remove(self, event_id);
     }
 
     fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T) {
-        HashMap::retain(self, |_, to| predicate(to));
+        FxHashMap::retain(self, |_, to| predicate(to));
     }
 
     fn clear(&mut self) {
-        HashMap::clear(self);
+        FxHashMap::clear(self);
     }
 }

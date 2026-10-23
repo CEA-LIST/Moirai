@@ -16,7 +16,7 @@ use petgraph::{
 };
 
 use crate::{
-    HashMap, HashSet,
+    FxHashMap, FxHashSet,
     flag::ew_flag::EWFlag,
     graph::uw_multidigraph::{Content, UWGraphLog},
     map::uw_map::UWMapLog,
@@ -202,17 +202,17 @@ record!(Relation {
     typ: VecLog::<TORegister::<RelationType>>,
 });
 
-pub type FeatureSnapshot = FeatureValue<HashSet<PrimitiveType>, Option<Visibility>>;
+pub type FeatureSnapshot = FeatureValue<FxHashSet<PrimitiveType>, Option<Visibility>>;
 pub type OperationSnapshot =
-    OperationValue<bool, Option<Visibility>, HashMap<String, HashSet<TypeRef>>, HashSet<TypeRef>>;
+    OperationValue<bool, Option<Visibility>, FxHashMap<String, FxHashSet<TypeRef>>, FxHashSet<TypeRef>>;
 pub type ClassSnapshot = ClassValue<
     bool,
-    HashSet<String>,
-    HashMap<String, FeatureSnapshot>,
-    HashMap<String, OperationSnapshot>,
+    FxHashSet<String>,
+    FxHashMap<String, FeatureSnapshot>,
+    FxHashMap<String, OperationSnapshot>,
 >;
 pub type EndsSnapshot = EndsValue<Option<Multiplicity>, Option<Multiplicity>>;
-pub type RelationSnapshot = RelationValue<EndsSnapshot, HashSet<String>, Option<RelationType>>;
+pub type RelationSnapshot = RelationValue<EndsSnapshot, FxHashSet<String>, Option<RelationType>>;
 
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
 pub type ClassDiagram<'a> = DiGraph<
@@ -313,7 +313,7 @@ fn format_node_name(class: &ClassSnapshot, name_vec: &[String]) -> String {
     format!("{prefix}{name_str}")
 }
 
-fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
+fn format_features(features: &FxHashMap<String, FeatureSnapshot>) -> String {
     features
         .iter()
         .map(|(k, v)| {
@@ -337,7 +337,10 @@ fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
         .join("\\l")
 }
 
-fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationSnapshot>) -> String {
+fn format_operations(
+    g: &ClassDiagram,
+    operations: &FxHashMap<String, OperationSnapshot>,
+) -> String {
     operations
         .iter()
         .map(|(k, v)| {

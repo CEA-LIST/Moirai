@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::HashMap, fmt::Debug};
+use std::{cmp::Reverse, fmt::Debug};
 
 use bimap::BiMap;
 use daggy::{Dag, NodeIndex};
@@ -12,6 +12,7 @@ use petgraph::{
     dot::{Config, Dot},
     visit::IntoNeighborsDirected,
 };
+use rustc_hash::FxHashMap;
 
 /// A sparse execution DAG and streaming inter-replica pair counts.
 ///
@@ -22,7 +23,7 @@ use petgraph::{
 pub struct ExecutionGraph<O> {
     graph: Dag<TaggedOp<O>, ()>,
     map: BiMap<NodeIndex, EventId>,
-    replica_event_counts: HashMap<ReplicaId, u128>,
+    replica_event_counts: FxHashMap<ReplicaId, u128>,
     comparable_pairs: u128,
     reduced: bool,
 }
@@ -44,7 +45,7 @@ where
         Self {
             graph: Dag::new(),
             map: BiMap::new(),
-            replica_event_counts: HashMap::new(),
+            replica_event_counts: FxHashMap::default(),
             comparable_pairs: 0,
             reduced: true,
         }
@@ -143,7 +144,7 @@ where
         }
 
         let node_count = self.graph.node_count();
-        let origins: HashMap<_, _> = self
+        let origins: FxHashMap<_, _> = self
             .replica_event_counts
             .keys()
             .cloned()

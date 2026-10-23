@@ -47,7 +47,7 @@ pub trait ReplicatedDataType: Debug + Sized {
         false
     }
 
-    fn stabilize(
+    fn on_stabilize(
         _tagged_op: &TaggedOp<Self>,
         _stable: &mut Self::StableState,
         _unstable: &mut impl IsUnstablePrune<Self>,
@@ -72,18 +72,6 @@ pub trait UsesUnstableService<U>: ReplicatedDataType
 where
     U: IsUnstableCore<Self>,
 {
-    /// Materialize a causally stable critical prefix in replay order.
-    /// GraphLog supplies a prefix observed by every retained event. Returning
-    /// None opts out of checkpointing; individual operations are never folded
-    /// sequentially into the snapshot by GraphLog.
-    fn checkpoint(
-        _stable: &Self::StableState,
-        _unstable: &U,
-        _prefix_len: usize,
-    ) -> Option<Self::StableState> {
-        None
-    }
-
     fn causal_reset(
         _version: &Version,
         _conservative: bool,

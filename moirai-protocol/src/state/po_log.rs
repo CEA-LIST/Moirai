@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use rustc_hash::FxHashMap;
+
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
@@ -10,16 +12,13 @@ use crate::{
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
-        cache::CachedLog, effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
+        effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
         unstable_state::IsUnstablePrune,
     },
-    utils::hashmap::HashMap,
 };
 
-pub type CachedVecLog<O, V> = CachedLog<VecLog<O>, V>;
-pub type CachedMapLog<O, V> = CachedLog<MapLog<O>, V>;
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
-pub type MapLog<O> = POLog<O, HashMap<EventId, TaggedOp<O>>>;
+pub type MapLog<O> = POLog<O, FxHashMap<EventId, TaggedOp<O>>>;
 
 #[derive(Debug, Clone)]
 pub struct POLog<O, U>
@@ -28,18 +27,6 @@ where
 {
     pub(crate) stable: O::StableState,
     pub(crate) unstable: U,
-}
-
-#[cfg(feature = "test_utils")]
-impl<O, U> deepsize::DeepSizeOf for POLog<O, U>
-where
-    O: ReplicatedDataType,
-    O::StableState: deepsize::DeepSizeOf,
-    U: deepsize::DeepSizeOf,
-{
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)
-    }
 }
 
 impl<O, U> IsLog for POLog<O, U>
@@ -104,7 +91,7 @@ where
             .collect::<Vec<_>>();
 
         for tagged_op in candidates {
-            O::stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
+            O::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
             if self.unstable.get(tagged_op.id()).is_some() {
                 self.stable.apply(tagged_op.op().clone());
                 self.unstable.remove(tagged_op.id());
@@ -206,5 +193,17 @@ where
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         O::execute_query(q, &self.stable, &self.unstable)
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<O, U> deepsize::DeepSizeOf for POLog<O, U>
+where
+    O: ReplicatedDataType,
+    O::StableState: deepsize::DeepSizeOf,
+    U: deepsize::DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)
     }
 }

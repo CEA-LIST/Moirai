@@ -20,7 +20,7 @@ use moirai_protocol::{
 use rand::Rng;
 
 use crate::{
-    HashMap,
+    FxHashMap,
     counter::resettable_counter::Counter,
     map::uw_map::{UWMap, UWMapLog},
 };
@@ -91,14 +91,14 @@ where
     }
 }
 
-impl<V> EvalNested<Read<HashMap<V, usize>>> for AWBagLog<V>
+impl<V> EvalNested<Read<FxHashMap<V, usize>>> for AWBagLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: &Read<HashMap<V, usize>>,
-    ) -> <Read<HashMap<V, usize>> as QueryOperation>::Response {
+        _q: &Read<FxHashMap<V, usize>>,
+    ) -> <Read<FxHashMap<V, usize>> as QueryOperation>::Response {
         self.0.execute_query(&Read::new())
     }
 }
@@ -157,7 +157,7 @@ mod tests {
         let event_a = replica_a.send(AWBag::Remove("a")).unwrap();
         replica_b.receive(event_a);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("b", 1);
 
         assert_eq!(replica_a.query(&Read::new()), result);
@@ -173,7 +173,7 @@ mod tests {
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("a", 2);
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
@@ -195,12 +195,12 @@ mod tests {
             None,
             None,
         )];
-        let config = FuzzerConfig::<AWBagLog<usize>, Read<HashMap<usize, usize>>>::new(
+        let config = FuzzerConfig::<AWBagLog<usize>, Read<FxHashMap<usize, usize>>>::new(
             "aw_bag",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<AWBagLog<usize>, Read<HashMap<usize, usize>>>(config);
+        fuzzer::<AWBagLog<usize>, Read<FxHashMap<usize, usize>>>(config);
     }
 }

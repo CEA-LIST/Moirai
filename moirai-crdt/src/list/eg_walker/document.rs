@@ -1,7 +1,7 @@
 use moirai_protocol::event::id::EventId;
 
 use crate::{
-    HashMap,
+    FxHashMap,
     list::eg_walker::item::{Item, ItemId},
 };
 
@@ -76,7 +76,7 @@ pub struct Document<'a, V> {
     ///
     /// Stable items that are still inside a `StableRange` are located by scanning
     /// ranges in `position_of`; only materialized `Item` records live in this map.
-    items_by_idx: HashMap<ItemId, usize>,
+    items_by_idx: FxHashMap<ItemId, usize>,
 }
 
 impl<'a, V> Document<'a, V> {
@@ -88,7 +88,7 @@ impl<'a, V> Document<'a, V> {
         let mut document = Self {
             stable,
             records: Vec::new(),
-            items_by_idx: HashMap::default(),
+            items_by_idx: FxHashMap::default(),
         };
         if !stable.is_empty() {
             document.records.push(Record::StableRange {
@@ -314,7 +314,7 @@ where
     ///
     /// Untouched stable ranges are copied directly. Concrete items are included
     /// only when their effect state still has at least one live dot.
-    pub fn materialize(&self) -> Vec<V> {
+    pub fn to_list(&self) -> Vec<V> {
         let mut value = Vec::new();
         for record in &self.records {
             match record {

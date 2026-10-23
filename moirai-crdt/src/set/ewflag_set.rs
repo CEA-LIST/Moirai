@@ -20,7 +20,7 @@ use moirai_protocol::{
 use rand::{Rng, RngExt};
 
 use crate::{
-    HashSet,
+    FxHashSet,
     flag::ew_flag::EWFlag,
     map::uw_map::{UWMap, UWMapLog},
 };
@@ -95,15 +95,15 @@ where
     }
 }
 
-impl<V> EvalNested<Read<HashSet<V>>> for EWFlagSetLog<V>
+impl<V> EvalNested<Read<FxHashSet<V>>> for EWFlagSetLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: &Read<HashSet<V>>,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
-        let mut set = HashSet::default();
+        _q: &Read<FxHashSet<V>>,
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
+        let mut set = FxHashSet::default();
         let values = self.inner.execute_query(&Read::new());
         for (k, val) in values {
             if val {
@@ -156,12 +156,12 @@ mod tests {
         replica_a.receive(event_b);
 
         assert_eq!(
-            replica_a.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec![])
+            replica_a.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec![])
         );
         assert_eq!(
-            replica_b.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec![])
+            replica_b.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec![])
         );
     }
 
@@ -181,12 +181,12 @@ mod tests {
         replica_b.receive(event_a);
 
         assert_eq!(
-            replica_a.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec!["b", "c"])
+            replica_a.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec!["b", "c"])
         );
         assert_eq!(
-            replica_b.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec!["b", "c"])
+            replica_b.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec!["b", "c"])
         );
     }
 
@@ -206,12 +206,12 @@ mod tests {
             None,
             None,
         )];
-        let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<HashSet<usize>>>::new(
+        let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<FxHashSet<usize>>>::new(
             "ewflag_set",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
         );
 
-        fuzzer::<EWFlagSetLog<usize>, Read<HashSet<usize>>>(config);
+        fuzzer::<EWFlagSetLog<usize>, Read<FxHashSet<usize>>>(config);
     }
 }
