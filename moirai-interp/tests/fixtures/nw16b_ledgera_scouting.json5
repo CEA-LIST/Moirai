@@ -1,0 +1,61 @@
+// NW.16b, R6 (vault spec/items/NW.16b.md): the connection and scouting
+// values of Ledgera's compiled Zenoh configuration, copied from
+// code/crates/util_deployment/src/zenoh_config.rs at ledgera-sdk 4eebc45
+// (repos/ledgera-sdk-4eebc45, read only), RAW_ZENOH_CONFIG, lines 23 to 72.
+// Every Ledgera and Detune node opens its session from that string (review
+// note spec/Zenoh in Ledgera and Detune, as deployed.md, vault 6317fb4,
+// section 1). Copied: mode (:25), connect (:30-39), listen (:40-49),
+// open (:50-55) and scouting (:56-72); the metadata name is the test's own.
+// Left out: metadata location, timestamping, the transport, TLS and
+// authentication blocks, none of which decides whom the peer meets.
+// Opened with this crate's Zenoh 1.10.1, not Ledgera's 1.9.0: R6 checks what
+// the configuration does, not wire compatibility between the two versions.
+{
+  mode: "peer",
+  metadata: {
+    name: "nw16b-ledgera-scouting",
+  },
+  connect: {
+    timeout_ms: { router: -1, peer: -1, client: 0 },
+    endpoints: [],
+    exit_on_failure: { router: false, peer: false, client: true },
+    retry: {
+      period_init_ms: 1000,
+      period_max_ms: 4000,
+      period_increase_factor: 2,
+    },
+  },
+  listen: {
+    timeout_ms: 0,
+    endpoints: { router: ["tcp/[::]:7447"], peer: ["tcp/0.0.0.0:0"] },
+    exit_on_failure: true,
+    retry: {
+      period_init_ms: 1000,
+      period_max_ms: 4000,
+      period_increase_factor: 2,
+    },
+  },
+  open: {
+    return_conditions: {
+      connect_scouted: true,
+      declares: true,
+    },
+  },
+  scouting: {
+    timeout: 3000,
+    delay: 500,
+    multicast: {
+      enabled: true,
+      address: "224.0.0.224:7446",
+      interface: "auto",
+      ttl: 1,
+      autoconnect: { router: [], peer: ["router", "peer"] },
+      listen: true,
+    },
+    gossip: {
+      enabled: true,
+      multihop: false,
+      autoconnect: { router: [], peer: ["router", "peer"] },
+    },
+  },
+}
