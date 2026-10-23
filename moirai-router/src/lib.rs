@@ -14,6 +14,14 @@
 //! join the two networks (vault `spec/Zenoh in Ledgera and Detune, as
 //! deployed.md`, section 8). So [`config`] turns multicast scouting off
 //! explicitly, since Zenoh reads an unset key as on.
+//!
+//! Regions (NW.16c's Layout R): given `ROUTER_REGIONS`, the router opens
+//! [`config_with_regions`], one Zenoh subregion per name and a last catch-all
+//! for a node of any other region or of none. Peers of one region are
+//! introduced to each other and link directly; the router never introduces
+//! peers of two regions, and forwards between regions. A node claims its
+//! region with `ZENOH_REGION`, which Zenoh takes on trust. Without the list
+//! the router keeps Zenoh's `auto` preset, [`config`].
 
 use std::fmt;
 
@@ -67,4 +75,89 @@ pub fn config(listen_port: u16) -> Result<zenoh::Config, ConfigError> {
         })?;
     }
     Ok(config)
+}
+
+/// The variable the router reads its region list from.
+pub const ROUTER_REGIONS: &str = "ROUTER_REGIONS";
+
+/// The most bytes a Zenoh region name may hold.
+pub const MAX_REGION_NAME_BYTES: usize = 32;
+
+/// The region names of a comma-separated `ROUTER_REGIONS`, in order, each as
+/// written. Refused: an empty name (the variable set but empty included), a
+/// name over [`MAX_REGION_NAME_BYTES`] bytes, a name given twice.
+pub fn regions(raw: &str) -> Result<Vec<String>, ConfigError> {
+    let mut names: Vec<String> = Vec::new();
+    for name in raw.split(',') {
+        if name.is_empty() {
+            return Err(ConfigError(format!(
+                "{ROUTER_REGIONS}=`{raw}` holds an empty region name"
+            )));
+        }
+        if name.len() > MAX_REGION_NAME_BYTES {
+            return Err(ConfigError(format!(
+                "{ROUTER_REGIONS}=`{raw}`: the region name `{name}` is {} bytes, over Zenoh's \
+                 {MAX_REGION_NAME_BYTES}",
+                name.len()
+            )));
+        }
+        if names.iter().any(|known| known == name) {
+            return Err(ConfigError(format!(
+                "{ROUTER_REGIONS}=`{raw}` names the region `{name}` twice"
+            )));
+        }
+        names.push(name.to_string());
+    }
+    Ok(names)
+}
+
+/// [`config`] plus `gateway.south`: one subregion per name of `regions`, in
+/// order, holding the nodes that claim that `region_name`, then a last
+/// catch-all `{}` holding every other node (another region, none, a client),
+/// which Zenoh would otherwise refuse. `regions` are names [`regions`] read.
+pub fn config_with_regions(
+    listen_port: u16,
+    regions: &[String],
+) -> Result<zenoh::Config, ConfigError> {
+    let mut config = config(listen_port)?;
+    let mut south: Vec<String> = regions
+        .iter()
+        .map(|name| {
+            format!(
+                "{{\"filters\":[{{\"region_names\":[{}]}}]}}",
+                json_string(name)
+            )
+        })
+        .collect();
+    south.push("{}".to_string());
+    // Zenoh's key paths stop at `gateway`, so it is set whole.
+    let gateway = format!("{{\"south\":[{}]}}", south.join(","));
+    config.insert_json5("gateway", &gateway).map_err(|e| {
+        ConfigError(format!(
+            "the Zenoh configuration refused gateway = {gateway}: {e}"
+        ))
+    })?;
+    Ok(config)
+}
+
+/// `names` as a JSON array of strings.
+pub fn json_strings(names: &[String]) -> String {
+    let items: Vec<String> = names.iter().map(|name| json_string(name)).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// `text` as a JSON string literal.
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if u32::from(c) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

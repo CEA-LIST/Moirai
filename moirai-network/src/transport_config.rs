@@ -10,9 +10,19 @@
 //! | `SESSION_ID` | the `<session>` key chunk under Zenoh; default `default` |
 //! | `ZENOH_ROUTER` | peer mode, introduced by this router: gossip on, one hop |
 //! | `ZENOH_MODE` | `client`, everything through `ZENOH_ROUTER`; refused without it |
+//! | `ZENOH_REGION` | the Zenoh region the node claims beside `ZENOH_ROUTER` in peer mode |
 //! | `ZENOH_SCOUTING` | `multicast` to opt in, on Moirai's own port |
 //! | `ZENOH_CONFIG` | a Zenoh configuration file, used as is |
 //! | `BOOTNODE_URL` | refused under Zenoh, which finds its peers without one |
+//!
+//! `ZENOH_REGION` (NW.16e, the NW.16c note's Layout R) is the node's
+//! `region_name`: a router given `ROUTER_REGIONS` introduces the peers of one
+//! region to each other and forwards between regions. It needs `ZENOH_ROUTER`
+//! in peer mode and is refused beside `PEERS` (a peer of another region
+//! dialled directly would receive every frame twice), beside
+//! `ZENOH_MODE=client`, beside `ZENOH_CONFIG`, set but empty (unlike the
+//! other variables, an empty value is not read as unset) and over
+//! [`MAX_REGION_NAME_BYTES`] bytes.
 //!
 //! Everything is read through a lookup function, so a caller (a test) can
 //! pass variables without touching the process environment; a node reads the
@@ -52,6 +62,9 @@ pub const MOIRAI_SCOUTING_ADDRESS: &str = "224.0.0.224:7450";
 /// 0.32 Mbit/s, where Zenoh's default of 5 s needs about 1.95 Mbit/s.
 pub const WAIT_BEFORE_CLOSE_US: u64 = 30_000_000;
 
+/// The most bytes a Zenoh region name may hold (`ZENOH_REGION`).
+pub const MAX_REGION_NAME_BYTES: usize = 32;
+
 /// A variable that was refused, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportConfigError(String);
@@ -77,6 +90,7 @@ pub struct TransportConfig {
     client: bool,
     multicast: bool,
     config_file: Option<String>,
+    region: Option<String>,
 }
 
 impl TransportConfig {
@@ -103,6 +117,7 @@ impl TransportConfig {
             client: false,
             multicast: false,
             config_file: None,
+            region: None,
         };
         if kind == TransportKind::Tcp {
             // The Zenoh variables mean nothing to a TCP node.
@@ -150,6 +165,7 @@ impl TransportConfig {
                 }
             }
         }
+        config.region = region(&lookup, &config)?;
         Ok(config)
     }
 
@@ -198,6 +214,14 @@ impl TransportConfig {
             });
         }
 
+        if self.region.is_some() && !peer_addresses.is_empty() {
+            return refuse(
+                "ZENOH_REGION is refused beside PEERS: the router introduces the peers of a \
+                 region, and a peer of another region dialled directly would receive every frame \
+                 twice; unset PEERS, or ZENOH_REGION",
+            );
+        }
+
         let mut connect: Vec<String> = self.router.iter().cloned().collect();
         let listen: Vec<String>;
         let mode;
@@ -235,6 +259,9 @@ impl TransportConfig {
         if gossip {
             set("scouting/gossip/multihop", json(&false))?;
         }
+        if let Some(name) = &self.region {
+            set("region_name", json(name))?;
+        }
         if self.client {
             // Zenoh's client defaults (`timeout_ms` 0, `exit_on_failure`
             // true) try the router once and fail the open, so a client
@@ -250,6 +277,47 @@ impl TransportConfig {
         )?;
         Ok(config)
     }
+}
+
+/// `ZENOH_REGION`, read as given (an empty value is refused, not unset), and
+/// refused where a region does not apply: beside `ZENOH_CONFIG`, beside
+/// `ZENOH_MODE=client`, without `ZENOH_ROUTER`. `PEERS` is checked by
+/// `zenoh_config`, which is given the peers the node dials.
+fn region(
+    lookup: impl Fn(&str) -> Option<String>,
+    config: &TransportConfig,
+) -> Result<Option<String>, TransportConfigError> {
+    let Some(name) = lookup("ZENOH_REGION") else {
+        return Ok(None);
+    };
+    if config.config_file.is_some() {
+        return refuse(
+            "ZENOH_CONFIG is used as is, so ZENOH_REGION, which would change it, is refused \
+             beside it",
+        );
+    }
+    if config.client {
+        return refuse(
+            "ZENOH_REGION is refused beside ZENOH_MODE=client: a client belongs to no region, \
+             and the router carries it whatever it claims",
+        );
+    }
+    if config.router.is_none() {
+        return refuse(
+            "ZENOH_REGION is refused without ZENOH_ROUTER: a region is the router's to \
+             introduce and forward between",
+        );
+    }
+    if name.is_empty() {
+        return refuse("ZENOH_REGION is set but empty; give a region name, or unset it");
+    }
+    if name.len() > MAX_REGION_NAME_BYTES {
+        return refuse(format!(
+            "ZENOH_REGION=`{name}` is {} bytes, over Zenoh's {MAX_REGION_NAME_BYTES}",
+            name.len()
+        ));
+    }
+    Ok(Some(name))
 }
 
 /// A configuration value as the JSON `insert_json5` takes.

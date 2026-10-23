@@ -61,6 +61,16 @@
 //! does not hold, so a client with `PORTS_FILE` needs a non-zero
 //! `LISTEN_PORT`.
 //!
+//! `ZENOH_REGION` names the Zenoh region the node claims, beside
+//! `ZENOH_ROUTER` in peer mode, for a router given `ROUTER_REGIONS`: the
+//! router introduces the peers of one region to each other, who then link
+//! directly, and forwards between regions; a node of a region the router does
+//! not list, or of none, lands in its catch-all. The claim is taken on trust.
+//! The node exits non-zero naming the variables when `ZENOH_REGION` is set
+//! beside a non-empty `PEERS` (or `PEERS_FILE` naming peers), beside
+//! `ZENOH_MODE=client`, beside `ZENOH_CONFIG`, without `ZENOH_ROUTER`, set but
+//! empty, or over 32 bytes.
+//!
 //! # Where the HTTP API listens, and whom it answers (NW.11)
 //!
 //! - `HTTP_BIND_ADDR` — the IP address the HTTP listener binds, on both the

@@ -1,12 +1,21 @@
 //! `moirai-router`: one Zenoh session in router mode, from
-//! [`moirai_router::config`], running until it is killed.
+//! [`moirai_router::config`] (or [`moirai_router::config_with_regions`] given
+//! `ROUTER_REGIONS`), running until it is killed.
 //!
 //! - `LISTEN_PORT` — the TCP port it listens on, on every IPv4 interface;
 //!   unset or empty, [`moirai_router::DEFAULT_PORT`]; 0, a port the kernel
 //!   chooses
+//! - `ROUTER_REGIONS` — a comma-separated list of region names, each
+//!   non-empty, at most 32 bytes, none twice: one Zenoh subregion per name,
+//!   in order, then a catch-all for a node of any other region or of none.
+//!   Unset, Zenoh's `auto` preset. An invalid list ends the process non-zero,
+//!   naming the variable; a value set but empty is a list of one empty name,
+//!   so it is refused too
 //! - `PORTS_FILE` — once the session is open, the router writes
 //!   `{"pid", "listen_port"}` there (its pid and the port its session listens
-//!   on), beside the path and renamed onto it so it appears whole
+//!   on), plus `"regions"`, the names it applied in order, when
+//!   `ROUTER_REGIONS` is set; beside the path and renamed onto it so it
+//!   appears whole
 //!
 //! It reads no other variable: no `ZENOH_*`, no configuration file, so
 //! nothing in its environment can turn multicast scouting back on.
@@ -35,6 +44,28 @@ fn listen_port() -> u16 {
     }
 }
 
+/// The names of `ROUTER_REGIONS`, `None` when it is unset, or the end of
+/// the process naming it.
+fn router_regions() -> Option<Vec<String>> {
+    let raw = env::var(moirai_router::ROUTER_REGIONS).map_or_else(
+        |err| match err {
+            env::VarError::NotPresent => None,
+            env::VarError::NotUnicode(_) => {
+                eprintln!(
+                    "[moirai-router] invalid {}: not UTF-8",
+                    moirai_router::ROUTER_REGIONS
+                );
+                exit(1);
+            }
+        },
+        Some,
+    )?;
+    Some(moirai_router::regions(&raw).unwrap_or_else(|err| {
+        eprintln!("[moirai-router] {err}");
+        exit(1);
+    }))
+}
+
 /// The port `session` listens on, read from its locators: the kernel's
 /// choice after a bind to port 0. `None` when it lists no locator, as a
 /// session on 0.0.0.0 does in a namespace whose only address is loopback.
@@ -50,9 +81,16 @@ fn session_port(session: &zenoh::Session) -> Option<u16> {
 }
 
 /// Write the report to `path`, beside it first and renamed onto it.
-fn write_ports_file(path: &Path, listen_port: u16) -> std::io::Result<()> {
+fn write_ports_file(
+    path: &Path,
+    listen_port: u16,
+    regions: Option<&[String]>,
+) -> std::io::Result<()> {
+    let regions = regions
+        .map(|names| format!(",\"regions\":{}", moirai_router::json_strings(names)))
+        .unwrap_or_default();
     let report = format!(
-        "{{\"pid\":{},\"listen_port\":{listen_port}}}",
+        "{{\"pid\":{},\"listen_port\":{listen_port}{regions}}}",
         std::process::id()
     );
     let mut staging = OsString::from(path.as_os_str());
@@ -63,7 +101,12 @@ fn write_ports_file(path: &Path, listen_port: u16) -> std::io::Result<()> {
 
 fn main() {
     let given = listen_port();
-    let config = moirai_router::config(given).unwrap_or_else(|err| {
+    let regions = router_regions();
+    let config = match &regions {
+        Some(names) => moirai_router::config_with_regions(given, names),
+        None => moirai_router::config(given),
+    }
+    .unwrap_or_else(|err| {
         eprintln!("[moirai-router] {err}");
         exit(1);
     });
@@ -83,7 +126,7 @@ fn main() {
         }
     };
     if let Some(path) = env::var_os("PORTS_FILE").filter(|p| !p.is_empty())
-        && let Err(err) = write_ports_file(Path::new(&path), port)
+        && let Err(err) = write_ports_file(Path::new(&path), port, regions.as_deref())
     {
         eprintln!(
             "[moirai-router] cannot write PORTS_FILE `{}`: {err}",
@@ -91,8 +134,12 @@ fn main() {
         );
         exit(1);
     }
+    let layout = match &regions {
+        Some(names) => format!("regions {names:?} then a catch-all"),
+        None => "Zenoh's auto preset".to_string(),
+    };
     eprintln!(
-        "[moirai-router] {} listening on port {port}, multicast scouting off",
+        "[moirai-router] {} listening on port {port}, multicast scouting off, {layout}",
         session.zid()
     );
     // The session lives as long as the process; it ends when it is killed.
