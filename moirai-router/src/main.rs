@@ -47,19 +47,17 @@ fn listen_port() -> u16 {
 /// The names of `ROUTER_REGIONS`, `None` when it is unset, or the end of
 /// the process naming it.
 fn router_regions() -> Option<Vec<String>> {
-    let raw = env::var(moirai_router::ROUTER_REGIONS).map_or_else(
-        |err| match err {
-            env::VarError::NotPresent => None,
-            env::VarError::NotUnicode(_) => {
-                eprintln!(
-                    "[moirai-router] invalid {}: not UTF-8",
-                    moirai_router::ROUTER_REGIONS
-                );
-                exit(1);
-            }
-        },
-        Some,
-    )?;
+    let raw = match env::var(moirai_router::ROUTER_REGIONS) {
+        Ok(raw) => raw,
+        Err(env::VarError::NotPresent) => return None,
+        Err(err) => {
+            eprintln!(
+                "[moirai-router] invalid {}: {err}",
+                moirai_router::ROUTER_REGIONS
+            );
+            exit(1);
+        }
+    };
     Some(moirai_router::regions(&raw).unwrap_or_else(|err| {
         eprintln!("[moirai-router] {err}");
         exit(1);
