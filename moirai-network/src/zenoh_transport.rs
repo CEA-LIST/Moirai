@@ -20,6 +20,13 @@
 //! - Every put is `CongestionControl::Block`. Zenoh's default for a put,
 //!   `Drop`, drops a frame on a congested link that stays up, and nothing in
 //!   Moirai asks again until the next link event (note 5.4).
+//! - Every put goes through a Publisher declared on its key, never through
+//!   `Session::put`. A declared Publisher asks the router which subscribers
+//!   it has for the key; once answered, a peer linked directly to the
+//!   subscriber sends its frames there alone, where a `Session::put` also
+//!   sends the router a copy (NW.16c Q5, NW.16d). The `all` Publisher is
+//!   declared when the session opens; a peer's own one on the first frame
+//!   for it, kept until the peer's last token goes.
 //! - Samples go from the subscribers' callbacks into one unbounded channel
 //!   that `try_recv` reads. Zenoh's default handler is a FIFO of 256 whose
 //!   producer blocks when full, holding one of the receive threads every
@@ -46,7 +53,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use serde::{de::DeserializeOwned, Serialize};
 use zenoh::bytes::ZBytes;
 use zenoh::liveliness::LivelinessToken;
-use zenoh::pubsub::Subscriber;
+use zenoh::pubsub::{Publisher, Subscriber};
 use zenoh::qos::{CongestionControl, Priority};
 use zenoh::sample::{Locality, Sample, SampleKind};
 use zenoh::{Config, Session, Wait};
@@ -81,6 +88,12 @@ where
     /// Held so the declarations live as long as the transport.
     _subscribers: Vec<Subscriber<()>>,
     _tokens: Vec<LivelinessToken>,
+    /// Puts every broadcast made while no peer is paused, on
+    /// `moirai/<session>/all/<local>`.
+    all_publisher: Publisher<'static>,
+    /// Puts every frame for one peer, on its `to_key`: declared on the first
+    /// frame for it, dropped (undeclared) when its last token goes.
+    publishers: HashMap<PeerId, Publisher<'static>>,
     incoming: Receiver<Inbound<O>>,
     /// The `PEERS` ids, and every id seen by token since.
     known: BTreeSet<PeerId>,
@@ -119,6 +132,26 @@ fn token_owner(key: &str, prefix: &str) -> Option<(PeerId, Option<String>)> {
 
 fn zenoh_error(what: &str, e: zenoh::Error) -> TransportError {
     TransportError::Other(format!("Zenoh: {what}: {e}"))
+}
+
+/// A Publisher on `key` with the settings of every put: `Block`, `Data`,
+/// not express.
+fn declare_publisher(session: &Session, key: String) -> TransportResult<Publisher<'static>> {
+    session
+        .declare_publisher(key.clone())
+        .congestion_control(CongestionControl::Block)
+        .priority(Priority::Data)
+        .express(false)
+        .wait()
+        .map_err(|e| zenoh_error(&format!("declare a publisher on {key}"), e))
+}
+
+/// Put `payload` through `publisher`.
+fn publish(publisher: &Publisher<'_>, payload: ZBytes) -> TransportResult<()> {
+    publisher
+        .put(payload)
+        .wait()
+        .map_err(|e| zenoh_error(&format!("put on {}", publisher.key_expr()), e))
 }
 
 impl<O> ZenohTransport<O>
@@ -208,6 +241,9 @@ where
             .map_err(|e| zenoh_error(&format!("subscribe to the tokens {presence}"), e))?;
         subscribers.push(subscriber);
 
+        let all_publisher =
+            declare_publisher(&session, format!("moirai/{session_id}/all/{local_id}"))?;
+
         // Last, so that a peer answering these tokens reaches the
         // subscribers: this session's own, then the node's.
         let mut tokens = Vec::new();
@@ -233,6 +269,8 @@ where
             session,
             _subscribers: subscribers,
             _tokens: tokens,
+            all_publisher,
+            publishers: HashMap::default(),
             incoming,
             known,
             live: BTreeSet::new(),
@@ -290,24 +328,19 @@ where
             })
     }
 
-    /// Where a broadcast goes while no peer is paused.
-    fn all_key(&self) -> String {
-        format!("moirai/{}/all/{}", self.session_id, self.local_id)
-    }
-
     /// Where a frame for `peer` alone goes.
     fn to_key(&self, peer: &str) -> String {
         format!("moirai/{}/to/{peer}/{}", self.session_id, self.local_id)
     }
 
-    fn put(&self, key: String, payload: ZBytes) -> TransportResult<()> {
-        self.session
-            .put(&key, payload)
-            .congestion_control(CongestionControl::Block)
-            .priority(Priority::Data)
-            .express(false)
-            .wait()
-            .map_err(|e| zenoh_error(&format!("put on {key}"), e))
+    /// Put a frame for `peer` alone through its Publisher, declared now if
+    /// this is the first frame for it since its arrival.
+    fn put_to(&mut self, peer: &PeerId, payload: ZBytes) -> TransportResult<()> {
+        if !self.publishers.contains_key(peer) {
+            let publisher = declare_publisher(&self.session, self.to_key(peer))?;
+            self.publishers.insert(peer.clone(), publisher);
+        }
+        publish(&self.publishers[peer], payload)
     }
 
     fn encode(msg: &TransportMessage<O>) -> TransportResult<ZBytes> {
@@ -335,7 +368,8 @@ where
     }
 
     /// Record a token of `peer` that went; answers whether it was the
-    /// peer's last.
+    /// peer's last, in which case its Publisher goes too, declared again on
+    /// the first frame for it after it returns.
     fn token_down(&mut self, peer: &PeerId, zid: &Option<String>) -> bool {
         let Some(tokens) = self.tokens.get_mut(peer) else {
             return false;
@@ -344,6 +378,7 @@ where
             return false;
         }
         self.tokens.remove(peer);
+        self.publishers.remove(peer);
         self.live.remove(peer)
     }
 }
@@ -365,18 +400,19 @@ where
         if !self.live.contains(peer) {
             return Err(TransportError::PeerNotFound(peer.clone()));
         }
-        self.put(self.to_key(peer), Self::encode(&msg)?)
+        self.put_to(peer, Self::encode(&msg)?)
     }
 
     fn broadcast(&mut self, msg: TransportMessage<O>) -> TransportResult<()> {
         let payload = Self::encode(&msg)?;
         if self.paused.is_empty() {
-            return self.put(self.all_key(), payload);
+            return publish(&self.all_publisher, payload);
         }
         // Every live unpaused peer is tried; the first failure is answered.
+        let peers: Vec<PeerId> = self.live.difference(&self.paused).cloned().collect();
         let mut failed = None;
-        for peer in self.live.difference(&self.paused) {
-            if let Err(e) = self.put(self.to_key(peer), payload.clone()) {
+        for peer in &peers {
+            if let Err(e) = self.put_to(peer, payload.clone()) {
                 eprintln!("[{}] Failed to send to {peer}: {e}", self.local_id);
                 failed.get_or_insert(e);
             }
