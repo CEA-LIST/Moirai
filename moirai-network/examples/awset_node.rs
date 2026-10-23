@@ -159,12 +159,13 @@ fn main() {
 
     let member_refs: Vec<&str> = all_members.iter().map(|s| s.as_str()).collect();
 
-    // Create the node with AWSet CRDT
-    let mut node = GenericNode::<AWSetLog, CompositeTransport<AWSet<String>>>::new(
+    // Create the node with AWSet CRDT, on TCP whatever MOIRAI_TRANSPORT says
+    let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
+        .expect("Failed to create TCP transport");
+    let mut node = GenericNode::<AWSetLog, CompositeTransport<AWSet<String>>>::with_transport(
         replica_id.clone(),
         &member_refs,
-        listen_port,
-        peer_addresses,
+        transport,
     );
 
     // Enable state querying - requires QueryableLog trait implementation

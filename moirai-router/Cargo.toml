@@ -1,0 +1,18 @@
+[package]
+name = "moirai-router"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The in-tree Zenoh router that introduces Moirai nodes to each other and carries client-mode nodes"
+
+[dependencies]
+# The same pin and features as `moirai-network`'s, so router and nodes run one
+# Zenoh build and the lock gains no Zenoh crate (NW.14 note, Q3 and Q4).
+# Default features off: they bring QUIC, UDP, WebSocket, TLS and public-key
+# authentication, none of which Moirai uses; `transport_tcp` is the one link.
+# `unstable` for one call, `session.info().locators()`, the port the session
+# holds after a bind to port 0, which the router reports in `PORTS_FILE`.
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"] }

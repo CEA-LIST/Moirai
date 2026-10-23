@@ -50,18 +50,29 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",
 ] }
+# The Zenoh transport (NW.14 note, vault `spec/Zenoh transport, peer-to-peer
+# and router.md`), chosen at run time by `MOIRAI_TRANSPORT=zenoh`. Pinned
+# exactly, because `unstable` is on: it is there for one call,
+# `session.info().locators()`, the port Zenoh holds after a bind to 0. Default
+# features off: they bring QUIC, UDP (quinn, rustls), WebSocket, TLS and
+# public-key authentication, none of which Moirai uses; TCP is the one link.
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"], optional = true }
 
 [features]
-default = []
+# `zenoh` on by default; `--no-default-features` builds a TCP-only library.
+default = ["zenoh"]
+zenoh = ["dep:zenoh"]
 # The measurement surface: deep sizes of the hosted logs and the check that
 # they hold one member table. Named like the sibling crates' feature, and off
 # by default for the same reason.
 test_utils = ["dep:deepsize", "moirai-protocol/test_utils", "moirai-crdt/test_utils"]
 
-# Dev-only, and deliberately so: `testcontainers` pulls tokio, which must not
-# reach the library — the whole codebase is synchronous. The `blocking` feature
-# is its sync runner, which keeps the harness a sequence of plain function
-# calls like everything around it.
+# Dev-only: `testcontainers` is a test harness, not a library dependency. No
+# async reaches the library's API — the whole codebase is synchronous — though
+# a runtime does run underneath where a feature needs one: `reqwest`'s
+# `blocking` client, and Zenoh's own pools, reached only through `Wait::wait`.
+# The `blocking` feature is `testcontainers`' sync runner, which keeps the
+# harness a sequence of plain function calls like everything around it.
 #
 # `bollard` and `tokio` are not extra dependencies: `testcontainers` already
 # brings both, and they are named here only so the harness can use the one
