@@ -1,0 +1,50 @@
+# NW.19's per-site accounting (vault spec/items/NW.19.md, section 4): for each pinned site, in the
+# step of tests/nw19/regression.sh that starts its nodes and by the test target that starts them
+# (the node's parent executable), the number of model_node or network_node processes started with
+# MOIRAI_TRANSPORT=tcp and the number started without it, as tests/nw19/watch.py counts them.
+# Measured at the TCP-default parent Pp (baseline A) and in the forced-Zenoh rehearsal (baseline Z),
+# equal in both but where `+N` reads "at least N" (a count that differed between them). Gated by
+# tests/nw19/account.py's W3 at H. Columns: site, step, target, tcp, other.
+P-01,P-02,P-03	p3/e2e	e2e_convergence	42	16
+P-05	r1/interp	nw02_loopback_ports	12	+3
+P-07	r1/interp	nw03_joiner_writes_l3	6	0
+P-08	r1/interp	nw04_joiner_with_history_l3	0	0
+P-09	r1/interp	si13_migration_l3	7	0
+P-09	r1/interp	si13_scale_l3	0	0
+P-09	r1/interp	si13_copy_in_progress	0	0
+P-09,P-11	r2/ms-tcp	si13_migration_l3	7	0
+P-11	r2/ms-zenoh	si13_migration_l3	0	0
+P-10	r2/p6-tcp	e2e_interp	18	0
+P-10	r2/p6-tcp	si01_store_identity_l3	5	0
+P-10	r2/p6-tcp	st01_optional_conflict_race_l3	8	0
+P-10	r2/p6-tcp	st02_emptied_optional_object_l3	9	0
+P-10	r2/p6-tcp	st04_emptied_optional_attribute_l3	5	0
+P-10	r2/p6-tcp	st05_recursive_keyed_class_l3	5	0
+P-10	r2/p6-tcp	st05_removed_key_l3	9	0
+P-10	r2/p6-tcp	nw07_named_model_ids_l3	4	0
+P-10	r2/p6-tcp	ed10_umlclass_u2_l3	3	0
+P-10	r2/p6-tcp	ed16a_notation_diagrams_l3	3	0
+P-10	r2/p6-tcp	ed20_join_without_metamodel_l3	7	0
+P-10	r2/p6-tcp	ar02_declarations_served_l3	3	0
+P-10	r2/p6-zenoh	e2e_interp	0	18
+P-10	r2/p6-zenoh	si01_store_identity_l3	0	5
+P-10	r2/p6-zenoh	st01_optional_conflict_race_l3	0	8
+P-10	r2/p6-zenoh	st02_emptied_optional_object_l3	0	9
+P-10	r2/p6-zenoh	st04_emptied_optional_attribute_l3	0	5
+P-10	r2/p6-zenoh	st05_recursive_keyed_class_l3	0	5
+P-10	r2/p6-zenoh	st05_removed_key_l3	0	9
+P-10	r2/p6-zenoh	nw07_named_model_ids_l3	0	4
+P-10	r2/p6-zenoh	ed10_umlclass_u2_l3	0	3
+P-10	r2/p6-zenoh	ed16a_notation_diagrams_l3	0	3
+P-10	r2/p6-zenoh	ed20_join_without_metamodel_l3	0	7
+P-10	r2/p6-zenoh	ar02_declarations_served_l3	0	3
+P-11	r2/ms-tcp	si05_references_l3	2	0
+P-11	r2/ms-tcp	si08_target_side_l3	2	0
+P-11	r2/ms-tcp	si12_copy_migration_l3	3	0
+P-11	r2/ms-tcp	si14_rebase_l3	6	0
+P-11	r2/ms-tcp	si16_rebased_joiner_l3	9	0
+P-11	r2/ms-zenoh	si05_references_l3	0	2
+P-11	r2/ms-zenoh	si08_target_side_l3	0	2
+P-11	r2/ms-zenoh	si12_copy_migration_l3	0	3
+P-11	r2/ms-zenoh	si14_rebase_l3	0	6
+P-11	r2/ms-zenoh	si16_rebased_joiner_l3	0	9
