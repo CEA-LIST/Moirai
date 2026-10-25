@@ -17,7 +17,8 @@
 #     MOIRAI_TRANSPORT=zenoh and a bootnode and a relay for --tcp, a replica told
 #     MOIRAI_TRANSPORT=zenoh with ZENOH_ROUTER and no BOOTNODE_URL for zenoh and told
 #     MOIRAI_TRANSPORT=tcp with the bootnode for --tcp, and the rig's replicas all told
-#     MOIRAI_TRANSPORT=tcp; F exists. P0-NO-INLINE-TEST no `#[cfg(test)]` added in any */src/ or
+#     MOIRAI_TRANSPORT=tcp; F exists. P0-RIG at HEAD, every replica of the measurement rig
+#     (docker/compose/docker-compose.yml, every profile) told MOIRAI_TRANSPORT=tcp. P0-NO-INLINE-TEST no `#[cfg(test)]` added in any */src/ or
 #     */examples/ file since the spec commit.
 # P1  P1-DEFAULT DEFAULT_TRANSPORT reads TransportKind::Zenoh; P1-L1 nw19_default_l1 in the
 #     default build, 3 passed; P1-LITE the same file with --no-default-features, 6 passed; P1-LIB
@@ -137,6 +138,10 @@ for c in $(G rev-list --reverse --first-parent --no-merges "$SPEC..HEAD"); do
 done
 if [ "$walked" -ge 2 ] && [ -n "$S" ] && [ -n "$F" ]; then pass "P0-ORDER the stack's support ${S:0:7} (TCP still the default; the router built and shipped; the router service, the TCP mode, the replicas told their transport, the rig on TCP, the dry run) before the flip ${F:0:7}"
 else fail "P0-ORDER commits $walked; stack commit before the flip '${S:0:7}' (candidates short of it:${S_WHY:- none}); flip '${F:0:7}'"; fi
+
+(cd "$ROOT/docker/compose" && MOIRAI_IMAGE=nw19-static-dry-run:none docker compose -f docker-compose.yml --profile '*' config --format json) > "$OUT/rig-head.json" 2> "$OUT/rig-head.err"
+if python3 -I "$HERE/compose_check.py" rig "$OUT/rig-head.json" > "$OUT/rig-head.txt" 2>&1; then pass "P0-RIG at HEAD: $(cat "$OUT/rig-head.txt")"
+else fail "P0-RIG at HEAD: $(cat "$OUT/rig-head.txt") $(head -c 300 "$OUT/rig-head.err")"; fi
 
 added=''
 while read -r f; do

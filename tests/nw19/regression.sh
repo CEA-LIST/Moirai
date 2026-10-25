@@ -131,7 +131,7 @@ done
 WATCH_MODE="${NW19_WATCH:-probe}"
 PROBE_INTENDED=(zenoh default)
 if [ "$MODE" = rehearse ]; then export MOIRAI_TRANSPORT=zenoh; PROBE_INTENDED=(zenoh); fi
-mkdir -p "$OUT/r1" "$OUT/r2" "$OUT/p3" "$OUT/p6" "$OUT/bin" "$OUT/watch" "$SCR/tmp"
+mkdir -p "$OUT/b" "$OUT/r1" "$OUT/r2" "$OUT/p3" "$OUT/p6" "$OUT/bin" "$OUT/watch" "$SCR/tmp"
 export TMPDIR="$SCR/tmp" CARGO_BUILD_JOBS=2
 C=(flock "$LOCK" nice -n 10 cargo)
 PARTS=" ${NW19_STEPS:-r1 r2 p3 p6} "
