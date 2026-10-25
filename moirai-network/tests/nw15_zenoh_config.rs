@@ -25,7 +25,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use moirai_network::transport::PeerId;
-use moirai_network::transport_config::{TransportConfig, TransportKind, DEFAULT_TRANSPORT};
+use moirai_network::transport_config::{TransportConfig, TransportKind};
 use moirai_network::HashMap;
 use serde_json::Value;
 use zenoh::Config;
@@ -139,15 +139,14 @@ fn set(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|i| i.to_string()).collect()
 }
 
+// NW.19 ruling (vault spec/items/NW.19.md, section 4, R-1 and P-12): the two
+// assertions of the old default (`DEFAULT_TRANSPORT == Tcp` and unset reading
+// TCP) are replaced by NW.19's own, `nw19_default_l1`, which asserts the new
+// default; the name of this test is kept so that its history reads on. The
+// bootnode case names TCP, which it meant.
 #[test]
 fn moirai_transport_chooses_the_transport_and_tcp_is_the_default() {
-    assert_eq!(
-        DEFAULT_TRANSPORT,
-        TransportKind::Tcp,
-        "the default before NW.19 and NW.20"
-    );
     let kind = |vars: &[(&str, &str)]| transport_config(vars).map(|c| c.kind());
-    assert_eq!(kind(&[]), Ok(TransportKind::Tcp), "MOIRAI_TRANSPORT unset");
     assert_eq!(kind(&[("MOIRAI_TRANSPORT", "tcp")]), Ok(TransportKind::Tcp));
     assert_eq!(
         kind(&[("MOIRAI_TRANSPORT", "zenoh")]),
@@ -158,7 +157,10 @@ fn moirai_transport_chooses_the_transport_and_tcp_is_the_default() {
         "an unknown transport is accepted"
     );
     assert_eq!(
-        kind(&[("BOOTNODE_URL", "http://127.0.0.1:9/")]),
+        kind(&[
+            ("MOIRAI_TRANSPORT", "tcp"),
+            ("BOOTNODE_URL", "http://127.0.0.1:9/")
+        ]),
         Ok(TransportKind::Tcp),
         "a bootnode under TCP, as today"
     );

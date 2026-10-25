@@ -275,6 +275,9 @@ fn launch_prepicked(binary: &Path, scratch: &Path, ids: &[&str]) -> Result<Vec<L
             .env("HTTP_PORT", ports[index].1.to_string())
             .env("PEERS", peers.join(","))
             .env("LOG_ID", "0e020e020e020e020e020e020e020e02")
+            // NW.19 pin P-06 (vault spec/items/NW.19.md, section 4): base is
+            // n3's paired control, so it runs on n3's transport.
+            .env("MOIRAI_TRANSPORT", "tcp")
             .env_remove("PORTS_FILE")
             .env_remove("PEERS_FILE")
             .env_remove("BOOTNODE_URL")
@@ -299,7 +302,18 @@ fn launch_prepicked(binary: &Path, scratch: &Path, ids: &[&str]) -> Result<Vec<L
 fn cluster_specs() -> Vec<NodeSpec> {
     CLUSTER_IDS
         .iter()
-        .map(|id| NodeSpec::new(id, &[("LOG_ID", "0e020e020e020e020e020e020e020e02")]))
+        // NW.19 pin P-05 (vault spec/items/NW.19.md, section 4): n3's claim is
+        // a port kept by the bind that chose it, which Zenoh's start with
+        // LISTEN_PORT=0 and PEERS_FILE does not keep by design (NW.16a P5b).
+        .map(|id| {
+            NodeSpec::new(
+                id,
+                &[
+                    ("LOG_ID", "0e020e020e020e020e020e020e020e02"),
+                    ("MOIRAI_TRANSPORT", "tcp"),
+                ],
+            )
+        })
         .collect()
 }
 

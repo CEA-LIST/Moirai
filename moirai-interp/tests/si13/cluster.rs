@@ -364,6 +364,10 @@ impl Cluster {
                     ("LOG_ID", self.log_id.clone()),
                     ("METAMODEL_DIR", dir.to_string_lossy().into_owned()),
                     ("BOOTNODE_URL", bootnode.clone()),
+                    // NW.19 pin P-09 (vault spec/items/NW.19.md, section 4):
+                    // SI.13's cluster is a bootnode, a relay and routes
+                    // `direct` or `relayed`, all TCP's.
+                    ("MOIRAI_TRANSPORT", "tcp".into()),
                     ("SESSION_ID", self.session.clone()),
                     ("ADVERTISE_ADDR", UNROUTABLE.to_string()),
                     ("RECONCILE_SECS", "1".into()),

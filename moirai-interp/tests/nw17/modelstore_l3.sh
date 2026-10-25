@@ -6,8 +6,9 @@
 #
 #   moirai-interp/tests/nw17/modelstore_l3.sh <tcp|zenoh> <out-dir>
 #
-# tcp:   MOIRAI_TRANSPORT unset (the default), model_node as built; every
-#        test runs, those bound to TCP by design included.
+# tcp:   MOIRAI_TRANSPORT=tcp (NW.19 pin P-11; the default until NW.19),
+#        model_node as built; every test runs, those bound to TCP by design
+#        included.
 # zenoh: MOIRAI_TRANSPORT=zenoh, inherited by every node (no launcher of
 #        these suites clears the environment or sets the variable), and
 #        model_node reached through nw16a/node_wrapper.sh, NW.16a's P6
@@ -116,7 +117,9 @@ for s in "${SUITES[@]}"; do
             -- --test-threads=1 "${skips[@]}" > "$W/run.log" 2>&1
         rc=$?
     else
-        env -u MOIRAI_TRANSPORT MOIRAI_E2E_INTERP_NODE_BIN="$NODE" \
+        # NW.19 pin P-11 (vault spec/items/NW.19.md, section 4): the TCP
+        # column names TCP, no longer the default.
+        env MOIRAI_TRANSPORT=tcp MOIRAI_E2E_INTERP_NODE_BIN="$NODE" \
             MOIRAI_E2E_RELAY_BIN="$RELAY" MOIRAI_E2E_BOOTNODE_BIN="$BOOTNODE" \
             CARGO_BUILD_JOBS=2 flock "$L" /usr/bin/time -v -o "$W/time.txt" nice -n 10 \
             cargo test -j 2 -p moirai-interp --features network --no-fail-fast --test "$s" \

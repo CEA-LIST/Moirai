@@ -856,6 +856,81 @@ struct Cluster {
     /// backend's own variables, so a scenario can pin another `LOG_ID` or
     /// point `METAMODEL_DIR` somewhere. See [`Cluster::with_env`].
     extra_env: Pairs,
+    /// NW.19: one sampler per replica whose replication network is cut, which
+    /// reads every other running replica's `/api/peers` every 100 ms until the
+    /// network is restored. See [`CutSampler`].
+    cut_samplers: BTreeMap<String, CutSampler>,
+}
+
+/// NW.19 (vault `spec/items/NW.19.md`, section 6): while one replica's
+/// replication network is cut, which of the others read it `Disconnected`, and
+/// how long after the cut each first did. Under Zenoh a link cut without a
+/// crash reads `Disconnected` once the 10 s lease runs out; a cut shorter than
+/// that may heal on the same link. Recorded, printed as one `E2E-CUT` line at
+/// the restore; C5 is the scenario that asserts it.
+struct CutSampler {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<BTreeMap<String, u128>>>,
+    started: Instant,
+}
+
+impl CutSampler {
+    fn start(cut: &str, watchers: Vec<(String, String)>) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&stop);
+        let cut = cut.to_string();
+        let started = Instant::now();
+        let handle = std::thread::spawn(move || {
+            let mut first: BTreeMap<String, u128> = BTreeMap::new();
+            while !flag.load(Ordering::Relaxed) {
+                for (id, base) in &watchers {
+                    if first.contains_key(id) {
+                        continue;
+                    }
+                    let status = client()
+                        .get(format!("{base}/api/peers"))
+                        .send()
+                        .and_then(|r| r.text())
+                        .ok()
+                        .and_then(|body| serde_json::from_str::<Value>(&body).ok())
+                        .and_then(|peers| {
+                            peers
+                                .get("peers")
+                                .and_then(Value::as_array)
+                                .and_then(|list| {
+                                    list.iter()
+                                        .find(|p| p.get("id").and_then(Value::as_str) == Some(&cut))
+                                        .and_then(|p| p.get("status").and_then(Value::as_str))
+                                        .map(str::to_string)
+                                })
+                        });
+                    if status.as_deref() == Some("Disconnected") {
+                        first.insert(id.clone(), started.elapsed().as_millis());
+                    }
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            first
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+            started,
+        }
+    }
+
+    /// Stops the sampler; answers how long the cut lasted and, per replica
+    /// that read the cut one `Disconnected`, the first time it did, in ms.
+    fn finish(mut self) -> (u128, BTreeMap<String, u128>) {
+        let held = self.started.elapsed().as_millis();
+        self.stop.store(true, Ordering::Relaxed);
+        let first = self
+            .handle
+            .take()
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
+        (held, first)
+    }
 }
 
 impl Cluster {
@@ -868,6 +943,7 @@ impl Cluster {
             running: BTreeMap::new(),
             bootnode: None,
             extra_env: Vec::new(),
+            cut_samplers: BTreeMap::new(),
         };
         for id in ids {
             let endpoint = cluster.backend.reserve(id)?;
@@ -915,6 +991,10 @@ impl Cluster {
                 Vec::new(),
                 vec![
                     ("BOOTNODE_URL".into(), bootnode.base_url.clone()),
+                    // NW.19 pin P-01 (vault spec/items/NW.19.md, section 4):
+                    // discovery through the bootnode is TCP's; a node under
+                    // Zenoh refuses BOOTNODE_URL.
+                    ("MOIRAI_TRANSPORT".into(), "tcp".into()),
                     ("SESSION_ID".into(), bootnode.session.clone()),
                     ("ADVERTISE_ADDR".into(), endpoint.sync_addr.clone()),
                     // Faster than the 5 s default so a scenario is not gated
@@ -1018,11 +1098,36 @@ impl Cluster {
     }
 
     fn cut_network(&mut self, id: &str) -> Result<()> {
-        self.backend.cut_network(id)
+        self.backend.cut_network(id)?;
+        let watchers = self
+            .running
+            .iter()
+            .filter(|(other, _)| other.as_str() != id)
+            .map(|(other, node)| (other.clone(), node.http_base().to_string()))
+            .collect();
+        self.cut_samplers
+            .insert(id.to_string(), CutSampler::start(id, watchers));
+        Ok(())
     }
 
     fn restore_network(&mut self, id: &str) -> Result<()> {
+        if let Some(sampler) = self.cut_samplers.remove(id) {
+            let (held, first) = sampler.finish();
+            eprintln!(
+                "E2E-CUT {} {id} held_ms={held} disconnected_first_ms={}",
+                std::thread::current().name().unwrap_or("unnamed"),
+                serde_json::to_string(&first).unwrap_or_default()
+            );
+        }
         self.backend.restore_network(id)
+    }
+
+    /// NW.19's C5: how long `id` has been cut so far, in ms, without stopping
+    /// its sampler; `None` when it is not cut.
+    fn cut_held_ms(&self, id: &str) -> Option<u128> {
+        self.cut_samplers
+            .get(id)
+            .map(|sampler| sampler.started.elapsed().as_millis())
     }
 }
 
@@ -1205,6 +1310,9 @@ fn await_mesh(nodes: &[&dyn Node], timeout: Duration) -> Result<()> {
         Ok(Some(()))
     });
 
+    if result.is_ok() {
+        report_routes(nodes);
+    }
     result.map_err(|last_err| {
         let mut report = format!("mesh did not form within {timeout:?}");
         if let Some(e) = last_err {
@@ -1223,6 +1331,25 @@ fn await_mesh(nodes: &[&dyn Node], timeout: Duration) -> Result<()> {
         }
         anyhow!(report)
     })
+}
+
+/// NW.19's route witness (vault `spec/items/NW.19.md`, section 6): once a mesh
+/// has formed, one line per node with the routes its `/api/metrics` reports,
+/// `zenoh` for a peer reached through a Zenoh session, `direct` or `relayed`
+/// under TCP. Printed only (run with `--nocapture`); `tests/nw19/containers.sh`
+/// reads the lines of the container scenarios. A node that does not answer is
+/// printed as such and never fails the scenario here.
+fn report_routes(nodes: &[&dyn Node]) {
+    let scenario = std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .to_string();
+    for node in nodes {
+        let routes = metrics_of(*node)
+            .map(|m| m.get("routes").cloned().unwrap_or(Value::Null).to_string())
+            .unwrap_or_else(|e| format!("<{e:#}>"));
+        eprintln!("E2E-ROUTES {scenario} {} {routes}", node.id());
+    }
 }
 
 /// Polls `/api/state` until every node reports a structurally identical value,
@@ -2277,9 +2404,12 @@ fn t5_a_severed_donor_does_not_strand_the_joiner() {
 /// known one is refused.
 #[test]
 fn t6_a_returning_member_is_refused_a_state_transfer() {
-    let Some(mut cluster) = process_cluster("T6", &["a", "b"]) else {
+    let Some(cluster) = process_cluster("T6", &["a", "b"]) else {
         return;
     };
+    // NW.19 pin P-02 (vault spec/items/NW.19.md, section 4): the test speaks
+    // the newline-JSON wire to `a`'s replication port, which only TCP serves.
+    let mut cluster = cluster.with_env(vec![("MOIRAI_TRANSPORT".into(), "tcp".into())]);
     cluster.start_all().expect("T6: start cluster");
     await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("T6: mesh");
 
@@ -2319,9 +2449,12 @@ fn t6_a_returning_member_is_refused_a_state_transfer() {
 /// other side.
 #[test]
 fn t9_a_state_request_for_a_foreign_log_is_refused_naming_both_ids() {
-    let Some(mut cluster) = process_cluster("T9", &["a"]) else {
+    let Some(cluster) = process_cluster("T9", &["a"]) else {
         return;
     };
+    // NW.19 pin P-03 (vault spec/items/NW.19.md, section 4): as T6, the
+    // newline-JSON wire, which only TCP serves.
+    let mut cluster = cluster.with_env(vec![("MOIRAI_TRANSPORT".into(), "tcp".into())]);
     cluster.start_all().expect("T9: start cluster");
 
     let foreign = "ffffffffffffffffffffffffffffffff";
@@ -2984,6 +3117,76 @@ fn c4_update_wins_over_a_concurrent_remove() {
         "update-wins violated: the concurrent increment must survive the remove, \
          and the causally-prior one must not; state: {state}"
     );
+}
+
+/// **C5** (NW.19, vault `spec/items/NW.19.md`, section 6) — a cut held past
+/// Zenoh's lease: the link is lost, read `Disconnected`, dialled again after
+/// the restore, and the replicas converge.
+///
+/// Every other cut of this suite is shorter than the 10 s lease, so under Zenoh
+/// it may heal on the link it never lost. Here `c`'s replication network is cut
+/// for 15 s while all three write: `a` and `b` must each read `c`
+/// `Disconnected` before the restore (a 100 ms sampler on their `/api/peers`),
+/// then `Connected` again, and every write must reach every replica.
+#[test]
+fn c5_a_cut_held_past_the_lease_reads_disconnected_then_heals() {
+    const HELD: Duration = Duration::from_secs(15);
+    let Some(mut cluster) = started_container_cluster("C5", &["a", "b", "c"]) else {
+        return;
+    };
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("seed", ops::string_insert('S', 0)),
+    );
+    assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+
+    cluster.cut_network("c").expect("C5: sever c");
+    apply_ok(
+        cluster.node("a"),
+        ops::object_update("alpha", ops::string_insert('A', 0)),
+    );
+    apply_ok(
+        cluster.node("b"),
+        ops::object_update("beta", ops::string_insert('B', 0)),
+    );
+    apply_ok(
+        cluster.node("c"),
+        ops::object_update("gamma", ops::string_insert('C', 0)),
+    );
+    assert_diverged(cluster.node("a"), cluster.node("c"), CONVERGE_TIMEOUT);
+    while cluster.cut_held_ms("c").unwrap_or(u128::MAX) < HELD.as_millis() {
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let sampler = cluster
+        .cut_samplers
+        .remove("c")
+        .expect("C5: the cut of c has a sampler");
+    let (held, first) = sampler.finish();
+    eprintln!(
+        "E2E-CUT c5_a_cut_held_past_the_lease_reads_disconnected_then_heals c held_ms={held} \
+         disconnected_first_ms={}",
+        serde_json::to_string(&first).unwrap_or_default()
+    );
+    for watcher in ["a", "b"] {
+        assert!(
+            first.contains_key(watcher),
+            "C5: `{watcher}` never read `c` Disconnected during a cut held {held} ms, past \
+             Zenoh's 10 s lease; first readings: {first:?}; {watcher}'s peers now: {:?}",
+            get_json(cluster.node(watcher), "/api/peers").map(|v| v.to_string())
+        );
+    }
+
+    cluster.restore_network("c").expect("C5: reconnect c");
+    await_mesh(&cluster.nodes(), MESH_TIMEOUT).expect("C5: Connected again after the restore");
+
+    let state = assert_converged(&cluster.nodes(), CONVERGE_TIMEOUT);
+    for (key, value) in [("seed", "S"), ("alpha", "A"), ("beta", "B"), ("gamma", "C")] {
+        assert_eq!(
+            read_string(&state, key).unwrap(),
+            value,
+            "C5: {key}; state: {state}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4392,6 +4595,10 @@ impl RelayRig {
             // other's events, which converges to nothing over any route.
             .with_env_var("LOG_ID", E2E_LOG_ID)
             .with_env_var("BOOTNODE_URL", format!("http://bootnode:{BOOTNODE_PORT}"))
+            // NW.19 pin P-04 (vault spec/items/NW.19.md, section 4): the rig's
+            // claim is the bootnode, the relay and routes `direct` or
+            // `relayed`, all TCP's; the image's default does not decide it.
+            .with_env_var("MOIRAI_TRANSPORT", "tcp")
             .with_env_var("SESSION_ID", &self.session)
             .with_env_var("ADVERTISE_ADDR", format!("{alias}:{CONTAINER_LISTEN_PORT}"))
             .with_env_var("RECONCILE_SECS", "1")

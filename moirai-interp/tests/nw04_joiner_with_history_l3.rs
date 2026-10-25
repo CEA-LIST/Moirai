@@ -223,7 +223,13 @@ fn writers_with_compacted_model(
 fn k1(binary: &Path, name: &str) -> Result<(), String> {
     let tag = name.to_uppercase();
     let (scratch, metamodels) = scratch_for(name)?;
-    let env = [("LOG_ID", LOG_ID), ("METAMODEL_DIR", metamodels.as_str())];
+    // NW.19 pin P-08 (vault spec/items/NW.19.md, section 4): the proxy
+    // carries each frame as one line of the TCP wire.
+    let env = [
+        ("LOG_ID", LOG_ID),
+        ("METAMODEL_DIR", metamodels.as_str()),
+        ("MOIRAI_TRANSPORT", "tcp"),
+    ];
     let js = Json::new();
     let digest = metamodel_digest(&serde_json::from_str::<Value>(JSON_DESCRIPTOR).unwrap());
     let http = Http::new()?;
@@ -334,7 +340,13 @@ fn member_the_donor_never_heard_of(
 ) -> Result<(), String> {
     let tag = name.to_uppercase();
     let (scratch, metamodels) = scratch_for(name)?;
-    let env = [("LOG_ID", LOG_ID), ("METAMODEL_DIR", metamodels.as_str())];
+    // NW.19 pin P-08 (vault spec/items/NW.19.md, section 4): the proxy
+    // carries each frame as one line of the TCP wire.
+    let env = [
+        ("LOG_ID", LOG_ID),
+        ("METAMODEL_DIR", metamodels.as_str()),
+        ("MOIRAI_TRANSPORT", "tcp"),
+    ];
     let js = Json::new();
     let digest = metamodel_digest(&serde_json::from_str::<Value>(JSON_DESCRIPTOR).unwrap());
     let http = Http::new()?;

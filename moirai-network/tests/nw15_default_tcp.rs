@@ -2,6 +2,11 @@
 //! today's TCP transport (vault `spec/items/NW.15.md`). Green at d996427 and
 //! after: TCP stays the default and speaks the same wire.
 //!
+//! NW.19 ruling R-2 (vault `spec/items/NW.19.md`, section 4): Zenoh is the
+//! default from NW.19, so this test names `MOIRAI_TRANSPORT=tcp` and keeps
+//! NW.15's wire claim for an explicit TCP choice; the unset case is
+//! `nw19_default_zenoh`'s. The test's name is kept so its history reads on.
+//!
 //! A node built by `Node::with_listener_and_log_id` on a listener bound to
 //! `127.0.0.1:0` is sent a `Hello` as one line of JSON over a plain TCP
 //! stream, and answers on that stream with a `SyncRequest` line, which is
@@ -29,7 +34,6 @@ use serde_json::{json, Value};
 #[test]
 fn with_moirai_transport_unset_a_node_speaks_newline_json_over_tcp() {
     for var in [
-        "MOIRAI_TRANSPORT",
         "ZENOH_CONFIG",
         "ZENOH_ROUTER",
         "ZENOH_MODE",
@@ -38,6 +42,7 @@ fn with_moirai_transport_unset_a_node_speaks_newline_json_over_tcp() {
     ] {
         std::env::remove_var(var);
     }
+    std::env::set_var("MOIRAI_TRANSPORT", "tcp");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
     let at = listener.local_addr().expect("local addr");
     let log = LogId::generate();

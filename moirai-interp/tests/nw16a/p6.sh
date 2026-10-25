@@ -5,7 +5,8 @@
 #
 #   moirai-interp/tests/nw16a/p6.sh <tcp|zenoh> <out-dir>
 #
-# tcp:   MOIRAI_TRANSPORT unset (the default), model_node as built.
+# tcp:   MOIRAI_TRANSPORT=tcp (NW.19 pin P-10; the default until NW.19),
+#        model_node as built.
 # zenoh: MOIRAI_TRANSPORT=zenoh, inherited by every node (no launcher of
 #        this crate clears the environment), and model_node reached through
 #        nw16a/node_wrapper.sh, which records every start and has
@@ -73,7 +74,9 @@ for s in "${SUITES[@]}"; do
             > "$W/run.log" 2>&1
         rc=$?
     else
-        env -u MOIRAI_TRANSPORT MOIRAI_E2E_INTERP_NODE_BIN="$NODE" \
+        # NW.19 pin P-10 (vault spec/items/NW.19.md, section 4): the TCP half
+        # of the pair names TCP, no longer the default.
+        env MOIRAI_TRANSPORT=tcp MOIRAI_E2E_INTERP_NODE_BIN="$NODE" \
             CARGO_BUILD_JOBS=2 flock "$L" /usr/bin/time -v -o "$W/time.txt" nice -n 10 \
             cargo test -j 2 -p moirai-interp --features network --no-fail-fast --test "$s" \
             > "$W/run.log" 2>&1

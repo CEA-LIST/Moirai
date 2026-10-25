@@ -234,7 +234,13 @@ fn scenario(binary: &Path, name: &str, order: Order) -> Result<(), String> {
     fs::create_dir_all(&metamodels).map_err(|err| err.to_string())?;
     fs::write(metamodels.join("json.json"), JSON_DESCRIPTOR).map_err(|err| err.to_string())?;
     let metamodels = metamodels.to_string_lossy().into_owned();
-    let env = [("LOG_ID", LOG_ID), ("METAMODEL_DIR", metamodels.as_str())];
+    // NW.19 pin P-07 (vault spec/items/NW.19.md, section 4): the proxy
+    // carries each frame as one line of the TCP wire.
+    let env = [
+        ("LOG_ID", LOG_ID),
+        ("METAMODEL_DIR", metamodels.as_str()),
+        ("MOIRAI_TRANSPORT", "tcp"),
+    ];
     let js = Json::new();
     let digest = metamodel_digest(&serde_json::from_str::<Value>(JSON_DESCRIPTOR).unwrap());
     let http = Http::new()?;
