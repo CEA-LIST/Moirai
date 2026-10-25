@@ -1,0 +1,11 @@
+moirai-bootnode 0.1.0 moirai-bootnode/Cargo.toml
+moirai-crdt 0.7.0 moirai-crdt/Cargo.toml
+moirai-dashboard 0.1.0 moirai-dashboard/Cargo.toml
+moirai-fuzz 0.1.0 moirai-fuzz/Cargo.toml
+moirai-interp 0.1.0 moirai-interp/Cargo.toml
+moirai-macros 0.7.0 moirai-macros/Cargo.toml
+moirai-network 0.1.0 moirai-network/Cargo.toml
+moirai-protocol 0.7.0 moirai-protocol/Cargo.toml
+moirai-relay 0.1.0 moirai-relay/Cargo.toml
+moirai-router 0.1.0 moirai-router/Cargo.toml
+moirai-semantics 0.1.0 moirai-semantics/Cargo.toml
