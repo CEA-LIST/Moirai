@@ -15,9 +15,10 @@
 #   - every process of the run gets tests/nw25/btdump.c preloaded and armed (inert unless the
 #     watcher sends SIGUSR2 to a node that reported and stays silent); NW19_BTDUMP=0 turns it off;
 #   - the moirai-interp node targets run with one test thread;
-#   - P3 is the e2e_convergence step under the process backend (with --nocapture, for the route
-#     lines), and opcount_double_delivery is run once more with --ignored, recorded and never
-#     compared (step p3/e2e-opcount);
+#   - P3 is the e2e_convergence step under the process backend (without --nocapture: a scenario's
+#     route line would break libtest's `test ... ok` line, and the scenario would drop out of the
+#     comparison; the watcher is P3's witness), and opcount_double_delivery is run once more with
+#     --ignored, recorded and never compared (step p3/e2e-opcount);
 #   - P6 is NW.25's R3, json_crdt's tests in a git-archive layout beside this tree;
 #   - steps are named by claim point, and the run never builds, starts or reads a container.
 #
@@ -231,9 +232,9 @@ fi
 # ------------------------------------------------------------------ P3: e2e_convergence on processes
 if want p3; then
 step p3 e2e env MOIRAI_E2E_BACKEND=process MOIRAI_E2E_NODE_BIN="$OUT/bin/network_node" MOIRAI_E2E_BOOTNODE_BIN="$OUT/bin/moirai-bootnode" \
-    "${C[@]}" test -j 2 --locked -p moirai-network --test e2e_convergence -- --test-threads=1 --nocapture
+    "${C[@]}" test -j 2 --locked -p moirai-network --test e2e_convergence -- --test-threads=1
 step p3 e2e-opcount env MOIRAI_E2E_BACKEND=process MOIRAI_E2E_NODE_BIN="$OUT/bin/network_node" MOIRAI_E2E_BOOTNODE_BIN="$OUT/bin/moirai-bootnode" \
-    "${C[@]}" test -j 2 --locked -p moirai-network --test e2e_convergence -- --ignored --exact opcount_double_delivery --nocapture
+    "${C[@]}" test -j 2 --locked -p moirai-network --test e2e_convergence -- --ignored --exact opcount_double_delivery
 fi
 
 # ------------------------------------------------------------------ P6: json_crdt's tests

@@ -139,7 +139,9 @@ t0=$(date +%s)
 src=$?
 note "suite exit $src in $(( $(date +%s) - t0 )) s"
 read -r passed failed ignored < <(grep -E '^test result' "$OUT/suite.log" | awk '{p+=$4; f+=$6; i+=$8} END {print p+0, f+0, i+0}')
-failing="$(grep -E '^test .* \.\.\. FAILED$' "$OUT/suite.log" | awk '{print $2}' | tr '\n' ' ')"
+# With --nocapture a scenario's lines interleave with libtest's `test ... ok`, so the failing
+# scenarios are read from libtest's own `failures:` list, and the counts from `test result`.
+failing="$(awk '/^failures:$/ {f++; next} f >= 2 && /^    [a-z0-9_]+$/ {print $1}' "$OUT/suite.log" | sort -u | tr '\n' ' ')"
 if [ "$src" = 0 ] && [ "$passed $failed $ignored" = "43 0 5" ]; then pass "P4-SUITE 43 passed, 0 failed, 5 ignored"
 else fail "P4-SUITE exit $src; passed $passed, failed $failed, ignored $ignored (43 0 5 registered); failing: $failing"; fi
 skips="$(grep -c 'E2E-SKIP' "$OUT/suite.log")"
