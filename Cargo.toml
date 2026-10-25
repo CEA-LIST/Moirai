@@ -13,6 +13,7 @@ members = [
     "moirai-interp",
     "moirai-dashboard",
 ]
+exclude = ["vendor"]
 
 [workspace.package]
 license = "Apache-2.0"
@@ -36,3 +37,10 @@ debug = true
 [profile.samply]
 inherits = "release"
 debug = true
+
+# zenoh 1.10.1 as published plus upstream commit 646f2d1b730e (eclipse-zenoh/zenoh
+# PR #2779, the fix for issue #2581: a peer can wedge at start in the interest
+# routing). NW.23's copy; it leaves out the crate's tests/ directory. Drop this
+# entry and vendor/zenoh-1.10.1 once a zenoh release carries the fix.
+[patch.crates-io]
+zenoh = { path = "vendor/zenoh-1.10.1" }

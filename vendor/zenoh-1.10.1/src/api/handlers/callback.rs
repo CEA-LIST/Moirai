@@ -1,0 +1,223 @@
+//
+// Copyright (c) 2023 ZettaScale Technology
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+// which is available at https://www.apache.org/licenses/LICENSE-2.0.
+//
+// SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+//
+// Contributors:
+//   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
+//
+
+//! Callback handler trait.
+
+use std::{fmt, sync::Arc};
+
+use crate::api::handlers::IntoHandler;
+
+/// A function that can transform an [`FnMut`]`(T)` into
+/// an [`Fn`]`(T)` with the help of a [`Mutex`](std::sync::Mutex).
+pub fn locked<T>(fnmut: impl FnMut(T)) -> impl Fn(T) {
+    let lock = std::sync::Mutex::new(fnmut);
+    move |x| zlock!(lock)(x)
+}
+
+pub trait CallbackParameter: 'static {
+    type Message<'a>;
+
+    fn from_message(msg: Self::Message<'_>) -> Self;
+}
+
+trait CallbackImpl<T>: Send + Sync {
+    fn call(&self, t: T);
+
+    fn call_with_message(&self, msg: T::Message<'_>)
+    where
+        T: CallbackParameter,
+    {
+        self.call(T::from_message(msg))
+    }
+}
+
+impl<T, F: Fn(T) + Send + Sync> CallbackImpl<T> for F {
+    fn call(&self, t: T) {
+        self(t)
+    }
+}
+
+struct Dropper<F>
+where
+    F: FnOnce() + Send + Sync,
+{
+    drop: Option<F>,
+}
+impl<F> Drop for Dropper<F>
+where
+    F: FnOnce() + Send + Sync,
+{
+    fn drop(&mut self) {
+        if let Some(d) = self.drop.take() {
+            (d)()
+        }
+    }
+}
+trait DropperTrait {}
+impl<F> DropperTrait for Dropper<F> where F: FnOnce() + Send + Sync {}
+/// Callback type used by zenoh entities.
+///
+/// This type stores the callback function passed to zenoh entities.
+pub struct Callback<T> {
+    callable: Arc<dyn CallbackImpl<T>>,
+    drop: Option<Arc<dyn DropperTrait + Send + Sync>>,
+}
+
+impl<T> fmt::Debug for Callback<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Callback")
+            .field("callable", &"..")
+            .field("has_drop", &self.drop.is_some())
+            .finish()
+    }
+}
+
+impl<T> Clone for Callback<T> {
+    fn clone(&self) -> Self {
+        Self {
+            callable: self.callable.clone(),
+            drop: self.drop.clone(),
+        }
+    }
+}
+
+impl<T> Callback<T> {
+    // TODO deprecate
+    /// Instantiate a `Callback` from a callback function.
+    pub fn new(cb: Arc<dyn Fn(T) + Send + Sync>) -> Self
+    where
+        T: 'static,
+    {
+        Self::from(move |msg| cb(msg))
+    }
+
+    /// Call the inner callback.
+    #[inline]
+    pub fn call(&self, arg: T) {
+        self.callable.call(arg)
+    }
+
+    pub(crate) fn call_with_message(&self, msg: T::Message<'_>)
+    where
+        T: CallbackParameter,
+    {
+        self.callable.call_with_message(msg)
+    }
+
+    #[zenoh_macros::pub_visibility_if_internal]
+    pub(crate) fn set_on_drop(&mut self, drop: impl FnOnce() + Send + Sync + 'static) {
+        self.drop = Some(Arc::new(Dropper { drop: Some(drop) }));
+    }
+}
+
+impl<T, F: Fn(T) + Send + Sync + 'static> From<F> for Callback<T> {
+    fn from(value: F) -> Self {
+        Self {
+            callable: Arc::new(value),
+            drop: None,
+        }
+    }
+}
+
+impl<T> IntoHandler<T> for Callback<T> {
+    type Handler = ();
+    fn into_handler(self) -> (Callback<T>, Self::Handler) {
+        (self, ())
+    }
+}
+
+impl<T, F, H> IntoHandler<T> for (F, H)
+where
+    F: Fn(T) + Send + Sync + 'static,
+{
+    type Handler = H;
+
+    fn into_handler(self) -> (Callback<T>, Self::Handler) {
+        (Callback::from(self.0), self.1)
+    }
+}
+
+impl<T, H> IntoHandler<T> for (Callback<T>, H) {
+    type Handler = H;
+
+    fn into_handler(self) -> (Callback<T>, Self::Handler) {
+        self
+    }
+}
+
+impl<T: Send + 'static> IntoHandler<T> for (flume::Sender<T>, flume::Receiver<T>) {
+    type Handler = flume::Receiver<T>;
+
+    fn into_handler(self) -> (Callback<T>, Self::Handler) {
+        let (sender, receiver) = self;
+        (
+            Callback::from(move |t| {
+                if let Err(e) = sender.send(t) {
+                    tracing::error!("{}", e)
+                }
+            }),
+            receiver,
+        )
+    }
+}
+
+/// A handler containing two callback functions:
+///  - `callback`: the typical callback function. `context` will be passed as its last argument.
+///  - `drop`: a callback invoked when this handler is dropped.
+///
+/// It is guaranteed that:
+///
+///   - `callback` will never be called once `drop` has started.
+///   - `drop` will only be called **once**, and **after** every `callback` has ended.
+///   - The two previous guarantees imply that `call` and `drop` are never called concurrently.
+pub struct CallbackDrop<Callback, DropFn>
+where
+    DropFn: FnMut() + Send + Sync + 'static,
+{
+    pub callback: Callback,
+    pub drop: DropFn,
+}
+
+impl<Callback, DropFn> fmt::Debug for CallbackDrop<Callback, DropFn>
+where
+    DropFn: FnMut() + Send + Sync + 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CallbackDrop")
+            .field("callback", &"..")
+            .field("drop", &"..")
+            .finish()
+    }
+}
+
+impl<Callback, DropFn> Drop for CallbackDrop<Callback, DropFn>
+where
+    DropFn: FnMut() + Send + Sync + 'static,
+{
+    fn drop(&mut self) {
+        (self.drop)()
+    }
+}
+
+impl<OnEvent, Event, DropFn> IntoHandler<Event> for CallbackDrop<OnEvent, DropFn>
+where
+    OnEvent: Fn(Event) + Send + Sync + 'static,
+    DropFn: FnMut() + Send + Sync + 'static,
+{
+    type Handler = ();
+
+    fn into_handler(self) -> (Callback<Event>, Self::Handler) {
+        (move |evt| (self.callback)(evt), ()).into_handler()
+    }
+}
