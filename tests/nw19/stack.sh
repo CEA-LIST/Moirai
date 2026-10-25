@@ -44,7 +44,9 @@
 #       NW19_ARACHNE_REV) posted to nw19-alice, then e2e/addMetamodel.e2e.ts, e2e/ipEditor.e2e.ts and
 #       e2e/sysmlEditor.e2e.ts against nw19-alice and nw19-bob (MOIRAI_LIVE_NODES; the replicas allow
 #       the origin http://127.0.0.1:*): three files passed, no failed test, no E2E-SKIP.
-#   Z9  `down-all`: no container of the run left, the session network gone.
+#   Z9  `down` each replica of the run, then `infra down`: no container of the run left, the
+#       session network gone (the script's `down-all` is not used: it takes down every replica
+#       container on the machine).
 # T, the TCP mode (`stack_interpreter.sh --tcp ...`; NW19_TCP_SELECT=none names no transport, for
 #    the baseline at the TCP-default parent):
 #   T1  `infra up`: nw19-bootnode and nw19-relay running, no nw19-router.
@@ -53,7 +55,7 @@
 #   T3  a model registered on nw19-alice, joined on the others, five classes on each, converged
 #       within 30 s. (Z8's editor files here too when NW19_EDITOR_T=1, the baseline's.) T5,
 #       recorded, never counted: Z7B on TCP.
-#   T4  `down-all`: nothing of the run left.
+#   T4  as Z9 under --tcp: nothing of the run left.
 # Then CLEAN (no container, network or anonymous volume of the run left; volumes it created removed
 # by name) and PROTECTED (every protected tag's image id as before).
 #
@@ -181,11 +183,17 @@ replica_down() { # mode name
     elif [ "$1" = t ]; then SI "${TCPSEL[@]}" down "$2" >> "$OUT/stack-script.log" 2>&1
     else SI down "$2" >> "$OUT/stack-script.log" 2>&1; fi
 }
+# Every replica of the run by name, then the infrastructure. Not the script's `down-all`, which
+# takes down every container labelled as a replica on the machine, another lane's included.
 down_all() { # mode
-    log "down-all $1"
-    if [ "$LAYOUT" = hand ]; then cleanup; return 0
-    elif [ "$1" = t ]; then SI "${TCPSEL[@]}" down-all >> "$OUT/stack-script.log" 2>&1
-    else SI down-all >> "$OUT/stack-script.log" 2>&1; fi
+    local n
+    log "down each replica, then infra down ($1)"
+    if [ "$LAYOUT" = hand ]; then cleanup; return 0; fi
+    for n in nw19-alice nw19-bob nw19-carol nw19-dave; do
+        docker container inspect "$n" >/dev/null 2>&1 && replica_down "$1" "$n"
+    done
+    if [ "$1" = t ]; then SI "${TCPSEL[@]}" infra down >> "$OUT/stack-script.log" 2>&1
+    else SI infra down >> "$OUT/stack-script.log" 2>&1; fi
 }
 nodes_of() { local out="" n; for n in "$@"; do out="$out,$n=http://127.0.0.1:${PORT[$n]}"; done; printf '%s' "${out#,}"; }
 prog() { # label step arg tag timeout names...   (NW19_RECORD_ONLY=1: a RECORD line, never a failure)
@@ -392,8 +400,8 @@ run_z() {
 
     down_all z
     local left; left="$(for n in $ALL_NAMES; do docker container inspect "$n" >/dev/null 2>&1 && printf '%s ' "$n"; done)"
-    if [ -z "$left" ] && ! docker network inspect "$NET" >/dev/null 2>&1; then pass "Z9-DOWN-ALL nothing of the Zenoh stack left, the session network gone"
-    else fail "Z9-DOWN-ALL left: $left network $(docker network inspect "$NET" >/dev/null 2>&1 && echo present)"; fi
+    if [ -z "$left" ] && ! docker network inspect "$NET" >/dev/null 2>&1; then pass "Z9-DOWN nothing of the Zenoh stack left, the session network gone"
+    else fail "Z9-DOWN left: $left network $(docker network inspect "$NET" >/dev/null 2>&1 && echo present)"; fi
 }
 
 # ------------------------------------------------------------------ T
@@ -420,8 +428,8 @@ run_t() {
     replica_up t nw19-carol && NW19_RECORD_ONLY=1 prog T5-WRITER-RETURNS join nw19-carol "" 20 nw19-alice nw19-bob nw19-carol
     down_all t
     local left; left="$(for n in $ALL_NAMES; do docker container inspect "$n" >/dev/null 2>&1 && printf '%s ' "$n"; done)"
-    if [ -z "$left" ] && ! docker network inspect "$NET" >/dev/null 2>&1; then pass "T4-DOWN-ALL nothing of the TCP stack left, the session network gone"
-    else fail "T4-DOWN-ALL left: $left network $(docker network inspect "$NET" >/dev/null 2>&1 && echo present)"; fi
+    if [ -z "$left" ] && ! docker network inspect "$NET" >/dev/null 2>&1; then pass "T4-DOWN nothing of the TCP stack left, the session network gone"
+    else fail "T4-DOWN left: $left network $(docker network inspect "$NET" >/dev/null 2>&1 && echo present)"; fi
 }
 
 case "$RUNS" in *Z*) log "run Z"; run_z; cleanup ;; esac
