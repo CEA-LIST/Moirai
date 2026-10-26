@@ -19,9 +19,12 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Optional<O> {
     Set(O),
     Unset,
@@ -49,6 +52,7 @@ impl<O> Boxer<Optional<Box<O>>> for Optional<O> {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct OptionLog<L>
 where
     L: IsLog,
