@@ -37,12 +37,15 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use replay::replay;
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum List<V> {
     /// Insert `content` at the visible position observed by the issuing replica.
     Insert { content: V, pos: usize },

@@ -7,8 +7,12 @@ use moirai_protocol::{
 
 use crate::counter::resettable_counter::{Counter as ResettableCounter, CounterValue};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CounterStable<V>(V);
 
 impl<V> CounterStable<V> {

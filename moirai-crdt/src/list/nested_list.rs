@@ -19,6 +19,8 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::{
     list::eg_walker::{List as SimpleList, ReadAt},
@@ -27,6 +29,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum NestedList<O> {
     /// Insert a new child CRDT at the given position
     Insert { pos: usize, op: O },

@@ -16,14 +16,18 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 pub type LwwRegister<V> = Register<V, LwwPolicy>;
 pub type FairRegister<V> = Register<V, FairPolicy>;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Register<V, P> {
     Write(V),
     Clear,
+    #[cfg_attr(feature = "serde", serde(skip))]
     // TODO: find a better design pattern
     __Marker(std::convert::Infallible, PhantomData<P>),
 }

@@ -28,9 +28,10 @@ deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = tru
     "elsa",
 ] }
 bitrep = "0.5.1"
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [features]
-default = ["fuzz"]
+default = ["fuzz", "serde"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz?/sink"]
 test_utils = [
@@ -38,3 +39,4 @@ test_utils = [
     "moirai-protocol/test_utils",
     "moirai-macros/test_utils",
 ]
+serde = ["dep:serde", "moirai-protocol/serde", "moirai-macros/serde"]

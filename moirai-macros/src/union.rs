@@ -6,6 +6,7 @@ macro_rules! union {
         $crate::paste::paste! {
             /// List of variant names, used in the `Choose` operation to select a variant
             #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Variant>] {
                 $(
                     $variant,
@@ -14,6 +15,7 @@ macro_rules! union {
 
             /// Set of Union CRDT operations
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum $union {
                 $(
                     $variant($ty),
@@ -63,6 +65,7 @@ macro_rules! union {
 
             /// Value returned by the child log of each variant
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union ChildValue>] {
                 $(
                     $variant($value),
@@ -80,6 +83,7 @@ macro_rules! union {
 
             /// Value returned by the union log, which may be a single value, a conflict of values, or unset.
             #[derive(Clone, Debug, Default, PartialEq)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Value>] {
                 #[default]

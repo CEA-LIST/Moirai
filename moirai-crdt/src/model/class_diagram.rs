@@ -23,8 +23,12 @@ use crate::{
     register::{mv_register::MVRegister, to_register::TORegister},
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum RelationType {
     Extends,
     Implements,
@@ -59,6 +63,7 @@ impl Ord for RelationType {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PrimitiveType {
     String,
     Number,
@@ -68,6 +73,7 @@ pub enum PrimitiveType {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Class(String),
@@ -81,6 +87,7 @@ impl Default for TypeRef {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Visibility {
     Public,
     Private,
@@ -114,6 +121,7 @@ impl Ord for Visibility {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Multiplicity {
     Unspecified,
     One,

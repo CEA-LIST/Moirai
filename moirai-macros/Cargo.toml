@@ -16,6 +16,7 @@ rustc-hash = "2.1.3"
 deepsize = { git = "https://github.com/leo-olivier/deepsize.git", optional = true, features = [
     "elsa",
 ] }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 # TEST UTILS FEATURES
 [features]
@@ -23,3 +24,4 @@ default = []
 fuzz = ["moirai-fuzz"]
 sink = ["moirai-protocol/sink"]
 test_utils = ["moirai-protocol/test_utils", "dep:deepsize"]
+serde = ["dep:serde"]
