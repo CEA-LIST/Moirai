@@ -38,9 +38,9 @@ use crate::state_transfer::{LogPayload, TransferableLog};
 use crate::transport::{CrdtTransport, PeerId, TransportMessage};
 use crate::HashMap;
 
-/// A replica over the transport `MOIRAI_TRANSPORT` names: TCP, routed per
-/// peer, unless it says `zenoh`. The alias to build a node with unless there
-/// is a reason not to.
+/// A replica over the transport `MOIRAI_TRANSPORT` names: Zenoh when it is
+/// unset or says `zenoh`, TCP routed per peer when it says `tcp`. The alias to
+/// build a node with unless there is a reason not to.
 pub type Node<L> = GenericNode<L, AnyTransport<<L as IsLog>::Op>>;
 
 /// Former name of [`Node`], from when TCP was the only way to reach a peer.
@@ -4040,9 +4040,9 @@ impl<L: IsLog<Command = <L as IsLog>::Op>> GenericNode<L, AnyTransport<L::Op>>
 where
     L::Op: NetworkOp,
 {
-    /// Create a node over the transport `MOIRAI_TRANSPORT` names, the routing
-    /// composite when it is unset (convenience wrapper around
-    /// [`with_transport`]). Panics if the transport variables are refused.
+    /// Create a node over the transport `MOIRAI_TRANSPORT` names, Zenoh when
+    /// it is unset (convenience wrapper around [`with_transport`]). Panics if
+    /// the transport variables are refused.
     ///
     /// * `replica_id` — unique identifier for this replica.
     /// * `members` — all replica IDs in the cluster (including self).

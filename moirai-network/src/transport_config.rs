@@ -40,9 +40,10 @@ pub enum TransportKind {
     Zenoh,
 }
 
-/// The transport a node runs on when `MOIRAI_TRANSPORT` is unset. TCP until
-/// each integration branch flips it after its merge (note section 8).
-pub const DEFAULT_TRANSPORT: TransportKind = TransportKind::Tcp;
+/// The transport a node runs on when `MOIRAI_TRANSPORT` is unset: Zenoh on
+/// this branch since NW.19 (note section 8). A build without moirai-network's
+/// `zenoh` feature refuses it at start, naming `MOIRAI_TRANSPORT=tcp`.
+pub const DEFAULT_TRANSPORT: TransportKind = TransportKind::Zenoh;
 
 /// The multicast group and port a node scouts on with
 /// `ZENOH_SCOUTING=multicast`. Zenoh's group, not Zenoh's port: 7446 is the
@@ -85,6 +86,7 @@ fn refuse<T>(why: impl Into<String>) -> Result<T, TransportConfigError> {
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     kind: TransportKind,
+    by_default: bool,
     session_id: String,
     router: Option<String>,
     client: bool,
@@ -110,8 +112,10 @@ impl TransportConfig {
                 ))
             }
         };
+        let by_default = var("MOIRAI_TRANSPORT").is_none();
         let mut config = Self {
             kind,
+            by_default,
             session_id: var("SESSION_ID").unwrap_or_else(|| "default".to_string()),
             router: None,
             client: false,
@@ -125,6 +129,13 @@ impl TransportConfig {
         }
 
         if var("BOOTNODE_URL").is_some() {
+            if by_default {
+                return refuse(
+                    "BOOTNODE_URL is set, but MOIRAI_TRANSPORT is unset, so the node runs Zenoh, \
+                     the default, which finds its peers without a bootnode; run with \
+                     MOIRAI_TRANSPORT=tcp to register with the bootnode, or unset BOOTNODE_URL",
+                );
+            }
             return refuse(
                 "BOOTNODE_URL is set, but a node under Zenoh finds its peers without a \
                  bootnode; unset it, or run with MOIRAI_TRANSPORT=tcp",
@@ -178,6 +189,12 @@ impl TransportConfig {
 
     pub fn kind(&self) -> TransportKind {
         self.kind
+    }
+
+    /// Whether the kind is [`DEFAULT_TRANSPORT`] because `MOIRAI_TRANSPORT`
+    /// is unset or empty, rather than named.
+    pub fn is_default(&self) -> bool {
+        self.by_default
     }
 
     /// The `<session>` chunk of every key under Zenoh: `SESSION_ID`, default

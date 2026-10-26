@@ -114,17 +114,25 @@ where
             .map(AnyTransport::Zenoh)
     }
 
+    /// Zenoh in a build without the `zenoh` feature: refused, naming the
+    /// feature and the way to TCP. Only a transport that was named is quoted
+    /// back; an unset one is said to be unset.
     #[cfg(not(feature = "zenoh"))]
     fn zenoh(
-        _config: &TransportConfig,
+        config: &TransportConfig,
         _local_id: PeerId,
         _listen: Listen,
         _peer_addresses: HashMap<PeerId, String>,
     ) -> TransportResult<Self> {
-        Err(crate::transport::TransportError::Other(
-            "MOIRAI_TRANSPORT=zenoh, but moirai-network was built without its `zenoh` feature"
-                .to_string(),
-        ))
+        let why = if config.is_default() {
+            "MOIRAI_TRANSPORT is unset, and the default transport, Zenoh, needs moirai-network's \
+             `zenoh` feature, which this build was made without; run with MOIRAI_TRANSPORT=tcp, \
+             or rebuild with the `zenoh` feature"
+        } else {
+            "MOIRAI_TRANSPORT=zenoh, but moirai-network was built without its `zenoh` feature; \
+             rebuild with it, or run with MOIRAI_TRANSPORT=tcp"
+        };
+        Err(crate::transport::TransportError::Other(why.to_string()))
     }
 }
 

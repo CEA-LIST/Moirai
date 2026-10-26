@@ -57,7 +57,7 @@ BOOTNODE_HTTP_PORT="${BOOTNODE_HTTP_PORT:-7000}"
 #          the bootnode
 #   zenoh  infra.yml's `zenoh` profile (one router); replicas are told
 #          ZENOH_ROUTER=tcp/router:7447 and no BOOTNODE_URL
-BINARY_DEFAULT_TRANSPORT=tcp
+BINARY_DEFAULT_TRANSPORT=zenoh
 TRANSPORT_FLAG=
 ROUTER_NAME="${MOIRAI_ROUTER_NAME:-router}"
 ROUTER_ENDPOINT="tcp/router:7447"

@@ -1,7 +1,8 @@
 //! Network node for the interpreted model plane: **one** binary, hosting a
 //! model of any metamodel it holds a descriptor for.
 //!
-//! Runs one replica with TCP peer-to-peer sync and an HTTP API, hosting one
+//! Runs one replica with peer-to-peer sync (Zenoh by default, TCP under
+//! `MOIRAI_TRANSPORT=tcp`) and an HTTP API, hosting one
 //! [`ModelLog`] per model it is asked to. Its generated twin,
 //! `arachne/generated/json_crdt/examples/network_node.rs`, is the same file
 //! for the same `GenericNode`; everything below is written against that one,
@@ -85,10 +86,13 @@
 //!
 //! # Peer discovery
 //!
-//! Set `BOOTNODE_URL` to have the replica register with a bootnode session
-//! directory every `RECONCILE_SECS` and dial whatever the roster returns. When
-//! it is unset the replica behaves exactly as it always has: `PEERS` only,
-//! dialled once. `PEERS` keeps working when both are set, as a static override.
+//! Under TCP (`MOIRAI_TRANSPORT=tcp`), set `BOOTNODE_URL` to have the replica
+//! register with a bootnode session directory every `RECONCILE_SECS` and dial
+//! whatever the roster returns. When it is unset the replica behaves exactly
+//! as it always has: `PEERS` only, dialled once. `PEERS` keeps working when
+//! both are set, as a static override. Under Zenoh, the default, a node finds
+//! its peers without a bootnode and refuses `BOOTNODE_URL` at start, naming
+//! `MOIRAI_TRANSPORT=tcp`.
 //!
 //! - `BOOTNODE_URL`   — unset means no discovery at all
 //! - `SESSION_ID`     — session to join, default `default`
