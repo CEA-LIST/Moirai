@@ -16,7 +16,7 @@ There are now two, and the difference is the lifecycle, not the topology.
 
 ## The stack's transport
 
-The stack runs on the transport the binaries run on unless told otherwise, and states it in every replica it starts (`MOIRAI_TRANSPORT` in the container's environment), never leaving it to the image. `--tcp` before the command, or `MOIRAI_TRANSPORT=tcp` in the environment, is TCP; `MOIRAI_TRANSPORT=zenoh` is Zenoh. Give the same transport to `infra up` and to every `up` of the session.
+The stack runs on the transport the binaries run on unless told otherwise, and states it in every replica it starts (`MOIRAI_TRANSPORT` in the container's environment), never leaving it to the image. `--tcp` before the command, or `MOIRAI_TRANSPORT=tcp` in the environment, is TCP; `MOIRAI_TRANSPORT=zenoh` is Zenoh. Give the same transport to `infra up` and to every `up` of the session: `up` refuses a replica on the other transport than the running infrastructure's, and `ls` and `urls` report the running infrastructure's transport, whatever the call names. `logs infra` shows the router, the bootnode and the relay, whichever runs.
 
 - Zenoh: `infra up` starts one router (`moirai-router`, container `router`, listening on 7447 on the session bridge under the alias `router`, no published port, multicast scouting off; infra.yml's `zenoh` profile). Each replica is told `ZENOH_ROUTER=tcp/router:7447` and no `BOOTNODE_URL`; the router introduces the replicas, which then link directly to each other on 9001 and keep converging while the router is down. There is no directory, so `ls` shows none.
 - TCP: `infra up` starts the bootnode and the relay as before (infra.yml's `tcp` profile), and each replica is told `MOIRAI_TRANSPORT=tcp` and `BOOTNODE_URL=http://bootnode:7000`:

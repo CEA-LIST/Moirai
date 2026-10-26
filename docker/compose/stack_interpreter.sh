@@ -106,7 +106,9 @@ http://bootnode:7000). Under Zenoh it is one router, MOIRAI_ROUTER_NAME
 published port; every replica is told ZENOH_ROUTER=tcp/router:7447 and no
 BOOTNODE_URL, and links directly with the peers the router introduces. Every
 replica's environment states MOIRAI_TRANSPORT. Give the same transport to
-`infra up` and to each `up`.
+`infra up` and to each `up`: `up` refuses a replica on the other transport
+than the running infrastructure's, and `ls` and `urls` report the running
+infrastructure's transport.
 
 Options for `build`:
       --rebuild          rebuild even if the image already exists
@@ -534,6 +536,20 @@ cmd_up() {
         "the session bridge '$NETWORK' does not exist; start the infrastructure first:" \
         "    $0 infra up"
 
+    # A replica on the other transport than the infrastructure's finds no
+    # peer: under TCP it would ask a bootnode that is not there, under Zenoh a
+    # router that is not there. Refused here rather than left to time out.
+    local running
+    running="$(infra_transport)"
+    if [ "$running" = zenoh ] && [ "$TRANSPORT" = tcp ]; then
+        die "the infrastructure ($INFRA_PROJECT) is the Zenoh router, and '$name' would be told TCP." \
+            "Start it on Zenoh: drop --tcp and MOIRAI_TRANSPORT=tcp."
+    fi
+    if [ "$running" = tcp ] && [ "$TRANSPORT" = zenoh ]; then
+        die "the infrastructure ($INFRA_PROJECT) is the TCP bootnode and relay, and '$name' would be told Zenoh." \
+            "Start it on TCP: $0 --tcp up $name --port $port"
+    fi
+
     say "starting replica '$name' (${REPLICA_BIN:-model_node}) on host port $port, transport $TRANSPORT"
     replica_compose "$name" "$port" up -d
     wait_healthy "$name" || die "'$name' never became healthy; try: $0 logs $name"
@@ -585,13 +601,38 @@ replica_names() {
 # reporting
 # --------------------------------------------------------------------------
 
+# The transport of the infrastructure already in the project, read from its
+# containers in any state (a stopped router still names Zenoh): zenoh when it
+# holds the router, tcp when it holds the bootnode or the relay, both when it
+# holds the two, nothing when it holds neither.
+infra_transport() {
+    local services z=0 t=0
+    services="$(docker ps -a --filter "label=com.docker.compose.project=$INFRA_PROJECT" \
+        --format '{{.Label "com.docker.compose.service"}}' 2>/dev/null)" || true
+    grep -qx router <<< "$services" && z=1
+    grep -qxE 'bootnode|relay' <<< "$services" && t=1
+    case "$z$t" in
+        10) printf 'zenoh' ;;
+        01) printf 'tcp' ;;
+        11) printf 'both' ;;
+    esac
+}
+
+# What `ls` and `urls` report: the transport of the infrastructure that is up,
+# whatever this call resolved; the resolved one only when none is up.
+shown_transport() {
+    local running
+    running="$(infra_transport)"
+    printf '%s' "${running:-$TRANSPORT}"
+}
+
 cmd_ls() {
     preflight
     printf '\nnetwork: %s' "$NETWORK"
     if docker network inspect "$NETWORK" >/dev/null 2>&1; then printf ' (up)\n'; else printf ' (absent)\n'; fi
 
     printf '\ninfrastructure (%s):\n' "$INFRA_PROJECT"
-    infra_compose ps --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' 2>/dev/null \
+    infra_compose --profile '*' ps --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' 2>/dev/null \
         | sed 's/^/  /'
 
     printf '\nreplicas:\n'
@@ -605,26 +646,32 @@ cmd_ls() {
     done
     [ "$found" -eq 1 ] || printf '  (none)\n'
 
-    printf '\ndirectory (session %s):\n' "$SESSION_ID"
-    if [ "$TRANSPORT" = zenoh ]; then
-        printf '  (none under Zenoh: the router %s introduces the replicas)\n\n' "$ROUTER_NAME"
-        return
+    local shown roster
+    shown="$(shown_transport)"
+    printf '\ndirectory (session %s, transport %s):\n' "$SESSION_ID" "$shown"
+    if [ "$shown" = zenoh ] || [ "$shown" = both ]; then
+        printf '  (none under Zenoh: the router %s introduces the replicas)\n' "$ROUTER_NAME"
     fi
-    local roster
-    if roster="$(curl -fsS --max-time 3 "http://localhost:$BOOTNODE_HTTP_PORT/session/$SESSION_ID/peers" 2>/dev/null)"; then
-        printf '%s' "$roster" | sed 's/},{/}\n{/g' | sed 's/^/  /'
-        printf '\n'
-    else
-        printf '  (the bootnode did not answer on port %s)\n' "$BOOTNODE_HTTP_PORT"
+    if [ "$shown" = tcp ] || [ "$shown" = both ]; then
+        if roster="$(curl -fsS --max-time 3 "http://localhost:$BOOTNODE_HTTP_PORT/session/$SESSION_ID/peers" 2>/dev/null)"; then
+            printf '%s' "$roster" | sed 's/},{/}\n{/g' | sed 's/^/  /'
+            printf '\n'
+        else
+            printf '  (the bootnode did not answer on port %s)\n' "$BOOTNODE_HTTP_PORT"
+        fi
     fi
     printf '\n'
 }
 
 cmd_urls() {
-    if [ "$TRANSPORT" = zenoh ]; then
-        printf '\n  router     %s on %s (%s, no published port)\n' "$ROUTER_ENDPOINT" "$NETWORK" "$ROUTER_NAME"
-    else
-        printf '\n  bootnode   http://localhost:%s/session/%s/peers\n' "$BOOTNODE_HTTP_PORT" "$SESSION_ID"
+    local shown
+    shown="$(shown_transport)"
+    printf '\n'
+    if [ "$shown" = zenoh ] || [ "$shown" = both ]; then
+        printf '  router     %s on %s (%s, no published port)\n' "$ROUTER_ENDPOINT" "$NETWORK" "$ROUTER_NAME"
+    fi
+    if [ "$shown" = tcp ] || [ "$shown" = both ]; then
+        printf '  bootnode   http://localhost:%s/session/%s/peers\n' "$BOOTNODE_HTTP_PORT" "$SESSION_ID"
     fi
     if docker container inspect "${MOIRAI_DASHBOARD_NAME:-dashboard}" >/dev/null 2>&1; then
         printf '  dashboard  http://localhost:%s/\n' "${DASHBOARD_PORT:-8090}"
@@ -643,7 +690,10 @@ cmd_logs() {
     shift
     preflight
     if [ "$target" = "infra" ]; then
-        infra_compose --profile dashboard logs "$@"
+        # Every profile: Compose leaves the services of a profile not named
+        # out of `logs`, and the router, the bootnode and the relay each sit
+        # behind one.
+        infra_compose --profile '*' logs "$@"
     else
         docker logs "$@" "$target"
     fi

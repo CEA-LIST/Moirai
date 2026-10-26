@@ -25,7 +25,9 @@
 # directly, so the router is no data path between peers.
 #
 # Nothing here replaces the measurement rig. `docker-compose.yml` is still what
-# `rig.sh`, the e2e harness and `experiments/` drive, and it is unchanged.
+# `rig.sh`, the e2e harness and `experiments/` drive. It stays on TCP: every rig
+# replica is told `MOIRAI_TRANSPORT: "tcp"` (its `x-replica-env`), since the rig
+# measures the bootnode and the relay.
 #
 # # Why the network is external
 #
