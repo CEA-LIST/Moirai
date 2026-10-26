@@ -4,7 +4,7 @@ There are now two, and the difference is the lifecycle, not the topology.
 
 `docker-compose.yml` is **the measurement rig**: one Compose project holding a bootnode, a relay, N scaled `node` replicas, an `islander` on a second bridge with no route to them, an observer sampling into `runs/metrics.csv`, a load driver and a dashboard. It is what `rig.sh`, `moirai-network/tests/e2e_convergence.rs` and the scripts under `experiments/` drive, and every committed curve was measured on it. One project means one lifecycle: everything goes up together and comes down together, which is exactly right for a run you intend to plot.
 
-`infra.yml` + `replica.yml`, driven by `stack_interpreter.sh`, is **the session**: the bootnode and relay as one project, and each replica as a project of its own. That buys the one thing the rig cannot do — a replica that comes and goes while the session it belongs to keeps running:
+`infra.yml` + `replica.yml`, driven by `stack_interpreter.sh`, is **the session**: the infrastructure as one project (a router under Zenoh, a bootnode and a relay under TCP), and each replica as a project of its own. That buys the one thing the rig cannot do — a replica that comes and goes while the session it belongs to keeps running:
 
     ./stack_interpreter.sh build
     ./stack_interpreter.sh infra up --dashboard
@@ -13,6 +13,21 @@ There are now two, and the difference is the lifecycle, not the topology.
     ./stack_interpreter.sh down bob          # alice keeps serving its models
     ./stack_interpreter.sh up bob --port 8082  # bob rejoins the same session
     ./stack_interpreter.sh down-all
+
+## The stack's transport
+
+The stack runs on the transport the binaries run on unless told otherwise, and states it in every replica it starts (`MOIRAI_TRANSPORT` in the container's environment), never leaving it to the image. `--tcp` before the command, or `MOIRAI_TRANSPORT=tcp` in the environment, is TCP; `MOIRAI_TRANSPORT=zenoh` is Zenoh. Give the same transport to `infra up` and to every `up` of the session.
+
+- Zenoh: `infra up` starts one router (`moirai-router`, container `router`, listening on 7447 on the session bridge under the alias `router`, no published port, multicast scouting off; infra.yml's `zenoh` profile). Each replica is told `ZENOH_ROUTER=tcp/router:7447` and no `BOOTNODE_URL`; the router introduces the replicas, which then link directly to each other on 9001 and keep converging while the router is down. There is no directory, so `ls` shows none.
+- TCP: `infra up` starts the bootnode and the relay as before (infra.yml's `tcp` profile), and each replica is told `MOIRAI_TRANSPORT=tcp` and `BOOTNODE_URL=http://bootnode:7000`:
+
+      ./stack_interpreter.sh --tcp infra up
+      ./stack_interpreter.sh --tcp up alice --port 8081
+      ./stack_interpreter.sh --tcp down-all
+
+`stack_interpreter.sh config infra` and `config up NAME --port N` print, as JSON, the Compose configuration `infra up` or `up` with the same arguments and environment would use, and start, create or change nothing (`--tcp config ...` for TCP's).
+
+The rig is TCP whole: `docker-compose.yml` states `MOIRAI_TRANSPORT=tcp` for every replica, because what it measures is the bootnode and the relay.
 
 Use the rig to measure. Use the stack to demonstrate, or to keep a session up across a working session of your own. `stack_interpreter.sh --help` is the full argument list.
 

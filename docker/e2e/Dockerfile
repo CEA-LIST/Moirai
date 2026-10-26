@@ -43,8 +43,8 @@ COPY ${ARACHNE_DIR}/generated/json_crdt/ ./${ARACHNE_DIR}/generated/json_crdt/
 # /api/metamodel without any host mount.
 COPY ${ARACHNE_DIR}/examples/ /build/metamodels/
 
-# The bootnode, the relay and the dashboard ship in the *same* image as the
-# replica rather than one of their own. They are small binaries, and one image
+# The bootnode, the relay, the router and the dashboard ship in the *same* image
+# as the replica rather than one of their own. They are small binaries, and one image
 # means the Compose rig, the e2e harness and whatever is watching cannot drift
 # onto different builds of the protocol — which, for a rig whose whole job is to
 # measure that protocol, is worth more than a few megabytes.
@@ -54,8 +54,12 @@ COPY ${ARACHNE_DIR}/examples/ /build/metamodels/
 # is a property worth being able to state and merging a data path into it would
 # end that. Co-deploying them in one image is packaging; merging them would be
 # design.
+#
+# `moirai-router` is the Zenoh infrastructure: `stack_interpreter.sh` runs it in
+# place of the bootnode and the relay when the replicas run on Zenoh. Same Zenoh
+# build as the replicas', from the same workspace and lock.
 WORKDIR /build/${MOIRAI_DIR}
-RUN cargo build -p moirai-bootnode -p moirai-relay -p moirai-dashboard
+RUN cargo build -p moirai-bootnode -p moirai-relay -p moirai-dashboard -p moirai-router
 
 # The interpreted replica. One build, and it never needs another: a metamodel
 # it has never seen arrives at run time through `POST /api/metamodels`. The
@@ -92,6 +96,9 @@ COPY --from=builder \
 COPY --from=builder \
     /build/${MOIRAI_DIR}/target/debug/moirai-relay \
     /usr/local/bin/moirai-relay
+COPY --from=builder \
+    /build/${MOIRAI_DIR}/target/debug/moirai-router \
+    /usr/local/bin/moirai-router
 # Same reasoning as the bootnode: the dashboard ships in the replica image so
 # that what watches the protocol cannot drift onto a different build of it.
 COPY --from=builder \

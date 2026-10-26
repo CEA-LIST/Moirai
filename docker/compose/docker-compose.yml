@@ -47,6 +47,11 @@ x-image: &image ${MOIRAI_IMAGE:-moirai-json-crdt:test}
 # island replica is the same replica on a different bridge, and a knob that
 # drifted between them would quietly stop being the same experiment.
 x-replica-env: &replica-env
+  # TCP, stated: the rig measures the bootnode and the relay (discovery through
+  # the roster, relayed edges to the islander), which are TCP's. A node on
+  # Zenoh, the binaries' default, refuses BOOTNODE_URL, so the rig names TCP
+  # for every replica rather than leaving it to the default.
+  MOIRAI_TRANSPORT: "tcp"
   LISTEN_PORT: "9001"
   HTTP_PORT: "8081"
   BOOTNODE_URL: "http://bootnode:7000"

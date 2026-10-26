@@ -1,5 +1,6 @@
-# The session infrastructure, on its own lifecycle: a directory, a relay, and
-# optionally a dashboard to watch what the replicas do.
+# The session infrastructure, on its own lifecycle: under TCP a directory and
+# a relay, under Zenoh one router, and optionally a dashboard to watch what the
+# replicas do.
 #
 # This file exists because `docker-compose.yml` next door starts a whole
 # measurement rig as one Compose project, and a project is the unit Compose
@@ -12,6 +13,16 @@
 #     ./stack_interpreter.sh infra up --dashboard
 #     ./stack_interpreter.sh up alice --port 8081
 #     ./stack_interpreter.sh down alice
+#
+# # Two transports, one profile each
+#
+# The transport picks the services, as a Compose profile: `tcp` is the
+# bootnode and the relay, `zenoh` the router. `stack_interpreter.sh` names the
+# profile of the transport it resolves (`--tcp`, or `MOIRAI_TRANSPORT`, or the
+# binaries' default) and never both; a bare `docker compose -f infra.yml up`
+# with no profile starts nothing. Under Zenoh there is no bootnode and no
+# relay: the router introduces the replicas to each other and they link
+# directly, so the router is no data path between peers.
 #
 # Nothing here replaces the measurement rig. `docker-compose.yml` is still what
 # `rig.sh`, the e2e harness and `experiments/` drive, and it is unchanged.
@@ -30,7 +41,7 @@
 #
 # # Where the relay is configured
 #
-# Here, and nowhere else. `model_node` and `network_node` read no relay
+# Here, and nowhere else (TCP only). `model_node` and `network_node` read no relay
 # variable at all: the bootnode publishes `RELAY_ADDR` in the roster it hands
 # out, and a replica learns from that roster where it can meet a peer it has no
 # route to. That is what makes `RELAY_ADDR=` a session with no relay and
@@ -47,6 +58,7 @@ services:
   # beyond a failed poll.
   bootnode:
     image: *image
+    profiles: [tcp]
     command: ["moirai-bootnode"]
     container_name: ${MOIRAI_BOOTNODE_NAME:-bootnode}
     environment:
@@ -80,6 +92,7 @@ services:
   # processes.
   relay:
     image: *image
+    profiles: [tcp]
     command: ["moirai-relay"]
     container_name: ${MOIRAI_RELAY_NAME:-relay}
     environment:
@@ -96,6 +109,35 @@ services:
     networks:
       session:
         aliases: [relay]
+
+  # The Zenoh infrastructure: `moirai-router` from the replica image, a Zenoh
+  # session in router mode listening on 7447 in its container, multicast
+  # scouting off (it reads no `ZENOH_*` variable, so nothing here can turn it
+  # on). Each replica is told `ZENOH_ROUTER=tcp/router:7447`; the router
+  # introduces the peers, which then link to each other directly and keep
+  # converging while it is down. It holds no model state and sees no
+  # operation addressed to it.
+  #
+  # It publishes no port: only the replicas, on the session bridge, reach it,
+  # by the alias `router`.
+  router:
+    image: *image
+    profiles: [zenoh]
+    command: ["moirai-router"]
+    container_name: ${MOIRAI_ROUTER_NAME:-router}
+    environment:
+      LISTEN_PORT: "7447"
+    # Ready once its session listens: a LISTEN socket on 7447 (0x1D17) in the
+    # container's own IPv4 table. The image's check is a replica's HTTP
+    # health, which a router does not serve.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qE '^ *[0-9]+: [0-9A-F]+:1D17 [0-9A-F]+:[0-9A-F]+ 0A ' /proc/net/tcp"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    networks:
+      session:
+        aliases: [router]
 
   # The live view, behind a profile as it is in the rig. "Optionally connected"
   # is the requirement, and a session that needs its monitoring to run is not

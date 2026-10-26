@@ -10,12 +10,22 @@
 # than a service of its own, so adding the fourth replica changes nothing here
 # and there is no per-replica block to drift out of step with the others.
 #
+# # The transport, stated
+#
+# `MOIRAI_TRANSPORT` has no default here: `stack_interpreter.sh` resolves the
+# transport (`--tcp`, `MOIRAI_TRANSPORT`, or the binaries' default) and states
+# it in every replica, so a replica never runs on whatever the image or the
+# binary defaults to. With it come the transport's own settings: under TCP
+# `BOOTNODE_URL` and an empty `ZENOH_ROUTER`; under Zenoh
+# `ZENOH_ROUTER=tcp/router:7447` and an empty `BOOTNODE_URL`, which every node
+# reads as unset (a node on Zenoh refuses a bootnode).
+#
 # # No relay knob, on purpose
 #
-# There is none because the binaries read none. A replica registers with the
-# bootnode and reads the roster back, and the roster is where the relay address
-# comes from — `infra.yml` configures it once, on the bootnode. A per-replica
-# relay setting could only ever disagree with the session.
+# There is none because the binaries read none. A replica on TCP registers
+# with the bootnode and reads the roster back, and the roster is where the
+# relay address comes from — `infra.yml` configures it once, on the bootnode.
+# A per-replica relay setting could only ever disagree with the session.
 #
 # # Identity, and the trap it comes from
 #
@@ -64,7 +74,11 @@ services:
       # passed on purpose: inside the container the API must bind 0.0.0.0, or
       # the published port stops answering.
       HTTP_ALLOWED_ORIGINS: "${HTTP_ALLOWED_ORIGINS:-}"
-      BOOTNODE_URL: "${BOOTNODE_URL:-http://bootnode:7000}"
+      MOIRAI_TRANSPORT: "${MOIRAI_TRANSPORT:?set MOIRAI_TRANSPORT (tcp or zenoh), or use stack_interpreter.sh}"
+      # TCP: the bootnode to register with. Zenoh: empty, read as unset.
+      BOOTNODE_URL: "${BOOTNODE_URL-}"
+      # Zenoh: the router that introduces the peers (peer mode). TCP: empty.
+      ZENOH_ROUTER: "${ZENOH_ROUTER-}"
       SESSION_ID: "${SESSION_ID:-stack}"
       RECONCILE_SECS: "${RECONCILE_SECS:-5}"
       # `-` rather than `:-`, so an explicitly empty `DASHBOARD_URL=` gives a
