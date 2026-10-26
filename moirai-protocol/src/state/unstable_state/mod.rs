@@ -8,7 +8,10 @@ pub mod vec;
 use std::range::Range;
 
 use crate::{
-    clock::version_vector::{Seq, Version},
+    clock::{
+        causal_frontier::CausalFrontier,
+        version_vector::{Seq, Version},
+    },
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
 };
@@ -55,6 +58,10 @@ pub trait IsUnstableCore<O> {
 
 /// Services for pruning an unstable state.
 pub trait IsUnstablePrune<O>: IsUnstableCore<O> {
+    /// Remove all tagged operations that are predecessors of the given frontier.
+    fn prune_predecessors(&mut self, frontier: &CausalFrontier) {
+        self.retain(|event| !frontier.contains(event.id()));
+    }
     /// Remove a tagged operation from the unstable state by its ID.
     fn remove(&mut self, event_id: &EventId);
     /// Retain only the tagged operations that satisfy the given predicate.
@@ -65,6 +72,14 @@ pub trait IsUnstablePrune<O>: IsUnstableCore<O> {
 
 /// Services for advanced causal information retrieval from an unstable state.
 pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
+    /// A version V is a critical version iff every event in the history is either in V,
+    /// or an ancestor of some event in V, or happened after all of the events in V.
+    fn greatest_critical_frontier(&self, upper_bound: &CausalFrontier) -> Option<CausalFrontier>;
+    /// Whether this frontier separates such a prefix from its suffix.
+    fn is_critical(&self, frontier: &CausalFrontier) -> bool {
+        self.greatest_critical_frontier(frontier)
+            .is_some_and(|critical| critical == *frontier)
+    }
     /// Returns a list of event IDs that are the direct parents of the given event ID.
     /// # Note
     /// The direct parents of an event are those events that are immediately causally before it, i.e.,
@@ -82,12 +97,11 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>>;
     /// Returns the version of the given event ID, if it exists.
     fn version(&self, event_id: &EventId) -> Option<&Version>;
+    fn roots(&self) -> Option<&CausalFrontier>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.
 pub trait IsUnstableDelivery<O>: IsUnstableCore<O> {
-    /// Returns the event's rank in the retained replay order, if it exists.
-    /// Compaction may renumber these ranks.
     fn delivery_order(&self, event_id: &EventId) -> Option<usize>;
 }
 

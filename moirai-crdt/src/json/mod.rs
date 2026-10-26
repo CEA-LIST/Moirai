@@ -4,7 +4,7 @@ use moirai_fuzz::{
     observers::footprint::{FootprintNode, LogFootprint},
 };
 use moirai_macros::union;
-use moirai_protocol::state::{graph_log::GraphLog, po_log::VecLog};
+use moirai_protocol::state::po_log::{GraphLog, VecLog};
 #[cfg(feature = "fuzz")]
 use moirai_protocol::{crdt::query::Read, utils::boxer::Boxer};
 #[cfg(feature = "fuzz")]

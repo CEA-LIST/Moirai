@@ -3,7 +3,10 @@ use std::{collections::VecDeque, fmt::Debug, range::Range};
 use rustc_hash::FxHashMap;
 
 use crate::{
-    clock::version_vector::{Seq, Version},
+    clock::{
+        causal_frontier::CausalFrontier,
+        version_vector::{Seq, Version},
+    },
     event::{Event, id::EventId, tagged_op::TaggedOp},
     replica::ReplicaIdx,
     state::unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
@@ -323,6 +326,14 @@ where
         let (event, version) = self.history.get(&event_id.idx())?.get(event_id.seq())?;
 
         (event.id() == event_id).then_some(version)
+    }
+
+    fn greatest_critical_frontier(&self, _upper_bound: &CausalFrontier) -> Option<CausalFrontier> {
+        todo!()
+    }
+
+    fn roots(&self) -> Option<&CausalFrontier> {
+        todo!()
     }
 }
 

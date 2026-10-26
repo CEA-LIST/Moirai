@@ -4,7 +4,7 @@ use deepsize::DeepSizeOf;
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
     crdt::replicated_data_type::ReplicatedDataType,
-    state::{cache::CachedLog, graph_log::GraphLog, log::IsLog, po_log::POLog},
+    state::{cache::CachedLog, log::IsLog, po_log::POLog},
 };
 use serde::{Deserialize, Serialize};
 
@@ -69,16 +69,6 @@ pub trait LogFootprint {
 }
 
 //* Default implementation of LogFootprint for common logs */
-impl<O> LogFootprint for GraphLog<O>
-where
-    O: ReplicatedDataType,
-    GraphLog<O>: DeepSizeOf,
-{
-    fn footprint(&self) -> FootprintNode {
-        FootprintNode::leaf(self)
-    }
-}
-
 impl<O, U> LogFootprint for POLog<O, U>
 where
     O: ReplicatedDataType,

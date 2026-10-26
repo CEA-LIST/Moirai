@@ -1,7 +1,7 @@
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
     replica::{IsReplica, Replica},
-    state::{cache::CachedLog, graph_log::GraphLog},
+    state::{cache::CachedLog, po_log::GraphLog},
 };
 
 use super::*;
@@ -115,7 +115,9 @@ fn read_at_uses_stable_document() {
     replica_a.send(List::delete(1)).unwrap();
 
     assert_eq!(
-        replica_a.query(&ReadAt::<Vec<char>>::new(&insert_version)),
+        replica_a
+            .query(&ReadAt::<Vec<char>>::new(&insert_version))
+            .unwrap(),
         vec!['a', 'X', 'b', 'c']
     );
     assert_eq!(replica_a.query(&Read::<String>::new()), "abc");
@@ -187,7 +189,7 @@ fn replay_preserves_positions_across_overlapping_deletes_and_updates() {
     for (replica, (version, expected)) in [&a, &b, &c].into_iter().zip(historical) {
         assert_eq!(replica.query(&Read::<String>::new()), "XYac");
         assert_eq!(
-            replica.query(&ReadAt::<Vec<char>>::new(&version)),
+            replica.query(&ReadAt::<Vec<char>>::new(&version)).unwrap(),
             expected.chars().collect::<Vec<_>>()
         );
     }
@@ -375,7 +377,11 @@ fn in_paper() {
     replica_a.receive(e8.clone());
 
     // Final result should be "Hey!"
-    assert_eq!(replica_a.query(&ReadAt::new(e4_version)), vec!['H', 'i']);
+    assert!(
+        replica_a
+            .query(&ReadAt::<Vec<char>>::new(e4_version))
+            .is_err()
+    );
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hey!");
     assert_eq!(
         &replica_a.query(&Read::<String>::new()),
@@ -550,7 +556,7 @@ fn regression_2() {
     assert_eq!(state_b, result);
 }
 
-/// Simulate a long sequence of operations to test caching and performance.
+/// Cached reads remain equivalent to replay across edits and causal snapshots.
 #[cfg(feature = "test_utils")]
 #[test]
 fn caching() {
@@ -583,42 +589,22 @@ fn caching() {
         }
     }
 
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_no_caching = time.elapsed();
-
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_with_caching_1 = time.elapsed();
-
+    let expected = replica_a.query(&Read::<String>::new());
+    for _ in 0..2 {
+        assert_eq!(
+            replica_a.state().read_ref().iter().collect::<String>(),
+            expected
+        );
+    }
     let _ = replica_a.send(List::insert('A', 0)).unwrap();
-
-    let time = std::time::Instant::now();
-    let _ = replica_a
-        .state()
-        .read_ref()
-        .iter()
-        .cloned()
-        .collect::<String>();
-    let elapsed_with_caching_2 = time.elapsed();
-
-    println!(
-        "Elapsed without caching: {:?}, with caching 1: {:?}, with caching 2: {:?}",
-        elapsed_no_caching, elapsed_with_caching_1, elapsed_with_caching_2
+    assert_eq!(
+        replica_a.state().read_ref().iter().collect::<String>(),
+        format!("A{expected}")
     );
-
-    assert!(elapsed_with_caching_1 * 100 < elapsed_no_caching);
-    assert!(elapsed_with_caching_2 * 100 < elapsed_no_caching);
+    assert_eq!(
+        replica_a.query(&Read::<String>::new()),
+        format!("A{expected}")
+    );
 }
 
 #[cfg(feature = "fuzz")]

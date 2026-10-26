@@ -1,8 +1,8 @@
-//! Positional list replay with update-wins membership.
+//! Positional list replay with update-wins semantics.
 //!
 //! `GraphLog::stabilize` folds the largest causally stable critical prefix into
 //! the snapshot: every retained event must observe the entire discarded prefix.
-//! `ReadAt` returns `HistoryCompacted` for versions before or concurrent with the
+//! `ReadAt` returns `HistoryStabilized` for versions before or concurrent with the
 //! resulting retention boundary. Save and restore that boundary with the snapshot.
 
 mod causal_cursor;
@@ -11,7 +11,10 @@ mod item;
 mod presence_state;
 mod replay;
 
-use std::fmt::{Debug, Display, Formatter};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display, Formatter},
+};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -25,7 +28,9 @@ use moirai_protocol::{
         eval::Eval,
         query::{QueryOperation, Read},
         redundancy::RedundancyRelation,
-        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalReset, ReplicatedDataType, Stabilization, UsesUnstableService,
+        },
     },
     event::tagged_op::TaggedOp,
     state::{cache::IncrementalCache, stable_state::IsStableState, unstable_state::CausalReplay},
@@ -33,7 +38,7 @@ use moirai_protocol::{
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
 
-use replay::replay_document;
+use replay::replay;
 
 // Single-character, position-based, pure op-based CRDT operations
 #[derive(Clone, Debug)]
@@ -77,7 +82,7 @@ where
     where
         U: CausalReplay<List<V>>,
     {
-        replay_document(stable, unstable, unstable.iter()).visible_len()
+        replay(stable, unstable, unstable.iter()).visible_len()
     }
 }
 
@@ -126,8 +131,6 @@ where
 
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
-    // Per-operation folding is unsafe for positional operations.
-    const DISABLE_STABILIZE: bool = true;
 }
 
 impl<V, U> UsesUnstableService<U> for List<V>
@@ -135,6 +138,22 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
+    fn causal_stabilize(
+        frontier: &CausalFrontier,
+        stable: &Self::StableState,
+        unstable: &U,
+    ) -> Stabilization<Self::StableState> {
+        let Some(cut) = unstable.greatest_critical_frontier(frontier) else {
+            return Stabilization::None;
+        };
+        let prefix = unstable.iter().take_while(|event| cut.contains(event.id()));
+        let state = replay(stable, unstable, prefix).to_list();
+        Stabilization::Critical {
+            frontier: cut,
+            stable: state,
+        }
+    }
+
     fn is_enabled(
         op: &Self,
         stable: &Self::StableState,
@@ -178,8 +197,9 @@ where
         if !conservative {
             return CausalReset::Prune;
         }
+
         let predecessors = unstable.predecessors(version);
-        let len = replay_document(stable, unstable, predecessors).visible_len();
+        let len = replay(stable, unstable, predecessors).visible_len();
         CausalReset::Inject(vec![List::DeleteRange { start: 0, len }])
     }
 }
@@ -190,7 +210,7 @@ where
     U: CausalReplay<Self>,
 {
     fn execute_query(_q: &Read<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
-        replay_document(stable, unstable, unstable.iter()).to_list()
+        replay(stable, unstable, unstable.iter()).to_list()
     }
 }
 
@@ -230,7 +250,7 @@ impl<V> ReadAt<V> {
 }
 
 impl<V> QueryOperation for ReadAt<V> {
-    type Response = V;
+    type Response = Result<V, HistoryStabilized>;
 
     #[cfg(feature = "test_utils")]
     fn name() -> &'static str {
@@ -248,9 +268,24 @@ where
     V: Debug + Clone,
     U: CausalReplay<Self>,
 {
-    fn execute_query(q: &ReadAt<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
+    fn execute_query(
+        q: &ReadAt<Vec<V>>,
+        stable: &Self::StableState,
+        unstable: &U,
+    ) -> Result<Vec<V>, HistoryStabilized> {
+        if let Some(roots) = unstable.roots() {
+            let frontier = CausalFrontier::from(&q.version);
+            match &frontier.partial_cmp(roots) {
+                Some(Ordering::Less) | None => {
+                    return Err(HistoryStabilized {
+                        frontier: roots.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
         let predecessors = unstable.predecessors(&q.version);
-        replay_document(stable, unstable, predecessors).to_list()
+        Ok(replay(stable, unstable, predecessors).to_list())
     }
 }
 

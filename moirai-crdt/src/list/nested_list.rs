@@ -14,7 +14,7 @@ use moirai_protocol::{
         query::{QueryOperation, Read},
     },
     event::{Event, id::EventId},
-    state::{cache::CachedLog, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{cache::CachedLog, effect_context::EffectContext, log::IsLog, po_log::GraphLog},
     utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
@@ -134,7 +134,8 @@ where
                 );
             }
             NestedList::Delete { pos } => {
-                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
+                let positions_at_version =
+                    self.positions.eval(&ReadAt::new(event.version())).unwrap();
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Delete { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Remove(target.clone()));
@@ -148,7 +149,8 @@ where
                 );
             }
             NestedList::Update { pos, op } => {
-                let positions_at_version = self.positions.eval(&ReadAt::new(event.version()));
+                let positions_at_version =
+                    self.positions.eval(&ReadAt::new(event.version())).unwrap();
                 let target = positions_at_version[pos].clone();
                 let list_event = Event::unfold(event.clone(), SimpleList::Update { pos });
                 let map_event = Event::unfold(event.clone(), UWMap::Update(target.clone(), op));
@@ -309,7 +311,7 @@ where
 mod tests {
     use moirai_macros::record;
     #[cfg(feature = "test_utils")]
-    use moirai_protocol::{crdt::eval::EvalNested, state::graph_log::GraphLog};
+    use moirai_protocol::{crdt::eval::EvalNested, state::po_log::GraphLog};
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     #[cfg(feature = "test_utils")]
@@ -678,7 +680,6 @@ mod tests {
             config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-        use moirai_protocol::state::graph_log::GraphLog;
 
         use crate::list::eg_walker::List;
 

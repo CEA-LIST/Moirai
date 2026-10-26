@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use crate::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{eval::Eval, query::QueryOperation},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::{
@@ -68,10 +68,29 @@ pub enum CausalReset<O> {
     Inject(Vec<O>),
 }
 
+/// How a CRDT folds causally stable history into its stable state.
+pub enum Stabilization<S> {
+    Regular,
+    Critical { frontier: CausalFrontier, stable: S },
+    None,
+}
+
 pub trait UsesUnstableService<U>: ReplicatedDataType
 where
     U: IsUnstableCore<Self>,
 {
+    fn causal_stabilize(
+        _frontier: &CausalFrontier,
+        _stable: &Self::StableState,
+        _unstable: &U,
+    ) -> Stabilization<Self::StableState> {
+        if Self::DISABLE_STABILIZE {
+            Stabilization::None
+        } else {
+            Stabilization::Regular
+        }
+    }
+
     fn causal_reset(
         _version: &Version,
         _conservative: bool,

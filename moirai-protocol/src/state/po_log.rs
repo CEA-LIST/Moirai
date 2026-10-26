@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{cmp::Ordering, fmt::Debug};
 
 use rustc_hash::FxHashMap;
 
@@ -8,17 +8,20 @@ use crate::{
         eval::{Eval, EvalNested},
         query::QueryOperation,
         redundancy::RedundancyRelation,
-        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalReset, ReplicatedDataType, Stabilization, UsesUnstableService,
+        },
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
-        effect_context::EffectContext, log::IsLog, stable_state::IsStableState,
-        unstable_state::IsUnstablePrune,
+        effect_context::EffectContext, event_graph::EventGraph, log::IsLog,
+        stable_state::IsStableState, unstable_state::IsUnstablePrune,
     },
 };
 
 pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
 pub type MapLog<O> = POLog<O, FxHashMap<EventId, TaggedOp<O>>>;
+pub type GraphLog<O> = POLog<O, EventGraph<O>>;
 
 #[derive(Debug, Clone)]
 pub struct POLog<O, U>
@@ -76,26 +79,42 @@ where
     }
 
     fn stabilize(&mut self, frontier: &CausalFrontier) {
-        if O::DISABLE_STABILIZE {
-            return;
-        }
-        // 1. select all ops in unstable that are predecessors of a version
-        // 2. for each of them, call stabilize, which may modify stable and/or unstable
-        // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
+        match O::causal_stabilize(frontier, &self.stable, &self.unstable) {
+            Stabilization::Regular => {
+                // 1. select all ops in unstable that are predecessors of a version
+                // 2. for each of them, call stabilize, which may modify stable and/or unstable
+                // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
 
-        let candidates = self
-            .unstable
-            .iter()
-            .filter(|tagged_op| frontier.contains(tagged_op.id()))
-            .cloned()
-            .collect::<Vec<_>>();
+                let candidates = self
+                    .unstable
+                    .iter()
+                    .filter(|tagged_op| frontier.contains(tagged_op.id()))
+                    .cloned()
+                    .collect::<Vec<_>>();
 
-        for tagged_op in candidates {
-            O::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
-            if self.unstable.get(tagged_op.id()).is_some() {
-                self.stable.apply(tagged_op.op().clone());
-                self.unstable.remove(tagged_op.id());
+                for tagged_op in candidates {
+                    O::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
+                    if self.unstable.get(tagged_op.id()).is_some() {
+                        self.stable.apply(tagged_op.op().clone());
+                        self.unstable.remove(tagged_op.id());
+                    }
+                }
             }
+            Stabilization::Critical {
+                frontier: cut,
+                stable,
+            } => {
+                assert!(
+                    matches!(
+                        cut.partial_cmp(frontier),
+                        Some(Ordering::Less | Ordering::Equal)
+                    ),
+                    "Critical frontier exceeds the stable one"
+                );
+                self.unstable.prune_predecessors(&cut);
+                self.stable = stable;
+            }
+            Stabilization::None => {}
         }
     }
 
@@ -150,6 +169,19 @@ impl<O, U> POLog<O, U>
 where
     O: ReplicatedDataType,
 {
+    /// Construct a log from a stable state and its remaining unstable events.
+    pub fn from_parts(stable: O::StableState, unstable: U) -> Self {
+        Self { stable, unstable }
+    }
+
+    /// Start from a stable state with no prior causal history.
+    pub fn from_stable(stable: O::StableState) -> Self
+    where
+        U: Default,
+    {
+        Self::from_parts(stable, U::default())
+    }
+
     pub fn stable(&self) -> &O::StableState {
         &self.stable
     }

@@ -112,11 +112,7 @@ impl AppliedEffect {
 
 /// Replay a causally closed stream in topological order. Cursor and journal are
 /// local to this replay; Document owns only the sequence and its visibility.
-pub(super) fn replay_document<'a, V, U, I>(
-    stable: &'a [V],
-    unstable: &'a U,
-    events: I,
-) -> Document<'a, V>
+pub(super) fn replay<'a, V, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Document<'a, V>
 where
     V: Clone + Debug + 'a,
     U: CausalReplay<List<V>> + 'a,

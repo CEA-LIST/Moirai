@@ -309,7 +309,7 @@ mod tests {
     use moirai_protocol::{
         crdt::query::{Get, Read},
         replica::IsReplica,
-        state::{graph_log::GraphLog, po_log::VecLog},
+        state::po_log::{GraphLog, VecLog},
     };
 
     use crate::{

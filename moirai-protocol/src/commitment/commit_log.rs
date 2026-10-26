@@ -19,7 +19,6 @@ use crate::{
 
 /// Special log that wraps a child log and adds commitment semantics.
 /// It maintains a separate log of leader votes, and uses a commitment protocol
-/// to determine the new version boundary for which the child log can be stabilized.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CommitmentLog<L> {
@@ -96,14 +95,13 @@ where
             self.protocol
                 .prune_support(&frontier, self.leader_log.unstable());
 
-            self.child.stabilize(&frontier);
             self.leader_log
                 .stabilize(&CommitmentLog::<L>::strict_past_frontier(frontier));
         }
     }
 
-    fn stabilize(&mut self, _frontier: &CausalFrontier) {
-        // Causal stability and commitment are conflicting
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.child.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {

@@ -5,10 +5,9 @@ use moirai_protocol::{
     crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
     state::{
         cache::{CachedLog, IncrementalCache},
-        graph_log::GraphLog,
         log::IsLog,
         po_log::POLog,
-        unstable_state::{IsUnstablePrune, event_graph::EventGraph},
+        unstable_state::IsUnstablePrune,
     },
 };
 use rand::Rng;
@@ -21,20 +20,6 @@ pub trait CommandGenerator: IsLog {
 }
 
 //* Default implementations of CommandGenerator for some common log types.
-
-impl<O> CommandGenerator for GraphLog<O>
-where
-    O: ReplicatedDataType + Clone + OpGenerator<EventGraph<O>> + UsesUnstableService<EventGraph<O>>,
-{
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        O::generate(
-            rng,
-            &<O as OpGenerator<EventGraph<O>>>::Config::default(),
-            self.stable(),
-            self.unstable(),
-        )
-    }
-}
 
 impl<O, U> CommandGenerator for POLog<O, U>
 where
