@@ -88,7 +88,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -240,16 +240,58 @@ trait Backend {
 /// Per-run counter, so concurrent test binaries do not share scratch dirs.
 static RUN_SEQ: AtomicU32 = AtomicU32::new(0);
 
-/// Asks the OS for an unused TCP port and hands it back.
+// BEGIN NW.19 round 3: the port allocator
+/// Every port [`free_ports`] has handed out in this test process. No port is
+/// handed out twice, so no two endpoints of one process share a port: not a
+/// replica's replication and HTTP ports, not two replicas, not a replica and
+/// a bootnode, not two scenarios, one after another or at once.
+static PORTS_HANDED_OUT: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+
+/// How many binds one call of [`free_ports`] may make before it gives up.
+const FREE_PORT_BINDS: usize = 1024;
+
+/// Asks the OS for `N` unused TCP ports and hands them back, pairwise
+/// distinct and distinct from every port handed out before in this process.
 ///
-/// There is an unavoidable window between releasing the listener and the child
-/// binding the port, but the kernel does not hand out the same ephemeral port
-/// twice in quick succession, which is enough in practice. It is still far
-/// better than hardcoding 8081/9001, which makes repeated runs collide.
-fn free_port() -> Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral port")?;
-    Ok(listener.local_addr()?.port())
+/// Two binds of `127.0.0.1:0`, each listener released at once, can return
+/// the same port: in NW.19's round 2, `reserve` gave J4's first replica 41063
+/// for both its replication and its HTTP port, the replication listener took
+/// it and the HTTP server failed with `AddrInUse`. So every listener stays
+/// bound until all `N` ports are chosen, and a port this process handed out
+/// before is skipped. What remains is the window between the release here
+/// and the child's own bind, in which another process may take the port. It
+/// is still far better than hardcoding 8081/9001, which makes repeated runs
+/// collide.
+fn free_ports<const N: usize>() -> Result<[u16; N]> {
+    let mut handed_out = PORTS_HANDED_OUT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let mut ports = [0; N];
+    let mut chosen = 0;
+    // Every listener of this call, the skipped ones too, stays bound until
+    // the call returns, so the kernel cannot return one port twice in it.
+    let mut held = Vec::new();
+    while chosen < N {
+        if held.len() == FREE_PORT_BINDS {
+            bail!("{FREE_PORT_BINDS} binds of 127.0.0.1:0 returned only ports handed out before");
+        }
+        let listener = TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral port")?;
+        let port = listener.local_addr()?.port();
+        if handed_out.insert(port) {
+            ports[chosen] = port;
+            chosen += 1;
+        }
+        held.push(listener);
+    }
+    Ok(ports)
 }
+
+/// One port from [`free_ports`]: never one this process handed out before.
+fn free_port() -> Result<u16> {
+    let [port] = free_ports::<1>()?;
+    Ok(port)
+}
+// END NW.19 round 3: the port allocator
 
 /// Runs replicas as child processes of the test binary.
 struct ProcessBackend {
@@ -287,8 +329,9 @@ impl Backend for ProcessBackend {
     }
 
     fn reserve(&mut self, _id: &str) -> Result<Endpoint> {
-        let listen_port = free_port()?;
-        let http_port = free_port()?;
+        // One call for both ports: distinct from each other and from every
+        // port handed out before in this process (NW.19 round 3).
+        let [listen_port, http_port] = free_ports::<2>()?;
         Ok(Endpoint {
             sync_addr: format!("127.0.0.1:{listen_port}"),
             listen_port,
