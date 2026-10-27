@@ -184,18 +184,16 @@ where
     }
 
     fn is_critical(&self, frontier: &CausalFrontier) -> bool {
-        use std::cmp::Ordering::Equal;
-
         // The existing checkpoint, or the initial empty cut, is already critical.
         let at_base = match &self.roots {
-            Some(base) => base.partial_cmp(frontier) == Some(Equal),
+            Some(base) => base.partial_cmp(frontier) == Some(Ordering::Equal),
             None => frontier.iter().all(|(_, seq)| seq == 0),
         };
 
         at_base
             || self
                 .greatest_critical_frontier(frontier)
-                .is_some_and(|cut| cut.partial_cmp(frontier) == Some(Equal))
+                .is_some_and(|cut| cut.partial_cmp(frontier) == Some(Ordering::Equal))
     }
 
     fn direct_predecessors(&self, event_id: &EventId) -> Vec<EventId> {

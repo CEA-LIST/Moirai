@@ -610,7 +610,7 @@ fn caching() {
 #[cfg(feature = "fuzz")]
 #[test]
 #[ignore]
-fn fuzz_list() {
+fn fuzz_list_without_commitment() {
     use std::num::NonZeroUsize;
 
     use moirai_fuzz::{

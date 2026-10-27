@@ -42,7 +42,7 @@ impl Display for ObjectPath {
 }
 
 impl ObjectPath {
-    pub fn new<'a>(root: &'a str) -> Self {
+    pub fn new(root: &str) -> Self {
         Self {
             root: String::from(root),
             segments: Vec::new(),
