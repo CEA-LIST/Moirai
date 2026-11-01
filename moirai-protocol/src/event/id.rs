@@ -90,6 +90,10 @@ impl EventId {
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ResolvedEventId {
     /// Plain string identifier of the issuing replica.
+    #[cfg_attr(
+        feature = "serde",
+        serde(deserialize_with = "crate::replica::deserialize_replica_id")
+    )]
     origin_id: ReplicaIdOwned,
     /// Sequence number.
     seq: Seq,
@@ -107,6 +111,7 @@ impl ResolvedEventId {
         seq: Seq,
         disambiguator: Option<u32>,
     ) -> Self {
+        crate::replica::validate_replica_id(&origin_id).unwrap_or_else(|error| panic!("{error}"));
         Self {
             origin_id,
             seq,

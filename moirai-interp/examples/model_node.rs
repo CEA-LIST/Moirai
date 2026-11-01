@@ -675,6 +675,10 @@ fn start_zenoh(
 
 fn main() {
     let replica_id = env::var("REPLICA_ID").unwrap_or_else(|_| "replica-a".to_string());
+    if let Err(error) = moirai_protocol::replica::validate_replica_id(&replica_id) {
+        eprintln!("Invalid REPLICA_ID: {error}");
+        std::process::exit(1);
+    }
     let listen_port: u16 = env::var("LISTEN_PORT")
         .unwrap_or_else(|_| "9001".to_string())
         .parse()

@@ -967,13 +967,15 @@ impl Copy<'_> {
     }
 
     /// The links, now that every object of the copy has its identity: each
-    /// names the copy of the object its source named. A link to an object
-    /// the copy does not hold is not written, as the source read none.
+    /// names the copy of the object its source named, or keeps a foreign
+    /// value verbatim. An unresolved local link is not written.
     fn link(&mut self) {
         for (at, targets) in std::mem::take(&mut self.links) {
             for target in targets {
                 if let Some(own) = self.ids.get(&target).cloned() {
                     self.push(&at, InstanceOp::Leaf(LeafOp::Link(own)));
+                } else if crate::refs::is_foreign(&target) {
+                    self.push(&at, InstanceOp::Leaf(LeafOp::Link(target)));
                 }
             }
         }

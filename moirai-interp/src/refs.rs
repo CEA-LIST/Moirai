@@ -29,6 +29,9 @@
 //!   the policy the generated reference graph is built with, so that a tie of
 //!   concurrent retargets is broken the same way on both paths.
 //!
+//! Foreign model coordinates and library values are opaque targets: they
+//! remain readable without a local target and are copied without rewriting.
+//!
 //! A link reaches its source without touching it: the generated runtime
 //! writes an arc into the reference graph and nothing into the containment,
 //! so here a link is routed to its source silently (no update of a sequence
@@ -53,6 +56,70 @@ use crate::eval::{ECLASS, ID, read_identified};
 use crate::leaf::LeafOp;
 use crate::node::{Node, Refusal, Target, visible};
 use crate::op::{InstanceOp, MapOp, OptOp, SeqOp};
+
+/// Recognize the foreign namespace without changing the value's bytes.
+/// Malformed coordinates retain the ordinary local served-target rule.
+pub(crate) fn is_foreign(target: &str) -> bool {
+    let Some((coordinate, identity)) = target.split_once('#') else {
+        return false;
+    };
+    if moirai_protocol::log_id::LogId::parse(coordinate).is_ok() {
+        let Some((replica, creation)) = identity.split_once('@') else {
+            return false;
+        };
+        if moirai_protocol::replica::validate_replica_id(replica).is_err() {
+            return false;
+        }
+        let Some((event, step)) = creation.split_once('.') else {
+            return false;
+        };
+        let (seq, extra) = match event.split_once(':') {
+            Some((seq, extra)) => (seq, Some(extra)),
+            None => (event, None),
+        };
+        return decimal(seq)
+            && seq.parse::<usize>().is_ok()
+            && decimal(step)
+            && step.parse::<u32>().is_ok()
+            && extra.is_none_or(|extra| decimal(extra) && extra.parse::<u32>().is_ok());
+    }
+    let Some((class, resource)) = coordinate.split_once(' ') else {
+        return false;
+    };
+    let Some((prefix, class)) = class.split_once(':') else {
+        return false;
+    };
+    let Some(uuid) = resource
+        .strip_prefix("sysmllibrary:///")
+        .or_else(|| resource.strip_prefix("kermllibrary:///"))
+    else {
+        return false;
+    };
+    identifier(prefix) && identifier(class) && library_uuid(uuid) && library_uuid(identity)
+}
+
+fn decimal(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn identifier(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn library_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+}
 
 /// Whether any feature of the metamodel is a reference by identity: when
 /// none is, a removal has no link to let go of and a read has no link to
@@ -144,12 +211,11 @@ impl RefNode {
     /// greatest link by `FairPolicy` names, `null` when it holds none; a
     /// many-valued one as the identities it holds, each once, in order.
     /// `served`, when given, is the set of identities the read-out holds, and
-    /// a link to anything else is not read.
+    /// a local link to anything else is not read. Foreign values are opaque.
     pub fn read(&self, many: bool, served: Option<&HashSet<String>>) -> Value {
-        let readable = self
-            .links
-            .iter()
-            .filter(|link| served.is_none_or(|served| served.contains(&link.target)));
+        let readable = self.links.iter().filter(|link| {
+            is_foreign(&link.target) || served.is_none_or(|served| served.contains(&link.target))
+        });
         if many {
             let targets: BTreeMap<&str, ()> =
                 readable.map(|link| (link.target.as_str(), ())).collect();
@@ -193,6 +259,9 @@ pub(crate) fn check_link_class(
     let Some(link) = linked(sem, None, op) else {
         return Ok(());
     };
+    if is_foreign(link.identity) {
+        return Ok(());
+    }
     // The class the read-out offers under a class name, by the lookup the
     // refusal below makes; `None` when no class of the table is so named.
     let offered_slot = |name: &str| {

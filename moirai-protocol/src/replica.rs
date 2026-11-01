@@ -22,6 +22,32 @@ use crate::{
 pub type ReplicaId = str;
 pub type ReplicaIdOwned = String;
 
+/// Validate an identity before it enters a replica table or wire message.
+pub fn validate_replica_id(id: &str) -> Result<(), String> {
+    if !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid replica id {id:?}: expected nonempty ASCII letters, digits, '.', '_' or '-'"
+        ))
+    }
+}
+
+/// Decode a replica identity without panicking on untrusted input.
+#[cfg(feature = "serde")]
+pub fn deserialize_replica_id<'de, D>(deserializer: D) -> Result<ReplicaIdOwned, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let id = <String as serde::Deserialize>::deserialize(deserializer)?;
+    validate_replica_id(&id).map_err(serde::de::Error::custom)?;
+    Ok(id)
+}
+
 /// Local index of the replica. It is an alias for its string ID.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

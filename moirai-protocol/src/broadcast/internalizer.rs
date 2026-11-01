@@ -61,6 +61,7 @@ impl<'de> Deserialize<'de> for Resolver {
         let vec = Vec::<ReplicaIdOwned>::deserialize(deserializer)?;
         let frozen = FrozenVec::new();
         for item in vec {
+            crate::replica::validate_replica_id(&item).map_err(serde::de::Error::custom)?;
             frozen.push(item);
         }
         Ok(Resolver {
@@ -274,6 +275,7 @@ impl Interner {
     }
 
     pub fn intern(&mut self, id: &ReplicaId) -> (ReplicaIdx, bool) {
+        crate::replica::validate_replica_id(id).unwrap_or_else(|error| panic!("{error}"));
         if let Some(&idx) = self.str_to_int.get(id) {
             return (idx, false);
         }

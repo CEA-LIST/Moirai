@@ -96,6 +96,65 @@ use crate::node::{At, Ctx, Emit, Mode, Node, Refusal, Shaped, Site, Target, appl
 use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
 use crate::rebase::{Revision, Translated};
 
+// Replica names also occur outside event resolvers in transferred migration
+// bookkeeping. Validate those fields without interpreting model ids or links.
+#[cfg(feature = "serde")]
+mod replica_ids {
+    use super::BTreeMap;
+    use moirai_protocol::replica::validate_replica_id;
+    use serde::{Deserialize, Deserializer, de::Error};
+
+    fn check<E: Error>(ids: impl IntoIterator<Item = impl AsRef<str>>) -> Result<(), E> {
+        for id in ids {
+            validate_replica_id(id.as_ref()).map_err(E::custom)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn versions<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<String, u64>, D::Error> {
+        let value = BTreeMap::<String, u64>::deserialize(d)?;
+        check(value.keys())?;
+        Ok(value)
+    }
+
+    pub(super) fn rows<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<String, BTreeMap<String, u64>>, D::Error> {
+        let value = BTreeMap::<String, BTreeMap<String, u64>>::deserialize(d)?;
+        check(value.keys())?;
+        for row in value.values() {
+            check(row.keys())?;
+        }
+        Ok(value)
+    }
+
+    pub(super) fn migration<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<(String, u64)>, D::Error> {
+        let value = Option::<(String, u64)>::deserialize(d)?;
+        check(value.iter().map(|(id, _)| id))?;
+        Ok(value)
+    }
+
+    pub(super) fn discarded<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<(String, u64)>, D::Error> {
+        let value = Vec::<(String, u64)>::deserialize(d)?;
+        check(value.iter().map(|(id, _)| id))?;
+        Ok(value)
+    }
+
+    pub(super) fn dropped<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<(String, u64, String)>, D::Error> {
+        let value = Vec::<(String, u64, String)>::deserialize(d)?;
+        check(value.iter().map(|(id, _, _)| id))?;
+        Ok(value)
+    }
+}
+
 /// What a model says it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -133,6 +192,7 @@ pub struct ModelLog {
     /// the set of events this replica has delivered, and what the events a
     /// cut had not seen are counted against.
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     delivered: BTreeMap<String, u64>,
     /// The cut this replica keeps, once it has delivered one: of every cut
     /// it delivered, the one [`Cut::outranks`] puts first (SI.13, D3).
@@ -152,6 +212,7 @@ pub struct ModelLog {
     /// are under, by origin and sequence number; `None` while they are under
     /// the descriptor the model was opened with.
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::migration"))]
     in_force: Option<(String, u64)>,
     /// The model under the descriptor the rebase in force replaced, kept
     /// until every member has delivered the rebase (SI.14, M23): what the
@@ -184,6 +245,7 @@ pub struct ModelLog {
     /// replica's matrix-clock row of the member, as its deliveries set it,
     /// which says whom a rebase still waits for (SI.14, R3).
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::rows"))]
     heard: BTreeMap<String, BTreeMap<String, u64>>,
     /// The members of the log, sorted, as the delivered events' member table
     /// names them, or as the hosting replica's does once it has adopted a
@@ -222,16 +284,25 @@ struct Form {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Rebase {
     /// The replica that wrote it, and its sequence number there.
+    #[cfg_attr(
+        feature = "serde",
+        serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")
+    )]
     origin: String,
     seq: u64,
     /// Its Lamport stamp, the sum of its version, as a cut's (M22).
     stamp: u64,
     /// Its causal past, as the greatest sequence number per origin: its
     /// version, the base it is defined by (R1).
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     seen: BTreeMap<String, u64>,
     /// The rebase in force for its writer when it wrote it, which its
     /// revision is a revision of: `None` for the descriptor the model was
     /// opened with.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, deserialize_with = "replica_ids::migration")
+    )]
     under: Option<(String, u64)>,
     /// The revision's digest, its text, and its table.
     to: String,
@@ -265,8 +336,10 @@ struct Report {
     /// The operations written concurrently under the old descriptor whose
     /// path reaches a removed class or feature, by origin, sequence number
     /// and the first removed name on the path.
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::dropped"))]
     dropped: Vec<(String, u64, String)>,
     /// The operations written under a migration that does not stand.
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::discarded"))]
     discarded: Vec<(String, u64)>,
 }
 
@@ -330,11 +403,15 @@ fn within(seen: &BTreeMap<String, u64>, origin: &str, seq: u64) -> bool {
 struct Cut {
     to: String,
     /// The cut's causal past, as the greatest sequence number per origin.
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     seen: BTreeMap<String, u64>,
     identified: Value,
     plain: Value,
     /// The replica that wrote the cut.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")
+    )]
     origin: String,
     /// Its sequence number at that replica.
     #[cfg_attr(feature = "serde", serde(default))]
