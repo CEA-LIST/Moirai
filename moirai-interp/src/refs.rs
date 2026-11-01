@@ -60,6 +60,9 @@ use crate::op::{InstanceOp, MapOp, OptOp, SeqOp};
 /// Recognize the foreign namespace without changing the value's bytes.
 /// Malformed coordinates retain the ordinary local served-target rule.
 pub(crate) fn is_foreign(target: &str) -> bool {
+    if qualified_name(target) {
+        return true;
+    }
     let Some((coordinate, identity)) = target.split_once('#') else {
         return false;
     };
@@ -96,6 +99,46 @@ pub(crate) fn is_foreign(target: &str) -> bool {
         return false;
     };
     identifier(prefix) && identifier(class) && library_uuid(uuid) && library_uuid(identity)
+}
+
+/// Two or more basic or nonempty quoted segments separated by `::`.
+/// Quotes contain unrestricted characters; a backslash escapes the next one.
+/// Inspect the whole spelling without unquoting or normalizing its bytes.
+fn qualified_name(target: &str) -> bool {
+    let mut chars = target.chars().peekable();
+    let mut qualified = false;
+    loop {
+        match chars.next() {
+            Some('\'') => {
+                let mut nonempty = false;
+                loop {
+                    match chars.next() {
+                        Some('\'') if nonempty => break,
+                        Some('\'') | None => return false,
+                        Some('\\') => {
+                            if chars.next().is_none() {
+                                return false;
+                            }
+                        }
+                        Some(_) => {}
+                    }
+                    nonempty = true;
+                }
+            }
+            Some(first) if first.is_ascii_alphabetic() || first == '_' => {
+                while chars
+                    .next_if(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .is_some()
+                {}
+            }
+            _ => return false,
+        }
+        match chars.next() {
+            None => return qualified,
+            Some(':') if chars.next() == Some(':') => qualified = true,
+            _ => return false,
+        }
+    }
 }
 
 fn decimal(text: &str) -> bool {
