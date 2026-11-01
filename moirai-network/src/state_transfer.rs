@@ -54,7 +54,9 @@ where
     }
 
     fn import_log(value: serde_json::Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
+        crate::json_decode::from_value(value)
+            .map_err(|e| eprintln!("Refusing an unreadable transferred log: {e}"))
+            .ok()
     }
 }
 
@@ -167,7 +169,9 @@ impl LogPayload {
         use base64::Engine as _;
 
         match self {
-            LogPayload::Plain(value) => Some(value),
+            LogPayload::Plain(value) => crate::json_decode::checked_value(value)
+                .map_err(|e| eprintln!("Refusing an unreadable plain log: {e}"))
+                .ok(),
             LogPayload::Deflate(text) => {
                 let deflated = base64::engine::general_purpose::STANDARD
                     .decode(text)
@@ -184,7 +188,9 @@ impl LogPayload {
                 if raw.len() as u64 > limit {
                     return None;
                 }
-                serde_json::from_slice(&raw).ok()
+                crate::json_decode::decode(&raw)
+                    .map_err(|e| eprintln!("Refusing an unreadable inflated log: {e}"))
+                    .ok()
             }
         }
     }

@@ -1953,6 +1953,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "stacker",
  "testcontainers",
  "tiny_http",
  "tokio",

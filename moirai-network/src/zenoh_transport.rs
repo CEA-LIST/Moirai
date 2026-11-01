@@ -199,7 +199,7 @@ where
                 .allowed_origin(Locality::Remote)
                 .callback(move |sample: Sample| {
                     let from = last_chunk(sample.key_expr().as_str()).to_string();
-                    match serde_json::from_slice::<TransportMessage<O>>(
+                    match crate::json_decode::decode::<TransportMessage<O>>(
                         &sample.payload().to_bytes(),
                     ) {
                         Ok(frame) => {

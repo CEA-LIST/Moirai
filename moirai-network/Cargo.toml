@@ -17,12 +17,11 @@ moirai-crdt = { path = "../moirai-crdt", features = ["serde"] }
 moirai-protocol = { path = "../moirai-protocol", features = ["serde"] }
 rustc-hash = "2.1.1"
 serde = { version = "1.0", features = ["derive"] }
-# `unbounded_depth` for one call, the op ingest. An interpreted `ModelOp`
-# carries its whole path from the model root, so an operation on an element at
-# containment depth 24 — which a real SysML v2 model reaches — nests past
-# `serde_json`'s default recursion limit of 128 and is answered `400 Invalid op
-# JSON`. `Api::submit` lifts the limit for that one body and for nothing else.
-serde_json = { version = "1.0.133", features = ["unbounded_depth"] }
+# Node boundaries use json_decode's own depth limit instead of serde's 128.
+# Raw operations retain their original JSON for per-operation HTTP admission.
+serde_json = { version = "1.0.133", features = ["unbounded_depth", "raw_value"] }
+# Already locked through pest; reserve stack space for bounded typed decodes.
+stacker = "0.1.25"
 tiny_http = "0.12"
 # The state transfer's `log` field is compressed, and only that field: the relay
 # copies `msg` through as a `RawValue` without parsing it (`routing.rs`), so

@@ -36,6 +36,7 @@ pub mod direct_transport;
 pub mod discovery;
 pub mod generic;
 pub mod http_api;
+mod json_decode;
 pub mod query;
 pub mod relay_transport;
 pub mod state_transfer;

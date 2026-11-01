@@ -682,17 +682,33 @@ struct BatchBody<O> {
     base: Option<String>,
 }
 
-/// Parse a request body that holds operations, with the recursion limit
-/// lifted. See [`Api::submit`] for why.
+/// Leave room for the transport envelopes and the exported state an operation
+/// builds, both of which must fit the shared decoder limit.
+const MAX_OPERATION_DEPTH: usize = 768;
+
+/// Validate the original operation text before decoding it as the node's type.
+/// In a batch this excludes the enclosing object and `ops` array, and a refusal
+/// happens before the batch is handed to the event loop.
+struct AdmittedOp<O>(O);
+
+impl<'de, O: DeserializeOwned> Deserialize<'de> for AdmittedOp<O> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+
+        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        let input = raw.get().as_bytes();
+        crate::json_decode::check_depth(crate::json_decode::depth(input), MAX_OPERATION_DEPTH)
+            .map_err(D::Error::custom)?;
+        crate::json_decode::decode(input)
+            .map(Self)
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Parse operation bodies with the shared depth and stack bounds.
 fn parse_lifted<T: DeserializeOwned>(body: &str) -> Result<T, serde_json::Error> {
-    let mut deserializer = serde_json::Deserializer::from_str(body);
-    deserializer.disable_recursion_limit();
-    let value = T::deserialize(&mut deserializer)?;
-    // `from_str` ends the input for us; a hand-built `Deserializer` does
-    // not, and without this a body with an operation and then trailing
-    // rubbish would be accepted.
-    deserializer.end()?;
-    Ok(value)
+    crate::json_decode::decode(body.as_bytes())
+        .inspect_err(|e| eprintln!("Refusing an unreadable operation body: {e}"))
 }
 
 /// What became of a submission handed to the event loop.
@@ -912,26 +928,16 @@ impl<O: NetworkOp> Api<O> {
     /// `POST /api/op` and `POST /api/model/{id}/op`: parse the body as an
     /// operation and hand it to the event loop.
     ///
-    /// The body is parsed through a [`serde_json::Deserializer`] with the
-    /// recursion limit lifted rather than through `from_str`, because an
-    /// operation's depth is the *model's* depth and not the protocol's. An
-    /// interpreted `ModelOp` carries its whole path from the model root, about
-    /// seven JSON levels per containment step, so an element at containment
-    /// depth 24 — which SysON's largest public example model reaches, and which the SysML v2
-    /// standard libraries pass three times over — produces an operation
-    /// nesting 168 levels. With the default limit of 128 such an operation is
-    /// answered `400 Invalid op JSON: recursion limit exceeded` and a real
-    /// model cannot be handed to a node at all.
-    ///
-    /// What the limit protects against is a stack overflow on a hostile body,
-    /// and that is still a property of this endpoint: it is reachable only by
-    /// whoever may already submit operations to this replica.
+    /// Model operations carry their whole containment path and can exceed
+    /// serde's default depth of 128. The shared decoder accepts deeper bodies,
+    /// while `AdmittedOp` bounds each operation so its replicated messages and
+    /// transferred state remain decodable by peers and joiners.
     fn submit(&self, request: &mut Request, log_id: Option<LogId>) -> Reply {
         let body = match read_body(request) {
             Ok(body) => body,
             Err(reply) => return reply,
         };
-        let op = match parse_lifted::<O>(&body) {
+        let AdmittedOp(op) = match parse_lifted::<AdmittedOp<O>>(&body) {
             Ok(op) => op,
             Err(e) => return error(400, format!("Invalid op JSON: {e}")),
         };
@@ -968,10 +974,11 @@ impl<O: NetworkOp> Api<O> {
             Ok(body) => body,
             Err(reply) => return reply,
         };
-        let BatchBody { ops, base } = match parse_lifted::<BatchBody<O>>(&body) {
+        let BatchBody { ops, base } = match parse_lifted::<BatchBody<AdmittedOp<O>>>(&body) {
             Ok(batch) => batch,
             Err(e) => return error(400, format!("Invalid batch JSON: {e}")),
         };
+        let ops: Vec<O> = ops.into_iter().map(|AdmittedOp(op)| op).collect();
         let of = ops.len();
         let (reply_tx, reply_rx) = mpsc::channel();
         let claim = Claim::default();

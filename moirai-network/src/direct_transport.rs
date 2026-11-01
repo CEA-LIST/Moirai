@@ -145,7 +145,9 @@ where
                         // a trace, which turns a serialization defect into a
                         // silent stall: the sender logs a successful send and
                         // the receiver logs nothing at all. Say so instead.
-                        let parsed = match serde_json::from_str::<TransportMessage<O>>(&data) {
+                        let parsed = match crate::json_decode::decode::<TransportMessage<O>>(
+                            data.as_bytes(),
+                        ) {
                             Ok(msg) => Some(msg),
                             Err(e) => {
                                 eprintln!(

@@ -478,7 +478,7 @@ fn spawn_reader_thread<O>(
         let mut joiner = Joiner::default();
         for line in reader.lines() {
             match line {
-                Ok(data) => match serde_json::from_str::<Inbound<O>>(&data) {
+                Ok(data) => match crate::json_decode::decode::<Inbound<O>>(data.as_bytes()) {
                     Ok(Inbound {
                         from,
                         msg:
@@ -493,7 +493,7 @@ fn spawn_reader_thread<O>(
                         else {
                             continue;
                         };
-                        match serde_json::from_str::<TransportMessage<O>>(&text) {
+                        match crate::json_decode::decode::<TransportMessage<O>>(text.as_bytes()) {
                             Ok(msg) => {
                                 if tx.send((from, msg)).is_err() {
                                     break;
