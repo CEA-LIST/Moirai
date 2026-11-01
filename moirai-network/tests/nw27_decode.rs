@@ -253,11 +253,11 @@ fn nw27_child() {
         "deep" => 192,
         "limit" => L,
         "over" => L + 8,
-        "hostile" => 2 * L,
+        "double" => 2 * L,
         "trailing" => 8,
         _ => panic!("case"),
     };
-    let reject = matches!(mode, "over" | "hostile" | "trailing");
+    let reject = matches!(mode, "over" | "double" | "trailing");
     let mut text = raw(n);
     if mode == "trailing" {
         text.push_str(" true");
@@ -303,7 +303,7 @@ fn nw27_g1_tcp_refusal_1032() {
 }
 #[test]
 fn nw27_g1_tcp_refusal_2048() {
-    run("tcp:hostile", true)
+    run("tcp:double", true)
 }
 #[cfg(feature = "zenoh")]
 #[test]
@@ -318,7 +318,7 @@ fn nw27_g1_zenoh_refusal_1032() {
 #[cfg(feature = "zenoh")]
 #[test]
 fn nw27_g1_zenoh_refusal_2048() {
-    run("zenoh:hostile", true)
+    run("zenoh:double", true)
 }
 #[test]
 fn nw27_g1_relay_refusal_1032() {
@@ -326,7 +326,7 @@ fn nw27_g1_relay_refusal_1032() {
 }
 #[test]
 fn nw27_g1_relay_refusal_2048() {
-    run("relay:hostile", true)
+    run("relay:double", true)
 }
 #[test]
 fn nw27_g1_chunks_refusal_1032() {
@@ -334,7 +334,7 @@ fn nw27_g1_chunks_refusal_1032() {
 }
 #[test]
 fn nw27_g1_chunks_refusal_2048() {
-    run("chunks:hostile", true)
+    run("chunks:double", true)
 }
 #[test]
 fn nw27_g4_deep_compressed_state() {
