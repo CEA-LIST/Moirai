@@ -1,5 +1,7 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::fmt::{self, Debug};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -9,67 +11,101 @@ use crate::{
         query::QueryOperation,
         redundancy::RedundancyRelation,
         replicated_data_type::{
-            CausalReset, ReplicatedDataType, Stabilization, UsesUnstableService,
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Reset, Sequential, Stabilization, Stable,
         },
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
-        effect_context::EffectContext, event_graph::EventGraph, log::IsLog,
-        stable_state::IsStableState, unstable_state::IsUnstablePrune,
+        effect_context::EffectContext,
+        event_graph::EventGraph,
+        log::IsLog,
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
 
-pub type VecLog<O> = POLog<O, Vec<TaggedOp<O>>>;
-pub type MapLog<O> = POLog<O, FxHashMap<EventId, TaggedOp<O>>>;
-pub type GraphLog<O> = POLog<O, EventGraph<O>>;
+pub type VecLog<R> = POLog<R, Vec<TaggedOp<<R as ReplicatedDataType>::Update>>>;
+pub type MapLog<R> = POLog<R, FxHashMap<EventId, TaggedOp<<R as ReplicatedDataType>::Update>>>;
+pub type GraphLog<R> = POLog<R, EventGraph<<R as ReplicatedDataType>::Update>>;
 
-#[derive(Debug, Clone)]
-pub struct POLog<O, U>
+pub struct POLog<R, U>
 where
-    O: ReplicatedDataType,
+    R: ReplicatedDataType,
 {
-    pub(crate) stable: O::StableState,
+    pub(crate) stable: Stable<R>,
     pub(crate) unstable: U,
 }
 
-impl<O, U> IsLog for POLog<O, U>
+impl<R, U> Clone for POLog<R, U>
 where
-    O: ReplicatedDataType + Clone + UsesUnstableService<U>,
-    U: IsUnstablePrune<O> + Default + Debug,
+    R: ReplicatedDataType,
+    Stable<R>: Clone,
+    U: Clone,
 {
-    type Command = O;
-    type Op = O;
-    type Rejection = O::Rejection;
+    fn clone(&self) -> Self {
+        Self {
+            stable: self.stable.clone(),
+            unstable: self.unstable.clone(),
+        }
+    }
+}
+
+impl<R, U> Debug for POLog<R, U>
+where
+    R: ReplicatedDataType,
+    Stable<R>: Debug,
+    U: Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("POLog")
+            .field("stable", &self.stable)
+            .field("unstable", &self.unstable)
+            .finish()
+    }
+}
+
+impl<R, U> IsLog for POLog<R, U>
+where
+    R: ReplicatedDataType
+        + Precondition<U>
+        + CausalCompaction<U>
+        + CausalStabilize<U>
+        + CausalReset<U>,
+    U: IsUnstableCore<R::Update> + IsUnstablePrune<R::Update> + Default + Debug,
+{
+    type Command = R::Update;
+    type Update = R::Update;
+    type Rejection = R::Rejection;
 
     fn new() -> Self {
         Self {
-            stable: O::StableState::default(),
+            stable: Stable::<R>::default(),
             unstable: U::default(),
         }
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         command
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        <O as UsesUnstableService<U>>::is_enabled(op, &self.stable, &self.unstable)
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
+        R::is_enabled(&self.stable, &self.unstable, op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
         let new_tagged_op = TaggedOp::from(&event);
-        if O::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
-            if !O::DISABLE_R_WHEN_R {
+        if R::redundant_itself(&new_tagged_op, &self.stable, self.unstable.iter()) {
+            if !<R as CausalCompaction<U>>::DISABLE_R_WHEN_R {
                 self.prune_redundant_ops(
-                    O::redundant_by_when_redundant,
+                    R::redundant_by_when_redundant,
                     &new_tagged_op,
                     event.version(),
                 );
             }
         } else {
-            if !O::DISABLE_R_WHEN_NOT_R {
+            if !R::DISABLE_R_WHEN_NOT_R {
                 self.prune_redundant_ops(
-                    O::redundant_by_when_not_redundant,
+                    R::redundant_by_when_not_redundant,
                     &new_tagged_op,
                     event.version(),
                 );
@@ -79,7 +115,7 @@ where
     }
 
     fn stabilize(&mut self, frontier: &CausalFrontier) {
-        match O::causal_stabilize(frontier, &self.stable, &self.unstable) {
+        match R::causal_stabilize(frontier, &self.stable, &self.unstable) {
             Stabilization::Regular => {
                 // 1. select all ops in unstable that are predecessors of a version
                 // 2. for each of them, call stabilize, which may modify stable and/or unstable
@@ -93,9 +129,9 @@ where
                     .collect::<Vec<_>>();
 
                 for tagged_op in candidates {
-                    O::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
+                    R::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
                     if self.unstable.get(tagged_op.id()).is_some() {
-                        self.stable.apply(tagged_op.op().clone());
+                        R::Stable::apply(&mut self.stable, tagged_op.op());
                         self.unstable.remove(tagged_op.id());
                     }
                 }
@@ -104,13 +140,6 @@ where
                 frontier: cut,
                 stable,
             } => {
-                assert!(
-                    matches!(
-                        cut.partial_cmp(frontier),
-                        Some(Ordering::Less | Ordering::Equal)
-                    ),
-                    "Critical frontier exceeds the stable one"
-                );
                 self.unstable.prune_predecessors(&cut);
                 self.stable = stable;
             }
@@ -119,13 +148,8 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        match <O as UsesUnstableService<U>>::causal_reset(
-            version,
-            conservative,
-            &self.stable,
-            &self.unstable,
-        ) {
-            CausalReset::Inject(ops) => {
+        match R::reset(version, conservative, &self.stable, &self.unstable) {
+            Reset::Inject(ops) => {
                 for op in ops {
                     let event_id = EventId::from(version);
                     let lamport = Lamport::from(version);
@@ -133,8 +157,8 @@ where
                     self.unstable.append(event);
                 }
             }
-            CausalReset::Prune => {
-                self.stable.clear();
+            Reset::Prune => {
+                self.stable = Stable::<R>::default();
                 if conservative {
                     self.unstable
                         .retain(|tagged_op| !tagged_op.id().is_predecessor_of(version))
@@ -145,8 +169,6 @@ where
         }
     }
 
-    // TODO: we must decide if this function is semantic or structural, i.e. if it returns true if the log is semantically equivalent to the default value,
-    // TODO: or if it returns true if the log is empty.
     fn is_default(&self) -> bool {
         self.stable.is_default() && self.unstable.is_empty()
     }
@@ -165,24 +187,22 @@ where
     }
 }
 
-impl<O, U> POLog<O, U>
+impl<R, U> POLog<R, U>
 where
-    O: ReplicatedDataType,
+    R: ReplicatedDataType,
 {
-    /// Construct a log from a stable state and its remaining unstable events.
-    pub fn from_parts(stable: O::StableState, unstable: U) -> Self {
+    pub fn from_parts(stable: Stable<R>, unstable: U) -> Self {
         Self { stable, unstable }
     }
 
-    /// Start from a stable state with no prior causal history.
-    pub fn from_stable(stable: O::StableState) -> Self
+    pub fn from_stable(stable: Stable<R>) -> Self
     where
         U: Default,
     {
         Self::from_parts(stable, U::default())
     }
 
-    pub fn stable(&self) -> &O::StableState {
+    pub fn stable(&self) -> &Stable<R> {
         &self.stable
     }
 
@@ -191,20 +211,20 @@ where
     }
 }
 
-impl<O, U> POLog<O, U>
+impl<R, U> POLog<R, U>
 where
-    O: ReplicatedDataType,
-    U: IsUnstablePrune<O>,
+    R: ReplicatedDataType + CausalCompaction<U>,
+    U: IsUnstablePrune<R::Update> + IsUnstableCore<R::Update>,
 {
     fn prune_redundant_ops(
         &mut self,
-        rdnt: RedundancyRelation<O>,
-        new_tagged_op: &TaggedOp<O>,
+        rdnt: RedundancyRelation<R::Update>,
+        new_tagged_op: &TaggedOp<R::Update>,
         version: &Version,
     ) {
-        self.stable.prune_redundant_ops(rdnt, new_tagged_op);
+        R::compact_stable(&mut self.stable, rdnt, new_tagged_op);
         self.unstable.retain(|old_tagged_op| {
-            // Note: the new operation is not in the log at this point.
+            //* Note: the new operation is not in the log at this point.
             let is_conc = !old_tagged_op.id().is_predecessor_of(version);
 
             !rdnt(
@@ -217,23 +237,22 @@ where
     }
 }
 
-impl<Q, O, U> EvalNested<Q> for POLog<O, U>
+impl<Q, R, U> EvalNested<Q> for POLog<R, U>
 where
     Q: QueryOperation,
-    O: ReplicatedDataType + Clone + Debug + Eval<Q, U> + UsesUnstableService<U>,
-    U: IsUnstablePrune<O> + Default + Debug,
+    R: ReplicatedDataType + Eval<Stable<R>, U, Q>,
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
-        O::execute_query(q, &self.stable, &self.unstable)
+        R::execute_query(&self.stable, &self.unstable, q)
     }
 }
 
 #[cfg(feature = "test_utils")]
-impl<O, U> deepsize::DeepSizeOf for POLog<O, U>
+impl<O, U> DeepSizeOf for POLog<O, U>
 where
     O: ReplicatedDataType,
-    O::StableState: deepsize::DeepSizeOf,
-    U: deepsize::DeepSizeOf,
+    Stable<O>: DeepSizeOf,
+    U: DeepSizeOf,
 {
     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
         self.stable.deep_size_of_children(context) + self.unstable.deep_size_of_children(context)

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash};
+use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
@@ -10,7 +10,10 @@ use moirai_protocol::{
     crdt::{
         eval::Eval,
         query::{QueryOperation, Read},
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        redundancy::RedundancyRelation,
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -20,74 +23,89 @@ use rand::{Rng, RngExt};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::FxHashSet;
+use crate::{FxHashSet, register::update::RegisterUpdate};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum PORegister<V> {
-    Clear,
-    Write(V),
-}
+pub struct PORegister<V>(PhantomData<V>);
 
 impl<V> ReplicatedDataType for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
 {
-    type StableState = Vec<Self>;
+    type Update = RegisterUpdate<V>;
+    type Stable = Vec<Self::Update>;
     type Rejection = Infallible;
+}
+
+impl<V, U> CausalCompaction<U> for PORegister<V>
+where
+    V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
+    U: IsUnstableCore<Self::Update>,
+{
+    fn compact_stable(
+        stable: &mut Self::Stable,
+        rdnt: RedundancyRelation<Self::Update>,
+        new: &TaggedOp<Self::Update>,
+    ) {
+        stable.retain(|old| !rdnt(old, None, false, new));
+    }
 
     fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
     ) -> bool
     where
         Self: 'a,
     {
-        matches!(new_tagged_op.op(), PORegister::Clear)
+        matches!(new_tagged_op.op(), RegisterUpdate::Clear)
     }
 
     fn redundant_by_when_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 
     fn redundant_by_when_not_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 }
 
-impl<V, U> UsesUnstableService<U> for PORegister<V>
-where
-    V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
-    U: IsUnstableCore<Self>,
+impl<V, U> CausalStabilize<U> for PORegister<V> where
+    V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash
 {
 }
 
-impl<V, U> Eval<Read<FxHashSet<V>>, U> for PORegister<V>
+impl<V, U> CausalReset<U> for PORegister<V> where
+    V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash
+{
+}
+
+impl<V, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<FxHashSet<V>>> for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<<Self as ReplicatedDataType>::Update>,
 {
     fn execute_query(
-        _q: &Read<FxHashSet<V>>,
-        stable: &<PORegister<V> as ReplicatedDataType>::StableState,
+        stable: &<Self as ReplicatedDataType>::Stable,
         unstable: &U,
+        _q: &Read<FxHashSet<V>>,
     ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
         // The set can contain only incomparable values
         let mut set = FxHashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|to| to.op())) {
-            if let PORegister::Write(v) = o {
+            if let RegisterUpdate::Write(v) = o {
                 // We add the value if there is no v' in the set that is superior to v
                 // We remove any v' in the set that is inferior to v
                 if !set.iter().any(|v2| v2 > v) {
@@ -103,7 +121,7 @@ where
 #[cfg(feature = "fuzz")]
 impl<V, U> OpGenerator<U> for PORegister<V>
 where
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<Self::Update>,
     V: Clone + Debug + Eq + Hash + ValueGenerator + PartialEq + PartialOrd,
 {
     type Config = ();
@@ -111,14 +129,23 @@ where
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &Self::StableState,
+        _stable: &Self::Stable,
         _unstable: &U,
-    ) -> Self {
+    ) -> Self::Update {
         if rng.random_ratio(1, 5) {
-            Self::Clear
+            RegisterUpdate::Clear
         } else {
-            Self::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
+            RegisterUpdate::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
         }
+    }
+}
+
+impl<V, U> Precondition<U> for PORegister<V>
+where
+    V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
+{
+    fn is_enabled(_: &Self::Stable, _: &U, _: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }
 
@@ -129,8 +156,8 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        register::po_register::PORegister,
-        utils::{membership::twins, set_from_slice},
+        register::{po_register::PORegister, update::RegisterUpdate},
+        utils::{bootstrap::twins, set_from_slice},
     };
 
     #[cfg(feature = "fuzz")]
@@ -171,16 +198,16 @@ mod tests {
     impl PartialOrd for Family {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
             match (self, other) {
-                (Family::Parent(age1), Family::Parent(age2)) => {
+                (Self::Parent(age1), Self::Parent(age2)) => {
                     if age1 == age2 {
                         Some(Ordering::Equal)
                     } else {
                         None
                     }
                 }
-                (Family::Parent(_), Family::Child) => Some(Ordering::Greater),
-                (Family::Child, Family::Parent(_)) => Some(Ordering::Less),
-                (Family::Child, Family::Child) => None,
+                (Self::Parent(_), Self::Child) => Some(Ordering::Greater),
+                (Self::Child, Self::Parent(_)) => Some(Ordering::Less),
+                (Self::Child, Self::Child) => None,
             }
         }
     }
@@ -189,7 +216,9 @@ mod tests {
     fn simple_po_register() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event = replica_a.send(PORegister::Write(Family::Child)).unwrap();
+        let event = replica_a
+            .send(RegisterUpdate::Write(Family::Child))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(
@@ -202,7 +231,7 @@ mod tests {
         );
 
         let event = replica_b
-            .send(PORegister::Write(Family::Parent(20)))
+            .send(RegisterUpdate::Write(Family::Parent(20)))
             .unwrap();
         replica_a.receive(event);
 
@@ -216,7 +245,7 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
         let event = replica_a
-            .send(PORegister::Write(Family::Parent(20)))
+            .send(RegisterUpdate::Write(Family::Parent(20)))
             .unwrap();
         replica_b.receive(event);
 
@@ -229,7 +258,9 @@ mod tests {
             set_from_slice(&[Family::Parent(20)])
         );
 
-        let event = replica_b.send(PORegister::Write(Family::Child)).unwrap();
+        let event = replica_b
+            .send(RegisterUpdate::Write(Family::Child))
+            .unwrap();
         replica_a.receive(event);
 
         let result = set_from_slice(&[Family::Child]);
@@ -242,10 +273,10 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
         let event_a = replica_a
-            .send(PORegister::Write(Family::Parent(20)))
+            .send(RegisterUpdate::Write(Family::Parent(20)))
             .unwrap();
         let event_b = replica_b
-            .send(PORegister::Write(Family::Parent(21)))
+            .send(RegisterUpdate::Write(Family::Parent(21)))
             .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -259,13 +290,15 @@ mod tests {
     fn po_register_instability() {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
-        let event_a_1 = replica_a.send(PORegister::Write(Family::Child)).unwrap();
+        let event_a_1 = replica_a
+            .send(RegisterUpdate::Write(Family::Child))
+            .unwrap();
         assert_eq!(
             replica_a.query(&Read::new()),
             set_from_slice(&[Family::Child])
         );
         let event_b_1 = replica_b
-            .send(PORegister::Write(Family::Parent(42)))
+            .send(RegisterUpdate::Write(Family::Parent(42)))
             .unwrap();
         assert_eq!(
             replica_b.query(&Read::new()),
@@ -278,7 +311,7 @@ mod tests {
         );
 
         let event_b_2 = replica_b
-            .send(PORegister::Write(Family::Parent(21)))
+            .send(RegisterUpdate::Write(Family::Parent(21)))
             .unwrap();
         assert_eq!(
             replica_b.query(&Read::new()),
@@ -299,14 +332,14 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<PORegister<Family>>();
 
         let event_a_1 = replica_a
-            .send(PORegister::Write(Family::Parent(20)))
+            .send(RegisterUpdate::Write(Family::Parent(20)))
             .unwrap();
         assert_eq!(
             replica_a.query(&Read::new()),
             set_from_slice(&[Family::Parent(20)])
         );
         let event_b_1 = replica_b
-            .send(PORegister::Write(Family::Parent(42)))
+            .send(RegisterUpdate::Write(Family::Parent(42)))
             .unwrap();
         assert_eq!(
             replica_b.query(&Read::new()),
@@ -318,7 +351,9 @@ mod tests {
             set_from_slice(&[Family::Parent(42), Family::Parent(20)])
         );
 
-        let event_b_2 = replica_b.send(PORegister::Write(Family::Child)).unwrap();
+        let event_b_2 = replica_b
+            .send(RegisterUpdate::Write(Family::Child))
+            .unwrap();
         assert_eq!(
             replica_b.query(&Read::new()),
             set_from_slice(&[Family::Child])

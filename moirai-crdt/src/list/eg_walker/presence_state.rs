@@ -29,7 +29,7 @@ impl PreparePresence {
         }
     }
 
-    pub fn is_integrated(&self) -> bool {
+    pub const fn is_integrated(&self) -> bool {
         self.inserted
     }
 

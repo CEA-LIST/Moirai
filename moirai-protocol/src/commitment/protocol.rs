@@ -1,8 +1,10 @@
+use std::cmp::Ordering;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::{causal_frontier::CausalFrontier, version_vector::Version},
+    clock::causal_frontier::CausalFrontier,
     commitment::{
         leader_vote::SupportDelta,
         oracle::{IsOracle, Omega},
@@ -102,21 +104,19 @@ where
         new_anchors
     }
 
-    pub fn advance_commitment(&mut self, candidate: &Version) -> bool {
-        let candidate_frontier = CausalFrontier::from(candidate);
-        let advances = match &self.last_committed {
-            Some(last_committed) => {
-                candidate_frontier.partial_cmp(last_committed) == Some(std::cmp::Ordering::Greater)
-            }
-            None => true,
-        };
-
-        if advances {
-            self.last_committed = Some(candidate_frontier);
-            return true;
+    pub fn advance_commitment(&mut self, candidate: &CausalFrontier) {
+        fn is_causally_after(last_committed: &CausalFrontier, candidate: &CausalFrontier) -> bool {
+            candidate.partial_cmp(last_committed) == Some(Ordering::Greater)
         }
 
-        false
+        if let Some(last_committed) = &self.last_committed {
+            assert!(
+                is_causally_after(last_committed, candidate),
+                "Candidate frontier must be causally after the last committed frontier"
+            );
+        }
+
+        self.last_committed = Some(candidate.clone());
     }
 
     /// Simple majority quorum, which is the minimum number of votes required to commit a candidate leader.
@@ -146,6 +146,7 @@ where
         self.maybe_shrink();
     }
 
+    // Shrink the support table if it is too large compared to the number of entries.
     fn maybe_shrink(&mut self) {
         if self.support.capacity() > 64 && self.support.len() <= self.support.capacity() / 4 {
             self.support

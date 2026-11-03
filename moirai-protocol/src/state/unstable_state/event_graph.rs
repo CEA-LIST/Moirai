@@ -53,13 +53,8 @@ where
     O: Debug + Clone,
 {
     fn append(&mut self, event: Event<O>) {
-        let first_missing = self
-            .cutter
-            .first_after(|origin| event.version().seq_by_idx(origin))
-            .unwrap_or(self.graph.node_count());
+        let (immediate_parents, past_count) = self.find_immediate_predecessors(event.version());
         let new_tagged_op = TaggedOp::from(&event);
-        // Find the immediate predecessors
-        let immediate_parents = self.find_immediate_predecessors(event.version());
 
         // Add the event to the graph
         let child_idx = self.graph.add_node(new_tagged_op);
@@ -80,11 +75,12 @@ where
         }
         // A new event is always a head of the graph since it has no children (yet)
         self.heads.insert(event.id().clone());
-        // A new event invalidates precisely the cuts beyond its first unseen event.
+        // Missing a vertex of a critical prefix also excludes every later vertex.
+        // The prefix survives exactly when its length does not exceed past_count.
         while self
             .critical_versions
             .last()
-            .is_some_and(|&cut| cut > first_missing)
+            .is_some_and(|&cut| cut > past_count)
         {
             self.critical_versions.pop();
         }
@@ -174,7 +170,7 @@ where
         let limit = self
             .cutter
             .first_after(|origin| upper_bound.seq_by_idx(origin))
-            .unwrap_or(self.graph.node_count());
+            .unwrap_or_else(|| self.graph.node_count());
 
         // Select the largest critical prefix entirely inside that range.
         let end = self.critical_versions.partition_point(|&len| len <= limit);
@@ -315,17 +311,12 @@ where
             let parents = if shift_cuts {
                 parents
             } else {
-                // Remove redundant parent edges and collect the vertex's full causal past.
-                let (parents, mut ancestors) = retained.maximal_nodes(parents);
-                ancestors.extend(parents.iter().copied());
-                let first_missing = (0..retained.graph.node_count())
-                    .find(|&index| !ancestors.contains(&NodeIndex::new(index)))
-                    .unwrap_or(retained.graph.node_count());
-                // Any cut containing an unobserved event is no longer critical.
+                // Reuse the predecessor count computed while reducing parent edges.
+                let (parents, past_count) = retained.maximal_nodes(parents);
                 while retained
                     .critical_versions
                     .last()
-                    .is_some_and(|&cut| cut > first_missing)
+                    .is_some_and(|&cut| cut > past_count)
                 {
                     retained.critical_versions.pop();
                 }
@@ -394,7 +385,7 @@ impl<O> EventGraph<O>
 where
     O: Debug + Clone,
 {
-    /// Find the immediate predecessors of the given version in the DAG.
+    /// Find the immediate predecessors and count all retained causal predecessors.
     /// An immediate predecessor is a node that is a predecessor of the given version,
     /// and has no other predecessors that are also predecessors of the given version.
     /// This is used to find the minimal set of events to attach a new event to.
@@ -407,14 +398,14 @@ where
     /// 2. Keep a frontier of maximal starts.
     /// 3. Walk parent edges once per uncovered slice. Every reached ancestor is dominated by the
     ///    current start, any previous frontier node reached by this walk is removed.
-    fn find_immediate_predecessors(&self, version: &Version) -> Vec<NodeIndex> {
-        self.maximal_nodes(self.cutter.below(version)).0
+    fn find_immediate_predecessors(&self, version: &Version) -> (Vec<NodeIndex>, usize) {
+        self.maximal_nodes(self.cutter.below(version))
     }
 
     fn maximal_nodes(
         &self,
         starts: impl IntoIterator<Item = NodeIndex>,
-    ) -> (Vec<NodeIndex>, FxHashSet<NodeIndex>) {
+    ) -> (Vec<NodeIndex>, usize) {
         let mut frontier = FxHashSet::default();
         let mut dominated = FxHashSet::default();
 
@@ -445,7 +436,9 @@ where
 
         let mut parents: Vec<NodeIndex> = frontier.into_iter().collect();
         parents.sort_by_key(|node_idx| node_idx.index());
-        (parents, dominated)
+        // The remaining parents and the visited ancestors are disjoint.
+        let past_count = parents.len() + dominated.len();
+        (parents, past_count)
     }
 
     pub fn graph(&self) -> &StableDiGraph<TaggedOp<O>, ()> {

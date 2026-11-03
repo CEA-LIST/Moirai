@@ -2,7 +2,6 @@ use std::fmt::{Display, Error, Formatter};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

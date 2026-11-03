@@ -1,0 +1,13 @@
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum CounterUpdate<V> {
+    Inc(V),
+    Dec(V),
+    Reset,
+}

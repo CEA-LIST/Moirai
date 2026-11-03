@@ -1,3 +1,5 @@
+pub mod update;
+
 use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
@@ -15,40 +17,13 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Optional<O> {
-    Set(O),
-    Unset,
-}
-
-// Optional operations embed their payload inline, just like list/map updates.
-// Convert only the payload; Unset never allocates.
-impl<O> Boxer<Optional<O>> for Optional<Box<O>> {
-    fn boxer(self) -> Optional<O> {
-        match self {
-            Self::Set(op) => Optional::Set(*op),
-            Self::Unset => Optional::Unset,
-        }
-    }
-}
-
-impl<O> Boxer<Optional<Box<O>>> for Optional<O> {
-    fn boxer(self) -> Optional<Box<O>> {
-        match self {
-            Self::Set(op) => Optional::Set(Box::new(op)),
-            Self::Unset => Optional::Unset,
-        }
-    }
-}
+use crate::option::update::OptionUpdate;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -64,21 +39,21 @@ impl<L> IsLog for OptionLog<L>
 where
     L: IsLog,
 {
-    type Command = Optional<L::Op>;
-    type Op = Optional<L::Op>;
+    type Command = OptionUpdate<L::Update>;
+    type Update = OptionUpdate<L::Update>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
-            Optional::Set(o) => {
+            OptionUpdate::Set(o) => {
                 if self.child.is_some() {
                     ctx.update();
                 } else {
@@ -92,7 +67,7 @@ where
                 });
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
-            Optional::Unset => {
+            OptionUpdate::Unset => {
                 if ctx.is_owned() {
                     ctx.delete();
                 }
@@ -119,10 +94,7 @@ where
     }
 
     fn is_default(&self) -> bool {
-        match self.child {
-            Some(ref child) => child.is_default(),
-            None => true,
-        }
+        self.child.as_ref().is_none_or(|child| child.is_default())
     }
 }
 
@@ -132,10 +104,9 @@ where
     V: Clone + Default + PartialEq,
 {
     fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {
-        match self.child {
-            Some(ref child) => Some(child.execute_query(&Read::new())),
-            None => Default::default(),
-        }
+        self.child.as_ref().map_or_else(Default::default, |child| {
+            Some(child.execute_query(&Read::new()))
+        })
     }
 }
 
@@ -147,7 +118,7 @@ where
         Self::default()
     }
 
-    pub fn child(&self) -> Option<&L> {
+    pub const fn child(&self) -> Option<&L> {
         self.child.as_ref()
     }
 }
@@ -164,18 +135,18 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> CommandGenerator for OptionLog<L>
 where
-    L: CommandGenerator + IsLog<Command = <L as IsLog>::Op>,
+    L: CommandGenerator + IsLog<Command = <L as IsLog>::Update>,
 {
     fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         match &self.child {
             Some(child) => {
                 if rng.random_bool(1.0 / 5.0) {
-                    Optional::Unset
+                    OptionUpdate::Unset
                 } else {
-                    Optional::Set(child.generate_command(rng))
+                    OptionUpdate::Set(child.generate_command(rng))
                 }
             }
-            None => Optional::Set(<L as CommandGenerator>::generate_command(
+            None => OptionUpdate::Set(<L as CommandGenerator>::generate_command(
                 &L::default(),
                 rng,
             )),
@@ -198,22 +169,26 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
-        counter::resettable_counter::Counter,
-        option::{OptionLog, Optional},
-        utils::membership::twins_log,
+        counter::{Counter, update::CounterUpdate},
+        option::{OptionLog, OptionUpdate},
+        utils::bootstrap::twins_log,
     };
 
     #[test]
     fn simple_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
+        let event = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Optional::Unset).unwrap();
+        let event = replica_a.send(OptionUpdate::Unset).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Optional::Set(Counter::Inc(5))).unwrap();
+        let event = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(5)))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), Some(5));
@@ -224,8 +199,12 @@ mod tests {
     fn concurrent_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
-        let event_b = replica_b.send(Optional::Set(Counter::Inc(5))).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
+        let event_b = replica_b
+            .send(OptionUpdate::Set(CounterUpdate::Inc(5)))
+            .unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -238,11 +217,15 @@ mod tests {
     fn concurrent_unset_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(10))).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(10)))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
-        let event_b = replica_b.send(Optional::Unset).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
+        let event_b = replica_b.send(OptionUpdate::Unset).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);

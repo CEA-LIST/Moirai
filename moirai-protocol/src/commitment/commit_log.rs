@@ -3,11 +3,11 @@ use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{
         commit_op::CommitOp,
-        leader_vote::{LeaderVote, NewSupports},
+        leader_vote::{LeaderVote, LeaderVoteUpdate, NewSupports},
         oracle::{IsOracle, Omega},
         protocol::CommitmentProtocol,
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    crdt::{eval::EvalNested, query::QueryOperation, replicated_data_type::ReplicatedDataType},
     event::Event,
     state::{
         effect_context::EffectContext,
@@ -17,15 +17,14 @@ use crate::{
     },
 };
 
-/// Special log that wraps a child log and adds commitment semantics.
-/// It maintains a separate log of leader votes, and uses a commitment protocol
+/// Special log that wraps a child log and provides a commitment protocol on top of it.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct CommitmentLog<L> {
     /// Child log. It can contain any CRDT log, including composite ones.
     child: L,
     /// Log of leader votes
-    leader_log: POLog<LeaderVote, EventHistory<LeaderVote>>,
+    leader_log: POLog<LeaderVote, EventHistory<<LeaderVote as ReplicatedDataType>::Update>>,
     /// Commitment protocol state
     protocol: CommitmentProtocol<Omega>,
 }
@@ -35,22 +34,24 @@ where
     L: IsLog,
 {
     type Command = L::Command;
-    type Op = CommitOp<L::Op>;
+    /// The CommitmentLog is not a pure CRDT log.
+    /// The child CRDT update is prepared to be annotated with a leader vote.
+    type Update = CommitOp<L::Update>;
     type Rejection = L::Rejection;
 
     /// A user command is prepared by the child log, and then annotated with the current leader vote from the oracle.
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         CommitOp::new(
             self.child.prepare(command),
-            LeaderVote::Vote(self.protocol.oracle().query().unwrap()),
+            LeaderVoteUpdate::Vote(self.protocol.oracle().query().unwrap()),
         )
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.child.is_enabled(&op.op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         // We update the resolver in the protocol to ensure that we can resolve
         // replica IDs correctly for the leader votes (in the case new replicas have joined
         // since the last event).
@@ -73,35 +74,27 @@ where
             self.protocol.last_committed().cloned(),
         ));
 
-        // Gather the new anchors
-        let candidate_anchors = self.protocol.apply_support_deltas(deltas);
+        for anchor in self.protocol.apply_support_deltas(deltas) {
+            let anchor_version = self.leader_log.unstable().version(&anchor).unwrap();
+            let frontier = CausalFrontier::from(anchor_version);
+            // Record the new latest commitment frontier in the protocol state
+            self.protocol.advance_commitment(&frontier);
 
-        // Find the greatest candidate anchor, if any.
-        let greatest_candidate = candidate_anchors
-            .iter()
-            .filter_map(|anchor| self.leader_log.unstable().version(anchor))
-            .max_by(|a, b| {
-                a.partial_cmp(b)
-                    .expect("candidate versions must be comparable")
-            })
-            .cloned();
-
-        // Only advance commitment when a real candidate exists.
-        if let Some(candidate) = greatest_candidate
-            && self.protocol.advance_commitment(&candidate)
-        {
-            let frontier = CausalFrontier::from(&candidate);
-
+            // Prune the support table
             self.protocol
                 .prune_support(&frontier, self.leader_log.unstable());
 
+            // Prune the leader log to the strict causal past of the new commitment frontier
             self.leader_log
-                .stabilize(&CommitmentLog::<L>::strict_past_frontier(frontier));
+                .stabilize(&CommitmentLog::<L>::strict_causal_past(&frontier));
+
+            // Stabilize the child log to the new commitment frontier
+            self.child.stabilize(&frontier);
         }
     }
 
-    fn stabilize(&mut self, frontier: &CausalFrontier) {
-        self.child.stabilize(frontier);
+    fn stabilize(&mut self, _: &CausalFrontier) {
+        // Causal stability is not compatible with majority commitment, so we don't stabilize the log.
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -133,13 +126,15 @@ where
         &self.child
     }
 
-    /// The latest majority-backed commitment frontier, if commitment has advanced.
+    /// The latest commitment frontier, if commitment has advanced.
     pub fn committed_frontier(&self) -> Option<&CausalFrontier> {
         self.protocol.last_committed()
     }
 
     /// Read-only access to the log of leader votes and their causal history.
-    pub fn leader_log(&self) -> &POLog<LeaderVote, EventHistory<LeaderVote>> {
+    pub fn leader_log(
+        &self,
+    ) -> &POLog<LeaderVote, EventHistory<<LeaderVote as ReplicatedDataType>::Update>> {
         &self.leader_log
     }
 
@@ -148,7 +143,8 @@ where
         &self.protocol
     }
 
-    pub fn strict_past_frontier(frontier: CausalFrontier) -> CausalFrontier {
+    /// Returns the frontier representing the strict causal past of the given frontier.
+    pub fn strict_causal_past(frontier: &CausalFrontier) -> CausalFrontier {
         let mut new_frontier = CausalFrontier::new(frontier.resolver().clone());
 
         for (idx, value) in frontier.iter() {

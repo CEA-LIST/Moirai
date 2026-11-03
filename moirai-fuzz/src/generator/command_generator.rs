@@ -2,12 +2,14 @@ use std::fmt::Debug;
 
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
-    crdt::replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+    crdt::replicated_data_type::{
+        CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+    },
     state::{
         cache::{CachedLog, IncrementalCache},
         log::IsLog,
         po_log::POLog,
-        unstable_state::IsUnstablePrune,
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
 use rand::Rng;
@@ -21,15 +23,20 @@ pub trait CommandGenerator: IsLog {
 
 //* Default implementations of CommandGenerator for some common log types.
 
-impl<O, U> CommandGenerator for POLog<O, U>
+impl<R, U> CommandGenerator for POLog<R, U>
 where
-    O: ReplicatedDataType + Clone + OpGenerator<U> + UsesUnstableService<U>,
-    U: IsUnstablePrune<O> + Default + Debug,
+    R: OpGenerator<U>
+        + ReplicatedDataType
+        + Precondition<U>
+        + CausalCompaction<U>
+        + CausalStabilize<U>
+        + CausalReset<U>,
+    U: IsUnstableCore<R::Update> + IsUnstablePrune<R::Update> + Default + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        O::generate(
+        R::generate(
             rng,
-            &<O as OpGenerator<U>>::Config::default(),
+            &<R as OpGenerator<U>>::Config::default(),
             self.stable(),
             self.unstable(),
         )
@@ -39,7 +46,7 @@ where
 impl<L, V> CommandGenerator for CachedLog<L, V>
 where
     L: IsLog + CommandGenerator,
-    V: IncrementalCache<L::Op> + Debug,
+    V: IncrementalCache<L::Update> + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         self.inner().generate_command(rng)

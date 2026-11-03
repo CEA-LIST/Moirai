@@ -21,17 +21,10 @@ use rand::Rng;
 
 use crate::{
     FxHashMap,
-    counter::resettable_counter::Counter,
-    map::uw_map::{UWMap, UWMapLog},
+    bag::update::BagUpdate,
+    counter::{Counter, update::CounterUpdate},
+    map::{update::MapUpdate, uw_map::UWMapLog},
 };
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub enum AWBag<V> {
-    Add(V),
-    Remove(V),
-    Clear,
-}
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -50,27 +43,23 @@ impl<V> IsLog for AWBagLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Command = AWBag<V>;
-    type Op = AWBag<V>;
+    type Command = BagUpdate<V>;
+    type Update = BagUpdate<V>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
-        Ok(())
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
-            AWBag::Add(k) => UWMap::Update(k.clone(), Counter::Inc(1)),
-            AWBag::Remove(k) => UWMap::Update(k.clone(), Counter::Dec(1)),
-            AWBag::Clear => UWMap::Clear,
+            BagUpdate::Add(k) => MapUpdate::Update(k.clone(), CounterUpdate::Inc(1)),
+            BagUpdate::Remove(k) => MapUpdate::Update(k.clone(), CounterUpdate::Dec(1)),
+            BagUpdate::Clear => MapUpdate::Clear,
         };
         let event = Event::unfold(event, op);
         // While the Bag contains a map, it is semantically a leaf CRDT, so we ignore the path and sink.
@@ -121,9 +110,9 @@ where
         let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
         let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
         match choice {
-            Choice::Add => AWBag::Add(value),
-            Choice::Remove => AWBag::Remove(value),
-            Choice::Clear => AWBag::Clear,
+            Choice::Add => BagUpdate::Add(value),
+            Choice::Remove => BagUpdate::Remove(value),
+            Choice::Clear => BagUpdate::Clear,
         }
     }
 }
@@ -143,18 +132,18 @@ mod tests {
     use moirai_protocol::replica::IsReplica;
 
     use super::*;
-    use crate::utils::membership::twins_log;
+    use crate::utils::bootstrap::twins_log;
 
     #[test]
     fn simple_bag() {
         let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<&str>>();
 
-        let event_a = replica_a.send(AWBag::Add("a")).unwrap();
-        let event_b = replica_b.send(AWBag::Add("b")).unwrap();
+        let event_a = replica_a.send(BagUpdate::Add("a")).unwrap();
+        let event_b = replica_b.send(BagUpdate::Add("b")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(AWBag::Remove("a")).unwrap();
+        let event_a = replica_a.send(BagUpdate::Remove("a")).unwrap();
         replica_b.receive(event_a);
 
         let mut result = FxHashMap::default();
@@ -168,8 +157,8 @@ mod tests {
     fn concurrent_bag() {
         let (mut replica_a, mut replica_b) = twins_log::<AWBagLog<&str>>();
 
-        let event_a = replica_a.send(AWBag::Add("a")).unwrap();
-        let event_b = replica_b.send(AWBag::Add("a")).unwrap();
+        let event_a = replica_a.send(BagUpdate::Add("a")).unwrap();
+        let event_b = replica_b.send(BagUpdate::Add("a")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 

@@ -30,7 +30,7 @@ use crate::{
 pub fn fuzzer<L, Q>(config: FuzzerConfig<L, Q>) -> ExecutionReport
 where
     L: IsLog + CommandGenerator + EvalNested<Q> + DeepSizeOf + LogFootprint,
-    L::Op: DeepSizeOf,
+    L::Update: DeepSizeOf,
     Q: QueryOperation,
     <Q as QueryOperation>::Response: Debug,
 {

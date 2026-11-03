@@ -43,15 +43,15 @@ impl PartialOrd for ItemKey {
 pub struct ItemId(ItemKey);
 
 impl ItemId {
-    pub fn stable(index: usize) -> Self {
+    pub const fn stable(index: usize) -> Self {
         Self(ItemKey::Stable(index))
     }
 
-    pub fn event(event_id: EventId) -> Self {
+    pub const fn event(event_id: EventId) -> Self {
         Self(ItemKey::Event(event_id))
     }
 
-    pub fn stable_index(&self) -> Option<usize> {
+    pub const fn stable_index(&self) -> Option<usize> {
         match self {
             Self(ItemKey::Stable(index)) => Some(*index),
             Self(ItemKey::Event(_)) => None,
@@ -69,11 +69,11 @@ impl ItemId {
 pub struct LifeDot(ItemKey);
 
 impl LifeDot {
-    pub fn stable(index: usize) -> Self {
+    pub const fn stable(index: usize) -> Self {
         Self(ItemKey::Stable(index))
     }
 
-    pub fn event(event_id: EventId) -> Self {
+    pub const fn event(event_id: EventId) -> Self {
         Self(ItemKey::Event(event_id))
     }
 }

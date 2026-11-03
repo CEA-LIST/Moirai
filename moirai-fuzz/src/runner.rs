@@ -46,12 +46,12 @@ pub fn runner<L, Q>(
     oracle_driver: Option<&OracleDriver<L>>,
     display: bool,
     commitment_accessor: Option<CommitmentAccessor<L>>,
-) -> RunCapture<L::Op>
+) -> RunCapture<L::Update>
 where
     Q: QueryOperation,
     <Q as QueryOperation>::Response: Debug,
     L: IsLog + CommandGenerator + EvalNested<Q> + DeepSizeOf + LogFootprint,
-    L::Op: DeepSizeOf,
+    L::Update: DeepSizeOf,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {
@@ -79,7 +79,7 @@ where
     let mut count_ops = 0;
 
     // Create execution graph if requested
-    let mut execution_graph: Option<ExecutionGraph<L::Op>> = if config.execution_graph {
+    let mut execution_graph: Option<ExecutionGraph<L::Update>> = if config.execution_graph {
         Some(ExecutionGraph::new())
     } else {
         None

@@ -6,7 +6,7 @@ use moirai_protocol::{
 };
 
 use super::{
-    List,
+    ListUpdate,
     causal_cursor::transition,
     document::Document,
     item::{ItemId, LifeDot},
@@ -34,21 +34,21 @@ enum Direction {
 
 impl AppliedEffect {
     /// Apply to both views after preparing the operation's parent version.
-    fn apply<V: Clone>(doc: &mut Document<V>, event: &TaggedOp<List<V>>) -> Self {
+    fn apply<V: Clone>(doc: &mut Document<V>, event: &TaggedOp<ListUpdate<V>>) -> Self {
         match event.op() {
-            List::Insert { content, pos } => {
+            ListUpdate::Insert { content, pos } => {
                 doc.insert_event(event.id().clone(), content.clone(), *pos);
                 Self::Insert(ItemId::event(event.id().clone()))
             }
-            List::Update { pos } => {
+            ListUpdate::Update { pos } => {
                 let item = doc
                     .visible_item_at(*pos)
                     .expect("Eg-Walker invariant: update target must exist");
                 item.apply_update(LifeDot::event(event.id().clone()));
                 Self::Update(item.id.clone())
             }
-            List::Delete { pos } => Self::delete(doc, *pos, 1),
-            List::DeleteRange { start, len } => Self::delete(doc, *start, *len),
+            ListUpdate::Delete { pos } => Self::delete(doc, *pos, 1),
+            ListUpdate::DeleteRange { start, len } => Self::delete(doc, *start, *len),
         }
     }
 
@@ -115,8 +115,8 @@ impl AppliedEffect {
 pub(super) fn replay<'a, V, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Document<'a, V>
 where
     V: Clone + Debug + 'a,
-    U: CausalReplay<List<V>> + 'a,
-    I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
+    U: CausalReplay<ListUpdate<V>> + 'a,
+    I: IntoIterator<Item = &'a TaggedOp<ListUpdate<V>>>,
 {
     let mut document = Document::new(stable);
     let mut prepared_head = None;

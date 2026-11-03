@@ -76,12 +76,12 @@ macro_rules! time_recorder {
                 }
             }
 
-            pub fn inc(&mut self) -> usize {
+            pub const fn inc(&mut self) -> usize {
                 self.count += 1;
                 self.count
             }
 
-            pub fn count(&self) -> usize {
+            pub const fn count(&self) -> usize {
                 self.count
             }
 
@@ -94,7 +94,7 @@ macro_rules! time_recorder {
                 (count, selected)
             }
 
-            fn disabled(&self) -> bool {
+            const fn disabled(&self) -> bool {
                 self.config.is_none()
             }
         }
@@ -123,7 +123,7 @@ pub struct ReplicaSizeRecorder {
 }
 
 impl ReplicaSizeRecorder {
-    pub fn new(config: Option<CallSampling>) -> Self {
+    pub const fn new(config: Option<CallSampling>) -> Self {
         Self {
             config,
             size: Vec::new(),
@@ -142,7 +142,7 @@ impl ReplicaSizeRecorder {
         (self.count, selected)
     }
 
-    fn disabled(&self) -> bool {
+    const fn disabled(&self) -> bool {
         self.config.is_none()
     }
 }
@@ -210,7 +210,7 @@ impl StabilityRecorder {
         }
     }
 
-    fn disabled(&self) -> bool {
+    const fn disabled(&self) -> bool {
         !self.enabled
     }
 }
@@ -224,14 +224,14 @@ pub struct CommitmentRecorder {
 }
 
 impl CommitmentRecorder {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             enabled: true,
             progress: Vec::new(),
         }
     }
 
-    fn disabled(&self) -> bool {
+    const fn disabled(&self) -> bool {
         !self.enabled
     }
 }
@@ -269,7 +269,7 @@ pub struct LogSizeRecorder {
 }
 
 impl LogSizeRecorder {
-    pub fn new(config: Option<CallSampling>) -> Self {
+    pub const fn new(config: Option<CallSampling>) -> Self {
         Self {
             config,
             size: Vec::new(),
@@ -289,7 +289,7 @@ impl LogSizeRecorder {
             .is_some_and(|sampling| should_record(sampling, effect_id));
     }
 
-    fn disabled(&self) -> bool {
+    const fn disabled(&self) -> bool {
         self.config.is_none()
     }
 }

@@ -78,10 +78,10 @@ pub struct Replica<L, T> {
 impl<L, T> IsReplica<L> for Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Op> + Debug,
+    T: IsTcsb<L::Update> + Debug,
 {
     type Command = L::Command;
-    type Payload = L::Op;
+    type Payload = L::Update;
 
     fn prepare(&self, cmd: Self::Command) -> Self::Payload {
         self.state.prepare(cmd)
@@ -138,9 +138,9 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Op> + Debug,
+    T: IsTcsb<L::Update> + Debug,
 {
-    fn deliver(&mut self, event: Event<L::Op>) {
+    fn deliver(&mut self, event: Event<L::Update>) {
         // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)
         let mut sink = SinkCollector::new();
         let mut ctx = EffectContext::root("root", Some(&mut sink));
@@ -156,7 +156,7 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Op> + Debug,
+    T: IsTcsb<L::Update> + Debug,
 {
     pub fn bootstrap<M>(id: ReplicaId, members: &[M]) -> Self
     where
@@ -204,15 +204,15 @@ where
 }
 
 #[cfg(feature = "test_utils")]
-impl<L> Replica<L, Tcsb<L::Op>>
+impl<L> Replica<L, Tcsb<L::Update>>
 where
     L: IsLog,
 {
-    pub fn new(id: ReplicaId, tcsb: Tcsb<L::Op>, state: L) -> Self {
+    pub fn new(id: ReplicaId, tcsb: Tcsb<L::Update>, state: L) -> Self {
         Self { id, tcsb, state }
     }
 
-    pub fn tcsb(&self) -> &Tcsb<L::Op> {
+    pub fn tcsb(&self) -> &Tcsb<L::Update> {
         &self.tcsb
     }
 

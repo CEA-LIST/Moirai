@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
 };
 
-#[cfg(feature = "test_utils")]
+#[cfg(feature = "fuzz")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::{
@@ -18,23 +18,15 @@ use moirai_protocol::{
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
-    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
-use crate::{FxHashMap, set::rw_set::RWSet};
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum RWMap<K, O> {
-    Update(K, O),
-    Remove(K),
-    Clear,
-}
+use crate::{
+    FxHashMap,
+    map::update::MapUpdate,
+    set::{rw_set::RWSet, update::SetUpdate},
+};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -69,11 +61,11 @@ where
         Self::default()
     }
 
-    pub fn children(&self) -> &FxHashMap<K, L> {
+    pub const fn children(&self) -> &FxHashMap<K, L> {
         &self.children
     }
 
-    pub fn set(&self) -> &VecLog<RWSet<K>> {
+    pub const fn set(&self) -> &VecLog<RWSet<K>> {
         &self.set
     }
 
@@ -87,24 +79,24 @@ where
     L: IsLog,
     K: Clone + Debug + Hash + Eq,
 {
-    type Command = RWMap<K, L::Op>;
-    type Op = RWMap<K, L::Op>;
+    type Command = MapUpdate<K, L::Update>;
+    type Update = MapUpdate<K, L::Update>;
     type Rejection = L::Rejection;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
-            RWMap::Update(k, v) => {
+            MapUpdate::Update(k, v) => {
                 // Query the RWSet
                 let was_live = self.set.execute_query(&Contains(k.clone()));
-                let set_op = Event::unfold(event.clone(), RWSet::Add(k.clone()));
+                let set_op = Event::unfold(event.clone(), SetUpdate::Add(k.clone()));
 
                 // Effect of the RWSet will determine whether the key is live or not, which in turn determines how we effect the child log
                 let mut silent_ctx = EffectContext::silent();
@@ -140,8 +132,8 @@ where
                     }
                 }
             }
-            RWMap::Remove(k) => {
-                let set_op = Event::unfold(event.clone(), RWSet::Remove(k.clone()));
+            MapUpdate::Remove(k) => {
+                let set_op = Event::unfold(event.clone(), SetUpdate::Remove(k.clone()));
                 let mut silent_ctx = EffectContext::silent();
                 self.set.effect(set_op, &mut silent_ctx);
 
@@ -153,8 +145,8 @@ where
                     child.redundant_by_parent(event.version(), false);
                 }
             }
-            RWMap::Clear => {
-                let set_op = Event::unfold(event.clone(), RWSet::Clear);
+            MapUpdate::Clear => {
+                let set_op = Event::unfold(event.clone(), SetUpdate::Clear);
                 let mut silent_ctx = EffectContext::silent();
                 self.set.effect(set_op, &mut silent_ctx);
 
@@ -186,9 +178,9 @@ where
         self.set.is_default() && self.children.values().all(IsLog::is_default)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         match op {
-            RWMap::Update(k, v) => {
+            MapUpdate::Update(k, v) => {
                 if self.set.execute_query(&Contains(k.clone())) {
                     self.children
                         .get(k)
@@ -197,7 +189,7 @@ where
                     L::default().is_enabled(v)
                 }
             }
-            RWMap::Remove(_) | RWMap::Clear => Ok(()),
+            MapUpdate::Remove(_) | MapUpdate::Clear => Ok(()),
         }
     }
 }
@@ -236,18 +228,16 @@ where
             return None;
         }
 
-        if let Some(child) = self.children.get(&q.key) {
-            Some(child.execute_query(&q.nested_query))
-        } else {
-            None
-        }
+        self.children
+            .get(&q.key)
+            .map_or_else(|| None, |child| Some(child.execute_query(&q.nested_query)))
     }
 }
 
 #[cfg(feature = "fuzz")]
 impl<K, L> CommandGenerator for RWMapLog<K, L>
 where
-    L: IsLog<Command = <L as IsLog>::Op> + CommandGenerator,
+    L: IsLog<Command = <L as IsLog>::Update> + CommandGenerator,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
@@ -270,10 +260,10 @@ where
                 } else {
                     L::new().generate_command(rng)
                 };
-                RWMap::Update(key, child_op)
+                MapUpdate::Update(key, child_op)
             }
-            Choice::Remove => RWMap::Remove(key),
-            Choice::Clear => RWMap::Clear,
+            Choice::Remove => MapUpdate::Remove(key),
+            Choice::Clear => MapUpdate::Clear,
         }
     }
 }
@@ -317,10 +307,10 @@ mod tests {
 
     use crate::{
         FxHashMap,
-        counter::resettable_counter::Counter,
-        list::eg_walker::List,
-        map::rw_map::{RWMap, RWMapLog},
-        utils::membership::{triplet_log, twins_log},
+        counter::{Counter, update::CounterUpdate},
+        list::{eg_walker::List, update::ListUpdate},
+        map::{rw_map::RWMapLog, update::MapUpdate},
+        utils::bootstrap::{triplet_log, twins_log},
     };
 
     type CounterMap = RWMapLog<String, VecLog<Counter<i32>>>;
@@ -331,9 +321,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<CounterMap>();
         let key = "a".to_string();
 
-        let remove = replica_a.send(RWMap::Remove(key.clone())).unwrap();
+        let remove = replica_a.send(MapUpdate::Remove(key.clone())).unwrap();
         let update = replica_b
-            .send(RWMap::Update(key.clone(), Counter::Inc(10)))
+            .send(MapUpdate::Update(key.clone(), CounterUpdate::Inc(10)))
             .unwrap();
 
         replica_a.receive(update);
@@ -351,11 +341,11 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<CounterMap>();
         let key = "a".to_string();
 
-        let remove = replica_a.send(RWMap::Remove(key.clone())).unwrap();
+        let remove = replica_a.send(MapUpdate::Remove(key.clone())).unwrap();
         replica_b.receive(remove);
 
         let update = replica_b
-            .send(RWMap::Update(key.clone(), Counter::Inc(7)))
+            .send(MapUpdate::Update(key.clone(), CounterUpdate::Inc(7)))
             .unwrap();
         replica_a.receive(update);
 
@@ -373,9 +363,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<ListMap>();
 
         let event_a = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
@@ -383,7 +373,9 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(RWMap::Remove("doc".to_string())).unwrap();
+        let event_b = replica_b
+            .send(MapUpdate::Remove("doc".to_string()))
+            .unwrap();
         replica_a.receive(event_b);
 
         let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
@@ -396,16 +388,18 @@ mod tests {
         let (mut replica_a, _) = twins_log::<ListMap>();
 
         let _ = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
             ))
             .unwrap();
-        let _ = replica_a.send(RWMap::Remove("patate".to_string())).unwrap();
-        let _ = replica_a.send(RWMap::Clear).unwrap();
+        let _ = replica_a
+            .send(MapUpdate::Remove("patate".to_string()))
+            .unwrap();
+        let _ = replica_a.send(MapUpdate::Clear).unwrap();
 
         assert_eq!(
             replica_a.query(&Read::<FxHashMap<String, Vec<char>>>::new()),
@@ -414,9 +408,9 @@ mod tests {
     }
 
     /// Execution trace:
-    /// replica_a: RWMap::Clear@v1
-    /// replica_b: RWMap::Update("doc", List::Insert { content: 'A', pos: 0 })@v2
-    /// replica_c: RWMap::Clear@v3
+    /// replica_a: MapUpdate::Clear@v1
+    /// replica_b: MapUpdate::Update("doc", ListUpdate::Insert { content: 'A', pos: 0 })@v2
+    /// replica_c: MapUpdate::Clear@v3
     /// replica_c receives v1, v2
     /// replica_a receives v2, v3
     /// replica_b receives v1, v3
@@ -425,17 +419,17 @@ mod tests {
     fn map_nested_eg_walker_3() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<ListMap>();
 
-        let event_a = replica_a.send(RWMap::Clear).unwrap();
+        let event_a = replica_a.send(MapUpdate::Clear).unwrap();
         let event_b = replica_b
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
             ))
             .unwrap();
-        let event_c = replica_c.send(RWMap::Clear).unwrap();
+        let event_c = replica_c.send(MapUpdate::Clear).unwrap();
 
         replica_c.receive(event_a.clone());
         replica_c.receive(event_b.clone());
@@ -459,9 +453,9 @@ mod tests {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<ListMap>();
 
         let event_a_1 = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "foo".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'a',
                     pos: 0,
                 },
@@ -469,9 +463,9 @@ mod tests {
             .unwrap();
 
         let event_a_2 = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "bar".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'b',
                     pos: 0,
                 },
@@ -483,8 +477,10 @@ mod tests {
         replica_b.receive(event_a_1);
         replica_b.receive(event_a_2);
 
-        let event_c_1 = replica_c.send(RWMap::Remove("alice".to_string())).unwrap();
-        let event_c_2 = replica_c.send(RWMap::Clear).unwrap();
+        let event_c_1 = replica_c
+            .send(MapUpdate::Remove("alice".to_string()))
+            .unwrap();
+        let event_c_2 = replica_c.send(MapUpdate::Clear).unwrap();
 
         replica_a.receive(event_c_1.clone());
         replica_a.receive(event_c_2.clone());
@@ -514,42 +510,46 @@ mod tests {
     fn map_nested_eg_walker_5() {
         let (mut replica_a, mut replica_b) = twins_log::<ListMap>();
 
-        let event_a_1 = replica_a.send(RWMap::Remove("ym".to_string())).unwrap();
-        let event_a_2 = replica_a.send(RWMap::Clear).unwrap();
-        let event_a_3 = replica_a.send(RWMap::Remove("hwxt".to_string())).unwrap();
+        let event_a_1 = replica_a.send(MapUpdate::Remove("ym".to_string())).unwrap();
+        let event_a_2 = replica_a.send(MapUpdate::Clear).unwrap();
+        let event_a_3 = replica_a
+            .send(MapUpdate::Remove("hwxt".to_string()))
+            .unwrap();
         let event_a_4 = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "mza".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 's',
                     pos: 0,
                 },
             ))
             .unwrap();
         let event_a_5 = replica_a
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "xz".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'K',
                     pos: 0,
                 },
             ))
             .unwrap();
-        let event_a_6 = replica_a.send(RWMap::Remove("hcl".to_string())).unwrap();
+        let event_a_6 = replica_a
+            .send(MapUpdate::Remove("hcl".to_string()))
+            .unwrap();
 
         let event_b_1 = replica_b
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "ym".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'r',
                     pos: 0,
                 },
             ))
             .unwrap();
         let event_b_2 = replica_b
-            .send(RWMap::Update(
+            .send(MapUpdate::Update(
                 "snif".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'R',
                     pos: 0,
                 },
@@ -582,7 +582,7 @@ mod tests {
 
         let run =
             RunConfig::new(ChurnConfig::new(0.6, 0.4), 2, 8, None, None).with_execution_graph();
-        let runs = vec![run.clone(); 10_000];
+        let runs = vec![run; 10_000];
 
         let config = FuzzerConfig::<ListMap, Read<FxHashMap<String, String>>>::new(
             "rw_map",
@@ -608,7 +608,7 @@ mod tests {
         type Value = Read<FxHashMap<String, FxHashSet<i32>>>;
 
         let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 50, None, None);
-        let runs = vec![run.clone(); 1_000];
+        let runs = vec![run; 1_000];
 
         let config = FuzzerConfig::<RWMapNested, Value>::new(
             "rw_map_aw_set",
@@ -617,25 +617,5 @@ mod tests {
         );
 
         fuzzer::<RWMapNested, Value>(config);
-    }
-}
-
-impl<K, O> Boxer<RWMap<K, O>> for RWMap<K, Box<O>> {
-    fn boxer(self) -> RWMap<K, O> {
-        match self {
-            RWMap::Update(k, v) => RWMap::Update(k, *v),
-            RWMap::Remove(k) => RWMap::Remove(k),
-            RWMap::Clear => RWMap::Clear,
-        }
-    }
-}
-
-impl<K, O> Boxer<RWMap<K, Box<O>>> for RWMap<K, O> {
-    fn boxer(self) -> RWMap<K, Box<O>> {
-        match self {
-            RWMap::Update(k, v) => RWMap::Update(k, Box::new(v)),
-            RWMap::Remove(k) => RWMap::Remove(k),
-            RWMap::Clear => RWMap::Clear,
-        }
     }
 }

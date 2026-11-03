@@ -148,18 +148,18 @@ macro_rules! union {
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
                 type Command = [<$union>];
-                type Op = [<$union>];
+                type Update = [<$union>];
                 type Rejection = [<$union Rejection>];
 
                 fn new() -> Self {
                     <Self as ::std::default::Default>::default()
                 }
 
-                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                fn prepare(&self, cmd: Self::Command) -> Self::Update {
                     cmd
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> ::std::result::Result<(), Self::Rejection> {
+                fn is_enabled(&self, op: &Self::Update) -> ::std::result::Result<(), Self::Rejection> {
                     match &self.child {
                         [<$union Container>]::Unset => match op {
                             $union::Choose(_) => ::std::result::Result::Err([<$union Rejection>]::MissingVariant),
@@ -179,7 +179,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -210,7 +210,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -237,7 +237,7 @@ macro_rules! union {
 
                 fn effect(
                     &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    event: $crate::moirai_protocol::event::Event<Self::Update>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match ::std::clone::Clone::clone(event.op()) {
@@ -248,7 +248,7 @@ macro_rules! union {
                                         [<$union Container>]::Unset => {
                                             let log = {
                                                 let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
-                                                let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
+                                                let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
                                                 let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
                                                 <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
                                                 log

@@ -9,98 +9,82 @@ use moirai_protocol::{
         eval::Eval,
         query::Read,
         redundancy::RedundancyRelation,
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Sequential,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
+    state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq)]
+use crate::flag::update::FlagUpdate;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum EWFlag {
-    Enable,
-    Disable,
-    Clear,
-}
-
-impl IsStableState<EWFlag> for Option<bool> {
-    fn is_default(&self) -> bool {
-        self.is_none()
-    }
-
-    fn apply(&mut self, value: EWFlag) {
-        match value {
-            EWFlag::Enable => *self = Some(true),
-            EWFlag::Disable => *self = Some(false),
-            EWFlag::Clear => *self = None,
-        }
-    }
-
-    fn clear(&mut self) {
-        *self = None;
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<EWFlag>,
-        _tagged_op: &TaggedOp<EWFlag>,
-    ) {
-        <Option<bool> as IsStableState<EWFlag>>::clear(self);
-    }
-}
+pub struct EWFlag;
 
 impl ReplicatedDataType for EWFlag {
-    type StableState = Option<bool>;
+    type Update = FlagUpdate;
+    type Stable = FlagState;
     type Rejection = Infallible;
+}
 
+impl<U: IsUnstableCore<FlagUpdate>> CausalCompaction<U> for EWFlag {
+    fn compact_stable(
+        stable: &mut FlagState,
+        _: RedundancyRelation<FlagUpdate>,
+        _: &TaggedOp<FlagUpdate>,
+    ) {
+        stable.0 = None;
+    }
     fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
     ) -> bool
     where
         Self: 'a,
     {
-        matches!(new_tagged_op.op(), EWFlag::Disable | EWFlag::Clear)
+        matches!(new_tagged_op.op(), FlagUpdate::Disable | FlagUpdate::Clear)
     }
 
     fn redundant_by_when_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_event_id: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 
     fn redundant_by_when_not_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 }
 
-impl<U> UsesUnstableService<U> for EWFlag where U: IsUnstableCore<Self> {}
+impl<U> CausalReset<U> for EWFlag {}
 
-impl<U> Eval<Read<bool>, U> for EWFlag
+impl<U> CausalStabilize<U> for EWFlag {}
+
+impl<U> Eval<FlagState, U, Read<bool>> for EWFlag
 where
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<FlagUpdate>,
 {
-    fn execute_query(_q: &Read<bool>, stable: &Self::StableState, unstable: &U) -> bool {
-        let mut flag = match stable {
-            Some(v) => *v,
-            None => false,
-        };
+    fn execute_query(stable: &FlagState, unstable: &U, _q: &Read<bool>) -> bool {
+        let mut flag = stable.0.unwrap_or_default();
         for op in unstable.iter().map(|t| t.op()) {
-            if let EWFlag::Enable = op {
+            if matches!(op, FlagUpdate::Enable) {
                 flag = true;
                 break;
             }
@@ -112,18 +96,18 @@ where
 #[cfg(feature = "fuzz")]
 impl<U> OpGenerator<U> for EWFlag
 where
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<FlagUpdate>,
 {
     type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as ReplicatedDataType>::StableState,
+        _stable: &<Self as ReplicatedDataType>::Stable,
         _unstable: &U,
-    ) -> Self {
+    ) -> Self::Update {
         let choice = rand::seq::IteratorRandom::choose(
-            [EWFlag::Enable, EWFlag::Disable, EWFlag::Clear].iter(),
+            [FlagUpdate::Enable, FlagUpdate::Disable, FlagUpdate::Clear].iter(),
             rng,
         )
         .unwrap();
@@ -131,11 +115,39 @@ where
     }
 }
 
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct FlagState(Option<bool>);
+
+impl Sequential for FlagState {
+    type Update = FlagUpdate;
+    fn is_default(&self) -> bool {
+        self.0.is_none()
+    }
+    fn apply(&mut self, update: &FlagUpdate) {
+        match update {
+            FlagUpdate::Enable => self.0 = Some(true),
+            FlagUpdate::Disable => self.0 = Some(false),
+            FlagUpdate::Clear => self.0 = None,
+        }
+    }
+}
+
+impl<U> Precondition<U> for EWFlag {
+    fn is_enabled(_: &FlagState, _: &U, _: &FlagUpdate) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
-    use crate::{flag::ew_flag::EWFlag, utils::membership::twins};
+    use crate::{
+        flag::{ew_flag::EWFlag, update::FlagUpdate},
+        utils::bootstrap::twins,
+    };
 
     // Test the Enable-Wins Flag CRDT using two replicas (twins)
     #[test]
@@ -143,29 +155,29 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<EWFlag>();
 
         // Replica A enables the flag
-        let event = replica_a.send(EWFlag::Enable).unwrap();
+        let event = replica_a.send(FlagUpdate::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(&Read::new()), true);
+        assert!(replica_a.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica B disables the flag
-        let event = replica_b.send(EWFlag::Disable).unwrap();
+        let event = replica_b.send(FlagUpdate::Disable).unwrap();
         replica_a.receive(event);
-        assert_eq!(replica_b.query(&Read::new()), false);
+        assert!(!replica_b.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica A enables again
-        let event = replica_a.send(EWFlag::Enable).unwrap();
+        let event = replica_a.send(FlagUpdate::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(&Read::new()), true);
+        assert!(replica_a.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
         // Concurrent Enable and Disable: Disable wins
-        let event_a = replica_a.send(EWFlag::Enable).unwrap();
-        let event_b = replica_b.send(EWFlag::Disable).unwrap();
+        let event_a = replica_a.send(FlagUpdate::Enable).unwrap();
+        let event_b = replica_b.send(FlagUpdate::Disable).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
-        assert_eq!(replica_a.query(&Read::new()), true);
-        assert_eq!(replica_b.query(&Read::new()), true);
+        assert!(replica_a.query(&Read::new()));
+        assert!(replica_b.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
@@ -180,7 +192,7 @@ mod tests {
 
         let run = RunConfig::new(ChurnConfig::new(0.95, 0.05), 4, 10_000, None, None)
             .with_execution_graph();
-        let runs = vec![run.clone(); 1];
+        let runs = vec![run; 1];
 
         let config = FuzzerConfig::<VecLog<EWFlag>, Read<bool>>::new(
             "ew_flag",

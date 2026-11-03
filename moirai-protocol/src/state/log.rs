@@ -11,7 +11,7 @@ pub trait IsLog: Default {
     /// Client input command type
     type Command: Debug + Clone;
     /// Stored operation type
-    type Op: Debug + Clone;
+    type Update: Debug + Clone;
     /// Rejection type for operations that are not enabled in the current state
     type Rejection: Debug + Display;
 
@@ -20,15 +20,15 @@ pub trait IsLog: Default {
     }
 
     /// Prepare a client command as the operation stored and replicated by this log.
-    fn prepare(&self, command: Self::Command) -> Self::Op;
+    fn prepare(&self, command: Self::Command) -> Self::Update;
 
     /// Check if an update operation is enabled in the current state.
-    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, _op: &Self::Update) -> Result<(), Self::Rejection> {
         Ok(())
     }
 
     /// Apply an event to the log, updating the state.
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>);
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>);
 
     /// Evaluate a query operation on the log, returning a value.
     fn eval<Q>(&self, q: &Q) -> Q::Response
@@ -63,22 +63,22 @@ impl<L: IsLog> DefaultSinkExpansion for L {}
 /// Explicit indirection for inline recursive logs.
 impl<L: IsLog> IsLog for Box<L> {
     type Command = L::Command;
-    type Op = L::Op;
+    type Update = L::Update;
     type Rejection = Box<L::Rejection>;
 
     fn new() -> Self {
         Box::new(L::new())
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         (**self).prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         (**self).is_enabled(op).map_err(Box::new)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         (**self).effect(event, ctx);
     }
 

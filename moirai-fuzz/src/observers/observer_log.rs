@@ -33,7 +33,7 @@ where
     L: IsLog,
 {
     fn default() -> Self {
-        LogObserver {
+        Self {
             inner: L::default(),
             with_stability: true,
             stability_recorder: StabilityRecorder::default(),
@@ -47,14 +47,14 @@ where
 
 impl<L: IsLog + LogFootprint> IsLog for LogObserver<L> {
     type Command = L::Command;
-    type Op = L::Op;
+    type Update = L::Update;
     type Rejection = L::Rejection;
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.inner.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         let (cnt, should_record) = self.effect_recorder.next_call();
 
         if should_record {
@@ -110,7 +110,7 @@ impl<L: IsLog + LogFootprint> IsLog for LogObserver<L> {
         self.record_size(DeliveryPhase::Effect);
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         self.inner.prepare(command)
     }
 
@@ -132,7 +132,7 @@ impl<L> LogObserver<L> {
         with_stability: bool,
         commitment_accessor: Option<CommitmentAccessor<L>>,
     ) -> Self {
-        LogObserver {
+        Self {
             inner,
             stability_recorder,
             effect_recorder,

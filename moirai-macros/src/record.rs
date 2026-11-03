@@ -6,9 +6,9 @@
 ///
 /// A field may also use `field: Operation, Log => Value`, matching `union!`'s
 /// variant syntax. `Operation` is the record variant's payload; `Boxer` converts
-/// it to `Log::Op` when forwarding. This separates operation layout from log and
+/// it to `Log::Update` when forwarding. This separates operation layout from log and
 /// read-value layout, so recursive collection operations need no log adapter.
-/// Existing field forms keep deriving their payload from `Log::Op`.
+/// Existing field forms keep deriving their payload from `Log::Update`.
 #[macro_export]
 macro_rules! record {
     // The optional first type is an explicit operation payload. Without it,
@@ -29,7 +29,7 @@ macro_rules! record {
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
             $crate::record!(@impl [$([<$field:camel Value>]),*] $name {
-                $($field: (<$T as $crate::moirai_protocol::state::log::IsLog>::Op, $T => [<$field:camel Value>])),*
+                $($field: (<$T as $crate::moirai_protocol::state::log::IsLog>::Update, $T => [<$field:camel Value>])),*
             });
             $crate::record!(@generic_eval [$([<$field:camel Value>]),*] $name {
                 $($field: $T => [<$field:camel Value>]),*
@@ -37,7 +37,7 @@ macro_rules! record {
         }
     };
     (@op $O:ty, $L:ty) => { $O };
-    (@op $L:ty) => { <$L as $crate::moirai_protocol::state::log::IsLog>::Op };
+    (@op $L:ty) => { <$L as $crate::moirai_protocol::state::log::IsLog>::Update };
     (@log $O:ty, $L:ty) => { $L };
     (@log $L:ty) => { $L };
     (@impl [$($value_param:ident),*] $name:ident {
@@ -72,7 +72,7 @@ macro_rules! record {
             }
 
             /// Returned value when reading the record, containing the values of all fields.
-            #[derive(Debug, Clone, Default, PartialEq)]
+            #[derive(Debug, Clone, Default, PartialEq, Eq)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Value>]<$($value_param),*> {
                 $(
@@ -134,7 +134,7 @@ macro_rules! record {
             /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
                 type Command = $name;
-                type Op = $name;
+                type Update = $name;
                 type Rejection = [<$name Rejection>];
 
                 fn new() -> Self {
@@ -145,13 +145,13 @@ macro_rules! record {
                     }
                 }
 
-                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                fn prepare(&self, cmd: Self::Command) -> Self::Update {
                     cmd
                 }
 
                 fn effect(
                     &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    event: $crate::moirai_protocol::event::Event<Self::Update>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match ::std::clone::Clone::clone(event.op()) {
@@ -165,7 +165,7 @@ macro_rules! record {
                                     ctx.update_typed(::std::stringify!($name));
                                 }
 
-                                let op: <$T as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                let op: <$T as $crate::moirai_protocol::state::log::IsLog>::Update =
                                     <$O as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(op);
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
                                 ctx.with_field(::std::stringify!($field), |ctx| {
@@ -218,7 +218,7 @@ macro_rules! record {
 
                 fn is_enabled(
                     &self,
-                    op: &Self::Op,
+                    op: &Self::Update,
                 ) -> ::std::result::Result<(), Self::Rejection> {
                     match op {
                         $(

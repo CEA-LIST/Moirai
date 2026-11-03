@@ -5,22 +5,23 @@ use moirai_protocol::{
 };
 
 use super::*;
-use crate::utils::membership::{triplet_log, twins_log};
+use crate::utils::bootstrap::{triplet_log, twins_log};
 
-type ListReplica = Replica<GraphLog<List<char>>, Tcsb<List<char>>>;
+type ListReplica = Replica<GraphLog<List<char>>, Tcsb<ListUpdate<char>>>;
 
 #[test]
 fn cached_list_replays_when_next_event_does_not_include_all_cached_events() {
     type Log = CachedLog<GraphLog<List<char>>, Vec<char>>;
-    let (mut a, mut b) = twins_log::<Log>();
+    let mut a = Replica::<Log, Tcsb<ListUpdate<char>>>::bootstrap("a".into(), &["a", "b"]);
+    let mut b = Replica::<Log, Tcsb<ListUpdate<char>>>::bootstrap("b".into(), &["a", "b"]);
 
-    let a_insert = a.send(List::insert('a', 0)).unwrap();
-    let b_insert = b.send(List::insert('b', 0)).unwrap();
+    let a_insert = a.send(ListUpdate::insert('a', 0)).unwrap();
+    let b_insert = b.send(ListUpdate::insert('b', 0)).unwrap();
     a.receive(b_insert);
 
     assert_eq!(a.query(&Read::<Vec<char>>::new()), vec!['a', 'b']);
 
-    let b_delete = b.send(List::delete(0)).unwrap();
+    let b_delete = b.send(ListUpdate::delete(0)).unwrap();
 
     a.receive(b_delete);
     b.receive(a_insert);
@@ -36,12 +37,12 @@ fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
     let replica_a = Replica::bootstrap_with_state(
         "a".to_string().into(),
         &["a", "b"],
-        GraphLog::<List<char>>::from_stable(stable.clone()),
+        GraphLog::<List<char>>::from_stable(stable.clone().into()),
     );
     let replica_b = Replica::bootstrap_with_state(
         "b".to_string().into(),
         &["a", "b"],
-        GraphLog::<List<char>>::from_stable(stable),
+        GraphLog::<List<char>>::from_stable(stable.into()),
     );
     (replica_a, replica_b)
 }
@@ -50,7 +51,7 @@ fn stable_twins(stable: Vec<char>) -> (ListReplica, ListReplica) {
 fn simple_insertion_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     replica_b.receive(e1);
 
     assert_eq!(&replica_a.query(&Read::<String>::new()), "A");
@@ -72,7 +73,7 @@ fn starts_from_stable_document() {
 fn inserts_into_stable_document() {
     for pos in 0..=3 {
         let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
-        b.receive(a.send(List::insert('X', pos)).unwrap());
+        b.receive(a.send(ListUpdate::insert('X', pos)).unwrap());
         let mut expected = String::from("abc");
         expected.insert(pos, 'X');
         assert_eq!(a.query(&Read::<String>::new()), expected);
@@ -84,7 +85,7 @@ fn inserts_into_stable_document() {
 fn deletes_from_stable_document() {
     for pos in 0..3 {
         let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
-        b.receive(a.send(List::delete(pos)).unwrap());
+        b.receive(a.send(ListUpdate::delete(pos)).unwrap());
         let mut expected = String::from("abc");
         expected.remove(pos);
         assert_eq!(a.query(&Read::<String>::new()), expected);
@@ -97,7 +98,7 @@ fn delete_range_from_stable_document() {
     for start in 0..=4 {
         for len in 0..=4 - start {
             let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c', 'd']);
-            b.receive(a.send(List::delete_range(start, len)).unwrap());
+            b.receive(a.send(ListUpdate::delete_range(start, len)).unwrap());
             let mut expected = String::from("abcd");
             expected.replace_range(start..start + len, "");
             assert_eq!(a.query(&Read::<String>::new()), expected);
@@ -110,9 +111,9 @@ fn delete_range_from_stable_document() {
 fn read_at_uses_stable_document() {
     let (mut replica_a, _) = stable_twins(vec!['a', 'b', 'c']);
 
-    let insert = replica_a.send(List::insert('X', 1)).unwrap();
+    let insert = replica_a.send(ListUpdate::insert('X', 1)).unwrap();
     let insert_version = insert.event().version().clone();
-    replica_a.send(List::delete(1)).unwrap();
+    replica_a.send(ListUpdate::delete(1)).unwrap();
 
     assert_eq!(
         replica_a
@@ -127,8 +128,8 @@ fn read_at_uses_stable_document() {
 fn concurrent_insertions_into_stable_document_converge() {
     let (mut replica_a, mut replica_b) = stable_twins(vec!['a', 'b', 'c']);
 
-    let event_a = replica_a.send(List::insert('X', 1)).unwrap();
-    let event_b = replica_b.send(List::insert('Y', 1)).unwrap();
+    let event_a = replica_a.send(ListUpdate::insert('X', 1)).unwrap();
+    let event_b = replica_b.send(ListUpdate::insert('Y', 1)).unwrap();
     replica_a.receive(event_b);
     replica_b.receive(event_a);
 
@@ -142,8 +143,8 @@ fn concurrent_insertions_into_stable_document_converge() {
 fn stable_update_wins_over_concurrent_delete() {
     for pos in 0..3 {
         let (mut a, mut b) = stable_twins(vec!['a', 'b', 'c']);
-        let delete = a.send(List::delete(pos)).unwrap();
-        let update = b.send(List::update(pos)).unwrap();
+        let delete = a.send(ListUpdate::delete(pos)).unwrap();
+        let update = b.send(ListUpdate::update(pos)).unwrap();
         a.receive(update);
         b.receive(delete);
         assert_eq!(a.query(&Read::<String>::new()), "abc");
@@ -157,19 +158,19 @@ fn replay_preserves_positions_across_overlapping_deletes_and_updates() {
         ListReplica::bootstrap_with_state(
             id.into(),
             &["a", "b", "c"],
-            GraphLog::from_stable(vec!['a', 'b', 'c']),
+            GraphLog::from_stable(vec!['a', 'b', 'c'].into()),
         )
     });
-    let a_delete = a.send(List::delete_range(0, 2)).unwrap();
-    let b_delete = b.send(List::delete(0)).unwrap();
-    let c_update = c.send(List::update(0)).unwrap();
-    let c_delete = c.send(List::delete(1)).unwrap();
+    let a_delete = a.send(ListUpdate::delete_range(0, 2)).unwrap();
+    let b_delete = b.send(ListUpdate::delete(0)).unwrap();
+    let c_update = c.send(ListUpdate::update(0)).unwrap();
+    let c_delete = c.send(ListUpdate::delete(1)).unwrap();
 
     // A has seen both overlapping deletes; B has seen only its own deletion.
     // Their next insertions require different prepared versions during replay.
     a.receive(b_delete.clone());
-    let a_insert = a.send(List::insert('X', 0)).unwrap();
-    let b_insert = b.send(List::insert('Y', 0)).unwrap();
+    let a_insert = a.send(ListUpdate::insert('X', 0)).unwrap();
+    let b_insert = b.send(ListUpdate::insert('Y', 0)).unwrap();
     let historical = [
         (a_insert.event().version().clone(), "Xc"),
         (b_insert.event().version().clone(), "Ybc"),
@@ -198,25 +199,25 @@ fn replay_preserves_positions_across_overlapping_deletes_and_updates() {
 #[test]
 fn sequential_cache_and_snapshot_match_replay() {
     type Log = CachedLog<GraphLog<List<char>>, Vec<char>>;
-    let mut replica = Replica::<Log, Tcsb<List<char>>>::bootstrap_with_state(
+    let mut replica = Replica::<Log, Tcsb<ListUpdate<char>>>::bootstrap_with_state(
         "a".into(),
         &["a", "b"],
-        CachedLog::from_inner(GraphLog::from_stable(vec!['a', 'b', 'c'])),
+        CachedLog::from_inner(GraphLog::from_stable(vec!['a', 'b', 'c'].into())),
     );
     let mut snapshot = vec!['a', 'b', 'c'];
     for (op, expected) in [
-        (List::insert('X', 1), "aXbc"),
-        (List::delete(0), "Xbc"),
-        (List::update(2), "Xbc"),
-        (List::delete_range(1, 2), "X"),
-        (List::delete_range(1, 0), "X"),
-        (List::delete(0), ""),
-        (List::delete_range(0, 0), ""),
-        (List::insert('Z', 0), "Z"),
+        (ListUpdate::insert('X', 1), "aXbc"),
+        (ListUpdate::delete(0), "Xbc"),
+        (ListUpdate::update(2), "Xbc"),
+        (ListUpdate::delete_range(1, 2), "X"),
+        (ListUpdate::delete_range(1, 0), "X"),
+        (ListUpdate::delete(0), ""),
+        (ListUpdate::delete_range(0, 0), ""),
+        (ListUpdate::insert('Z', 0), "Z"),
     ] {
         // Populate the cache before every edit to exercise sequential updates.
         replica.query(&Read::<Vec<char>>::new());
-        <Vec<char> as IsStableState<List<char>>>::apply(&mut snapshot, op.clone());
+        op.clone().apply_sequential(&mut snapshot);
         replica.send(op).unwrap();
         let expected_chars: Vec<_> = expected.chars().collect();
         assert_eq!(snapshot, expected_chars);
@@ -230,12 +231,12 @@ fn sequential_cache_and_snapshot_match_replay() {
 fn concurrent_insertions_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('H', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('H', 0)).unwrap();
     replica_b.receive(e1);
     assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
 
-    let e2a = replica_a.send(List::insert('e', 1)).unwrap();
-    let e2b = replica_b.send(List::insert('i', 1)).unwrap();
+    let e2a = replica_a.send(ListUpdate::insert('e', 1)).unwrap();
+    let e2b = replica_b.send(ListUpdate::insert('i', 1)).unwrap();
     replica_b.receive(e2a);
     replica_a.receive(e2b);
 
@@ -255,8 +256,8 @@ fn concurrent_insertions_egwalker() {
 fn concurrent_insert() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('H', 0)).unwrap();
-    let e2 = replica_b.send(List::insert('i', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('H', 0)).unwrap();
+    let e2 = replica_b.send(ListUpdate::insert('i', 0)).unwrap();
     replica_a.receive(e2);
     replica_b.receive(e1);
 
@@ -276,10 +277,10 @@ fn concurrent_insert() {
 fn delete_operation_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     replica_b.receive(e1);
 
-    let e2 = replica_a.send(List::delete(0)).unwrap();
+    let e2 = replica_a.send(ListUpdate::delete(0)).unwrap();
     replica_b.receive(e2);
 
     assert_eq!(&replica_a.query(&Read::<String>::new()), "");
@@ -293,11 +294,11 @@ fn delete_operation_egwalker() {
 fn conc_delete_ins_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     replica_b.receive(e1);
 
-    let edel = replica_a.send(List::delete(0)).unwrap();
-    let eins = replica_b.send(List::insert('B', 1)).unwrap(); // Insert to the right of 'A' in B's view
+    let edel = replica_a.send(ListUpdate::delete(0)).unwrap();
+    let eins = replica_b.send(ListUpdate::insert('B', 1)).unwrap(); // Insert to the right of 'A' in B's view
     replica_a.receive(eins);
     replica_b.receive(edel);
 
@@ -312,12 +313,12 @@ fn conc_delete_ins_egwalker() {
 fn sequential_conc_operations_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('H', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('H', 0)).unwrap();
     replica_b.receive(e1);
     assert_eq!(&replica_a.query(&Read::<String>::new()), "H");
 
-    let e2a = replica_a.send(List::insert('e', 1)).unwrap();
-    let e2b = replica_b.send(List::insert('i', 1)).unwrap();
+    let e2a = replica_a.send(ListUpdate::insert('e', 1)).unwrap();
+    let e2b = replica_b.send(ListUpdate::insert('i', 1)).unwrap();
     replica_b.receive(e2a);
     replica_a.receive(e2b);
     assert!(
@@ -326,7 +327,7 @@ fn sequential_conc_operations_egwalker() {
     );
 
     // Insert a space between e and i from A's perspective (which will be position 2 if e<i)
-    let e3 = replica_a.send(List::insert(' ', 2)).unwrap();
+    let e3 = replica_a.send(ListUpdate::insert(' ', 2)).unwrap();
     replica_b.receive(e3);
     let res = replica_a.query(&Read::<String>::new());
     // Depending on tie-breaker, expected is either "He i" or "Hi e". We accept either space between letters.
@@ -338,43 +339,43 @@ fn in_paper() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
     // e1: Insert(0, 'h')
-    let e1 = replica_a.send(List::insert('h', 0)).unwrap();
-    replica_b.receive(e1.clone());
+    let e1 = replica_a.send(ListUpdate::insert('h', 0)).unwrap();
+    replica_b.receive(e1);
 
     // e2: Insert(1, 'i')
-    let e2 = replica_a.send(List::insert('i', 1)).unwrap();
-    replica_b.receive(e2.clone());
+    let e2 = replica_a.send(ListUpdate::insert('i', 1)).unwrap();
+    replica_b.receive(e2);
 
     // Branch: Replica A will capitalize 'H', Replica B will change to 'hey'
     // e3: Insert(0, 'H') depends on e1,e2
-    let e3 = replica_a.send(List::insert('H', 0)).unwrap();
+    let e3 = replica_a.send(ListUpdate::insert('H', 0)).unwrap();
 
     // e4: Delete(1) (remove lowercase 'h') depends on e3
-    let e4 = replica_a.send(List::delete(1)).unwrap();
+    let e4 = replica_a.send(ListUpdate::delete(1)).unwrap();
 
     let e4_version = e4.event().version();
     assert_eq!(&replica_a.query(&Read::<String>::new()), "Hi");
 
     // e5: Delete(1) (remove 'i') on other branch
-    let e5 = replica_b.send(List::delete(1)).unwrap();
+    let e5 = replica_b.send(ListUpdate::delete(1)).unwrap();
 
     // e6: Insert(1, 'e')
-    let e6 = replica_b.send(List::insert('e', 1)).unwrap();
+    let e6 = replica_b.send(ListUpdate::insert('e', 1)).unwrap();
 
     // e7: Insert(2, 'y')
-    let e7 = replica_b.send(List::insert('y', 2)).unwrap();
+    let e7 = replica_b.send(ListUpdate::insert('y', 2)).unwrap();
 
-    replica_b.receive(e3.clone());
+    replica_b.receive(e3);
     replica_b.receive(e4.clone());
-    replica_a.receive(e5.clone());
-    replica_a.receive(e6.clone());
-    replica_a.receive(e7.clone());
+    replica_a.receive(e5);
+    replica_a.receive(e6);
+    replica_a.receive(e7);
     // Merge both replicas so they see all events before e8
     // At this point both should be "Hey"
 
     // e8: Insert(3, '!')
-    let e8 = replica_b.send(List::insert('!', 3)).unwrap();
-    replica_a.receive(e8.clone());
+    let e8 = replica_b.send(ListUpdate::insert('!', 3)).unwrap();
+    replica_a.receive(e8);
 
     // Final result should be "Hey!"
     assert!(
@@ -393,15 +394,15 @@ fn in_paper() {
 fn delete_range_egwalker() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('A', 0)).unwrap();
-    let e2 = replica_a.send(List::insert('B', 1)).unwrap();
-    let e3 = replica_a.send(List::insert('C', 2)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
+    let e2 = replica_a.send(ListUpdate::insert('B', 1)).unwrap();
+    let e3 = replica_a.send(ListUpdate::insert('C', 2)).unwrap();
     replica_b.receive(e1);
     replica_b.receive(e2);
     replica_b.receive(e3);
     assert_eq!(replica_a.query(&Read::<String>::new()), "ABC");
 
-    let e4 = replica_a.send(List::delete_range(0, 2)).unwrap();
+    let e4 = replica_a.send(ListUpdate::delete_range(0, 2)).unwrap();
     replica_b.receive(e4);
     assert_eq!(replica_a.query(&Read::<String>::new()), "C");
     assert_eq!(
@@ -414,19 +415,19 @@ fn delete_range_egwalker() {
 fn delete_range_egwalker_2() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let event_a = replica_a.send(List::insert('A', 0)).unwrap();
+    let event_a = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     replica_b.receive(event_a);
 
     assert_eq!(replica_a.query(&Read::<String>::new()), "A");
     assert_eq!(replica_b.query(&Read::<String>::new()), "A");
 
-    let event_b = replica_b.send(List::insert('B', 0)).unwrap();
+    let event_b = replica_b.send(ListUpdate::insert('B', 0)).unwrap();
     assert_eq!(replica_b.query(&Read::<String>::new()), "BA");
-    let event_b_2 = replica_b.send(List::delete_range(0, 2)).unwrap();
+    let event_b_2 = replica_b.send(ListUpdate::delete_range(0, 2)).unwrap();
 
     assert_eq!(replica_b.query(&Read::<String>::new()), "");
 
-    let event_a_2 = replica_a.send(List::delete_range(0, 1)).unwrap();
+    let event_a_2 = replica_a.send(ListUpdate::delete_range(0, 1)).unwrap();
 
     assert_eq!(replica_a.query(&Read::<String>::new()), "");
 
@@ -444,15 +445,15 @@ fn delete_range_egwalker_2() {
 fn delete_range_egwalker_3() {
     let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<GraphLog<List<char>>>();
 
-    let event_a = replica_a.send(List::insert('4', 0)).unwrap();
+    let event_a = replica_a.send(ListUpdate::insert('4', 0)).unwrap();
     replica_c.receive(event_a.clone());
 
-    let event_c = replica_c.send(List::insert('U', 0)).unwrap();
-    let event_c_1 = replica_c.send(List::delete_range(0, 2)).unwrap();
+    let event_c = replica_c.send(ListUpdate::insert('U', 0)).unwrap();
+    let event_c_1 = replica_c.send(ListUpdate::delete_range(0, 2)).unwrap();
 
     replica_b.receive(event_c.clone());
-    replica_b.receive(event_a.clone());
-    let event_b = replica_b.send(List::insert('y', 1)).unwrap();
+    replica_b.receive(event_a);
+    let event_b = replica_b.send(ListUpdate::insert('y', 1)).unwrap();
 
     replica_a.receive(event_c);
     replica_a.receive(event_b.clone());
@@ -475,12 +476,12 @@ fn delete_range_egwalker_3() {
 fn update_delete() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let e1 = replica_a.send(List::insert('A', 0)).unwrap();
+    let e1 = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     replica_b.receive(e1);
 
-    let e2 = replica_b.send(List::update(0)).unwrap();
+    let e2 = replica_b.send(ListUpdate::update(0)).unwrap();
 
-    let e3 = replica_a.send(List::delete(0)).unwrap();
+    let e3 = replica_a.send(ListUpdate::delete(0)).unwrap();
     replica_b.receive(e3);
     replica_a.receive(e2);
 
@@ -500,14 +501,14 @@ fn update_delete() {
 #[test]
 fn regression_1() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
-    let a1 = replica_a.send(List::insert('a', 0)).unwrap();
-    let a2 = replica_a.send(List::delete(0)).unwrap();
-    let b1 = replica_b.send(List::insert('6', 0)).unwrap();
+    let a1 = replica_a.send(ListUpdate::insert('a', 0)).unwrap();
+    let a2 = replica_a.send(ListUpdate::delete(0)).unwrap();
+    let b1 = replica_b.send(ListUpdate::insert('6', 0)).unwrap();
     replica_a.receive(b1);
     replica_b.receive(a1);
     replica_b.receive(a2);
 
-    let a3 = replica_a.send(List::delete(0)).unwrap();
+    let a3 = replica_a.send(ListUpdate::delete(0)).unwrap();
     replica_b.receive(a3);
 
     let state_a = replica_a.query(&Read::<String>::new());
@@ -531,18 +532,18 @@ fn regression_1() {
 fn regression_2() {
     let (mut replica_a, mut replica_b) = twins_log::<GraphLog<List<char>>>();
 
-    let b1 = replica_b.send(List::insert('N', 0)).unwrap();
-    let b2 = replica_b.send(List::insert('r', 1)).unwrap();
+    let b1 = replica_b.send(ListUpdate::insert('N', 0)).unwrap();
+    let b2 = replica_b.send(ListUpdate::insert('r', 1)).unwrap();
 
     replica_a.receive(b1);
     replica_a.receive(b2);
 
-    let a1 = replica_a.send(List::delete(0)).unwrap();
-    let b3 = replica_b.send(List::delete(0)).unwrap();
+    let a1 = replica_a.send(ListUpdate::delete(0)).unwrap();
+    let b3 = replica_b.send(ListUpdate::delete(0)).unwrap();
 
     replica_a.receive(b3);
-    let a2 = replica_a.send(List::insert('Y', 0)).unwrap();
-    let b4 = replica_b.send(List::insert('x', 1)).unwrap();
+    let a2 = replica_a.send(ListUpdate::insert('Y', 0)).unwrap();
+    let b4 = replica_b.send(ListUpdate::insert('x', 1)).unwrap();
 
     replica_a.receive(b4);
     replica_b.receive(a1);
@@ -569,21 +570,21 @@ fn caching() {
     for i in 0..100 {
         if i % 3 == 0 {
             let e1 = replica_a
-                .send(List::insert(alphabet[i % alphabet.len()], 0))
+                .send(ListUpdate::insert(alphabet[i % alphabet.len()], 0))
                 .unwrap();
             let e2 = replica_b
-                .send(List::insert(alphabet[(i + 1) % alphabet.len()], 0))
+                .send(ListUpdate::insert(alphabet[(i + 1) % alphabet.len()], 0))
                 .unwrap();
             replica_a.receive(e2);
             replica_b.receive(e1);
         } else if i % 3 == 1 {
-            let e1 = replica_a.send(List::delete(0)).unwrap();
-            let e2 = replica_b.send(List::delete(0)).unwrap();
+            let e1 = replica_a.send(ListUpdate::delete(0)).unwrap();
+            let e2 = replica_b.send(ListUpdate::delete(0)).unwrap();
             replica_a.receive(e2);
             replica_b.receive(e1);
         } else {
-            let e1 = replica_a.send(List::update(0)).unwrap();
-            let e2 = replica_b.send(List::update(0)).unwrap();
+            let e1 = replica_a.send(ListUpdate::update(0)).unwrap();
+            let e2 = replica_b.send(ListUpdate::update(0)).unwrap();
             replica_a.receive(e2);
             replica_b.receive(e1);
         }
@@ -596,7 +597,7 @@ fn caching() {
             expected
         );
     }
-    let _ = replica_a.send(List::insert('A', 0)).unwrap();
+    let _ = replica_a.send(ListUpdate::insert('A', 0)).unwrap();
     assert_eq!(
         replica_a.state().read_ref().iter().collect::<String>(),
         format!("A{expected}")

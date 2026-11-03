@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
     hash::Hash,
+    marker::PhantomData,
 };
 
 #[cfg(feature = "test_utils")]
@@ -14,7 +15,10 @@ use moirai_protocol::{
     crdt::{
         eval::Eval,
         query::{QueryOperation, Read},
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        redundancy::RedundancyRelation,
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -27,21 +31,12 @@ use rand::seq::IteratorRandom;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{FxHashMap, FxHashSet};
+use crate::{FxHashMap, FxHashSet, graph::update::GraphUpdate};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Graph<V, E> {
-    /// Add a vertex with identifier `V`. `V` must be unique.
-    AddVertex(V),
-    /// Remove a vertex with identifier `V`. All arcs connected to this vertex are also removed.
-    RemoveVertex(V),
-    /// Add an arc from vertex `V` to vertex `V'` with edge identifier `E`. Both vertices must already exist. The triple `(V, V', E)` must be unique.
-    AddArc(V, V, E),
-    /// Remove an arc from vertex `V` to vertex `V'` with edge identifier `E`. The triple `(V, V', E)` must already exist.
-    RemoveArc(V, V, E),
-}
+pub struct AWMultidigraph<V, E>(PhantomData<(V, E)>);
 
 #[derive(Clone, Debug)]
 pub enum GraphRejection<V, E> {
@@ -56,82 +51,40 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GraphRejection::ArcDoesNotExist(v1, v2, e) => write!(
+            Self::ArcDoesNotExist(v1, v2, e) => write!(
                 f,
                 "Arc from {:?} to {:?} with edge {:?} does not exist",
                 v1, v2, e
             ),
-            GraphRejection::VertexDoesNotExist(v) => write!(f, "Vertex {:?} does not exist", v),
+            Self::VertexDoesNotExist(v) => write!(f, "Vertex {:?} does not exist", v),
         }
     }
 }
 
-impl<V, E> ReplicatedDataType for Graph<V, E>
+impl<V, E> ReplicatedDataType for AWMultidigraph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
 {
     // TODO: We can use a more efficient representation of the stable state
     // TODO: garbage collect dangling arcs
-    type StableState = Vec<Self>;
+    type Update = GraphUpdate<V, E>;
+    type Stable = Vec<Self::Update>;
     type Rejection = GraphRejection<V, E>;
-
-    fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> bool
-    where
-        Self: 'a,
-    {
-        matches!(
-            new_tagged_op.op(),
-            Graph::RemoveVertex(_) | Graph::RemoveArc(_, _, _)
-        )
-    }
-
-    fn redundant_by_when_redundant(
-        old_op: &Self,
-        _old_tag: Option<&Tag>,
-        is_conc: bool,
-        new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        // old_op = addVertex, addArc only
-        !is_conc
-            && match (old_op, new_tagged_op.op()) {
-                (Graph::AddArc(v1, v2, _), Graph::RemoveVertex(v3)) => v1 == v3 || v2 == v3,
-                (Graph::AddArc(v1, v2, e1), Graph::AddArc(v3, v4, e2))
-                | (Graph::AddArc(v1, v2, e1), Graph::RemoveArc(v3, v4, e2)) => {
-                    v1 == v3 && v2 == v4 && e1 == e2
-                }
-                (Graph::AddVertex(v1), Graph::AddVertex(v2))
-                | (Graph::AddVertex(v1), Graph::RemoveVertex(v2)) => v1 == v2,
-                _ => false,
-            }
-    }
-
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        old_tag: Option<&Tag>,
-        is_conc: bool,
-        new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
-    }
 }
 
-impl<V, E, U> UsesUnstableService<U> for Graph<V, E>
+impl<V, E, U> Precondition<U> for AWMultidigraph<V, E>
 where
-    V: Debug + Clone + PartialEq + Eq + Hash,
-    E: Debug + Clone + PartialEq + Eq + Hash,
-    U: IsUnstableCore<Self>,
+    V: Debug + Clone + Eq + Hash,
+    E: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self::Update>,
 {
     fn is_enabled(
-        op: &Self,
-        stable: &Self::StableState,
+        stable: &Self::Stable,
         unstable: &U,
+        op: &Self::Update,
     ) -> Result<(), Self::Rejection> {
-        let state = Self::execute_query(&Read::new(), stable, unstable);
+        let state = Self::execute_query(stable, unstable, &Read::new());
 
         let vertex_exists = |v| state.node_weights().any(|node| node == v);
         let vertex_index = |v| {
@@ -150,15 +103,15 @@ where
         };
 
         match op {
-            Graph::AddVertex(_) => Ok(()),
-            Graph::RemoveVertex(v) => {
+            GraphUpdate::AddVertex(_) => Ok(()),
+            GraphUpdate::RemoveVertex(v) => {
                 if vertex_exists(v) {
                     Ok(())
                 } else {
                     Err(GraphRejection::VertexDoesNotExist(v.clone()))
                 }
             }
-            Graph::AddArc(v1, v2, _) => {
+            GraphUpdate::AddArc(v1, v2, _) => {
                 if !vertex_exists(v1) {
                     Err(GraphRejection::VertexDoesNotExist(v1.clone()))
                 } else if !vertex_exists(v2) {
@@ -167,7 +120,7 @@ where
                     Ok(())
                 }
             }
-            Graph::RemoveArc(v1, v2, e) => {
+            GraphUpdate::RemoveArc(v1, v2, e) => {
                 if arc_exists(v1, v2, e) {
                     Ok(())
                 } else {
@@ -182,25 +135,105 @@ where
     }
 }
 
-impl<V, E, U> Eval<Read<DiGraph<V, E>>, U> for Graph<V, E>
+impl<V, E, U> CausalStabilize<U> for AWMultidigraph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
-    U: IsUnstableCore<Self>,
+{
+}
+
+impl<V, E, U> CausalReset<U> for AWMultidigraph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+{
+}
+
+impl<V, E, U> CausalCompaction<U> for AWMultidigraph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<Self::Update>,
+{
+    fn compact_stable(
+        stable: &mut Self::Stable,
+        rdnt: RedundancyRelation<Self::Update>,
+        new: &TaggedOp<Self::Update>,
+    ) {
+        stable.retain(|old| !rdnt(old, None, false, new));
+    }
+
+    fn redundant_itself<'a>(
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
+    ) -> bool
+    where
+        Self: 'a,
+    {
+        matches!(
+            new_tagged_op.op(),
+            GraphUpdate::RemoveVertex(_) | GraphUpdate::RemoveArc(_, _, _)
+        )
+    }
+
+    fn redundant_by_when_redundant(
+        old_op: &Self::Update,
+        _old_tag: Option<&Tag>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self::Update>,
+    ) -> bool {
+        // old_op = addVertex, addArc only
+        !is_conc
+            && match (old_op, new_tagged_op.op()) {
+                (GraphUpdate::AddArc(v1, v2, _), GraphUpdate::RemoveVertex(v3)) => {
+                    v1 == v3 || v2 == v3
+                }
+                (GraphUpdate::AddArc(v1, v2, e1), GraphUpdate::AddArc(v3, v4, e2))
+                | (GraphUpdate::AddArc(v1, v2, e1), GraphUpdate::RemoveArc(v3, v4, e2)) => {
+                    v1 == v3 && v2 == v4 && e1 == e2
+                }
+                (GraphUpdate::AddVertex(v1), GraphUpdate::AddVertex(v2))
+                | (GraphUpdate::AddVertex(v1), GraphUpdate::RemoveVertex(v2)) => v1 == v2,
+                _ => false,
+            }
+    }
+
+    fn redundant_by_when_not_redundant(
+        old_op: &Self::Update,
+        old_tag: Option<&Tag>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self::Update>,
+    ) -> bool {
+        <Self as CausalCompaction<U>>::redundant_by_when_redundant(
+            old_op,
+            old_tag,
+            is_conc,
+            new_tagged_op,
+        )
+    }
+}
+
+impl<V, E, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<DiGraph<V, E>>>
+    for AWMultidigraph<V, E>
+where
+    V: Debug + Clone + PartialEq + Eq + Hash,
+    E: Debug + Clone + PartialEq + Eq + Hash,
+    U: IsUnstableCore<<Self as ReplicatedDataType>::Update>,
 {
     fn execute_query(
-        _q: &Read<DiGraph<V, E>>,
-        stable: &Self::StableState,
+        stable: &Vec<<Self as ReplicatedDataType>::Update>,
         unstable: &U,
+        _q: &Read<DiGraph<V, E>>,
     ) -> <Read<DiGraph<V, E>> as QueryOperation>::Response {
-        let mut ops: Vec<&Self> = stable
+        let mut ops: Vec<&<Self as ReplicatedDataType>::Update> = stable
             .iter()
             .chain(unstable.iter().map(|t| t.op()))
             .collect();
         // TODO: Not needed if we are using a sorted unstable! e.g., VecLog
         ops.sort_by(|a, b| match (a, b) {
-            (Graph::AddVertex(_), Graph::AddArc(_, _, _)) => Ordering::Less,
-            (Graph::AddArc(_, _, _), Graph::AddVertex(_)) => Ordering::Greater,
+            (GraphUpdate::AddVertex(_), GraphUpdate::AddArc(_, _, _)) => Ordering::Less,
+            (GraphUpdate::AddArc(_, _, _), GraphUpdate::AddVertex(_)) => Ordering::Greater,
             _ => Ordering::Equal,
         });
         let mut graph = DiGraph::new();
@@ -208,14 +241,14 @@ where
         let mut edge_index: FxHashSet<(&V, &V, &E)> = FxHashSet::default();
         for o in ops {
             match o {
-                Graph::AddVertex(v) => {
+                GraphUpdate::AddVertex(v) => {
                     if node_index.contains_key(v) {
                         continue; // Skip if the vertex already exists
                     }
                     let idx = graph.add_node(v.clone());
                     node_index.insert(v, idx);
                 }
-                Graph::AddArc(v1, v2, e) => {
+                GraphUpdate::AddArc(v1, v2, e) => {
                     if edge_index.contains(&(v1, v2, e)) {
                         continue; // Skip if the edge already exists
                     }
@@ -224,7 +257,9 @@ where
                         edge_index.insert((v1, v2, e));
                     }
                 }
-                Graph::RemoveVertex(_) | Graph::RemoveArc(_, _, _) => unreachable!(),
+                GraphUpdate::RemoveVertex(_) | GraphUpdate::RemoveArc(_, _, _) => {
+                    unreachable!()
+                }
             }
         }
         graph
@@ -232,9 +267,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V, E, U> OpGenerator<U> for Graph<V, E>
+impl<V, E, U> OpGenerator<U> for AWMultidigraph<V, E>
 where
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<Self::Update>,
     V: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
     E: ValueGenerator + Debug + Clone + PartialEq + Eq + Hash,
 {
@@ -243,9 +278,9 @@ where
     fn generate(
         rng: &mut impl rand::Rng,
         _config: &Self::Config,
-        stable: &Self::StableState,
+        stable: &Self::Stable,
         unstable: &U,
-    ) -> Self {
+    ) -> Self::Update {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -255,7 +290,7 @@ where
             RemoveArc,
         }
 
-        let graph = Self::execute_query(&Read::new(), stable, unstable);
+        let graph = Self::execute_query(stable, unstable, &Read::new());
 
         let choice = if graph.node_count() < 2 {
             &Choice::AddVertex
@@ -277,12 +312,12 @@ where
                 use moirai_fuzz::generator::value_generator::ValueGenerator;
 
                 let v = V::generate(rng, &<V as ValueGenerator>::Config::default());
-                Graph::AddVertex(v)
+                GraphUpdate::AddVertex(v)
             }
             Choice::RemoveVertex => {
                 let idx = graph.node_indices().choose(rng).unwrap();
                 let v = graph.node_weight(idx).unwrap().clone();
-                Graph::RemoveVertex(v)
+                GraphUpdate::RemoveVertex(v)
             }
             Choice::AddArc => {
                 let idx1 = graph.node_indices().choose(rng).unwrap();
@@ -290,14 +325,14 @@ where
                 let v1 = graph.node_weight(idx1).unwrap().clone();
                 let v2 = graph.node_weight(idx2).unwrap().clone();
                 let e = E::generate(rng, &<E as ValueGenerator>::Config::default());
-                Graph::AddArc(v1, v2, e)
+                GraphUpdate::AddArc(v1, v2, e)
             }
             Choice::RemoveArc => {
                 let edge = graph.edge_references().choose(rng).unwrap();
                 let v1 = graph.node_weight(edge.source()).unwrap().clone();
                 let v2 = graph.node_weight(edge.target()).unwrap().clone();
                 let e = edge.weight().clone();
-                Graph::RemoveArc(v1, v2, e)
+                GraphUpdate::RemoveArc(v1, v2, e)
             }
         }
     }
@@ -308,24 +343,26 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        graph::aw_multidigraph::Graph,
-        utils::membership::{triplet, twins},
+        graph::{aw_multidigraph::AWMultidigraph, update::GraphUpdate},
+        utils::bootstrap::{triplet, twins},
     };
 
     #[test]
     fn simple_graph() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, &str>>();
 
-        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::AddVertex("B")).unwrap();
+        let event = replica_b.send(GraphUpdate::AddVertex("B")).unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(Graph::AddArc("B", "A", "arc1")).unwrap();
+        let event = replica_a
+            .send(GraphUpdate::AddArc("B", "A", "arc1"))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        let event = replica_b.send(GraphUpdate::RemoveVertex("B")).unwrap();
         replica_a.receive(event);
 
         assert!(
@@ -340,13 +377,13 @@ mod tests {
 
     #[test]
     fn concurrent_add_remove_vertex() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, &str>>();
 
-        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event);
 
-        let event_b = replica_b.send(Graph::RemoveVertex("A")).unwrap();
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::RemoveVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -364,16 +401,18 @@ mod tests {
 
     #[test]
     fn concurrent_graph_arc() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, &str>>();
 
-        let event = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(Graph::AddVertex("B")).unwrap();
+        let event = replica_b.send(GraphUpdate::AddVertex("B")).unwrap();
         replica_a.receive(event);
 
-        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
-        let event_a = replica_a.send(Graph::AddArc("B", "A", "arc1")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::RemoveVertex("B")).unwrap();
+        let event_a = replica_a
+            .send(GraphUpdate::AddArc("B", "A", "arc1"))
+            .unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -389,10 +428,10 @@ mod tests {
 
     #[test]
     fn concurrent_graph_vertex() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, &str>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, &str>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
-        let event_b = replica_b.send(Graph::AddVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -409,13 +448,13 @@ mod tests {
 
     #[test]
     fn graph_multiple_vertex_same_id() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("A")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_a.receive(event_b);
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
@@ -423,21 +462,21 @@ mod tests {
 
     #[test]
     fn concurrent_revive_arc() {
-        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<Graph<&str, u8>>();
+        let (mut replica_a, mut replica_b, mut replica_c) = triplet::<AWMultidigraph<&str, u8>>();
 
-        let event_a_1 = replica_a.send(Graph::AddVertex("A")).unwrap();
-        let event_a_2 = replica_a.send(Graph::AddVertex("B")).unwrap();
+        let event_a_1 = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
+        let event_a_2 = replica_a.send(GraphUpdate::AddVertex("B")).unwrap();
 
         replica_b.receive(event_a_1.clone());
         replica_b.receive(event_a_2.clone());
         replica_c.receive(event_a_1);
         replica_c.receive(event_a_2);
 
-        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::RemoveVertex("B")).unwrap();
         replica_c.receive(event_b.clone());
-        let event_c = replica_c.send(Graph::AddVertex("B")).unwrap();
+        let event_c = replica_c.send(GraphUpdate::AddVertex("B")).unwrap();
 
-        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddArc("A", "B", 1)).unwrap();
 
         replica_a.receive(event_b);
         replica_a.receive(event_c.clone());
@@ -455,15 +494,15 @@ mod tests {
 
     #[test]
     fn revive_arc() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("B")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::AddVertex("B")).unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
-        let event_b = replica_b.send(Graph::RemoveVertex("B")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddArc("A", "B", 1)).unwrap();
+        let event_b = replica_b.send(GraphUpdate::RemoveVertex("B")).unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -479,7 +518,7 @@ mod tests {
         assert_eq!(replica_a.query(&Read::new()).node_count(), 1);
         assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
-        let event_a = replica_a.send(Graph::AddVertex("B")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("B")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_a.query(&Read::new()).node_count(), 2);
@@ -497,15 +536,15 @@ mod tests {
 
     #[test]
     fn multigraph() {
-        let (mut replica_a, mut replica_b) = twins::<Graph<&str, u8>>();
+        let (mut replica_a, mut replica_b) = twins::<AWMultidigraph<&str, u8>>();
 
-        let event_a = replica_a.send(Graph::AddVertex("A")).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddVertex("A")).unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(Graph::AddVertex("B")).unwrap();
+        let event_b = replica_b.send(GraphUpdate::AddVertex("B")).unwrap();
         replica_a.receive(event_b);
 
-        let event_a = replica_a.send(Graph::AddArc("A", "B", 1)).unwrap();
-        let event_b = replica_b.send(Graph::AddArc("A", "B", 2)).unwrap();
+        let event_a = replica_a.send(GraphUpdate::AddArc("A", "B", 1)).unwrap();
+        let event_b = replica_b.send(GraphUpdate::AddArc("A", "B", 2)).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -534,17 +573,18 @@ mod tests {
         use petgraph::graph::DiGraph;
 
         let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 1_000, None, None);
-        let runs = vec![run.clone(); 1];
+        let runs = vec![run; 1];
 
-        let config = FuzzerConfig::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>::new(
-            "aw_graph",
-            runs,
-            // |a, b| vf2::isomorphisms(a, b).first().is_some(),
-            Predicate::new(Read::new(), |a, b| {
-                a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
-            }),
-        );
+        let config =
+            FuzzerConfig::<VecLog<AWMultidigraph<String, u8>>, Read<DiGraph<String, u8>>>::new(
+                "aw_graph",
+                runs,
+                // |a, b| vf2::isomorphisms(a, b).first().is_some(),
+                Predicate::new(Read::new(), |a, b| {
+                    a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
+                }),
+            );
 
-        fuzzer::<VecLog<Graph<String, u8>>, Read<DiGraph<String, u8>>>(config);
+        fuzzer::<VecLog<AWMultidigraph<String, u8>>, Read<DiGraph<String, u8>>>(config);
     }
 }

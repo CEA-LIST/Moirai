@@ -29,7 +29,7 @@ pub struct ReplicaObserver<L>
 where
     L: IsLog,
 {
-    replica: Replica<L, Tcsb<L::Op>>,
+    replica: Replica<L, Tcsb<L::Update>>,
     response_recorder: ResponseRecorder,
     query_recorder: QueryRecorder,
     replica_size_recorder: ReplicaSizeRecorder,
@@ -38,10 +38,10 @@ where
 impl<L> IsReplica<LogObserver<L>> for ReplicaObserver<LogObserver<L>>
 where
     L: IsLog + DeepSizeOf + LogFootprint,
-    L::Op: DeepSizeOf,
+    L::Update: DeepSizeOf,
 {
     type Command = L::Command;
-    type Payload = L::Op;
+    type Payload = L::Update;
 
     fn id(&self) -> &ReplicaId {
         self.replica.id()
@@ -169,7 +169,7 @@ where
             interner.intern(&ReplicaId::from(member.as_ref()));
         }
 
-        ReplicaObserver {
+        Self {
             replica: Replica::new(
                 id,
                 Tcsb::new(idx, interner),
@@ -201,7 +201,7 @@ where
     }
 
     pub fn measurements(self) -> ReplicaRecorders {
-        let ReplicaObserver {
+        let Self {
             replica,
             response_recorder,
             query_recorder,
@@ -237,7 +237,7 @@ where
 impl<L> ReplicaObserver<LogObserver<L>>
 where
     L: IsLog + DeepSizeOf + LogFootprint,
-    L::Op: DeepSizeOf,
+    L::Update: DeepSizeOf,
 {
     pub fn record_terminal_sizes(&mut self) {
         if self.replica_size_recorder.config.is_some() {
@@ -276,7 +276,7 @@ where
             tcsb: self.replica.tcsb(),
             log: self.replica.state().inner(),
         };
-        std::mem::size_of::<Replica<L, Tcsb<L::Op>>>() + view.deep_size_of()
+        std::mem::size_of::<Replica<L, Tcsb<L::Update>>>() + view.deep_size_of()
             - std::mem::size_of_val(&view)
     }
 }
@@ -285,14 +285,14 @@ where
 /// or counting any observer storage. References are followed explicitly.
 struct ReplicaFootprint<'a, L: IsLog> {
     id: &'a ReplicaId,
-    tcsb: &'a Tcsb<L::Op>,
+    tcsb: &'a Tcsb<L::Update>,
     log: &'a L,
 }
 
 impl<L> DeepSizeOf for ReplicaFootprint<'_, L>
 where
     L: IsLog + DeepSizeOf,
-    L::Op: DeepSizeOf,
+    L::Update: DeepSizeOf,
 {
     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
         DeepSizeOf::deep_size_of_children(self.id, context)

@@ -18,23 +18,13 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::{
     FxHashSet,
-    flag::ew_flag::EWFlag,
-    map::uw_map::{UWMap, UWMapLog},
+    flag::{ew_flag::EWFlag, update::FlagUpdate},
+    map::{update::MapUpdate, uw_map::UWMapLog},
+    set::update::SetUpdate,
 };
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum EWFlagSet<V> {
-    Add(V),
-    Remove(V),
-    Clear,
-}
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -57,27 +47,23 @@ impl<V> IsLog for EWFlagSetLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Command = EWFlagSet<V>;
-    type Op = EWFlagSet<V>;
+    type Command = SetUpdate<V>;
+    type Update = SetUpdate<V>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
-        Ok(())
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
-            EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
-            EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
-            EWFlagSet::Clear => UWMap::Clear,
+            SetUpdate::Add(k) => MapUpdate::Update(k.clone(), FlagUpdate::Enable),
+            SetUpdate::Remove(k) => MapUpdate::Update(k.clone(), FlagUpdate::Disable),
+            SetUpdate::Clear => MapUpdate::Clear,
         };
         let event = Event::unfold(event, op);
         // The EWFlagSetLog is semantically a leaf CRDT, so we ignore the path and sink for now
@@ -125,9 +111,9 @@ where
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         let value = <V as ValueGenerator>::generate(rng, &V::Config::default());
         match rng.random_range(0..8) {
-            0 => EWFlagSet::Clear,
-            1 | 2 => EWFlagSet::Remove(value),
-            _ => EWFlagSet::Add(value),
+            0 => SetUpdate::Clear,
+            1 | 2 => SetUpdate::Remove(value),
+            _ => SetUpdate::Add(value),
         }
     }
 }
@@ -147,15 +133,15 @@ mod tests {
     use moirai_protocol::replica::IsReplica;
 
     use super::*;
-    use crate::utils::membership::twins_log;
+    use crate::utils::bootstrap::twins_log;
 
     #[test]
     fn default_uw_map() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
-        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(EWFlagSet::<&str>::Remove("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Remove("a")).unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(
@@ -171,14 +157,14 @@ mod tests {
     #[test]
     fn test_ewflag_set() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
-        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
-        let event_b = replica_b.send(EWFlagSet::<&str>::Add("b")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Add("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(EWFlagSet::<&str>::Remove("a")).unwrap();
-        let event_b = replica_b.send(EWFlagSet::<&str>::Add("c")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Remove("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);

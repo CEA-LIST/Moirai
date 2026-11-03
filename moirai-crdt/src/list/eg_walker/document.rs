@@ -37,7 +37,7 @@ impl<V> Record<V> {
     ///
     /// Retreated insertions are still in the sequence but are not integrated in the
     /// prepared version, so new insertions must not anchor on them.
-    pub fn is_integrated(&self) -> bool {
+    pub const fn is_integrated(&self) -> bool {
         match self {
             Self::StableRange { .. } => true,
             Self::Item(item) => item.prepare.is_integrated(),
@@ -118,9 +118,8 @@ impl<'a, V> Document<'a, V> {
             return Some(*idx);
         }
 
-        match id.stable_index() {
-            Some(stable_idx) => self
-                .records
+        id.stable_index().and_then(|stable_idx| {
+            self.records
                 .iter()
                 .enumerate()
                 .find_map(|(record_idx, record)| match record {
@@ -130,9 +129,8 @@ impl<'a, V> Document<'a, V> {
                         Some(record_idx)
                     }
                     _ => None,
-                }),
-            None => None,
-        }
+                })
+        })
     }
 
     /// Borrow the concrete item at `idx`, if the record is materialized.

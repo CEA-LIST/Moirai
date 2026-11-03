@@ -12,21 +12,22 @@ use rand::Rng;
 
 use crate::{
     FxHashMap,
-    counter::resettable_counter::Counter,
-    flag::ew_flag::EWFlag,
+    counter::{Counter, update::CounterUpdate},
+    flag::{ew_flag::EWFlag, update::FlagUpdate},
     list::{
         eg_walker::List,
-        nested_list::{NestedList, NestedListLog},
+        nested_list::NestedListLog,
+        update::{ListUpdate, NestedListUpdate},
     },
-    map::uw_map::{UWMap, UWMapLog},
+    map::{update::MapUpdate, uw_map::UWMapLog},
 };
 
 union! {
-    Json = Number(Counter<f64>, VecLog::<Counter<f64>> => f64)
-        | Boolean(EWFlag, VecLog::<EWFlag> => bool)
-        | String(List<char>, GraphLog::<List<char>> => String)
-        | Object(UWMap<String, Box<Json>>, UWMapLog::<String, JsonLog> => FxHashMap<String, JsonValue>)
-        | Array(NestedList<Box<Json>>, NestedListLog::<JsonLog> => Vec<JsonValue>)
+    Json = Number(CounterUpdate<f64>, VecLog::<Counter<f64>> => f64)
+        | Boolean(FlagUpdate, VecLog::<EWFlag> => bool)
+        | String(ListUpdate<char>, GraphLog::<List<char>> => String)
+        | Object(MapUpdate<String, Box<Json>>, UWMapLog::<String, JsonLog> => FxHashMap<String, JsonValue>)
+        | Array(NestedListUpdate<Box<Json>>, NestedListLog::<JsonLog> => Vec<JsonValue>)
 }
 
 // TODO: the code must be factorized
@@ -61,14 +62,14 @@ impl CommandGenerator for JsonLog {
 
         fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl Rng) -> Json {
             let op = <UWMapLog<String, JsonLog> as CommandGenerator>::generate_command(log, rng);
-            Json::Object(Boxer::<UWMap<String, Box<Json>>>::boxer(op))
+            Json::Object(Boxer::<MapUpdate<String, Box<Json>>>::boxer(op))
         }
 
         fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl Rng) -> Json {
             use moirai_protocol::utils::boxer::Boxer;
 
             let list_op = <NestedListLog<JsonLog> as CommandGenerator>::generate_command(log, rng);
-            let o = Boxer::<NestedList<Box<Json>>>::boxer(list_op);
+            let o = Boxer::<NestedListUpdate<Box<Json>>>::boxer(list_op);
             Json::Array(o)
         }
 
@@ -83,7 +84,7 @@ impl CommandGenerator for JsonLog {
             }
         }
 
-        fn variant_of(value: &JsonChildValue) -> JsonVariant {
+        const fn variant_of(value: &JsonChildValue) -> JsonVariant {
             match value {
                 JsonChildValue::Number(_) => JsonVariant::Number,
                 JsonChildValue::Boolean(_) => JsonVariant::Boolean,
@@ -134,9 +135,9 @@ impl CommandGenerator for JsonLog {
                 match choice {
                     Choice::Number => generate_number(&VecLog::<Counter<f64>>::new(), rng),
                     Choice::Boolean => generate_boolean(&VecLog::<EWFlag>::new(), rng),
-                    Choice::Object => generate_object(&UWMapLog::<String, JsonLog>::new(), rng),
+                    Choice::Object => generate_object(&UWMapLog::<String, Self>::new(), rng),
                     Choice::String => generate_string(&GraphLog::<List<char>>::new(), rng),
-                    Choice::Array => generate_array(&NestedListLog::<JsonLog>::new(), rng),
+                    Choice::Array => generate_array(&NestedListLog::<Self>::new(), rng),
                 }
             }
             JsonValue::Value(v) => match &self.child {
@@ -210,21 +211,23 @@ mod tests {
     use serde_json::{Number, Value, json};
 
     use crate::{
-        counter::resettable_counter::Counter,
-        flag::ew_flag::EWFlag,
+        counter::update::CounterUpdate,
+        flag::update::FlagUpdate,
         json::{Json, JsonLog, JsonVariant},
-        list::{eg_walker::List, nested_list::NestedList},
-        map::uw_map::UWMap,
+        list::update::{ListUpdate, NestedListUpdate},
+        map::update::MapUpdate,
         query::read_as_json::ReadAsJson,
-        utils::membership::{triplet_log, twins_log},
+        utils::bootstrap::{triplet_log, twins_log},
     };
 
     #[test]
     fn concurrent_insert() {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
-        let event_a = replica_a.send(Json::Boolean(EWFlag::Enable)).unwrap();
-        let event_b = replica_b.send(Json::Number(Counter::Inc(5.0))).unwrap();
+        let event_a = replica_a.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
+        let event_b = replica_b
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -244,7 +247,9 @@ mod tests {
 
         assert!(replica_a.send(Json::Choose(JsonVariant::Number)).is_err());
 
-        replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
+        replica_a
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
         assert!(replica_a.send(Json::Choose(JsonVariant::Number)).is_err());
         assert!(replica_a.send(Json::Choose(JsonVariant::Boolean)).is_err());
     }
@@ -253,8 +258,10 @@ mod tests {
     fn choose_resolves_observed_conflict() {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
-        let event_a = replica_a.send(Json::Boolean(EWFlag::Enable)).unwrap();
-        let event_b = replica_b.send(Json::Number(Counter::Inc(5.0))).unwrap();
+        let event_a = replica_a.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
+        let event_b = replica_b
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -270,8 +277,12 @@ mod tests {
     fn sequential_same_variant() {
         let (mut replica_a, _) = twins_log::<JsonLog>();
 
-        replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
-        replica_a.send(Json::Number(Counter::Inc(3.0))).unwrap();
+        replica_a
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
+        replica_a
+            .send(Json::Number(CounterUpdate::Inc(3.0)))
+            .unwrap();
 
         let result = Value::Number(Number::from_f64(8.0).unwrap());
         assert_eq!(result, replica_a.query(&ReadAsJson::new()));
@@ -289,8 +300,10 @@ mod tests {
     fn sequential_different_variant_fail() {
         let (mut replica_a, _) = twins_log::<JsonLog>();
 
-        replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
-        let op = replica_a.send(Json::Boolean(EWFlag::Enable));
+        replica_a
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
+        let op = replica_a.send(Json::Boolean(FlagUpdate::Enable));
         assert!(op.is_err());
 
         let result = Value::Number(Number::from_f64(5.0).unwrap());
@@ -301,8 +314,12 @@ mod tests {
     fn concurrent_same_variant() {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
-        let event_a = replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
-        let event_b = replica_b.send(Json::Number(Counter::Inc(3.0))).unwrap();
+        let event_a = replica_a
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
+        let event_b = replica_b
+            .send(Json::Number(CounterUpdate::Inc(3.0)))
+            .unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -316,11 +333,13 @@ mod tests {
     fn conflict_resolution_then_operation() {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
-        let event_a1 = replica_a.send(Json::Number(Counter::Inc(5.0))).unwrap();
-        let event_b1 = replica_b.send(Json::Boolean(EWFlag::Enable)).unwrap();
+        let event_a1 = replica_a
+            .send(Json::Number(CounterUpdate::Inc(5.0)))
+            .unwrap();
+        let event_b1 = replica_b.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
 
-        replica_b.receive(event_a1.clone());
-        replica_a.receive(event_b1.clone());
+        replica_b.receive(event_a1);
+        replica_a.receive(event_b1);
 
         let conflicts = Value::Array(vec![
             Value::Bool(true),
@@ -329,8 +348,10 @@ mod tests {
 
         assert_eq!(conflicts, replica_a.query(&ReadAsJson::new()));
 
-        let event_a2 = replica_a.send(Json::Number(Counter::Inc(2.0))).unwrap();
-        let event_b2 = replica_b.send(Json::Boolean(EWFlag::Disable)).unwrap();
+        let event_a2 = replica_a
+            .send(Json::Number(CounterUpdate::Inc(2.0)))
+            .unwrap();
+        let event_b2 = replica_b.send(Json::Boolean(FlagUpdate::Disable)).unwrap();
 
         replica_b.receive(event_a2);
         replica_a.receive(event_b2);
@@ -348,20 +369,25 @@ mod tests {
     fn triple_conflict() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<JsonLog>();
 
-        let event_a = replica_a.send(Json::Number(Counter::Inc(1.0))).unwrap();
-        let event_b = replica_b.send(Json::Boolean(EWFlag::Enable)).unwrap();
+        let event_a = replica_a
+            .send(Json::Number(CounterUpdate::Inc(1.0)))
+            .unwrap();
+        let event_b = replica_b.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
 
-        let map_op = UWMap::Update("key".to_string(), Box::new(Json::Number(Counter::Inc(0.0))));
+        let map_op = MapUpdate::Update(
+            "key".to_string(),
+            Box::new(Json::Number(CounterUpdate::Inc(0.0))),
+        );
         let event_c = replica_c.send(Json::Object(map_op)).unwrap();
 
         replica_a.receive(event_b.clone());
         replica_a.receive(event_c.clone());
 
         replica_b.receive(event_a.clone());
-        replica_b.receive(event_c.clone());
+        replica_b.receive(event_c);
 
-        replica_c.receive(event_a.clone());
-        replica_c.receive(event_b.clone());
+        replica_c.receive(event_a);
+        replica_c.receive(event_b);
 
         let result = json!([true, 1.0, {"key": 0.0}]);
 
@@ -374,11 +400,13 @@ mod tests {
     fn nested_conflicts() {
         let (mut replica_a, mut replica_b, mut replica_c) = triplet_log::<JsonLog>();
 
-        let event_a = replica_a.send(Json::Number(Counter::Inc(1.0))).unwrap();
+        let event_a = replica_a
+            .send(Json::Number(CounterUpdate::Inc(1.0)))
+            .unwrap();
         let event_b = replica_b
-            .send(Json::Object(UWMap::Update(
+            .send(Json::Object(MapUpdate::Update(
                 "foo".to_string(),
-                Box::new(Json::Number(Counter::Inc(0.0))),
+                Box::new(Json::Number(CounterUpdate::Inc(0.0))),
             )))
             .unwrap();
 
@@ -386,11 +414,11 @@ mod tests {
         replica_b.receive(event_a.clone());
 
         let event_c = replica_c
-            .send(Json::Object(UWMap::Update(
+            .send(Json::Object(MapUpdate::Update(
                 "foo".to_string(),
-                Box::new(Json::Object(UWMap::Update(
+                Box::new(Json::Object(MapUpdate::Update(
                     "bar".to_string(),
-                    Box::new(Json::Boolean(EWFlag::Enable)),
+                    Box::new(Json::Boolean(FlagUpdate::Enable)),
                 ))),
             )))
             .unwrap();
@@ -414,10 +442,16 @@ mod tests {
     fn map_recursion_same_variant() {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
-        let op_a = UWMap::Update("k1".to_string(), Box::new(Json::Number(Counter::Inc(1.0))));
+        let op_a = MapUpdate::Update(
+            "k1".to_string(),
+            Box::new(Json::Number(CounterUpdate::Inc(1.0))),
+        );
         let event_a = replica_a.send(Json::Object(op_a)).unwrap();
 
-        let op_b = UWMap::Update("k2".to_string(), Box::new(Json::Boolean(EWFlag::Enable)));
+        let op_b = MapUpdate::Update(
+            "k2".to_string(),
+            Box::new(Json::Boolean(FlagUpdate::Enable)),
+        );
         let event_b = replica_b.send(Json::Object(op_b)).unwrap();
 
         replica_b.receive(event_a);
@@ -455,11 +489,11 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<JsonLog>();
 
         let b1 = replica_b
-            .send(Json::Array(NestedList::insert(
+            .send(Json::Array(NestedListUpdate::insert(
                 0,
-                Box::new(Json::Object(UWMap::Update(
+                Box::new(Json::Object(MapUpdate::Update(
                     "s".into(),
-                    Box::new(Json::String(List::insert('w', 0))),
+                    Box::new(Json::String(ListUpdate::insert('w', 0))),
                 ))),
             )))
             .unwrap();
@@ -467,44 +501,46 @@ mod tests {
         replica_a.receive(b1);
 
         let b2 = replica_b
-            .send(Json::Array(NestedList::update(
+            .send(Json::Array(NestedListUpdate::update(
                 0,
-                Box::new(Json::Object(UWMap::Update(
+                Box::new(Json::Object(MapUpdate::Update(
                     "ok".into(),
-                    Box::new(Json::Number(Counter::Inc(5.0))),
+                    Box::new(Json::Number(CounterUpdate::Inc(5.0))),
                 ))),
             )))
             .unwrap();
 
-        let b3 = replica_b.send(Json::Array(NestedList::delete(0))).unwrap();
+        let b3 = replica_b
+            .send(Json::Array(NestedListUpdate::delete(0)))
+            .unwrap();
 
         let a1 = replica_a
-            .send(Json::Array(NestedList::update(
+            .send(Json::Array(NestedListUpdate::update(
                 0,
-                Box::new(Json::Object(UWMap::Update(
+                Box::new(Json::Object(MapUpdate::Update(
                     "nsd".into(),
-                    Box::new(Json::Object(UWMap::Clear)),
+                    Box::new(Json::Object(MapUpdate::Clear)),
                 ))),
             )))
             .unwrap();
         let a2 = replica_a
-            .send(Json::Array(NestedList::update(
+            .send(Json::Array(NestedListUpdate::update(
                 0,
-                Box::new(Json::Object(UWMap::Clear)),
+                Box::new(Json::Object(MapUpdate::Clear)),
             )))
             .unwrap();
         let a3 = replica_a
-            .send(Json::Array(NestedList::insert(
+            .send(Json::Array(NestedListUpdate::insert(
                 1,
-                Box::new(Json::Boolean(EWFlag::Enable)),
+                Box::new(Json::Boolean(FlagUpdate::Enable)),
             )))
             .unwrap();
         let a4 = replica_a
-            .send(Json::Array(NestedList::update(
+            .send(Json::Array(NestedListUpdate::update(
                 0,
-                Box::new(Json::Object(UWMap::Update(
+                Box::new(Json::Object(MapUpdate::Update(
                     "zw".into(),
-                    Box::new(Json::Number(Counter::Reset)),
+                    Box::new(Json::Number(CounterUpdate::Reset)),
                 ))),
             )))
             .unwrap();
@@ -514,7 +550,9 @@ mod tests {
         replica_b.receive(a3);
         replica_b.receive(a4);
 
-        let b4 = replica_b.send(Json::Array(NestedList::delete(0))).unwrap();
+        let b4 = replica_b
+            .send(Json::Array(NestedListUpdate::delete(0)))
+            .unwrap();
 
         replica_a.receive(b2);
         replica_a.receive(b3);
@@ -536,7 +574,7 @@ mod tests {
 
         let run =
             RunConfig::new(ChurnConfig::new(0.6, 0.4), 4, 100, None, None).with_execution_graph();
-        let runs = vec![run.clone(); 1_000];
+        let runs = vec![run; 1_000];
 
         let config = FuzzerConfig::<JsonLog, Read<JsonValue>>::new(
             "json",

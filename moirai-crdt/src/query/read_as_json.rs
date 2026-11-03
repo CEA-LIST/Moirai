@@ -28,7 +28,7 @@ impl QueryOperation for ReadAsJson {
 }
 
 impl ReadAsJson {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -62,7 +62,7 @@ impl EvalNested<ReadAsJson> for UWMapLog<String, JsonLog> {
     }
 }
 
-fn variant_rank(v: &Value) -> u8 {
+const fn variant_rank(v: &Value) -> u8 {
     match v {
         Value::Null => 0,
         Value::Bool(_) => 1,
@@ -103,7 +103,7 @@ impl EvalNested<ReadAsJson> for JsonLog {
             }
         }
 
-        let value = <JsonLog as EvalNested<Read<JsonValue>>>::execute_query(self, &Read::new());
+        let value = <Self as EvalNested<Read<JsonValue>>>::execute_query(self, &Read::new());
         eval_value(&value)
     }
 }

@@ -17,7 +17,7 @@ pub struct FootprintNode {
     pub inclusive_bytes: usize,
     /// Children of the log, if any
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<FootprintNode>,
+    pub children: Vec<Self>,
 }
 
 impl FootprintNode {
@@ -38,7 +38,7 @@ impl FootprintNode {
     /// A parent node has children, and its size is the size of the log itself plus the size of its children
     /// # Example
     /// The UWMapLog is a parent node, and its children are the values in the map.
-    pub fn parent<T>(value: &T, children: Vec<FootprintNode>) -> Self
+    pub fn parent<T>(value: &T, children: Vec<Self>) -> Self
     where
         T: DeepSizeOf,
     {
@@ -72,7 +72,7 @@ pub trait LogFootprint {
 impl<O, U> LogFootprint for POLog<O, U>
 where
     O: ReplicatedDataType,
-    POLog<O, U>: DeepSizeOf,
+    Self: DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
         FootprintNode::leaf(self)
@@ -82,7 +82,7 @@ where
 impl<L, V> LogFootprint for CachedLog<L, V>
 where
     L: IsLog + LogFootprint,
-    CachedLog<L, V>: DeepSizeOf,
+    Self: DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
         FootprintNode::parent(self, vec![self.inner().footprint()])
@@ -92,7 +92,7 @@ where
 impl<L> LogFootprint for CommitmentLog<L>
 where
     L: IsLog + LogFootprint,
-    CommitmentLog<L>: DeepSizeOf,
+    Self: DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
         FootprintNode::parent(

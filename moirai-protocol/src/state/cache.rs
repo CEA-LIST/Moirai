@@ -119,21 +119,21 @@ where
 impl<L, V> IsLog for CachedLog<L, V>
 where
     L: IsLog,
-    V: Debug + IncrementalCache<L::Op>,
+    V: Debug + IncrementalCache<L::Update>,
 {
     type Command = L::Command;
-    type Op = L::Op;
+    type Update = L::Update;
     type Rejection = L::Rejection;
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         self.inner.prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.inner.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         if let Some(frontier) = &self.frontier
             && event.version().includes_frontier(frontier)
             && let Some(cache) = self.read_cache.get_mut()
@@ -177,7 +177,7 @@ where
     Q: QueryOperation + 'static,
     Q::Response: 'static,
     L: IsLog + EvalNested<Q> + EvalNested<Read<V>>,
-    V: Debug + Clone + IncrementalCache<L::Op> + 'static,
+    V: Debug + Clone + IncrementalCache<L::Update> + 'static,
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         if cast!(q, &Read<V>).is_ok() {

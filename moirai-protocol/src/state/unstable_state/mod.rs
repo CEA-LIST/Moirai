@@ -19,37 +19,37 @@ use crate::{
 /// Essential services for an unstable state implementation.
 /// Core services include appending, retrieving and iterating over tagged operations.
 /// As such, it is "grow-only".
-pub trait IsUnstableCore<O> {
+pub trait IsUnstableCore<Update> {
     /// Append an event to the unstable state.
-    fn append(&mut self, event: Event<O>);
+    fn append(&mut self, event: Event<Update>);
     /// Get a tagged operation from the unstable state by its ID.
-    fn get(&self, event_id: &EventId) -> Option<&TaggedOp<O>>;
+    fn get(&self, event_id: &EventId) -> Option<&TaggedOp<Update>>;
     /// Returns a list of references to tagged operations that are predecessors of the given version.
     /// The set of predecessors of a version v is defined as the set of tagged operations that are causally before or equal to v.
-    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<O>>
+    fn predecessors(&self, version: &Version) -> Vec<&TaggedOp<Update>>
     where
-        O: Clone;
+        Update: Clone;
     /// Returns a list of references to tagged operations that are concurrent with the given version in the current unstable state.
-    fn concurrent(&self, version: &Version) -> Vec<&TaggedOp<O>>
+    fn concurrent(&self, version: &Version) -> Vec<&TaggedOp<Update>>
     where
-        O: Clone,
+        Update: Clone,
     {
         self.iter()
             .filter(|to| !to.id().is_predecessor_of(version))
             .collect()
     }
     /// Returns an iterator over all tagged operations in the unstable state.
-    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<O>>
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a TaggedOp<Update>>
     where
-        O: 'a;
+        Update: 'a;
     /// Iterates over the events of the given replica whose sequence numbers fall within the specified range.
     fn replica_events<'a>(
         &'a self,
         replica_idx: ReplicaIdx,
         range: Range<Seq>,
-    ) -> impl Iterator<Item = &'a TaggedOp<O>>
+    ) -> impl Iterator<Item = &'a TaggedOp<Update>>
     where
-        O: 'a;
+        Update: 'a;
     /// Returns the number of tagged operations in the unstable state.
     fn len(&self) -> usize;
     /// Checks if the unstable state is empty.
@@ -57,7 +57,7 @@ pub trait IsUnstableCore<O> {
 }
 
 /// Services for pruning an unstable state.
-pub trait IsUnstablePrune<O>: IsUnstableCore<O> {
+pub trait IsUnstablePrune<Update> {
     /// Remove all tagged operations that are predecessors of the given frontier.
     fn prune_predecessors(&mut self, frontier: &CausalFrontier) {
         self.retain(|event| !frontier.contains(event.id()));
@@ -65,13 +65,13 @@ pub trait IsUnstablePrune<O>: IsUnstableCore<O> {
     /// Remove a tagged operation from the unstable state by its ID.
     fn remove(&mut self, event_id: &EventId);
     /// Retain only the tagged operations that satisfy the given predicate.
-    fn retain<T: Fn(&TaggedOp<O>) -> bool>(&mut self, predicate: T);
+    fn retain<T: Fn(&TaggedOp<Update>) -> bool>(&mut self, predicate: T);
     /// Clear all tagged operations from the unstable state.
     fn clear(&mut self);
 }
 
 /// Services for advanced causal information retrieval from an unstable state.
-pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
+pub trait IsUnstableCausal<Update> {
     /// A version V is a critical version iff every event in the history is either in V,
     /// or an ancestor of some event in V, or happened after all of the events in V.
     fn greatest_critical_frontier(&self, upper_bound: &CausalFrontier) -> Option<CausalFrontier>;
@@ -87,34 +87,37 @@ pub trait IsUnstableCausal<O>: IsUnstableCore<O> {
     fn direct_predecessors(&self, event_id: &EventId) -> Vec<EventId>;
     /// Returns the list of tagged operations that are maximal in the unstable state, i.e.,
     /// those that have no successors in the unstable state.
-    fn frontier(&self) -> Vec<TaggedOp<O>>;
+    fn frontier(&self) -> Vec<TaggedOp<Update>>;
     /// Let v ∈ G, previous(v) denotes the set of vertices z ∈ G such that z is the last vertex from z.id for which z ⇝ v
-    fn previous(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
+    fn previous(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<Update>>;
     /// Let v ∈ G, next(v) denotes the set of vertices w ∈ G such that w is the first vertex from w.id for which v ⇝ w
-    fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<O>>;
+    fn next(&self, event_id: &EventId, r: ReplicaIdx) -> Option<&TaggedOp<Update>>;
     /// Given an event `e` issued by a replica `r` `newly_observed_by(e)` returns the set of
     /// event ids `v` for which `e` is the first event issued by `r` that has `v` in its causal past.
-    fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<O>>;
+    fn newly_observed_by(&self, observer: &EventId) -> Vec<&TaggedOp<Update>>;
     /// Returns the version of the given event ID, if it exists.
     fn version(&self, event_id: &EventId) -> Option<&Version>;
     fn roots(&self) -> Option<&CausalFrontier>;
 }
 
 /// Services for retrieving the delivery order of events in an unstable state.
-pub trait IsUnstableDelivery<O>: IsUnstableCore<O> {
+pub trait IsUnstableDelivery<Update> {
     fn delivery_order(&self, event_id: &EventId) -> Option<usize>;
 }
 
 /// Service for replaying events in an unstable state.
 /// Requires the unstable state to support core, causal, and delivery services.
-pub trait CausalReplay<O>: IsUnstableCore<O> + IsUnstableCausal<O> + IsUnstableDelivery<O> {}
+pub trait CausalReplay<Update>:
+    IsUnstableCore<Update> + IsUnstableCausal<Update> + IsUnstableDelivery<Update>
+{
+}
 
-impl<O, T> CausalReplay<O> for T where
-    T: IsUnstableCore<O> + IsUnstableCausal<O> + IsUnstableDelivery<O>
+impl<Update, T> CausalReplay<Update> for T where
+    T: IsUnstableCore<Update> + IsUnstableCausal<Update> + IsUnstableDelivery<Update>
 {
 }
 
 /// Complete set of services for an unstable state implementation.
-pub trait IsUnstableState<O>: IsUnstablePrune<O> + CausalReplay<O> {}
+pub trait IsUnStable<Update>: IsUnstablePrune<Update> + CausalReplay<Update> {}
 
-impl<O, T> IsUnstableState<O> for T where T: IsUnstablePrune<O> + CausalReplay<O> {}
+impl<Update, T> IsUnStable<Update> for T where T: IsUnstablePrune<Update> + CausalReplay<Update> {}
