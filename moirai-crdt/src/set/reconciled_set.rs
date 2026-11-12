@@ -3,17 +3,11 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
-        policy::{LwwPolicy, Policy},
-        query::{Contains, QueryOperation, Read},
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled,
-            Reconciliation, ReplicatedDataType, Sequential, SequentialEval,
+    clock::causal_frontier::CausalFrontier, crdt::{
+        eval::Eval, policy::{LwwPolicy, Policy}, query::{Contains, QueryOperation, Read}, replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled, Reconciliation, ReplicatedDataType, Sequential, SequentialEval, Stabilization, Stable,
         },
-    },
-    event::tagged_op::TaggedOp,
-    state::unstable_state::IsUnstableCore,
+    }, event::{lamport::Lamport, tagged_op::TaggedOp}, state::unstable_state::IsUnstableCore,
 };
 
 use crate::{FxHashSet, set::update::SetUpdate};
@@ -49,6 +43,35 @@ where
 /// An update-consistent set
 pub struct ReconciledSet<V>(PhantomData<V>);
 
+impl<V: Debug + Clone + Eq + Hash> ReconciledSet<V> {
+
+    fn get_frontier_from_lamport(unstable: & impl IsUnstableCore<SetUpdate<V>>, watermark: Lamport) -> Option<CausalFrontier> {
+        let eligible_ids: Vec<_> = unstable.iter()
+            .filter(|op| op.lamport().val() <= watermark.val())
+            .map(|op| op.id().clone())
+            .collect();
+
+        let Some(first_id) = eligible_ids.first() else {
+            return None
+        };
+
+        let mut frontier = CausalFrontier::new(first_id.resolver().clone());
+
+        // The frontier component for each replica is its greatest eligible sequence.
+        for id in &eligible_ids {
+            let origin = id.idx();
+            let seq = id.seq();
+
+            if seq > frontier.seq_by_idx(origin) {
+                frontier.set_by_idx(origin, seq);
+            }
+        }
+
+        Some(frontier)
+    }
+
+}
+
 impl<V: Debug + Clone + Eq + Hash> ReplicatedDataType for ReconciledSet<V> {
     type Update = SetUpdate<V>;
     type Stable = SequentialSet<V>;
@@ -70,8 +93,36 @@ where
     const DISABLE_R_WHEN_NOT_R: bool = true;
 }
 
-impl<V: Debug + Clone + Eq + Hash, U> CausalStabilize<U> for ReconciledSet<V> {
-    const DISABLE_STABILIZE: bool = true;
+impl<V: Debug + Clone + Eq + Hash, U> CausalStabilize<U> for ReconciledSet<V>
+where 
+    U: IsUnstableCore<SetUpdate<V>>
+{
+
+    const DISABLE_STABILIZE: bool = false;
+
+    fn causal_stabilize(
+        frontier: &CausalFrontier,
+        stable: &Stable<Self>,
+        unstable: &U,
+    ) -> Stabilization<Stable<Self>>
+    {
+        let lamport = frontier.sum();
+
+        let new_frontier = match ReconciledSet::get_frontier_from_lamport(unstable,Lamport::new(lamport)) {
+            Some(f) => f,
+            None => return Stabilization::None
+        };
+
+        let mut new_stable = stable.clone();
+
+        for tagged_op in Sorted::<LwwPolicy>::linearize(unstable)
+            .filter(|tagged_op| new_frontier.contains(tagged_op.id()))
+        {
+            new_stable.apply(tagged_op.op());
+        }
+
+        Stabilization::Critical { frontier: new_frontier, stable: new_stable }
+    }
 }
 
 impl<V: Debug + Clone + Eq + Hash, U> CausalReset<U> for ReconciledSet<V> {}
@@ -168,9 +219,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Read},
-        replica::IsReplica,
-        state::po_log::VecLog,
+        crdt::query::{Contains, Read}, replica::IsReplica, state::{po_log::VecLog},
     };
 
     use crate::{
@@ -212,6 +261,75 @@ mod tests {
         b.receive(remove);
         assert!(!a.query(&Contains("x")));
         assert!(!b.query(&Contains("x")));
+    }
+
+    #[test]
+    fn reconciled_set_converges_after_repeated_lamport_stabilization() {
+        use moirai_protocol::{
+            crdt::query::Read,
+            replica::IsReplica,
+            state::{
+                unstable_state::IsUnstableCore,
+            },
+        };
+
+        use crate::{
+            set::{reconciled_set::ReconciledSet, update::SetUpdate},
+            utils::bootstrap::twins_log,
+        };
+
+        let (mut a, mut b) = twins_log::<VecLog<ReconciledSet<u8>>>();
+
+        let mut stable_progress_rounds_a = 0;
+        let mut stable_progress_rounds_b = 0;
+        let mut last_stable_a = 0;
+        let mut last_stable_b = 0;
+
+        for round in 0..64 {
+            let value = (round % 4) as u8;
+            let next_value = ((round + 1) % 4) as u8;
+
+            let (op_a, op_b) = match round % 4 {
+                0 => (SetUpdate::Add(value), SetUpdate::Remove(value)),
+                1 => (SetUpdate::Remove(value), SetUpdate::Add(value)),
+                2 => (SetUpdate::Add(next_value), SetUpdate::Clear),
+                _ => (SetUpdate::Clear, SetUpdate::Add(value)),
+            };
+
+            // Both operations are issued before either replica receives the other.
+            let msg_a = a.send(op_a).unwrap();
+            let msg_b = b.send(op_b).unwrap();
+
+            a.receive(msg_b);
+            b.receive(msg_a);
+
+            assert_eq!(a.delivered_count(), b.delivered_count());
+
+            let stable_a =
+                a.delivered_count() - a.state().unstable().iter().count();
+            let stable_b =
+                b.delivered_count() - b.state().unstable().iter().count();
+
+            if stable_a > last_stable_a {
+                stable_progress_rounds_a += 1;
+                last_stable_a = stable_a;
+            }
+            if stable_b > last_stable_b {
+                stable_progress_rounds_b += 1;
+                last_stable_b = stable_b;
+            }
+        }
+
+        assert!(
+            stable_progress_rounds_a >= 2,
+            "replica a did not show stable-log progress in multiple rounds"
+        );
+        assert!(
+            stable_progress_rounds_b >= 2,
+            "replica b did not show stable-log progress in multiple rounds"
+        );
+
+        assert_eq!(a.query(&Read::new()), b.query(&Read::new()));
     }
 
     #[cfg(feature = "fuzz")]
