@@ -6,7 +6,6 @@ use moirai_protocol::{
     crdt::replicated_data_type::ReplicatedDataType,
     state::{cache::CachedLog, log::IsLog, po_log::POLog},
 };
-use moirai_protocol::state::po_log_lamport::POLogLamport;
 use serde::{Deserialize, Serialize};
 
 /// A node in the footprint tree, representing a log and its children
@@ -87,16 +86,6 @@ where
 {
     fn footprint(&self) -> FootprintNode {
         FootprintNode::parent(self, vec![self.inner().footprint()])
-    }
-}
-
-impl<O, U> LogFootprint for POLogLamport<O, U>
-where
-    O: ReplicatedDataType,
-    Self: DeepSizeOf,
-{
-    fn footprint(&self) -> FootprintNode {
-        FootprintNode::leaf(self)
     }
 }
 

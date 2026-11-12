@@ -7,7 +7,7 @@ use moirai_protocol::{
         eval::Eval, policy::{LwwPolicy, Policy}, query::{Contains, QueryOperation, Read}, replicated_data_type::{
             CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled, Reconciliation, ReplicatedDataType, Sequential, SequentialEval, Stabilization, Stable,
         },
-    }, event::tagged_op::TaggedOp, state::unstable_state::IsUnstableCore,
+    }, event::{lamport::Lamport, tagged_op::TaggedOp}, state::unstable_state::IsUnstableCore,
 };
 
 use crate::{FxHashSet, set::update::SetUpdate};
@@ -43,6 +43,35 @@ where
 /// An update-consistent set
 pub struct ReconciledSet<V>(PhantomData<V>);
 
+impl<V: Debug + Clone + Eq + Hash> ReconciledSet<V> {
+
+    fn get_frontier_from_lamport(unstable: & impl IsUnstableCore<SetUpdate<V>>, watermark: Lamport) -> Option<CausalFrontier> {
+        let eligible_ids: Vec<_> = unstable.iter()
+            .filter(|op| op.lamport().val() <= watermark.val())
+            .map(|op| op.id().clone())
+            .collect();
+
+        let Some(first_id) = eligible_ids.first() else {
+            return None
+        };
+
+        let mut frontier = CausalFrontier::new(first_id.resolver().clone());
+
+        // The frontier component for each replica is its greatest eligible sequence.
+        for id in &eligible_ids {
+            let origin = id.idx();
+            let seq = id.seq();
+
+            if seq > frontier.seq_by_idx(origin) {
+                frontier.set_by_idx(origin, seq);
+            }
+        }
+
+        Some(frontier)
+    }
+
+}
+
 impl<V: Debug + Clone + Eq + Hash> ReplicatedDataType for ReconciledSet<V> {
     type Update = SetUpdate<V>;
     type Stable = SequentialSet<V>;
@@ -77,16 +106,22 @@ where
         unstable: &U,
     ) -> Stabilization<Stable<Self>>
     {
+        let lamport = frontier.sum();
+
+        let new_frontier = match ReconciledSet::get_frontier_from_lamport(unstable,Lamport::new(lamport)) {
+            Some(f) => f,
+            None => return Stabilization::None
+        };
 
         let mut new_stable = stable.clone();
 
         for tagged_op in Sorted::<LwwPolicy>::linearize(unstable)
-            .filter(|tagged_op| frontier.contains(tagged_op.id()))
+            .filter(|tagged_op| new_frontier.contains(tagged_op.id()))
         {
             new_stable.apply(tagged_op.op());
         }
 
-        Stabilization::Critical { frontier: frontier.clone(), stable: new_stable }
+        Stabilization::Critical { frontier: new_frontier, stable: new_stable }
     }
 }
 
@@ -184,7 +219,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Read}, replica::IsReplica, state::{po_log_lamport::VecLogLamport},
+        crdt::query::{Contains, Read}, replica::IsReplica, state::{po_log::VecLog},
     };
 
     use crate::{
@@ -195,7 +230,7 @@ mod tests {
 
     #[test]
     fn reconciled_set_converges_with_polog() {
-        let (mut a, mut b) = twins_log::<VecLogLamport<ReconciledSet<&str>>>();
+        let (mut a, mut b) = twins_log::<VecLog<ReconciledSet<&str>>>();
 
         // Both updates have timestamp 1. B's removal wins, even though it is
         // initially ineffective and B receives A's insertion afterwards.
@@ -234,7 +269,6 @@ mod tests {
             crdt::query::Read,
             replica::IsReplica,
             state::{
-                po_log_lamport::VecLogLamport,
                 unstable_state::IsUnstableCore,
             },
         };
@@ -244,7 +278,7 @@ mod tests {
             utils::bootstrap::twins_log,
         };
 
-        let (mut a, mut b) = twins_log::<VecLogLamport<ReconciledSet<u8>>>();
+        let (mut a, mut b) = twins_log::<VecLog<ReconciledSet<u8>>>();
 
         let mut stable_progress_rounds_a = 0;
         let mut stable_progress_rounds_b = 0;
@@ -306,11 +340,11 @@ mod tests {
             config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-        use moirai_protocol::{crdt::query::Read};
+        use moirai_protocol::{crdt::query::Read, state::po_log::VecLog};
 
         use crate::{FxHashSet, set::reconciled_set::ReconciledSet};
 
-        type Log = VecLogLamport<ReconciledSet<u8>>;
+        type Log = VecLog<ReconciledSet<u8>>;
 
         let runs = vec![RunConfig::new(
             ChurnConfig::new(0.4, 0.6),
