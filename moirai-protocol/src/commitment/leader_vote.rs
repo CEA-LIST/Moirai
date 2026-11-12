@@ -2,13 +2,12 @@ use std::{convert::Infallible, range::Range};
 
 use crate::{
     clock::causal_frontier::CausalFrontier,
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::QueryOperation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
         },
+        sequential::SequentialDataType,
     },
     event::id::EventId,
     replica::{ReplicaId, ReplicaIdx},
@@ -60,11 +59,17 @@ impl LeaderVote {
     }
 }
 
-impl Sequential for () {
+impl SequentialDataType for () {
+    type Rejection = Infallible;
+    type Update = LeaderVoteUpdate;
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
+
     fn is_default(&self) -> bool {
         true
     }
-    type Update = LeaderVoteUpdate;
 
     fn apply(&mut self, _: &Self::Update) {}
 }
@@ -146,7 +151,7 @@ impl QueryOperation for NewSupports {
     }
 }
 
-impl<U> Eval<(), U, NewSupports> for LeaderVote
+impl<U> Eval<U, NewSupports> for LeaderVote
 where
     U: IsUnstableCausal<<Self as ReplicatedDataType>::Update>
         + IsUnstableCore<<Self as ReplicatedDataType>::Update>,

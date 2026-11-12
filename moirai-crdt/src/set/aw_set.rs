@@ -7,14 +7,13 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{Contains, QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
+        sequential::SequentialDataType,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -116,7 +115,7 @@ where
     }
 }
 
-impl<V, U> Eval<Set<V>, U, Read<FxHashSet<V>>> for AWSet<V>
+impl<V, U> Eval<U, Read<FxHashSet<V>>> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
@@ -136,7 +135,7 @@ where
     }
 }
 
-impl<V, U> Eval<Set<V>, U, Contains<V>> for AWSet<V>
+impl<V, U> Eval<U, Contains<V>> for AWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
@@ -169,11 +168,12 @@ impl<V> Default for Set<V> {
     }
 }
 
-impl<V> Sequential for Set<V>
+impl<V> SequentialDataType for Set<V>
 where
     V: Clone + Eq + Hash + Debug,
 {
     type Update = SetUpdate<V>;
+    type Rejection = Infallible;
 
     fn is_default(&self) -> bool {
         self.0.is_empty()
@@ -191,6 +191,10 @@ where
                 self.0.clear();
             }
         }
+    }
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }
 
@@ -230,7 +234,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Read},
+        data_type::query::{Contains, Read},
         replica::IsReplica,
         state::po_log::VecLog,
     };

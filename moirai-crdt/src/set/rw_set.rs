@@ -7,14 +7,13 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{Contains, QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
+        sequential::SequentialDataType,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::{IsUnstableCore, IsUnstablePrune},
@@ -148,36 +147,15 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct Set<V>(FxHashSet<V>, Vec<SetUpdate<V>>);
-
-#[cfg(feature = "test_utils")]
-impl<V: DeepSizeOf + Eq + Hash> DeepSizeOf for Set<V> {
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
-    }
-}
-
-impl<V> Default for Set<V> {
-    fn default() -> Self {
-        Self(FxHashSet::default(), vec![])
-    }
-}
-
-impl<V> ReplicatedDataType for RWSet<V>
-where
-    V: Debug + Clone + Hash + Eq,
-{
-    type Stable = Set<V>;
-    type Update = SetUpdate<V>;
-    type Rejection = Infallible;
-}
+pub struct MixedSet<V>(FxHashSet<V>, Vec<SetUpdate<V>>);
 
 // TODO: maybe two hashsets is better?
-impl<V> Sequential for Set<V>
+impl<V> SequentialDataType for MixedSet<V>
 where
     V: Clone + Eq + Hash + Debug,
 {
     type Update = SetUpdate<V>;
+    type Rejection = Infallible;
 
     fn is_default(&self) -> bool {
         self.0.is_empty() && self.1.is_empty()
@@ -194,9 +172,38 @@ where
             SetUpdate::Clear => unreachable!(),
         }
     }
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
 }
 
-impl<V, U> Eval<Set<V>, U, Read<FxHashSet<V>>> for RWSet<V>
+#[cfg(feature = "test_utils")]
+impl<V> DeepSizeOf for MixedSet<V>
+where
+    V: DeepSizeOf + Eq + Hash,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
+    }
+}
+
+impl<V> Default for MixedSet<V> {
+    fn default() -> Self {
+        Self(FxHashSet::default(), vec![])
+    }
+}
+
+impl<V> ReplicatedDataType for RWSet<V>
+where
+    V: Debug + Clone + Hash + Eq,
+{
+    type Stable = MixedSet<V>;
+    type Update = SetUpdate<V>;
+    type Rejection = Infallible;
+}
+
+impl<V, U> Eval<U, Read<FxHashSet<V>>> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
@@ -233,7 +240,7 @@ where
     }
 }
 
-impl<V, U> Eval<Set<V>, U, Contains<V>> for RWSet<V>
+impl<V, U> Eval<U, Contains<V>> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
@@ -310,7 +317,7 @@ impl<V: Debug + Clone + Eq + Hash, U> Precondition<U> for RWSet<V> {
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Get, Read},
+        data_type::query::{Contains, Get, Read},
         replica::IsReplica,
         state::po_log::VecLog,
     };

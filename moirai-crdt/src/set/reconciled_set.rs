@@ -3,14 +3,14 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         policy::{LwwPolicy, Policy},
         query::{Contains, QueryOperation, Read},
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled,
-            Reconciliation, ReplicatedDataType, Sequential, SequentialEval,
+        reconciliation::{Reconciled, Reconciliation},
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
         },
+        sequential::{SequentialDataType, SequentialEval},
     },
     event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableCore,
@@ -76,7 +76,7 @@ impl<V: Debug + Clone + Eq + Hash, U> CausalStabilize<U> for ReconciledSet<V> {
 
 impl<V: Debug + Clone + Eq + Hash, U> CausalReset<U> for ReconciledSet<V> {}
 
-impl<V, U, Q> Eval<SequentialSet<V>, U, Q> for ReconciledSet<V>
+impl<V, U, Q> Eval<U, Q> for ReconciledSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
@@ -99,7 +99,11 @@ impl<V> Default for SequentialSet<V> {
     }
 }
 
-impl<V: Debug + Clone + Eq + Hash> Sequential for SequentialSet<V> {
+impl<V> SequentialDataType for SequentialSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    type Rejection = Infallible;
     type Update = SetUpdate<V>;
 
     fn apply(&mut self, update: &Self::Update) {
@@ -117,15 +121,25 @@ impl<V: Debug + Clone + Eq + Hash> Sequential for SequentialSet<V> {
     fn is_default(&self) -> bool {
         self.0.is_empty()
     }
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
 }
 
-impl<V: Debug + Clone + Eq + Hash> SequentialEval<Read<FxHashSet<V>>> for SequentialSet<V> {
+impl<V> SequentialEval<Read<FxHashSet<V>>> for SequentialSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
     fn eval(state: &Self, _: &Read<FxHashSet<V>>) -> FxHashSet<V> {
         state.0.clone()
     }
 }
 
-impl<V: Debug + Clone + Eq + Hash> SequentialEval<Contains<V>> for SequentialSet<V> {
+impl<V> SequentialEval<Contains<V>> for SequentialSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
     fn eval(state: &Self, query: &Contains<V>) -> bool {
         state.0.contains(&query.0)
     }
@@ -168,9 +182,9 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Contains, Read},
+        data_type::query::{Contains, Read},
         replica::IsReplica,
-        state::po_log::VecLog,
+        state::po_log::GraphLog,
     };
 
     use crate::{
@@ -181,7 +195,7 @@ mod tests {
 
     #[test]
     fn reconciled_set_converges_with_polog() {
-        let (mut a, mut b) = twins_log::<VecLog<ReconciledSet<&str>>>();
+        let (mut a, mut b) = twins_log::<GraphLog<ReconciledSet<&str>>>();
 
         // Both updates have timestamp 1. B's removal wins, even though it is
         // initially ineffective and B receives A's insertion afterwards.
@@ -222,7 +236,7 @@ mod tests {
             config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-        use moirai_protocol::{crdt::query::Read, state::po_log::VecLog};
+        use moirai_protocol::{data_type::query::Read, state::po_log::VecLog};
 
         use crate::{FxHashSet, set::reconciled_set::ReconciledSet};
 

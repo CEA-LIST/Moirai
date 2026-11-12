@@ -276,20 +276,20 @@ macro_rules! record {
         $($field:ident : $T:ty => $V:ty),* $(,)?
     }) => {
         $crate::paste::paste! {
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<
-                $crate::moirai_protocol::crdt::query::Read<[<$name Value>]>
+            impl $crate::moirai_protocol::data_type::eval::EvalNested<
+                $crate::moirai_protocol::data_type::query::Read<[<$name Value>]>
             > for [<$name Log>] {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
+                    _q: &$crate::moirai_protocol::data_type::query::Read<[<$name Value>]>,
                 ) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
-                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            $field: <$T as $crate::moirai_protocol::data_type::eval::EvalNested<
+                                $crate::moirai_protocol::data_type::query::Read<$V>
                             >>::execute_query(
                                 &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                                &$crate::moirai_protocol::data_type::query::Read::<$V>::new(),
                             ),
                         )*
                     }
@@ -302,31 +302,31 @@ macro_rules! record {
     }) => {
         $crate::paste::paste! {
             impl<$($value_param),*>
-                $crate::moirai_protocol::crdt::eval::EvalNested<
-                    $crate::moirai_protocol::crdt::query::Read<
+                $crate::moirai_protocol::state::log::EvalNested<
+                    $crate::moirai_protocol::data_type::query::Read<
                         [<$name Value>]<$($value_param),*>
                     >
                 > for [<$name Log>]
             where
                 $(
-                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
-                        $crate::moirai_protocol::crdt::query::Read<$V>
+                    $T: $crate::moirai_protocol::state::log::EvalNested<
+                        $crate::moirai_protocol::data_type::query::Read<$V>
                     >,
                 )*
             {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<
+                    _q: &$crate::moirai_protocol::data_type::query::Read<
                         [<$name Value>]<$($value_param),*>
                     >,
                 ) -> [<$name Value>]<$($value_param),*> {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
-                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            $field: <$T as $crate::moirai_protocol::state::log::EvalNested<
+                                $crate::moirai_protocol::data_type::query::Read<$V>
                             >>::execute_query(
                                 &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                                &$crate::moirai_protocol::data_type::query::Read::<$V>::new(),
                             ),
                         )*
                     }

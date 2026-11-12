@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use moirai_protocol::{
-    commitment::commit_log::CommitmentLog, crdt::query::QueryOperation, replica::ReplicaId,
+    commitment::commit_log::CommitmentLog, data_type::query::QueryOperation, replica::ReplicaId,
     state::log::IsLog,
 };
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ impl<L> OracleDriver<L>
 where
     L: IsLog,
 {
-    pub(crate) fn new(set_leader: fn(&mut L, &ReplicaId)) -> Self {
+    pub fn new(set_leader: fn(&mut L, &ReplicaId)) -> Self {
         Self { set_leader }
     }
 

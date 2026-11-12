@@ -63,7 +63,7 @@ pub struct Tcsb<O> {
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug,
+    O: Clone,
 {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
@@ -181,7 +181,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Clone,
 {
     /// Record a received event in the inbox and outbox if it is valid.
     fn record(&mut self, event: Event<O>) {
@@ -375,7 +375,7 @@ where
 #[cfg(feature = "test_utils")]
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Clone,
 {
     pub fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock

@@ -12,12 +12,12 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{Get, QueryOperation, Read},
-    },
+    data_type::query::{Get, QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -264,7 +264,7 @@ where
 mod tests {
     use moirai_macros::record;
     use moirai_protocol::{
-        crdt::query::{Contains, Get, Read},
+        data_type::query::{Contains, Get, Read},
         replica::IsReplica,
         state::po_log::{GraphLog, VecLog},
     };

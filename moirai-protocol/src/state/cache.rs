@@ -7,12 +7,12 @@ use castaway::cast;
 
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    data_type::query::{QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 
 pub trait IncrementalCache<O> {

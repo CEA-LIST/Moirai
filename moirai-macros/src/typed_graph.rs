@@ -516,9 +516,9 @@ macro_rules! typed_graph {
         }
 
         // Preconditions use the same query semantics as reads.
-        impl<U, P> $crate::moirai_protocol::crdt::replicated_data_type::Precondition<U> for $graph<P>
+        impl<U, P> $crate::moirai_protocol::data_type::replicated::Precondition<U> for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
             U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
         {
             fn is_enabled(
@@ -526,8 +526,8 @@ macro_rules! typed_graph {
                 unstable: &U,
                 op: &Self::Update,
             ) -> ::std::result::Result<(), Self::Rejection> {
-                use $crate::moirai_protocol::crdt::eval::Eval;
-                use $crate::moirai_protocol::crdt::query::Read;
+                use $crate::moirai_protocol::data_type::replicated::Eval;
+                use $crate::moirai_protocol::data_type::query::Read;
 
                 let graph = Self::execute_query(stable, unstable, &Read::new());
                 match op {
@@ -612,36 +612,36 @@ macro_rules! typed_graph {
             }
         }
 
-        impl<P> $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType for $graph<P>
+        impl<P> $crate::moirai_protocol::data_type::replicated::ReplicatedDataType for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
         {
             type Update = $update;
             type Stable = ::std::vec::Vec<Self::Update>;
             type Rejection = $crate::typed_graph::TypedGraphRejection;
         }
 
-        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalReset<U> for $graph<P>
+        impl<P, U> $crate::moirai_protocol::data_type::replicated::CausalReset<U> for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
         {}
 
-        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalStabilize<U> for $graph<P>
+        impl<P, U> $crate::moirai_protocol::data_type::replicated::CausalStabilize<U> for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
         {
             // TODO: find a way to enable stabilize for this CRDT
             const DISABLE_STABILIZE: ::std::primitive::bool = true;
         }
 
-        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalCompaction<U> for $graph<P>
+        impl<P, U> $crate::moirai_protocol::data_type::replicated::CausalCompaction<U> for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
             U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
         {
             fn compact_stable(
                 stable: &mut Self::Stable,
-                rdnt: $crate::moirai_protocol::crdt::redundancy::RedundancyRelation<Self::Update>,
+                rdnt: $crate::moirai_protocol::data_type::replicated::RedundancyRelation<Self::Update>,
                 new: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
             ) {
                 stable.retain(|old| !rdnt(old, None, false, new));
@@ -708,7 +708,7 @@ macro_rules! typed_graph {
                 is_conc: ::std::primitive::bool,
                 new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
             ) -> ::std::primitive::bool {
-                <Self as $crate::moirai_protocol::crdt::replicated_data_type::CausalCompaction<U>>::redundant_by_when_redundant(
+                <Self as $crate::moirai_protocol::data_type::replicated::CausalCompaction<U>>::redundant_by_when_redundant(
                     old_op,
                     old_tag,
                     is_conc,
@@ -717,21 +717,20 @@ macro_rules! typed_graph {
             }
         }
 
-        impl<P, U> $crate::moirai_protocol::crdt::eval::Eval<
-            ::std::vec::Vec<$update>,
+        impl<P, U> $crate::moirai_protocol::data_type::replicated::Eval<
             U,
-            $crate::moirai_protocol::crdt::query::Read<
+            $crate::moirai_protocol::data_type::query::Read<
                 ::petgraph::graph::DiGraph<$vertex, $edge>
             >
         > for $graph<P>
         where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
+            P: $crate::moirai_protocol::data_type::policy::Policy,
             U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
         {
             fn execute_query(
-                stable: &<Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::Stable,
+                stable: &<Self as $crate::moirai_protocol::data_type::replicated::ReplicatedDataType>::Stable,
                 unstable: &U,
-                _q: &$crate::moirai_protocol::crdt::query::Read<::petgraph::graph::DiGraph<$vertex, $edge>>,
+                _q: &$crate::moirai_protocol::data_type::query::Read<::petgraph::graph::DiGraph<$vertex, $edge>>,
             ) -> ::petgraph::graph::DiGraph<$vertex, $edge>
             {
                 let tagged_ops: ::std::vec::Vec<(
@@ -784,7 +783,7 @@ macro_rules! typed_graph {
                                         (::std::option::Option::None, ::std::option::Option::Some(_)) => true,
                                         (::std::option::Option::Some(_), ::std::option::Option::None) => false,
                                         (::std::option::Option::Some(old_tag), ::std::option::Option::Some(new_tag)) => {
-                                            <P as $crate::moirai_protocol::crdt::policy::Policy>::compare(old_tag, new_tag)
+                                            <P as $crate::moirai_protocol::data_type::policy::Policy>::compare(old_tag, new_tag)
                                                 == ::std::cmp::Ordering::Less
                                         }
                                     };
@@ -841,7 +840,7 @@ macro_rules! typed_graph {
                                 (::std::option::Option::None, ::std::option::Option::Some(_)) => ::std::cmp::Ordering::Less,
                                 (::std::option::Option::Some(_), ::std::option::Option::None) => ::std::cmp::Ordering::Greater,
                                 (::std::option::Option::Some(ta), ::std::option::Option::Some(tb)) => {
-                                    <P as $crate::moirai_protocol::crdt::policy::Policy>::compare(ta, tb)
+                                    <P as $crate::moirai_protocol::data_type::policy::Policy>::compare(ta, tb)
                                 },
                             }
                         });

@@ -15,12 +15,11 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -89,7 +88,7 @@ where
     }
 }
 
-impl<V, U> Eval<CounterStable<V>, U, Read<V>> for Counter<V>
+impl<V, U> Eval<U, Read<V>> for Counter<V>
 where
     V: CounterValue,
     U: IsUnstableCore<CounterUpdate<V>>,
@@ -245,7 +244,7 @@ impl<V: CounterValue, U> Precondition<U> for Counter<V> {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
 
     use crate::{
         counter::{Counter, update::CounterUpdate},

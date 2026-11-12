@@ -5,14 +5,13 @@ use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::generator::op_generator::OpGenerator;
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::Read,
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
+        sequential::SequentialDataType,
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
@@ -77,7 +76,7 @@ impl<U> CausalReset<U> for EWFlag {}
 
 impl<U> CausalStabilize<U> for EWFlag {}
 
-impl<U> Eval<FlagState, U, Read<bool>> for EWFlag
+impl<U> Eval<U, Read<bool>> for EWFlag
 where
     U: IsUnstableCore<FlagUpdate>,
 {
@@ -120,17 +119,25 @@ where
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FlagState(Option<bool>);
 
-impl Sequential for FlagState {
+// TODO: merge with flag_state in dw_flag.rs if possible
+impl SequentialDataType for FlagState {
     type Update = FlagUpdate;
+    type Rejection = Infallible;
+
     fn is_default(&self) -> bool {
         self.0.is_none()
     }
+
     fn apply(&mut self, update: &FlagUpdate) {
         match update {
             FlagUpdate::Enable => self.0 = Some(true),
             FlagUpdate::Disable => self.0 = Some(false),
             FlagUpdate::Clear => self.0 = None,
         }
+    }
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }
 
@@ -142,7 +149,7 @@ impl<U> Precondition<U> for EWFlag {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
 
     use crate::{
         flag::{ew_flag::EWFlag, update::FlagUpdate},

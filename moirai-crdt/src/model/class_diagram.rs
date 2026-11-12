@@ -463,7 +463,7 @@ mod tests {
     // @enduml
     use moirai_protocol::{
         broadcast::tcsb::Tcsb,
-        crdt::query::Read,
+        data_type::query::Read,
         replica::{IsReplica, Replica},
     };
 

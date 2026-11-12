@@ -6,7 +6,7 @@ use moirai_fuzz::{
 use moirai_macros::union;
 use moirai_protocol::state::po_log::{GraphLog, VecLog};
 #[cfg(feature = "fuzz")]
-use moirai_protocol::{crdt::query::Read, utils::boxer::Boxer};
+use moirai_protocol::{data_type::query::Read, utils::boxer::Boxer};
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
@@ -207,7 +207,7 @@ impl LogFootprint for JsonLog {
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
     use serde_json::{Number, Value, json};
 
     use crate::{

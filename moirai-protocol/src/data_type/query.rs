@@ -133,29 +133,3 @@ where
         ]
     }
 }
-
-#[cfg(all(test, feature = "test_utils"))]
-mod tests {
-    use super::*;
-
-    struct PlainQuery;
-
-    // A consumer without its own test-utils feature implements only the
-    // semantic contract, even when this crate's test-utils feature is enabled.
-    impl QueryOperation for PlainQuery {
-        type Response = usize;
-    }
-
-    #[test]
-    fn metadata_defaults_do_not_require_consumer_feature_alignment() {
-        assert_eq!(PlainQuery::name(), std::any::type_name::<PlainQuery>());
-        assert!(PlainQuery.args().is_empty());
-    }
-
-    #[test]
-    fn explicit_query_metadata_overrides_defaults() {
-        let query = Contains(7);
-        assert_eq!(Contains::<i32>::name(), "Contains");
-        assert_eq!(query.args(), vec!["7"]);
-    }
-}

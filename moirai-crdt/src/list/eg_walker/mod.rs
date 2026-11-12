@@ -27,13 +27,13 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{QueryOperation, Read},
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Reset, Sequential, Stabilization,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
+            Reset, Stabilization,
         },
+        sequential::SequentialDataType,
     },
     state::{
         cache::IncrementalCache,
@@ -139,11 +139,12 @@ impl<V> std::ops::Deref for StableList<V> {
     }
 }
 
-impl<V> Sequential for StableList<V>
+impl<V> SequentialDataType for StableList<V>
 where
     V: Debug + Clone,
 {
     type Update = ListUpdate<V>;
+    type Rejection = ListRejection;
 
     fn is_default(&self) -> bool {
         self.0.is_empty()
@@ -151,6 +152,44 @@ where
 
     fn apply(&mut self, update: &Self::Update) {
         update.clone().apply_sequential(&mut self.0);
+    }
+
+    fn is_enabled(&self, update: &Self::Update) -> Result<(), Self::Rejection> {
+        match update {
+            ListUpdate::Insert { pos, .. } => {
+                if *pos > self.0.len() {
+                    return Err(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: self.0.len(),
+                    });
+                }
+            }
+            ListUpdate::Delete { pos } => {
+                if *pos >= self.0.len() {
+                    return Err(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: self.0.len(),
+                    });
+                }
+            }
+            ListUpdate::DeleteRange { start, len } => {
+                if *start + *len > self.0.len() {
+                    return Err(ListRejection::OutOfBounds {
+                        pos: *start + *len,
+                        len: self.0.len(),
+                    });
+                }
+            }
+            ListUpdate::Update { pos, .. } => {
+                if *pos >= self.0.len() {
+                    return Err(ListRejection::OutOfBounds {
+                        pos: *pos,
+                        len: self.0.len(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -205,7 +244,7 @@ where
     }
 }
 
-impl<V, U> Eval<StableList<V>, U, Read<Vec<V>>> for List<V>
+impl<V, U> Eval<U, Read<Vec<V>>> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<ListUpdate<V>>,
@@ -220,7 +259,7 @@ where
 }
 
 /// Convenience read for character lists.
-impl<U> Eval<StableList<char>, U, Read<String>> for List<char>
+impl<U> Eval<U, Read<String>> for List<char>
 where
     U: CausalReplay<ListUpdate<char>>,
 {
@@ -272,7 +311,7 @@ impl<V> QueryOperation for ReadAt<V> {
     }
 }
 
-impl<V, U> Eval<StableList<V>, U, ReadAt<Vec<V>>> for List<V>
+impl<V, U> Eval<U, ReadAt<Vec<V>>> for List<V>
 where
     V: Debug + Clone,
     U: CausalReplay<ListUpdate<V>>,

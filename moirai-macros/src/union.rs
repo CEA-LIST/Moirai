@@ -404,10 +404,10 @@ macro_rules! union {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>> for [<$union Log>] {
+            impl $crate::moirai_protocol::state::log::EvalNested<$crate::moirai_protocol::data_type::query::Read<[<$union Value>]>> for [<$union Log>] {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>,
+                    _q: &$crate::moirai_protocol::data_type::query::Read<[<$union Value>]>,
                 ) -> [<$union Value>] {
                     match &self.child {
                         [<$union Container>]::Unset => [<$union Value>]::Unset,
@@ -415,9 +415,9 @@ macro_rules! union {
                             match child.as_ref() {
                                 $(
                                     [<$union Child>]::$variant(log) => {
-                                        let value = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                        let value = $crate::moirai_protocol::state::log::EvalNested::execute_query(
                                             log,
-                                            &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
+                                            &$crate::moirai_protocol::data_type::query::Read::<$value>::new(),
                                         );
                                         [<$union Value>]::Value(::std::boxed::Box::new([<$union ChildValue>]::$variant(value)))
                                     }
@@ -430,9 +430,9 @@ macro_rules! union {
                                 let value = match child {
                                     $(
                                         [<$union Child>]::$variant(log) => {
-                                            let v = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                            let v = $crate::moirai_protocol::state::log::EvalNested::execute_query(
                                                 log,
-                                                &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
+                                                &$crate::moirai_protocol::data_type::query::Read::<$value>::new(),
                                             );
                                             [<$union ChildValue>]::$variant(v)
                                         }

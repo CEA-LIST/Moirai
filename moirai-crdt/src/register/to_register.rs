@@ -7,12 +7,11 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -86,7 +85,7 @@ impl<V, U> CausalStabilize<U> for TORegister<V> where V: Debug + PartialOrd + Or
 
 impl<V, U> CausalReset<U> for TORegister<V> where V: Debug + PartialOrd + Ord + Clone {}
 
-impl<V, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<Option<V>>> for TORegister<V>
+impl<V, U> Eval<U, Read<Option<V>>> for TORegister<V>
 where
     V: Debug + PartialOrd + Ord + Clone,
     U: IsUnstableCore<<Self as ReplicatedDataType>::Update>,
@@ -141,7 +140,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
 
     use crate::{
         register::{to_register::TORegister, update::RegisterUpdate},

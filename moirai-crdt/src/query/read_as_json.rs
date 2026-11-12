@@ -1,6 +1,6 @@
-use moirai_protocol::crdt::{
-    eval::EvalNested,
-    query::{QueryOperation, Read},
+use moirai_protocol::{
+    data_type::query::{QueryOperation, Read},
+    state::log::EvalNested,
 };
 use serde_json::{Map, Number, Value};
 

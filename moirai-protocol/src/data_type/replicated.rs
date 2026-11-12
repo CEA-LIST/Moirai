@@ -1,17 +1,29 @@
-use std::{
-    convert::Infallible,
-    fmt::{Debug, Display},
-    marker::PhantomData,
-};
-
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{eval::Eval, query::QueryOperation, redundancy::RedundancyRelation},
+    data_type::{query::QueryOperation, sequential::SequentialDataType},
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::{IsUnstableCore, IsUnstablePrune},
 };
 
-pub trait Precondition<U>: ReplicatedDataType {
+pub trait ReplicatedDataType: Sized {
+    type Update: Clone;
+    type Stable: SequentialDataType<Update = Self::Update>;
+    type Rejection;
+
+    // TODO: is it really useful?
+    fn eval<Q, U>(stable: &Stable<Self>, unstable: &U, query: &Q) -> Q::Response
+    where
+        Q: QueryOperation,
+        Self: Eval<U, Q>,
+    {
+        Self::execute_query(stable, unstable, query)
+    }
+}
+
+pub trait Precondition<U>
+where
+    Self: ReplicatedDataType,
+{
     fn is_enabled(
         stable: &Stable<Self>,
         unstable: &U,
@@ -19,71 +31,19 @@ pub trait Precondition<U>: ReplicatedDataType {
     ) -> Result<(), Self::Rejection>;
 }
 
-pub trait ReplicatedDataType: Sized {
-    type Update: Clone + Debug;
-    type Stable: Sequential<Update = Self::Update>;
-    type Rejection: Debug + Display;
-
-    // TODO: is it really useful?
-    fn eval<Q, U>(stable: &Stable<Self>, unstable: &U, query: &Q) -> Q::Response
-    where
-        Q: QueryOperation,
-        Self: Eval<Stable<Self>, U, Q>,
-    {
-        Self::execute_query(stable, unstable, query)
-    }
+pub trait Eval<U, Q>
+where
+    Q: QueryOperation,
+    Self: ReplicatedDataType,
+{
+    fn execute_query(
+        stable: &<Self as ReplicatedDataType>::Stable,
+        unstable: &U,
+        q: &Q,
+    ) -> Q::Response;
 }
 
 pub type Stable<R> = <R as ReplicatedDataType>::Stable;
-
-/// Sequential behavior implemented directly by the stored state.
-pub trait Sequential: Default {
-    type Update: Clone + Debug;
-
-    fn apply(&mut self, update: &Self::Update);
-
-    /// Whether the state contains no retained contribution.
-    fn is_default(&self) -> bool;
-}
-
-pub trait SequentialEval<Q>
-where
-    Self: Sequential,
-    Q: QueryOperation,
-{
-    fn eval(state: &Self, query: &Q) -> Q::Response;
-}
-
-pub struct Reconciled<S, R>(PhantomData<fn() -> (S, R)>);
-
-pub trait Reconciliation<O, U> {
-    fn linearize<'a>(log: &'a U) -> impl Iterator<Item = &'a TaggedOp<O>>
-    where
-        O: 'a;
-}
-
-impl<S: Sequential, R> Reconciled<S, R> {
-    pub fn fold<U>(stable: &S, unstable: &U) -> S
-    where
-        S: Clone,
-        R: Reconciliation<S::Update, U>,
-    {
-        let mut state = stable.clone();
-        for event in R::linearize(unstable) {
-            S::apply(&mut state, event.op());
-        }
-        state
-    }
-}
-
-impl<S, R> ReplicatedDataType for Reconciled<S, R>
-where
-    S: Sequential,
-{
-    type Update = S::Update;
-    type Stable = S;
-    type Rejection = Infallible;
-}
 
 pub trait CausalCompaction<U>
 where
@@ -129,6 +89,13 @@ where
     ) {
     }
 }
+
+pub type RedundancyRelation<O> = fn(
+    _old_op: &O,
+    _old_event_id: Option<&Tag>,
+    is_conc: bool,
+    new_tagged_op: &TaggedOp<O>,
+) -> bool;
 
 /// How a CRDT folds causally stable history into its stable state.
 pub enum Stabilization<S> {

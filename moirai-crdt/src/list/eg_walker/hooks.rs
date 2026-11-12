@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::replicated_data_type::{Reset, Stabilization},
+    data_type::replicated::{Reset, Stabilization},
     state::unstable_state::CausalReplay,
 };
 

@@ -12,12 +12,12 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    data_type::query::{QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -57,7 +57,9 @@ where
 impl<V, E, Vl, El> Display for LabelledGraphRejection<V, E, Vl, El>
 where
     Vl: IsLog,
+    Vl::Rejection: Display,
     El: IsLog,
+    El::Rejection: Display,
     V: Debug,
     E: Debug,
 {
@@ -438,7 +440,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     use moirai_fuzz::config::Predicate;
     use moirai_protocol::{
-        crdt::{policy::LwwPolicy, query::Read},
+        data_type::{policy::LwwPolicy, query::Read},
         replica::IsReplica,
         state::po_log::VecLog,
     };

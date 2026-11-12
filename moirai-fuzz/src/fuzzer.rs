@@ -3,8 +3,8 @@ use std::{fmt::Debug, time::Duration};
 use deepsize::DeepSizeOf;
 use log::debug;
 use moirai_protocol::{
-    crdt::{eval::EvalNested, query::QueryOperation},
-    state::log::IsLog,
+    data_type::query::QueryOperation,
+    state::log::{EvalNested, IsLog},
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +30,8 @@ use crate::{
 pub fn fuzzer<L, Q>(config: FuzzerConfig<L, Q>) -> ExecutionReport
 where
     L: IsLog + CommandGenerator + EvalNested<Q> + DeepSizeOf + LogFootprint,
-    L::Update: DeepSizeOf,
+    L::Update: DeepSizeOf + Debug,
+    L::Rejection: Debug,
     Q: QueryOperation,
     <Q as QueryOperation>::Response: Debug,
 {

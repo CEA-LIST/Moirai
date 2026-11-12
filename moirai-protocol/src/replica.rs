@@ -11,9 +11,13 @@ use crate::{
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::IsTcsb,
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+        sink::SinkCollector,
+    },
 };
 
 /// Replica identifier
@@ -156,7 +160,7 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     pub fn bootstrap<M>(id: ReplicaId, members: &[M]) -> Self
     where

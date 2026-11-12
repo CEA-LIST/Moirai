@@ -1,5 +1,5 @@
 use moirai_protocol::{
-    crdt::replicated_data_type::{ReplicatedDataType, Stable},
+    data_type::replicated::{ReplicatedDataType, Stable},
     state::unstable_state::IsUnstableCore,
 };
 use rand::Rng;

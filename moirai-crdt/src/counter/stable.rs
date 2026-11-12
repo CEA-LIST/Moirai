@@ -1,6 +1,8 @@
+use std::convert::Infallible;
+
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-use moirai_protocol::crdt::replicated_data_type::Sequential;
+use moirai_protocol::data_type::sequential::SequentialDataType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +32,12 @@ impl<V: CounterValue> CounterStable<V> {
     }
 }
 
-impl<V> Sequential for CounterStable<V>
+impl<V> SequentialDataType for CounterStable<V>
 where
     V: CounterValue,
 {
     type Update = CounterUpdate<V>;
+    type Rejection = Infallible;
 
     fn is_default(&self) -> bool {
         V::value(&self.0) == V::default()
@@ -46,6 +49,10 @@ where
             Self::Update::Dec(v) => V::decrement(&mut self.0, *v),
             Self::Update::Reset => unreachable!(),
         }
+    }
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }
 

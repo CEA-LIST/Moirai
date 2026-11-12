@@ -7,9 +7,9 @@ use moirai_protocol::{
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::{IsTcsb, Tcsb},
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     replica::{IsReplica, Replica, ReplicaId},
-    state::log::IsLog,
+    state::log::{EvalNested, IsLog},
 };
 
 use crate::{
@@ -38,7 +38,7 @@ where
 impl<L> IsReplica<LogObserver<L>> for ReplicaObserver<LogObserver<L>>
 where
     L: IsLog + DeepSizeOf + LogFootprint,
-    L::Update: DeepSizeOf,
+    L::Update: DeepSizeOf + Debug,
 {
     type Command = L::Command;
     type Payload = L::Update;
@@ -138,6 +138,7 @@ where
 impl<L> ReplicaObserver<LogObserver<L>>
 where
     L: IsLog + LogFootprint,
+    L::Update: Debug,
 {
     pub fn bootstrap<M>(
         id: ReplicaId,
@@ -237,7 +238,7 @@ where
 impl<L> ReplicaObserver<LogObserver<L>>
 where
     L: IsLog + DeepSizeOf + LogFootprint,
-    L::Update: DeepSizeOf,
+    L::Update: DeepSizeOf + Debug,
 {
     pub fn record_terminal_sizes(&mut self) {
         if self.replica_size_recorder.config.is_some() {

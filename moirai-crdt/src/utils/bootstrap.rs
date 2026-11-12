@@ -1,6 +1,6 @@
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
-    crdt::replicated_data_type::ReplicatedDataType,
+    data_type::replicated::ReplicatedDataType,
     replica::Replica,
     state::{log::IsLog, po_log::VecLog},
 };

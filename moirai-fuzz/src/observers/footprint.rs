@@ -3,7 +3,7 @@ use std::{any::type_name, fmt::Display};
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
-    crdt::replicated_data_type::ReplicatedDataType,
+    data_type::replicated::ReplicatedDataType,
     state::{cache::CachedLog, log::IsLog, po_log::POLog},
 };
 use serde::{Deserialize, Serialize};

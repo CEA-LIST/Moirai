@@ -55,9 +55,9 @@ mod tests {
     use moirai_fuzz::generator::op_generator::OpGenerator;
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
-    use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableCore};
+    use moirai_protocol::{data_type::policy::Policy, state::unstable_state::IsUnstableCore};
     use moirai_protocol::{
-        crdt::{policy::LwwPolicy, query::Read},
+        data_type::{policy::LwwPolicy, query::Read, replicated::Eval},
         replica::IsReplica,
         state::{object_path::ObjectPath, po_log::VecLog},
     };
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn update_type_is_shared_across_policies() {
-        use moirai_protocol::crdt::policy::FairPolicy;
+        use moirai_protocol::data_type::policy::FairPolicy;
 
         assert_eq!(size_of::<MyTypedGraph<LwwPolicy>>(), 0);
         assert_eq!(size_of::<MyTypedGraph<FairPolicy>>(), 0);
@@ -760,7 +760,7 @@ mod tests {
             stable: &Self::Stable,
             unstable: &U,
         ) -> Self::Update {
-            use moirai_protocol::crdt::{eval::Eval, query::Read};
+            use moirai_protocol::data_type::query::Read;
             use rand::{
                 distr::{Distribution, weighted::WeightedIndex},
                 seq::IndexedRandom,

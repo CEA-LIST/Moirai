@@ -1,8 +1,11 @@
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 
 use crate::{
@@ -107,7 +110,7 @@ impl<L: IsLog + LogFootprint> IsLog for LogObserver<L> {
             self.inner.stabilize(frontier);
         }
 
-        self.record_size(DeliveryPhase::Effect);
+        self.record_size(DeliveryPhase::Stability);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Update {

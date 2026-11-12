@@ -138,7 +138,7 @@ mod tests {
 
     use crate::{
         broadcast::internalizer::Interner,
-        crdt::policy::FairTag,
+        data_type::policy::FairTag,
         event::{id::EventId, lamport::Lamport, tag::Tag},
         replica::{ReplicaId, ReplicaIdx},
     };

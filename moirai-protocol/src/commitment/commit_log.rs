@@ -7,11 +7,11 @@ use crate::{
         oracle::{IsOracle, Omega},
         protocol::CommitmentProtocol,
     },
-    crdt::{eval::EvalNested, query::QueryOperation, replicated_data_type::ReplicatedDataType},
+    data_type::{query::QueryOperation, replicated::ReplicatedDataType},
     event::Event,
     state::{
         effect_context::EffectContext,
-        log::IsLog,
+        log::{EvalNested, IsLog},
         po_log::POLog,
         unstable_state::{IsUnstableCausal, event_history::EventHistory},
     },

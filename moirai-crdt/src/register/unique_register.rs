@@ -5,13 +5,12 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         policy::{FairPolicy, LwwPolicy, Policy},
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -106,7 +105,7 @@ where
 {
 }
 
-impl<V, P, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<Option<V>>> for Register<V, P>
+impl<V, P, U> Eval<U, Read<Option<V>>> for Register<V, P>
 where
     V: Debug + Clone,
     P: Policy,
@@ -164,7 +163,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::{
+        data_type::{
             policy::{FairPolicy, LwwPolicy},
             query::Read,
         },

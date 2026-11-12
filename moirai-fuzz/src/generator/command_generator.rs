@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use moirai_protocol::{
     commitment::commit_log::CommitmentLog,
-    crdt::replicated_data_type::{
+    data_type::replicated::{
         CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
     },
     state::{

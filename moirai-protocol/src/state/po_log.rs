@@ -6,20 +6,19 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::{Eval, EvalNested},
+    data_type::{
         query::QueryOperation,
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Reset, Sequential, Stabilization, Stable,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType, Reset, Stabilization, Stable,
         },
+        sequential::SequentialDataType,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
         effect_context::EffectContext,
         event_graph::EventGraph,
-        log::IsLog,
+        log::{EvalNested, IsLog},
         unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
@@ -240,7 +239,7 @@ where
 impl<Q, R, U> EvalNested<Q> for POLog<R, U>
 where
     Q: QueryOperation,
-    R: ReplicatedDataType + Eval<Stable<R>, U, Q>,
+    R: ReplicatedDataType + Eval<U, Q>,
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         R::execute_query(&self.stable, &self.unstable, q)
