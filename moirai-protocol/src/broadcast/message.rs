@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -62,13 +62,13 @@ pub enum Payload<P> {
 }
 
 impl<P, K> Message<P, K> {
-    pub fn resolver(&self) -> &Resolver {
+    pub const fn resolver(&self) -> &Resolver {
         &self.resolver
     }
 }
 
 impl<P> Message<P> {
-    pub fn new(payload: Payload<P>, resolver: Resolver) -> Self {
+    pub const fn new(payload: Payload<P>, resolver: Resolver) -> Self {
         Self {
             payload,
             resolver,
@@ -76,13 +76,13 @@ impl<P> Message<P> {
         }
     }
 
-    pub fn payload(&self) -> &Payload<P> {
+    pub const fn payload(&self) -> &Payload<P> {
         &self.payload
     }
 }
 
 impl<P> Message<P, kind::Event> {
-    pub fn new(event: Event<P>, resolver: Resolver) -> Self {
+    pub const fn new(event: Event<P>, resolver: Resolver) -> Self {
         Self {
             payload: Payload::Event(event),
             resolver,
@@ -99,7 +99,7 @@ impl<P> Message<P, kind::Event> {
 }
 
 impl<P> Message<P, kind::Batch> {
-    pub fn new(batch: Batch<P>, resolver: Resolver) -> Self {
+    pub const fn new(batch: Batch<P>, resolver: Resolver) -> Self {
         Self {
             payload: Payload::Batch(batch),
             resolver,
@@ -130,7 +130,7 @@ impl<P> Message<P, kind::Batch> {
 }
 
 impl<P> Message<P, kind::Since> {
-    pub fn new(since: Since, resolver: Resolver) -> Self {
+    pub const fn new(since: Since, resolver: Resolver) -> Self {
         Self {
             payload: Payload::Since(since),
             resolver,

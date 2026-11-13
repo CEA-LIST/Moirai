@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -28,7 +28,7 @@ use crate::{
     observers::footprint::FootprintNode,
 };
 
-fn should_record(sampling: &CallSampling, counter: usize) -> bool {
+const fn should_record(sampling: &CallSampling, counter: usize) -> bool {
     match sampling {
         CallSampling::All => true,
         CallSampling::Every { interval } => counter.is_multiple_of(interval.get()),
@@ -82,7 +82,7 @@ macro_rules! time_recorder {
         }
 
         impl $name {
-            pub fn new(config: Option<CallSampling>) -> Self {
+            pub const fn new(config: Option<CallSampling>) -> Self {
                 Self {
                     config,
                     time: Vec::new(),

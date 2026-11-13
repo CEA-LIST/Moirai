@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -204,7 +204,7 @@ pub fn display_run_results(run_number: usize, results: &RunReport) -> Vec<Table>
     tables
 }
 
-fn has_displayable_metrics(stats: &crate::fuzzer::ReplicaStats) -> bool {
+const fn has_displayable_metrics(stats: &crate::fuzzer::ReplicaStats) -> bool {
     stats.stability_progress_count.is_some()
         || stats.avg_events_between_stability.is_some()
         || stats.commitment_progress_count.is_some()
@@ -600,10 +600,10 @@ impl FootprintFormatter {
 }
 
 fn format_footprint_bytes(bytes: u128) -> String {
-    match u64::try_from(bytes) {
-        Ok(bytes) => Byte::from(bytes).to_string(),
-        Err(_) => format!("{} B", group_decimal_digits(&bytes.to_string())),
-    }
+    u64::try_from(bytes).map_or_else(
+        |_| format!("{} B", group_decimal_digits(&bytes.to_string())),
+        |bytes| Byte::from(bytes).to_string(),
+    )
 }
 
 fn format_footprint_label(node: &FootprintNode) -> String {

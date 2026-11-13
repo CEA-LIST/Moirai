@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -136,22 +136,22 @@ where
         }
     }
 
-    pub fn with_oracle_driver(mut self, driver: OracleDriver<L>) -> Self {
+    pub const fn with_oracle_driver(mut self, driver: OracleDriver<L>) -> Self {
         self.oracle_driver = Some(driver);
         self
     }
 
-    pub fn without_final_merge(mut self) -> Self {
+    pub const fn without_final_merge(mut self) -> Self {
         self.final_merge = false;
         self
     }
 
-    pub fn save(mut self, config: SaveMode) -> Self {
+    pub const fn save(mut self, config: SaveMode) -> Self {
         self.save = Some(config);
         self
     }
 
-    pub fn without_display(mut self) -> Self {
+    pub const fn without_display(mut self) -> Self {
         self.display = false;
         self
     }
@@ -197,7 +197,7 @@ impl Probability {
         }
     }
 
-    pub fn val(&self) -> f64 {
+    pub const fn val(&self) -> f64 {
         self.0
     }
 }
@@ -211,7 +211,7 @@ pub enum CallSampling {
 }
 
 impl CallSampling {
-    pub fn is_exhaustive(&self) -> bool {
+    pub const fn is_exhaustive(&self) -> bool {
         match self {
             Self::All => true,
             Self::Every { interval } => interval.get() == 1,
@@ -236,25 +236,25 @@ pub struct MetricsSampling {
 }
 
 impl MetricsSampling {
-    pub fn new(calls: CallSampling, replicas: ReplicaSampling) -> Self {
+    pub const fn new(calls: CallSampling, replicas: ReplicaSampling) -> Self {
         Self { calls, replicas }
     }
 
-    pub fn all() -> Self {
+    pub const fn all() -> Self {
         Self {
             calls: CallSampling::All,
             replicas: ReplicaSampling::All,
         }
     }
 
-    pub fn every_call(interval: NonZeroUsize) -> Self {
+    pub const fn every_call(interval: NonZeroUsize) -> Self {
         Self {
             calls: CallSampling::Every { interval },
             replicas: ReplicaSampling::All,
         }
     }
 
-    pub fn every_replica(count: NonZeroUsize) -> Self {
+    pub const fn every_replica(count: NonZeroUsize) -> Self {
         Self {
             calls: CallSampling::All,
             replicas: ReplicaSampling::Count(count),
@@ -357,17 +357,17 @@ impl RunConfig {
         }
     }
 
-    pub fn with_execution_graph(mut self) -> Self {
+    pub const fn with_execution_graph(mut self) -> Self {
         self.execution_graph = true;
         self
     }
 
-    pub fn with_log_stabilization(mut self) -> Self {
+    pub const fn with_log_stabilization(mut self) -> Self {
         self.disable_log_stabilization = false;
         self
     }
 
-    pub fn without_log_stabilization(mut self) -> Self {
+    pub const fn without_log_stabilization(mut self) -> Self {
         self.disable_log_stabilization = true;
         self
     }

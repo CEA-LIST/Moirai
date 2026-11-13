@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -392,11 +392,11 @@ impl<O> Tcsb<O>
 where
     O: Clone,
 {
-    pub fn matrix_clock(&self) -> &MatrixClock {
+    pub const fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
     }
 
-    pub fn last_stable_version(&self) -> &CausalFrontier {
+    pub const fn last_stable_version(&self) -> &CausalFrontier {
         &self.last_stable_version
     }
 
@@ -433,7 +433,7 @@ where
             .sum()
     }
 
-    pub fn interner(&self) -> &Interner {
+    pub const fn interner(&self) -> &Interner {
         &self.interner
     }
 }

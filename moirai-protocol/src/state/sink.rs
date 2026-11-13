@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -32,11 +32,11 @@ pub struct Sink {
 }
 
 impl Sink {
-    pub fn new(object_path: ObjectPath, effect: SinkEffect) -> Self {
+    pub const fn new(object_path: ObjectPath, effect: SinkEffect) -> Self {
         Self::new_with_kind(object_path, effect, None)
     }
 
-    pub fn new_with_kind(
+    pub const fn new_with_kind(
         object_path: ObjectPath,
         effect: SinkEffect,
         kind: Option<&'static str>,
@@ -48,35 +48,35 @@ impl Sink {
         }
     }
 
-    pub fn create(object_path: ObjectPath) -> Self {
+    pub const fn create(object_path: ObjectPath) -> Self {
         Self::new(object_path, SinkEffect::Create)
     }
 
-    pub fn create_typed(object_path: ObjectPath, kind: &'static str) -> Self {
+    pub const fn create_typed(object_path: ObjectPath, kind: &'static str) -> Self {
         Self::new_with_kind(object_path, SinkEffect::Create, Some(kind))
     }
 
-    pub fn delete(object_path: ObjectPath) -> Self {
+    pub const fn delete(object_path: ObjectPath) -> Self {
         Self::new(object_path, SinkEffect::Delete)
     }
 
-    pub fn update(object_path: ObjectPath) -> Self {
+    pub const fn update(object_path: ObjectPath) -> Self {
         Self::new(object_path, SinkEffect::Update)
     }
 
-    pub fn update_typed(object_path: ObjectPath, kind: &'static str) -> Self {
+    pub const fn update_typed(object_path: ObjectPath, kind: &'static str) -> Self {
         Self::new_with_kind(object_path, SinkEffect::Update, Some(kind))
     }
 
-    pub fn path(&self) -> &ObjectPath {
+    pub const fn path(&self) -> &ObjectPath {
         &self.object_path
     }
 
-    pub fn effect(&self) -> &SinkEffect {
+    pub const fn effect(&self) -> &SinkEffect {
         &self.effect
     }
 
-    pub fn kind(&self) -> Option<&'static str> {
+    pub const fn kind(&self) -> Option<&'static str> {
         self.kind
     }
 }
@@ -114,7 +114,7 @@ impl Default for SinkCollector {
 }
 
 impl SinkCollector {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { sinks: Vec::new() }
     }
 

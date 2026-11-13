@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -291,7 +291,7 @@ macro_rules! record {
         $($field:ident : $T:ty => $V:ty),* $(,)?
     }) => {
         $crate::paste::paste! {
-            impl $crate::moirai_protocol::data_type::eval::EvalNested<
+            impl $crate::moirai_protocol::state::log::EvalNested<
                 $crate::moirai_protocol::data_type::query::Read<[<$name Value>]>
             > for [<$name Log>] {
                 fn execute_query(
@@ -300,7 +300,7 @@ macro_rules! record {
                 ) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::data_type::eval::EvalNested<
+                            $field: <$T as $crate::moirai_protocol::state::log::EvalNested<
                                 $crate::moirai_protocol::data_type::query::Read<$V>
                             >>::execute_query(
                                 &self.$field,

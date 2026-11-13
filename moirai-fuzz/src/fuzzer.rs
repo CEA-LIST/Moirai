@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -218,7 +218,7 @@ pub struct ReplicaStats {
 }
 
 impl ReplicaStats {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             response_sample_count: None,
             effect_sample_count: None,
@@ -294,7 +294,7 @@ impl ReplicaStats {
         stats
     }
 
-    pub fn stability_progress_count(&mut self, stability_recorder: &StabilityRecorder) {
+    pub const fn stability_progress_count(&mut self, stability_recorder: &StabilityRecorder) {
         if stability_recorder.enabled {
             self.stability_progress_count = Some(stability_recorder.progress.len());
         }
@@ -461,7 +461,7 @@ impl ReplicaStats {
         }
     }
 
-    pub fn final_replica_size(&mut self, replica_size_recorder: &ReplicaSizeRecorder) {
+    pub const fn final_replica_size(&mut self, replica_size_recorder: &ReplicaSizeRecorder) {
         if replica_size_recorder.config.is_some() {
             self.final_replica_size = replica_size_recorder.final_size;
         }
@@ -537,7 +537,7 @@ impl RunStats {
     /// No cross-replica aggregation exists unless a time metric has samples
     /// from at least two replicas. Keep these stats available in memory, but
     /// omit redundant single-replica (or empty) summaries from presentation.
-    pub fn is_redundant(&self) -> bool {
+    pub const fn is_redundant(&self) -> bool {
         self.response_replica_count <= 1 && self.effect_replica_count <= 1
     }
 
@@ -600,7 +600,7 @@ impl RunStats {
     }
 }
 
-fn average_duration(total: Duration, sample_count: usize) -> Option<Duration> {
+const fn average_duration(total: Duration, sample_count: usize) -> Option<Duration> {
     if sample_count == 0 {
         return None;
     }
@@ -657,16 +657,16 @@ where
         .map(ReplicaStats::from_recorders)
         .collect();
 
-    let (execution_graph_dot, inter_replica_concurrency_ratio, avg_concurrent_updates) =
-        if let Some(mut graph) = capture.execution_graph.take() {
+    let (execution_graph_dot, inter_replica_concurrency_ratio, avg_concurrent_updates) = capture
+        .execution_graph
+        .take()
+        .map_or((None, None, None), |mut graph| {
             let ratio = graph.inter_replica_concurrency_ratio().clamp(0.0, 1.0);
             let avg_concurrent_updates = graph.avg_concurrent_updates();
             graph.reduce(display);
             let dot = clean_dot_output(&graph.to_dot());
             (Some(dot), Some(ratio), avg_concurrent_updates)
-        } else {
-            (None, None, None)
-        };
+        });
 
     let mut config = capture.config;
     config.seed = Some(capture.seed);
@@ -690,7 +690,7 @@ pub struct ExecutionSummary {
     pub total_runs: usize,
 }
 
-fn execution_summary(run_results_list: &[RunRecord]) -> Option<ExecutionSummary> {
+const fn execution_summary(run_results_list: &[RunRecord]) -> Option<ExecutionSummary> {
     if run_results_list.len() < 2 {
         return None;
     }

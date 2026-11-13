@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -196,10 +196,10 @@ where
 
     fn is_critical(&self, frontier: &CausalFrontier) -> bool {
         // The existing checkpoint, or the initial empty cut, is already critical.
-        let at_base = match &self.roots {
-            Some(base) => base.partial_cmp(frontier) == Some(Ordering::Equal),
-            None => frontier.iter().all(|(_, seq)| seq == 0),
-        };
+        let at_base = self.roots.as_ref().map_or_else(
+            || frontier.iter().all(|(_, seq)| seq == 0),
+            |base| base.partial_cmp(frontier) == Some(Ordering::Equal),
+        );
 
         at_base
             || self
@@ -209,14 +209,12 @@ where
 
     fn direct_predecessors(&self, event_id: &EventId) -> Vec<EventId> {
         let maybe_idx = self.map.get_by_right(event_id);
-        if let Some(idx) = maybe_idx {
+        maybe_idx.map_or_else(Vec::new, |idx| {
             self.graph
                 .neighbors_directed(*idx, Direction::Outgoing)
                 .filter_map(|nx| self.map.get_by_left(&nx).cloned())
                 .collect()
-        } else {
-            vec![]
-        }
+        })
     }
 
     fn frontier(&self) -> Vec<TaggedOp<O>> {
@@ -456,11 +454,11 @@ where
         (parents, past_count)
     }
 
-    pub fn graph(&self) -> &StableDiGraph<TaggedOp<O>, ()> {
+    pub const fn graph(&self) -> &StableDiGraph<TaggedOp<O>, ()> {
         &self.graph
     }
 
-    pub fn heads(&self) -> &FxHashSet<EventId> {
+    pub const fn heads(&self) -> &FxHashSet<EventId> {
         &self.heads
     }
 
@@ -550,7 +548,7 @@ where
 struct Cutter(BTreeMap<ReplicaIdx, BTreeMap<Seq, (NodeIndex, NodeIndex)>>);
 
 impl Cutter {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(BTreeMap::new())
     }
 

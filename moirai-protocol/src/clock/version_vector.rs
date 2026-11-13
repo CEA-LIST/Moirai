@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -188,7 +188,7 @@ impl Version {
         self.resolver.is_empty()
     }
 
-    pub fn origin_idx(&self) -> ReplicaIdx {
+    pub const fn origin_idx(&self) -> ReplicaIdx {
         self.origin_idx
     }
 
@@ -200,7 +200,7 @@ impl Version {
         self.seq_by_idx(self.origin_idx)
     }
 
-    pub fn resolver(&self) -> &Resolver {
+    pub const fn resolver(&self) -> &Resolver {
         &self.resolver
     }
 
@@ -210,7 +210,7 @@ impl Version {
         origin_idx: ReplicaIdx,
         values: &[usize],
     ) -> Self {
-        let mut v = Version::new(origin_idx, resolver);
+        let mut v = Self::new(origin_idx, resolver);
         for (idx, val) in values.iter().enumerate() {
             v.set_by_idx(ReplicaIdx(idx), *val);
         }
@@ -220,10 +220,13 @@ impl Version {
 
 impl From<&Version> for EventId {
     fn from(version: &Version) -> Self {
-        if version.origin_seq() == 0 {
-            panic!("Version {} has an origin sequence number of 0", version);
-        }
-        EventId::new(
+        assert_ne!(
+            version.origin_seq(),
+            0,
+            "Version {} has an origin sequence number of 0",
+            version
+        );
+        Self::new(
             version.origin_idx(),
             version.origin_seq(),
             version.resolver.clone(),

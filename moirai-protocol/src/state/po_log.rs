@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -205,7 +205,7 @@ impl<R, U> POLog<R, U>
 where
     R: ReplicatedDataType,
 {
-    pub fn from_parts(stable: Stable<R>, unstable: U) -> Self {
+    pub const fn from_parts(stable: Stable<R>, unstable: U) -> Self {
         Self { stable, unstable }
     }
 
@@ -216,11 +216,11 @@ where
         Self::from_parts(stable, U::default())
     }
 
-    pub fn stable(&self) -> &Stable<R> {
+    pub const fn stable(&self) -> &Stable<R> {
         &self.stable
     }
 
-    pub fn unstable(&self) -> &U {
+    pub const fn unstable(&self) -> &U {
         &self.unstable
     }
 }

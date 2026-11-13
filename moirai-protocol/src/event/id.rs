@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -42,11 +42,11 @@ pub struct EventId {
 }
 
 impl EventId {
-    pub fn new(idx: ReplicaIdx, seq: Seq, resolver: Resolver) -> Self {
+    pub const fn new(idx: ReplicaIdx, seq: Seq, resolver: Resolver) -> Self {
         Self::new_with_disambiguator(idx, seq, resolver, None)
     }
 
-    pub fn new_with_disambiguator(
+    pub const fn new_with_disambiguator(
         idx: ReplicaIdx,
         seq: Seq,
         resolver: Resolver,
@@ -64,19 +64,19 @@ impl EventId {
         self.resolver.resolve(self.idx).unwrap()
     }
 
-    pub fn seq(&self) -> Seq {
+    pub const fn seq(&self) -> Seq {
         self.seq
     }
 
-    pub fn idx(&self) -> ReplicaIdx {
+    pub const fn idx(&self) -> ReplicaIdx {
         self.idx
     }
 
-    pub fn disambiguator(&self) -> Option<u32> {
+    pub const fn disambiguator(&self) -> Option<u32> {
         self.disambiguator
     }
 
-    pub fn with_disambiguator(mut self, disambiguator: u32) -> Self {
+    pub const fn with_disambiguator(mut self, disambiguator: u32) -> Self {
         self.disambiguator = Some(disambiguator);
         self
     }
@@ -89,7 +89,7 @@ impl EventId {
         ver_seq >= self.seq
     }
 
-    pub fn resolver(&self) -> &Resolver {
+    pub const fn resolver(&self) -> &Resolver {
         &self.resolver
     }
 }
@@ -114,11 +114,11 @@ pub struct ResolvedEventId {
 }
 
 impl ResolvedEventId {
-    pub fn new(origin_id: ReplicaId, seq: Seq) -> Self {
+    pub const fn new(origin_id: ReplicaId, seq: Seq) -> Self {
         Self::new_with_disambiguator(origin_id, seq, None)
     }
 
-    pub fn new_with_disambiguator(
+    pub const fn new_with_disambiguator(
         origin_id: ReplicaId,
         seq: Seq,
         disambiguator: Option<u32>,
@@ -130,15 +130,15 @@ impl ResolvedEventId {
         }
     }
 
-    pub fn origin_id(&self) -> &ReplicaId {
+    pub const fn origin_id(&self) -> &ReplicaId {
         &self.origin_id
     }
 
-    pub fn seq(&self) -> Seq {
+    pub const fn seq(&self) -> Seq {
         self.seq
     }
 
-    pub fn disambiguator(&self) -> Option<u32> {
+    pub const fn disambiguator(&self) -> Option<u32> {
         self.disambiguator
     }
 }
@@ -167,7 +167,7 @@ impl From<(&ResolvedEventId, &Interner)> for EventId {
                 event_id.origin_id()
             )
         });
-        EventId::new_with_disambiguator(
+        Self::new_with_disambiguator(
             idx,
             event_id.seq(),
             interner.resolver().clone(),
@@ -327,7 +327,7 @@ mod tests {
         let size_seq = event_1.seq.deep_size_of();
         let size_idx = event_1.idx.deep_size_of();
         let size_disambiguator = event_1.disambiguator.deep_size_of();
-        let container = vec![event_0.clone(), event_1.clone()];
+        let container = vec![event_0, event_1];
         let size_container = Vec::<EventId>::new().deep_size_of();
         let size_rc = 8; // Assuming 8 bytes for the Rc pointer in the resolver
         assert_eq!(

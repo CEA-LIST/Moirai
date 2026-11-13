@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -165,11 +165,11 @@ impl<L> LogObserver<L> {
         }
     }
 
-    pub fn inner(&self) -> &L {
+    pub const fn inner(&self) -> &L {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &mut L {
+    pub const fn inner_mut(&mut self) -> &mut L {
         &mut self.inner
     }
 }

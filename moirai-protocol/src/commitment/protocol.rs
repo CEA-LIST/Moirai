@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -62,11 +62,11 @@ where
         }
     }
 
-    pub fn oracle(&self) -> &Oracle {
+    pub const fn oracle(&self) -> &Oracle {
         &self.oracle
     }
 
-    pub fn oracle_mut(&mut self) -> &mut Oracle {
+    pub const fn oracle_mut(&mut self) -> &mut Oracle {
         &mut self.oracle
     }
 
@@ -74,12 +74,12 @@ where
         self.resolver = resolver;
     }
 
-    pub fn last_committed(&self) -> Option<&CausalFrontier> {
+    pub const fn last_committed(&self) -> Option<&CausalFrontier> {
         self.last_committed.as_ref()
     }
 
     #[allow(clippy::mutable_key_type)]
-    pub fn support_mut(&mut self) -> &mut FxHashMap<EventId, FxHashSet<ReplicaIdx>> {
+    pub const fn support_mut(&mut self) -> &mut FxHashMap<EventId, FxHashSet<ReplicaIdx>> {
         &mut self.support
     }
 

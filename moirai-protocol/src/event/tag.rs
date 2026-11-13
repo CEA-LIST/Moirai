@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -29,15 +29,15 @@ pub struct Tag {
 }
 
 impl Tag {
-    pub fn new(id: EventId, lamport: Lamport) -> Self {
+    pub const fn new(id: EventId, lamport: Lamport) -> Self {
         Self { id, lamport }
     }
 
-    pub fn id(&self) -> &EventId {
+    pub const fn id(&self) -> &EventId {
         &self.id
     }
 
-    pub fn lamport(&self) -> &Lamport {
+    pub const fn lamport(&self) -> &Lamport {
         &self.lamport
     }
 }

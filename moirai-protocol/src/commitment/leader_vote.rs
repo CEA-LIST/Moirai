@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -36,9 +36,9 @@ pub enum LeaderVoteUpdate {
 }
 
 impl LeaderVoteUpdate {
-    pub fn id(&self) -> &ReplicaId {
+    pub const fn id(&self) -> &ReplicaId {
         match self {
-            LeaderVoteUpdate::Vote(replica_id) => replica_id,
+            Self::Vote(replica_id) => replica_id,
         }
     }
 }
@@ -97,7 +97,7 @@ impl ReplicatedDataType for LeaderVote {
 
 impl<U> Precondition<U> for LeaderVote {
     fn is_enabled(
-        _stable: &<LeaderVote as ReplicatedDataType>::Stable,
+        _stable: &<Self as ReplicatedDataType>::Stable,
         _unstable: &U,
         _update: &Self::Update,
     ) -> Result<(), Infallible> {
@@ -144,7 +144,7 @@ pub struct NewSupports {
 }
 
 impl NewSupports {
-    pub fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
+    pub const fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
         Self {
             observer,
             last_committed,
@@ -193,7 +193,7 @@ where
                         return false;
                     }
                 }
-                LeaderVote::supports(unstable, candidate.id(), supporter)
+                Self::supports(unstable, candidate.id(), supporter)
             })
             .map(|candidate| SupportDelta {
                 candidate: candidate.id().clone(),

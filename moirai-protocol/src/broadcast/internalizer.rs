@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -33,7 +33,7 @@ use crate::replica::{ReplicaId, ReplicaIdx};
 struct ReplicaIds(FrozenVec<Box<ReplicaId>>);
 
 impl ReplicaIds {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(FrozenVec::new())
     }
 
@@ -236,7 +236,7 @@ impl Interner {
         self.str_to_int.get(id).copied()
     }
 
-    pub fn resolver(&self) -> &Resolver {
+    pub const fn resolver(&self) -> &Resolver {
         &self.int_to_str
     }
 }

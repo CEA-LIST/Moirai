@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -28,7 +28,7 @@ pub struct Batch<O> {
 }
 
 impl<O> Batch<O> {
-    pub fn new(events: Vec<Event<O>>, version: Version) -> Self {
+    pub const fn new(events: Vec<Event<O>>, version: Version) -> Self {
         Self { events, version }
     }
 
@@ -36,11 +36,11 @@ impl<O> Batch<O> {
         self.events
     }
 
-    pub fn events(&self) -> &Vec<Event<O>> {
+    pub const fn events(&self) -> &Vec<Event<O>> {
         &self.events
     }
 
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 

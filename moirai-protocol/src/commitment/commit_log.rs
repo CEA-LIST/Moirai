@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -76,7 +76,7 @@ where
         let (op, vote) = event.op().clone().split();
 
         let update_event = event.clone().unfold(op);
-        let vote_event = event.clone().unfold(vote);
+        let vote_event = event.unfold(vote);
         let vote_event_id = vote_event.id().clone();
 
         // Dispatch the child update to its log, and the leader vote to the leader log.
@@ -101,7 +101,7 @@ where
 
             // Prune the leader log to the strict causal past of the new commitment frontier
             self.leader_log
-                .stabilize(&CommitmentLog::<L>::strict_causal_past(&frontier));
+                .stabilize(&Self::strict_causal_past(&frontier));
 
             // Stabilize the child log to the new commitment frontier
             self.child.stabilize(&frontier);
@@ -133,28 +133,28 @@ where
         }
     }
 
-    pub fn oracle_mut(&mut self) -> &mut Omega {
+    pub const fn oracle_mut(&mut self) -> &mut Omega {
         self.protocol.oracle_mut()
     }
 
-    pub fn child(&self) -> &L {
+    pub const fn child(&self) -> &L {
         &self.child
     }
 
     /// The latest commitment frontier, if commitment has advanced.
-    pub fn committed_frontier(&self) -> Option<&CausalFrontier> {
+    pub const fn committed_frontier(&self) -> Option<&CausalFrontier> {
         self.protocol.last_committed()
     }
 
     /// Read-only access to the log of leader votes and their causal history.
-    pub fn leader_log(
+    pub const fn leader_log(
         &self,
     ) -> &POLog<LeaderVote, EventHistory<<LeaderVote as ReplicatedDataType>::Update>> {
         &self.leader_log
     }
 
     /// Read-only access to commitment state, including candidate support.
-    pub fn protocol(&self) -> &CommitmentProtocol<Omega> {
+    pub const fn protocol(&self) -> &CommitmentProtocol<Omega> {
         &self.protocol
     }
 

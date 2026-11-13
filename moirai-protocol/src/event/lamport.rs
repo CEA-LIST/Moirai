@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -21,6 +21,7 @@ use deepsize::DeepSizeOf;
 use crate::clock::version_vector::Version;
 
 /// This is not really a Lamport timestamp.
+///
 /// It is just a wrapper around the sum of the version vector, which is used for ordering events in the event log.
 /// The sum of vector-clock components is a valid Lamport timestamp in the sense that it satisfies Lamport’s clock condition.
 /// But it is not necessarily the same value as the Lamport algorithm would produce.
@@ -29,18 +30,18 @@ use crate::clock::version_vector::Version;
 pub struct Lamport(usize);
 
 impl Lamport {
-    pub fn val(&self) -> usize {
+    pub const fn val(&self) -> usize {
         self.0
     }
 
-    pub fn new(val: usize) -> Self {
-        Lamport(val)
+    pub const fn new(val: usize) -> Self {
+        Self(val)
     }
 }
 
 impl From<&Version> for Lamport {
     fn from(version: &Version) -> Self {
-        Lamport(version.sum())
+        Self(version.sum())
     }
 }
 

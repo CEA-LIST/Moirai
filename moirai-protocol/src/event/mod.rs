@@ -23,7 +23,7 @@ pub struct Event<O> {
 }
 
 impl<O> Event<O> {
-    pub fn new(id: EventId, lamport: Lamport, op: O, version: Version) -> Self {
+    pub const fn new(id: EventId, lamport: Lamport, op: O, version: Version) -> Self {
         Self {
             id,
             lamport,
@@ -45,19 +45,19 @@ impl<O> Event<O> {
         )
     }
 
-    pub fn id(&self) -> &EventId {
+    pub const fn id(&self) -> &EventId {
         &self.id
     }
 
-    pub fn op(&self) -> &O {
+    pub const fn op(&self) -> &O {
         &self.op
     }
 
-    pub fn lamport(&self) -> &Lamport {
+    pub const fn lamport(&self) -> &Lamport {
         &self.lamport
     }
 
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 }

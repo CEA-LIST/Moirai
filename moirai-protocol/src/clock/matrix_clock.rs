@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -42,6 +42,7 @@ impl ReplicaMap {
 }
 
 /// A matrix clock is a generalization in 2 dimensions of a vector clock. It is a square matrix of positive integers.
+///
 /// Each row represents the last vector clock known by the local replica from each member of the view.
 /// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
 #[derive(Debug, PartialEq)]
@@ -204,7 +205,7 @@ impl MatrixClock {
 
     #[cfg(test)]
     fn build(resolver: Resolver, origin_idx: ReplicaIdx, values: &[&[usize]]) -> Self {
-        let mut mc = MatrixClock::new(origin_idx, resolver.clone());
+        let mut mc = Self::new(origin_idx, resolver.clone());
         for (idx, val) in values.iter().enumerate() {
             let version = Version::build(resolver.clone(), ReplicaIdx(idx), val);
             mc.set_by_idx(ReplicaIdx(idx), version);

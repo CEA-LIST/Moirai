@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -31,12 +31,12 @@ pub struct Omega {
 }
 
 impl Omega {
-    pub fn new() -> Omega {
-        Omega { leader: None }
+    pub const fn new() -> Self {
+        Self { leader: None }
     }
 
-    pub fn with_leader(leader: impl Into<ReplicaId>) -> Omega {
-        Omega {
+    pub fn with_leader(leader: impl Into<ReplicaId>) -> Self {
+        Self {
             leader: Some(leader.into()),
         }
     }

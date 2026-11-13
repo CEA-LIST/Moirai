@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -30,16 +30,16 @@ pub struct Since {
 
 impl Since {
     #[allow(clippy::mutable_key_type)]
-    pub fn new(version: Version, except: FxHashSet<EventId>) -> Self {
+    pub const fn new(version: Version, except: FxHashSet<EventId>) -> Self {
         Self { version, except }
     }
 
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 
     #[allow(clippy::mutable_key_type)]
-    pub fn except(&self) -> &FxHashSet<EventId> {
+    pub const fn except(&self) -> &FxHashSet<EventId> {
         &self.except
     }
 

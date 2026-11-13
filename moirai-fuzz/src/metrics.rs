@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -59,7 +59,7 @@ impl ResponseSample {
         event_ids: Vec<EventId>,
         primitive: CommCall,
     ) -> Self {
-        ResponseSample {
+        Self {
             call_id,
             duration,
             event_ids: event_ids.into_iter().map(ResolvedEventId::from).collect(),
@@ -69,22 +69,22 @@ impl ResponseSample {
     }
 
     pub fn from_send(call_id: usize, duration: Duration, event_id: EventId) -> Self {
-        ResponseSample::new(call_id, duration, vec![event_id], CommCall::Send)
+        Self::new(call_id, duration, vec![event_id], CommCall::Send)
     }
 
     pub fn from_receive(call_id: usize, duration: Duration, event_id: EventId) -> Self {
-        ResponseSample::new(call_id, duration, vec![event_id], CommCall::Receive)
+        Self::new(call_id, duration, vec![event_id], CommCall::Receive)
     }
 
     pub fn from_batch(call_id: usize, duration: Duration, event_ids: Vec<EventId>) -> Self {
-        ResponseSample::new(call_id, duration, event_ids, CommCall::ReceiveBatch)
+        Self::new(call_id, duration, event_ids, CommCall::ReceiveBatch)
     }
 
-    pub fn duration(&self) -> Duration {
+    pub const fn duration(&self) -> Duration {
         self.duration
     }
 
-    pub fn call_id(&self) -> usize {
+    pub const fn call_id(&self) -> usize {
         self.call_id
     }
 
@@ -92,7 +92,7 @@ impl ResponseSample {
         &self.event_ids
     }
 
-    pub fn primitive(&self) -> CommCall {
+    pub const fn primitive(&self) -> CommCall {
         self.primitive
     }
 }
@@ -107,8 +107,8 @@ pub struct EffectSample {
 }
 
 impl EffectSample {
-    pub fn new(effect_id: usize, duration: Duration, event_id: ResolvedEventId) -> Self {
-        EffectSample {
+    pub const fn new(effect_id: usize, duration: Duration, event_id: ResolvedEventId) -> Self {
+        Self {
             effect_id,
             duration,
             event_id,
@@ -116,15 +116,15 @@ impl EffectSample {
         }
     }
 
-    pub fn effect_id(&self) -> usize {
+    pub const fn effect_id(&self) -> usize {
         self.effect_id
     }
 
-    pub fn duration(&self) -> Duration {
+    pub const fn duration(&self) -> Duration {
         self.duration
     }
 
-    pub fn event_id(&self) -> &ResolvedEventId {
+    pub const fn event_id(&self) -> &ResolvedEventId {
         &self.event_id
     }
 }
@@ -138,7 +138,7 @@ pub struct StabilitySample {
 }
 
 impl StabilitySample {
-    pub fn new(after_effect_id: usize, frontier: CausalFrontier) -> Self {
+    pub const fn new(after_effect_id: usize, frontier: CausalFrontier) -> Self {
         Self {
             after_effect_id,
             frontier,
@@ -146,11 +146,11 @@ impl StabilitySample {
         }
     }
 
-    pub fn after_effect_id(&self) -> usize {
+    pub const fn after_effect_id(&self) -> usize {
         self.after_effect_id
     }
 
-    pub fn frontier(&self) -> &CausalFrontier {
+    pub const fn frontier(&self) -> &CausalFrontier {
         &self.frontier
     }
 }
@@ -165,7 +165,7 @@ pub struct CommitmentSample {
 }
 
 impl CommitmentSample {
-    pub fn new(after_effect_id: usize, frontier: CausalFrontier) -> Self {
+    pub const fn new(after_effect_id: usize, frontier: CausalFrontier) -> Self {
         Self {
             after_effect_id,
             frontier,
@@ -173,11 +173,11 @@ impl CommitmentSample {
         }
     }
 
-    pub fn after_effect_id(&self) -> usize {
+    pub const fn after_effect_id(&self) -> usize {
         self.after_effect_id
     }
 
-    pub fn frontier(&self) -> &CausalFrontier {
+    pub const fn frontier(&self) -> &CausalFrontier {
         &self.frontier
     }
 }
@@ -199,7 +199,7 @@ impl QuerySample {
         query_name: &'static str,
         query_args: Vec<String>,
     ) -> Self {
-        QuerySample {
+        Self {
             call_id,
             duration,
             query_name: query_name.to_owned(),
@@ -208,7 +208,7 @@ impl QuerySample {
         }
     }
 
-    pub fn duration(&self) -> Duration {
+    pub const fn duration(&self) -> Duration {
         self.duration
     }
 }
@@ -238,8 +238,8 @@ pub struct LogSizeSample {
 macro_rules! phased_sample {
     ($($sample:ty),*) => { $(
         impl $sample {
-            pub fn with_phase(mut self, phase: Phase) -> Self { self.phase = phase; self }
-            pub fn phase(&self) -> Phase { self.phase }
+            pub const fn with_phase(mut self, phase: Phase) -> Self { self.phase = phase; self }
+            pub const fn phase(&self) -> Phase { self.phase }
         }
     )* };
 }
