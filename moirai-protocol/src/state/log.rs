@@ -32,6 +32,11 @@ pub trait IsLog: Default {
         Self::default()
     }
 
+    /// Report the types and paths of objects created when this log is created,
+    /// including children that exist from the start. Visit them in a fixed order
+    /// without constructing any logs. By default, report nothing.
+    fn visit_initial_objects(_ctx: &mut EffectContext<'_>) {}
+
     /// Prepare a client command as the operation stored and replicated by this log.
     fn prepare(&self, command: Self::Command) -> Self::Update;
 
@@ -72,14 +77,6 @@ where
     fn execute_query(&self, q: &Q) -> Q::Response;
 }
 
-// TODO: this is potentially garbage
-#[doc(hidden)]
-pub trait DefaultSinkExpansion: IsLog {
-    fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}
-}
-
-impl<L: IsLog> DefaultSinkExpansion for L {}
-
 /// Explicit indirection for inline recursive logs.
 impl<L: IsLog> IsLog for Box<L> {
     type Command = L::Command;
@@ -88,6 +85,10 @@ impl<L: IsLog> IsLog for Box<L> {
 
     fn new() -> Self {
         Self::new(L::new())
+    }
+
+    fn visit_initial_objects(ctx: &mut EffectContext<'_>) {
+        L::visit_initial_objects(ctx);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Update {

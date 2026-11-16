@@ -54,6 +54,10 @@ where
     type Update = CommitOp<L::Update>;
     type Rejection = L::Rejection;
 
+    fn visit_initial_objects(ctx: &mut EffectContext<'_>) {
+        L::visit_initial_objects(ctx);
+    }
+
     /// A user command is prepared by the child log, and then annotated with the current leader vote from the oracle.
     fn prepare(&self, command: Self::Command) -> Self::Update {
         CommitOp::new(

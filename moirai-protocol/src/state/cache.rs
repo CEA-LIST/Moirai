@@ -140,6 +140,10 @@ where
     type Update = L::Update;
     type Rejection = L::Rejection;
 
+    fn visit_initial_objects(ctx: &mut EffectContext<'_>) {
+        L::visit_initial_objects(ctx);
+    }
+
     fn prepare(&self, command: Self::Command) -> Self::Update {
         self.inner.prepare(command)
     }

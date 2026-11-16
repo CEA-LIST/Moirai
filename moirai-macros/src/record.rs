@@ -126,22 +126,6 @@ macro_rules! record {
                         &self.$field
                     }
                 )*
-
-                #[doc(hidden)]
-                pub fn default_sink_expansion(
-                    &self,
-                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
-                ) {
-                    ctx.create_typed(::std::stringify!($name));
-                    $(
-                        ctx.with_field(::std::stringify!($field), |ctx| {
-                            <$T as $crate::moirai_protocol::state::log::DefaultSinkExpansion>::default_sink_expansion(
-                                &<$T as $crate::moirai_protocol::state::log::IsLog>::new(),
-                                ctx,
-                            );
-                        });
-                    )*
-                }
             }
 
             /// Implementation of the Log trait for the record.
@@ -151,6 +135,17 @@ macro_rules! record {
                 type Command = $name;
                 type Update = $name;
                 type Rejection = [<$name Rejection>];
+
+                fn visit_initial_objects(
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
+                ) {
+                    ctx.create_typed(::std::stringify!($name));
+                    $(
+                        ctx.with_field(::std::stringify!($field), |ctx| {
+                            <$T as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
+                        });
+                    )*
+                }
 
                 fn new() -> Self {
                     Self {
@@ -175,7 +170,7 @@ macro_rules! record {
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
 
                                 if is_default {
-                                    Self::default_sink_expansion(self, ctx);
+                                    <Self as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
                                 } else {
                                     ctx.update_typed(::std::stringify!($name));
                                 }
@@ -196,7 +191,7 @@ macro_rules! record {
                             }
                         )*
                         $name::New => {
-                            Self::default_sink_expansion(self, ctx);
+                            <Self as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
                         }
                     }
                 }
