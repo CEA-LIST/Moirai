@@ -14,6 +14,16 @@ There are now two, and the difference is the lifecycle, not the topology.
     ./stack_interpreter.sh up bob --port 8082  # bob rejoins the same session
     ./stack_interpreter.sh down-all
 
+## Before the first build: the folder names
+
+The build reads two sibling checkouts, and both folder names matter. Clone them like this, side by side in one folder:
+
+    git clone -b akira/moirai-modelstore git@github.com:CEA-LIST/Moirai.git moirai-model-plane
+    git clone -b akira/interpreter-modelstore git@github.com:CEA-LIST/Arachne.git arachne
+    cd moirai-model-plane/docker/compose && ./stack_interpreter.sh build
+
+The Moirai checkout must be named exactly `moirai-model-plane`: the generated crate in the Arachne branch (`generated/json_crdt/Cargo.toml`) points at `../../../moirai-model-plane/...`. The Arachne checkout sits next to it as `arachne` (or `arachne-model-plane`, which the script prefers when it exists). With the default clone names `Moirai` and `Arachne`, `build` fails: the script derives the image tag from the Moirai folder name and only understands a lowercase `moirai...` name, then cannot find the Arachne checkout. No environment variable is needed once the names are right.
+
 ## The stack's transport
 
 The stack runs on the transport the binaries run on unless told otherwise, and states it in every replica it starts (`MOIRAI_TRANSPORT` in the container's environment), never leaving it to the image. `--tcp` before the command, or `MOIRAI_TRANSPORT=tcp` in the environment, is TCP; `MOIRAI_TRANSPORT=zenoh` is Zenoh. Give the same transport to `infra up` and to every `up` of the session: `up` refuses a replica on the other transport than the running infrastructure's, and `ls` and `urls` report the running infrastructure's transport, whatever the call names. `logs infra` shows the router, the bootnode and the relay, whichever runs.
@@ -43,7 +53,11 @@ The published host ports are the only thing that actually collide. The rig's `--
 
 ## What a restarted replica does and does not remember
 
-Nothing. A replica is a container with in-memory state, so `stack_interpreter.sh up bob` after a `down` gives a replica that has registered with the directory and hosts only its default log. It rejoins a model the way any replica joins one — `POST /api/models {"model_id": ..., "metamodel_id": ...}` — and then fills it by state transfer. That is the same out-of-band join `register-models.sh` performs, and there is no catalogue to consult: the model plane's design leaves the id to a person pasting it, so a rejoin is a paste as well.
+Nothing. A replica is a container with in-memory state, so `stack_interpreter.sh up bob` after a `down` gives a replica that has registered with the directory and hosts only its default log. It rejoins a model the way any replica joins one — `POST /api/models {"model_id": ..., "metamodel_id": ...}` — and then fills it by state transfer. That is the same out-of-band join `register-models.sh` performs, and there is no catalogue to consult: the model plane's design leaves the id to a person pasting it, so a rejoin is a paste as well. Under the same name this does not work yet: see the known bug below.
+
+## Known bug: a replica restarted under the same name stays empty
+
+`down bob` followed by `up bob` (the same name) gives a replica whose model stays empty. Rejoining the model (`POST /api/models` with its `model_id`) answers 200, but `GET /api/model/<id>/state` stays `null`, and `/api/model/<id>/metrics` shows pending operations that are never delivered. The other replicas refuse a state transfer to a returning member (their log says merging its history with a snapshot is not implemented), and the delta sync they fall back to never fills the gap. Seen on Zenoh and on TCP on 2026-11-16. Until it is fixed, restart a replica under a new name (`up carol --port ...`): it joins as a fresh member and fills by state transfer within seconds.
 
 ## The other scripts here
 
