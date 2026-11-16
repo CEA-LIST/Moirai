@@ -18,6 +18,8 @@ Moirai serves as a research platform for developing novel CRDTs tailored for Col
 
 ## The node's HTTP API: where it listens and whom it answers
 
+Every route, request and response is described in [`docs/api/replica-openapi.yaml`](docs/api/replica-openapi.yaml) (OpenAPI 3.0; view it in https://editor.swagger.io or with `npx @redocly/cli preview-docs docs/api/replica-openapi.yaml`).
+
 `model_node` (`moirai-interp/examples/model_node.rs`) serves its HTTP API on `HTTP_PORT`. Two variables bound who can reach it and what a browser page may do with it:
 
 - `HTTP_BIND_ADDR`: the IP address the HTTP listener binds, for example `127.0.0.1` to answer this machine only. Unset or empty, it is `0.0.0.0`, every interface, which a container needs for its published port. An address that does not parse stops the node with an error naming the variable; it never falls back to another address. The replication listener (`LISTEN_PORT`) is not affected.

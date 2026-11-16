@@ -14,6 +14,8 @@ There are now two, and the difference is the lifecycle, not the topology.
     ./stack_interpreter.sh up bob --port 8082  # bob rejoins the same session
     ./stack_interpreter.sh down-all
 
+The HTTP API every replica serves (models, metamodels, reads, the edit operation format, errors) is described in [`docs/api/replica-openapi.yaml`](../../docs/api/replica-openapi.yaml), an OpenAPI 3.0 file: open it in https://editor.swagger.io (File > Import file), or run `npx @redocly/cli preview-docs docs/api/replica-openapi.yaml` from the repository root.
+
 ## Before the first build: the folder names
 
 The build reads two sibling checkouts, and both folder names matter. Clone them like this, side by side in one folder:

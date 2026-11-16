@@ -1,0 +1,1539 @@
+# The HTTP API of one Moirai replica (`model_node`), as served by
+# moirai-network/src/http_api.rs and configured by moirai-interp/examples/model_node.rs.
+# OpenAPI 3.0.3 rather than 3.1: Swagger UI, editor.swagger.io and Redoc render 3.0 in full;
+# 3.1 would only add tuple arrays (prefixItems), and the two tuples of the edit grammar
+# (`Variant` and `Field`) are spelled out in prose and examples instead.
+# Every example below was sent to, or answered by, a running replica (image built from e832e04).
+openapi: 3.0.3
+info:
+  title: Moirai replica API (model_node)
+  version: e832e04
+  description: |
+    A **replica** is one `model_node` process (`moirai-interp/examples/model_node.rs`). It hosts any
+    number of **models**, each one a replicated log under one **metamodel**, and keeps them in sync
+    with the other replicas of its session (over a Zenoh router, or TCP with a bootnode). Every
+    replica serves this same API and none is a leader: an edit applied on one replica reaches the
+    others, and each answers reads with the state it holds now.
+
+    ## Start replicas
+
+    See `docker/compose/README.md`. From `docker/compose/`:
+
+        ./stack_interpreter.sh build
+        ./stack_interpreter.sh infra up
+        ./stack_interpreter.sh up alice --port 127.0.0.1:8081
+        ./stack_interpreter.sh up bob   --port 127.0.0.1:8082
+        ./stack_interpreter.sh down-all
+
+    The image ships the descriptors of Arachne's `examples/*.json` (behaviortree, json, notation,
+    simpleuml, umlclass); `GET /api/metamodels` lists them with their digests.
+
+    ## Create, join, read, edit
+
+    1. Pick a metamodel: `GET /api/metamodels`, take its `digest`.
+    2. Create a model on one replica: `POST /api/models {"metamodel_id": "<digest>"}`, answered
+       201 with the new `model_id` (`<32 hex>_<package>`).
+    3. Join it on another replica: `POST /api/models {"model_id": "<id>", "metamodel_id": "<digest>"}`,
+       answered 200. The joiner fills the model by state transfer from its peers, usually within
+       seconds; its state reads `null` until then. `{"model_id": "<id>"}` alone also joins: the
+       descriptor travels inside the model. There is no catalogue of models; an id is passed on
+       out of band. `GET /api/models` lists, under `seen`, ids this replica has heard traffic
+       for without hosting them.
+    4. Read: `GET /api/model/{id}/state` (or `/state/identified`, with element identities), and
+       `GET /api/model/{id}/metamodel` for the descriptor the edits are addressed against.
+    5. Edit: `POST /api/model/{id}/op` with one operation, or `/ops` with a batch guarded by the
+       `ETag` of the read it was computed from. The operation grammar is under
+       `POST /api/model/{model_id}/op`.
+
+    ## Known bug: a replica restarted under the same name stays empty
+
+    `down bob` then `up bob` gives a replica whose rejoined model stays `null`. Restart it under a
+    new name instead (`up carol --port ...`). See `docker/compose/README.md`, section
+    [Known bug: a replica restarted under the same name stays empty](https://github.com/CEA-LIST/Moirai/blob/akira/moirai-modelstore/docker/compose/README.md#known-bug-a-replica-restarted-under-the-same-name-stays-empty).
+
+    ## Who may call it
+
+    No authentication: whoever reaches the port acts as the replica. A request with no `Origin`
+    header (curl, a Node client) is served in full. A browser page is served only from an origin
+    in `HTTP_ALLOWED_ORIGINS` (comma-separated exact origins or `scheme://host:*`; unset, it is
+    `http://localhost:5173`, `http://localhost:5174`, `http://127.0.0.1:5173`,
+    `http://127.0.0.1:5174`). Any other origin gets 403 on a `POST` and no CORS header on a read.
+    An allowed origin is echoed in `Access-Control-Allow-Origin`, and `ETag` is exposed.
+    `OPTIONS` on any path answers 204 with those headers (the preflight). To use "Try it out"
+    from a hosted Swagger UI, start the replica with that page's origin allowed, for example
+    `HTTP_ALLOWED_ORIGINS=https://editor.swagger.io ./stack_interpreter.sh up alice --port 127.0.0.1:8081`.
+
+    ## Conventions
+
+    - Bodies are JSON both ways. A `POST` body must be sent with `Content-Type: application/json`
+      (415 otherwise); a bodyless `POST` may omit it.
+    - Errors are `{"error": "<sentence>"}`. An unknown path or method is 404 `{"error": "not found"}`.
+      No route takes a query string: one makes the path unknown (404).
+    - `{model_id}` is 32 lowercase hex characters, optionally followed by `_` and 1 to 32 ASCII
+      letters or digits. A malformed id is 400, an id the replica does not host is 404.
+    - A refused edit is not an HTTP error: `POST .../op` answers 200 with `"success": false`.
+    - A request waits at most 5 s for the replica's event loop, then gets 504; a write answered
+      504 was not applied and never will be. 500 means the event loop has stopped.
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: "8081"
+        description: The host port given to `stack_interpreter.sh up NAME --port`.
+tags:
+  - name: Replica
+    description: The replica itself.
+  - name: Models
+    description: Registering and listing the models a replica hosts.
+  - name: Metamodels
+    description: The metamodel descriptors a replica holds.
+  - name: Model
+    description: Reading and editing one hosted model.
+  - name: Migration
+    description: Moving a model to a revision of its metamodel.
+  - name: Peers
+    description: The replica's connections to other replicas (test and demo controls).
+  - name: Default log
+    description: >-
+      The replica's own log (`LOG_ID`), outside any model. On `model_node` it holds no metamodel
+      and refuses every write; clients use the model routes.
+paths:
+  /api/health:
+    get:
+      tags: [Replica]
+      operationId: getHealth
+      summary: Health check, with the replica's name and default log.
+      responses:
+        "200":
+          description: The replica is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, replica_id, log_id]
+                properties:
+                  status: {type: string, enum: [ok]}
+                  replica_id: {type: string, description: "`REPLICA_ID`, the container name under the stack."}
+                  log_id: {$ref: "#/components/schemas/ModelId"}
+              examples:
+                up:
+                  value: {"log_id": "1a7e9be511a7e9be511a7e9be511a7e9", "replica_id": "alice", "status": "ok"}
+  /api/log-id:
+    get:
+      tags: [Default log]
+      operationId: getLogId
+      summary: The replica's default log id.
+      responses:
+        "200":
+          description: The default log id, the same on every replica of a session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [log_id]
+                properties:
+                  log_id: {$ref: "#/components/schemas/ModelId"}
+              examples:
+                stack:
+                  value: {"log_id": "1a7e9be511a7e9be511a7e9be511a7e9"}
+  /api/state:
+    get:
+      tags: [Default log]
+      operationId: getDefaultState
+      summary: The default log's state; `null` on model_node.
+      responses:
+        "200":
+          description: The state, read as `GET /api/model/{model_id}/state` reads a model.
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/State"}
+              examples:
+                empty:
+                  value: null
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/metamodel:
+    get:
+      tags: [Metamodels]
+      operationId: getFirstMetamodel
+      summary: The first descriptor the replica holds (by file name; behaviortree on the stock image).
+      responses:
+        "200":
+          description: The descriptor text, verbatim. Same shape as `GET /api/model/{model_id}/metamodel`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Descriptor"}
+              examples:
+                behaviortree:
+                  summary: Excerpt (one class of twenty-one)
+                  value:
+                    classes:
+                      Root:
+                        abstract: false
+                        attributes: []
+                        containments:
+                          - {"annotation": null, "facets": {"ordered": null, "unique": null}, "many": false, "merge": {"kind": "containment", "shape": {"kind": "single"}, "target": "BehaviorTree"}, "name": "main", "ordered": true, "provenance": {"leaf": "notApplicable", "ordered": "notApplicable", "presence": "declared", "unique": "notApplicable"}, "required": true, "target": "BehaviorTree"}
+                        references: []
+                        superTypes: []
+                    enums: {"Status": ["RUNNING", "SUCCESS", "FAILURE"]}
+                    formatVersion: 2
+                    nsURI: http://www.example.org/behaviortree
+                    package: behaviortree
+                    rootClasses: [Root]
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/metrics:
+    get:
+      tags: [Replica]
+      operationId: getMetrics
+      summary: The default log's counters beside the replica's own.
+      description: >-
+        For one model's counters use `GET /api/model/{model_id}/metrics`. `hosted_logs` counts the
+        default log and every model; `routes` names how each peer is reached.
+      responses:
+        "200":
+          description: Counters.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Metrics"}
+              examples:
+                idle:
+                  value: {"delivered_ops": 0, "foreign_log_refusals": 0, "frames_not_hosted": 0, "hosted_logs": 1, "known_replicas": 2, "log_id": "1a7e9be511a7e9be511a7e9be511a7e9", "ops_applied": 0, "peer_count": 1, "peers_known": 1, "pending_ops": 0, "replica_id": "alice", "retained_ops": 0, "routes": {"bob": "zenoh"}, "stable_prefix": 0, "stable_version": {"alice": 0, "bob": 0}}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/operations:
+    get:
+      tags: [Default log]
+      operationId: getOperations
+      summary: The operations the default log delivered (display only; models are not listed).
+      responses:
+        "200":
+          description: The operations, as posted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations, count]
+                properties:
+                  operations: {type: array, items: {$ref: "#/components/schemas/ModelOp"}}
+                  count: {type: integer}
+              examples:
+                none:
+                  value: {"count": 0, "operations": []}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/op:
+    post:
+      tags: [Default log]
+      operationId: postDefaultOp
+      summary: One operation on the default log (refused on model_node, which holds no metamodel there).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ModelOp"}
+            examples:
+              default-op:
+                value: {"Instance": {"Variant": [7, "New"]}}
+      responses:
+        "200":
+          description: Applied, or refused with the reason (`success` says which).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                default-op:
+                  value: {"success": false, "message": "Operation not enabled: this log holds no metamodel yet: its first operation opens it and every other one waits for that"}
+        "400": {$ref: "#/components/responses/BadOp"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/OpExpired"}
+  /api/ops:
+    post:
+      tags: [Default log]
+      operationId: postDefaultOps
+      summary: A batch on the default log, as `POST /api/model/{model_id}/ops`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Batch"}
+            examples:
+              default-ops:
+                value: {"ops": [{"Instance": {"Variant": [7, "New"]}}]}
+      responses:
+        "200": {$ref: "#/components/responses/BatchApplied"}
+        "400": {$ref: "#/components/responses/BadOp"}
+        "409": {$ref: "#/components/responses/BatchStale"}
+        "422":
+          description: An operation was refused; `applied` counts those before it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BatchResult"}
+              examples:
+                default-ops:
+                  value: {"outcome": "refused", "applied": 0, "of": 1, "refused_at": 0, "message": "operation 1 of 1 refused after 0 applied: Operation not enabled: this log holds no metamodel yet: its first operation opens it and every other one waits for that", "version": "9d7e2c4a.0"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/BatchExpired"}
+  /api/peers:
+    get:
+      tags: [Peers]
+      operationId: getPeers
+      summary: The peers this replica knows and their link status.
+      responses:
+        "200":
+          description: Peers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [peers]
+                properties:
+                  peers:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, status, buffered]
+                      properties:
+                        id: {type: string, description: The peer's replica id.}
+                        status: {type: string, enum: [Connected, Paused, Disconnected, Connecting]}
+                        buffered: {type: integer, description: Messages held while the peer is paused.}
+              examples:
+                one-peer:
+                  value: {"peers": [{"buffered": 0, "id": "bob", "status": "Connected"}]}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/pause/{peer}:
+    post:
+      tags: [Peers]
+      operationId: pausePeer
+      summary: Stop exchanging with one peer (simulates a disconnection); its messages are buffered.
+      parameters:
+        - {$ref: "#/components/parameters/Peer"}
+      responses:
+        "200":
+          description: Done, or not (`success`); a peer this replica does not know is `success` false.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                paused:
+                  value: {"success": true, "message": "Paused peer 'bob'"}
+                pause-unknown:
+                  value: {"success": false, "message": "Failed to pause 'nobody': Peer not found: nobody"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/resume/{peer}:
+    post:
+      tags: [Peers]
+      operationId: resumePeer
+      summary: Resume one paused peer, deliver what was buffered and ask it to sync.
+      parameters:
+        - {$ref: "#/components/parameters/Peer"}
+      responses:
+        "200":
+          description: Done, or not (`success`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                resumed:
+                  value: {"success": true, "message": "Resumed peer 'bob', delivered 0 buffered msgs, requested sync"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/pause-all:
+    post:
+      tags: [Peers]
+      operationId: pauseAll
+      summary: Pause every peer.
+      responses:
+        "200":
+          description: Done, or not (`success`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                paused:
+                  value: {"success": true, "message": "All peers paused"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/resume-all:
+    post:
+      tags: [Peers]
+      operationId: resumeAll
+      summary: Resume every paused peer.
+      responses:
+        "200":
+          description: Done, or not (`success`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                resumed:
+                  value: {"success": true, "message": "Resumed 1 peers, delivered 2 buffered msgs"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/leave:
+    post:
+      tags: [Peers]
+      operationId: leave
+      summary: Deregister from the bootnode session (TCP transport only; under Zenoh there is none).
+      responses:
+        "200":
+          description: Done, or not (`success`). The replica keeps running and serving its peers.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                zenoh:
+                  value: {"success": false, "message": "discovery is not enabled; nothing to leave"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/models:
+    get:
+      tags: [Models]
+      operationId: listModels
+      summary: The models this replica hosts, and the ids it has seen without hosting.
+      description: >-
+        `metamodel_id` is what the registration named (a digest string or a `{nsURI, digest}`
+        object), `null` for the default log, and `null` for a model joined by id alone until its
+        history brings the descriptor, then that descriptor's listing entry.
+      responses:
+        "200":
+          description: The hosted models.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models, seen]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      required: [model_id, metamodel_id]
+                      properties:
+                        model_id: {$ref: "#/components/schemas/ModelId"}
+                        metamodel_id:
+                          nullable: true
+                          allOf: [{$ref: "#/components/schemas/MetamodelId"}]
+                  seen:
+                    type: array
+                    description: Ids of models this replica has heard traffic for but does not host.
+                    items: {$ref: "#/components/schemas/ModelId"}
+              examples:
+                after-create:
+                  value: {"models": [{"metamodel_id": null, "model_id": "1a7e9be511a7e9be511a7e9be511a7e9"}, {"metamodel_id": {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json"}, "model_id": "ecb00b2db6e03220c30222a173ac8421_json"}, {"metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml"}], "seen": []}
+                after-join-by-id:
+                  summary: On the joining replica, once the json model's history arrived; `seen` holds three models created elsewhere and not joined here
+                  value: {"models": [{"metamodel_id": null, "model_id": "1a7e9be511a7e9be511a7e9be511a7e9"}, {"metamodel_id": {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json", "package": "json"}, "model_id": "ecb00b2db6e03220c30222a173ac8421_json"}, {"metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml"}], "seen": ["68b61a221d403efb519956776b9bebb2_notes", "a6faf32188c034dd590d06260b0e6dd4_notes", "b080e68978a6629b2a440fc7e19c3e04_notes"]}
+        "504": {$ref: "#/components/responses/Timeout"}
+    post:
+      tags: [Models]
+      operationId: registerModel
+      summary: Create a model, or join one by id.
+      description: |
+        - `{"metamodel_id"}`: **create**. The replica mints the id (`<32 hex>_<package>`) and writes
+          the model's first operation, which carries the descriptor. 201.
+        - `{"model_id", "metamodel_id"}`: **join** a model created elsewhere. Writes nothing; the
+          replica fills it by state transfer from peers that host it. 200. A digest this replica
+          does not hold is accepted on a join: the descriptor arrives with the model.
+        - `{"model_id"}` (or `"metamodel_id": null`): join by id alone. 200.
+
+        `metamodel_id` is a digest from `GET /api/metamodels`, or `{"nsURI", "digest"}` (only the
+        digest is read). The answer echoes it as sent. Other fields are ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model_id: {$ref: "#/components/schemas/ModelId"}
+                metamodel_id:
+                  nullable: true
+                  allOf: [{$ref: "#/components/schemas/MetamodelId"}]
+            examples:
+              create:
+                value: {"metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3"}
+              create-object-form:
+                value: {"metamodel_id": {"nsURI": "http://www.example.org/json", "digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30"}}
+              join:
+                summary: On a second replica
+                value: {"model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml", "metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3"}
+              join-by-id:
+                summary: On a second replica
+                value: {"model_id": "ecb00b2db6e03220c30222a173ac8421_json"}
+              already-hosted:
+                value: {"model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml", "metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3"}
+              unknown-metamodel:
+                value: {"metamodel_id": "0000000000000000000000000000000000000000000000000000000000000000"}
+              missing-metamodel:
+                value: {}
+              bad-model-id:
+                value: {"model_id": "not-an-id"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Registered"}
+              examples:
+                create:
+                  value: {"created": true, "metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml"}
+                create-object-form:
+                  value: {"created": true, "metamodel_id": {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json"}, "model_id": "ecb00b2db6e03220c30222a173ac8421_json"}
+        "200":
+          description: Joined.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Registered"}
+              examples:
+                join:
+                  value: {"created": false, "metamodel_id": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "model_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml"}
+                join-by-id:
+                  value: {"created": false, "metamodel_id": null, "model_id": "ecb00b2db6e03220c30222a173ac8421_json"}
+        "400":
+          description: Not JSON, no `metamodel_id` on a create, or a malformed `model_id`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                missing-metamodel:
+                  value: {"error": "`metamodel_id` is required"}
+                bad-model-id:
+                  value: {"error": "`model_id`: log id must be 32 lowercase hex characters, optionally followed by `_` and a name, found 9 characters"}
+        "409":
+          description: This replica already hosts that id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                already-hosted:
+                  value: {"error": "model f9d6f90f345ad1536648c43d78f27cb1_simpleuml is already hosted here"}
+        "422":
+          description: A create under a metamodel this replica holds no descriptor for (or an unreadable `metamodel_id`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                unknown-metamodel:
+                  value: {"error": "this node holds no descriptor for metamodel \"0000000000000000000000000000000000000000000000000000000000000000\""}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/metamodels:
+    get:
+      tags: [Metamodels]
+      operationId: listMetamodels
+      summary: The descriptors this replica holds, in file-name order.
+      responses:
+        "200":
+          description: One listing entry per descriptor; `digest` is what `metamodel_id` names.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [metamodels]
+                properties:
+                  metamodels: {type: array, items: {$ref: "#/components/schemas/MetamodelListing"}}
+              examples:
+                stock-image:
+                  value: {"metamodels": [{"digest": "f19f730e4aaa7320d23e6b211a7856e7aa9042b56cef67cb3c0cb36091ad6822", "nsURI": "http://www.example.org/behaviortree", "package": "behaviortree"}, {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json", "package": "json"}, {"digest": "14377158866c6dd249915cdadbc5579efb64a3e742b5bd7aff1ced4396f57b86", "nsURI": "http://cea.fr/crdt/notation/0.1", "package": "notation"}, {"digest": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "nsURI": "http:///SimpleUML.ecore", "package": "simpleuml"}, {"digest": "999ed54f0657c2c8e27162645b0676e94be56a16d9058429707a104d1e620dc9", "nsURI": "http://cea.fr/crdt/umlclass/0.1", "package": "umlclass"}]}
+    post:
+      tags: [Metamodels]
+      operationId: addMetamodel
+      summary: Hold one more descriptor, now, with nothing restarted.
+      description: >-
+        The body is a descriptor (`formatVersion` 2, as Arachne emits it). Its digest is the
+        SHA-256 of its compact, key-sorted JSON, so formatting and key order do not change it.
+        Only this replica learns it; a model created under it carries it to the replicas that join.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Descriptor"}
+            examples:
+              notes:
+                summary: A complete, minimal descriptor
+                value: {"formatVersion": 2, "nsURI": "http://example.org/notes", "package": "notes", "rootClasses": ["Board"], "enums": {}, "classes": {"Board": {"abstract": false, "superTypes": [], "attributes": [], "references": [], "containments": [{"name": "notes", "merge": {"kind": "containment", "shape": {"kind": "sequence"}, "target": "Note"}, "provenance": {"ordered": "declared", "unique": "declared", "leaf": "notApplicable", "presence": "declared"}}]}, "Note": {"abstract": false, "superTypes": [], "containments": [], "references": [], "attributes": [{"name": "title", "merge": {"kind": "attribute", "shape": {"kind": "optional"}, "leaf": {"kind": "text"}}, "provenance": {"ordered": "notApplicable", "unique": "notApplicable", "leaf": "declared", "presence": "declared"}}]}}}
+              notes-revision:
+                summary: A revision of it (same nsURI, adds Note.done)
+                value: {"formatVersion": 2, "nsURI": "http://example.org/notes", "package": "notes", "rootClasses": ["Board"], "enums": {}, "classes": {"Board": {"abstract": false, "superTypes": [], "attributes": [], "references": [], "containments": [{"name": "notes", "merge": {"kind": "containment", "shape": {"kind": "sequence"}, "target": "Note"}, "provenance": {"ordered": "declared", "unique": "declared", "leaf": "notApplicable", "presence": "declared"}}]}, "Note": {"abstract": false, "superTypes": [], "containments": [], "references": [], "attributes": [{"name": "title", "merge": {"kind": "attribute", "shape": {"kind": "optional"}, "leaf": {"kind": "text"}}, "provenance": {"ordered": "notApplicable", "unique": "notApplicable", "leaf": "declared", "presence": "declared"}}, {"name": "done", "merge": {"kind": "attribute", "shape": {"kind": "optional"}, "leaf": {"kind": "flag", "wins": "enable"}}, "provenance": {"ordered": "notApplicable", "unique": "notApplicable", "leaf": "declared", "presence": "declared"}}]}}}
+              unreadable:
+                value: not a descriptor
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MetamodelAdded"}
+              examples:
+                notes:
+                  value: {"added": true, "metamodel": {"digest": "cad1d66c1ab65ffad84b66c454a1e9f97247dfe4bd4f779c1d8bfb8ea17aaeb0", "nsURI": "http://example.org/notes", "package": "notes"}, "metamodels": [{"digest": "f19f730e4aaa7320d23e6b211a7856e7aa9042b56cef67cb3c0cb36091ad6822", "nsURI": "http://www.example.org/behaviortree", "package": "behaviortree"}, {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json", "package": "json"}, {"digest": "14377158866c6dd249915cdadbc5579efb64a3e742b5bd7aff1ced4396f57b86", "nsURI": "http://cea.fr/crdt/notation/0.1", "package": "notation"}, {"digest": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "nsURI": "http:///SimpleUML.ecore", "package": "simpleuml"}, {"digest": "999ed54f0657c2c8e27162645b0676e94be56a16d9058429707a104d1e620dc9", "nsURI": "http://cea.fr/crdt/umlclass/0.1", "package": "umlclass"}, {"digest": "cad1d66c1ab65ffad84b66c454a1e9f97247dfe4bd4f779c1d8bfb8ea17aaeb0", "nsURI": "http://example.org/notes", "package": "notes"}]}
+                notes-revision:
+                  value: {"added": true, "metamodel": {"digest": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "nsURI": "http://example.org/notes", "package": "notes"}, "metamodels": [{"digest": "f19f730e4aaa7320d23e6b211a7856e7aa9042b56cef67cb3c0cb36091ad6822", "nsURI": "http://www.example.org/behaviortree", "package": "behaviortree"}, {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json", "package": "json"}, {"digest": "14377158866c6dd249915cdadbc5579efb64a3e742b5bd7aff1ced4396f57b86", "nsURI": "http://cea.fr/crdt/notation/0.1", "package": "notation"}, {"digest": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "nsURI": "http:///SimpleUML.ecore", "package": "simpleuml"}, {"digest": "999ed54f0657c2c8e27162645b0676e94be56a16d9058429707a104d1e620dc9", "nsURI": "http://cea.fr/crdt/umlclass/0.1", "package": "umlclass"}, {"digest": "cad1d66c1ab65ffad84b66c454a1e9f97247dfe4bd4f779c1d8bfb8ea17aaeb0", "nsURI": "http://example.org/notes", "package": "notes"}, {"digest": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "nsURI": "http://example.org/notes", "package": "notes"}]}
+        "200":
+          description: Already held; nothing changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MetamodelAdded"}
+              examples:
+                notes:
+                  summary: The same descriptor posted again
+                  value: {"added": false, "metamodel": {"digest": "cad1d66c1ab65ffad84b66c454a1e9f97247dfe4bd4f779c1d8bfb8ea17aaeb0", "nsURI": "http://example.org/notes", "package": "notes"}, "metamodels": [{"digest": "f19f730e4aaa7320d23e6b211a7856e7aa9042b56cef67cb3c0cb36091ad6822", "nsURI": "http://www.example.org/behaviortree", "package": "behaviortree"}, {"digest": "a9d83505175d8d6708b86c7eb64d356d64197f066f752c1a9ea842c76a45bc30", "nsURI": "http://www.example.org/json", "package": "json"}, {"digest": "14377158866c6dd249915cdadbc5579efb64a3e742b5bd7aff1ced4396f57b86", "nsURI": "http://cea.fr/crdt/notation/0.1", "package": "notation"}, {"digest": "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3", "nsURI": "http:///SimpleUML.ecore", "package": "simpleuml"}, {"digest": "999ed54f0657c2c8e27162645b0676e94be56a16d9058429707a104d1e620dc9", "nsURI": "http://cea.fr/crdt/umlclass/0.1", "package": "umlclass"}, {"digest": "cad1d66c1ab65ffad84b66c454a1e9f97247dfe4bd4f779c1d8bfb8ea17aaeb0", "nsURI": "http://example.org/notes", "package": "notes"}]}
+        "422":
+          description: Not a descriptor this replica can read, with the reason.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                unreadable:
+                  value: {"error": "not a descriptor this node can serve: not JSON: expected ident at line 1 column 2"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/state:
+    get:
+      tags: [Model]
+      operationId: getModelState
+      summary: The model as a JSON document; `null` before its root is written (or before a join has filled it).
+      description: |
+        Canonical form: an object is a JSON object with `eClass` and one key per feature its class
+        can see (own and inherited), keys sorted. A text is a string, a sequence an array, an
+        unset optional an absent key, an unwritten register `null`, a set an array, a counter a
+        number, a flag a boolean, a keyed collection an object. An instance of a class marked
+        `transparent` in the descriptor is the value of its one feature, which is why a `json`
+        model reads as plain JSON. Concurrent writes the merge keeps apart read as
+        `{"__conflict": [...]}`. An identity reference reads as the target's identity (see
+        `/state/identified`).
+
+        `ETag` is the version the state was read at: hand it back as `base` in `POST .../ops`.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      responses:
+        "200":
+          description: The state.
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/State"}
+              examples:
+                created:
+                  summary: Right after create (or while a join is filling)
+                  value: null
+                simpleuml:
+                  value: {"eClass": "Model", "name": "Shop", "ownedElements": [{"abstract": true, "attributes": [], "eClass": "Class", "generalizations": [{"eClass": "Generalization", "general": "alice@7.1"}], "name": "Order", "owner": "Shop", "stereotype": ["entity"], "taggedValue": []}], "owner": null, "stereotype": [], "taggedValue": []}
+                json:
+                  value: {"count": 3.0, "tags": [""], "title": "Hi"}
+        "400": {$ref: "#/components/responses/BadModelId"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/state/identified:
+    get:
+      tags: [Model]
+      operationId: getModelStateIdentified
+      summary: The same document with every element's identity under `__id`, and every element a record.
+      description: >-
+        `__id` (`<replica>@<seq>.<step>`, the event that minted the element) is stable for the
+        element's life and the same on every replica. It is what `Link` and `Unlink` name. Here a
+        transparent instance is a record too (`eClass`, its feature, `__id`).
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      responses:
+        "200":
+          description: The identified state.
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/State"}
+              examples:
+                simpleuml:
+                  value: {"__id": "alice@2.0", "eClass": "Model", "name": "Shop", "ownedElements": [{"__id": "alice@7.1", "abstract": true, "attributes": [], "eClass": "Class", "generalizations": [{"__id": "alice@18.2", "eClass": "Generalization", "general": "alice@7.1"}], "name": "Order", "owner": "Shop", "stereotype": ["entity"], "taggedValue": []}], "owner": null, "stereotype": [], "taggedValue": []}
+                json:
+                  value: {"__id": "alice@2.0", "eClass": "Object", "entry": {"count": {"__id": "alice@6.1", "eClass": "Number", "value": 3.0}, "tags": {"__id": "alice@8.1", "eClass": "Array", "items": [{"__id": "alice@8.2", "eClass": "String", "value": ""}]}, "title": {"__id": "alice@3.1", "eClass": "String", "value": "Hi"}}}
+        "400": {$ref: "#/components/responses/BadModelId"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/metamodel:
+    get:
+      tags: [Model, Metamodels]
+      operationId: getModelMetamodel
+      summary: The descriptor the model is under; the slot numbers of its edits come from here.
+      description: >-
+        404 while a model joined by id alone has not received its history, and when that history
+        names a different descriptor than the registration did. After a rebase, the revision.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      responses:
+        "200":
+          description: The descriptor text, verbatim.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Descriptor"}
+              examples:
+                simpleuml:
+                  summary: Excerpt (two classes of fifteen; the real one is 14 KB)
+                  value:
+                    classes:
+                      Model: {"abstract": false, "attributes": [], "containments": [], "references": [], "superTypes": ["Package"]}
+                      ModelElement:
+                        abstract: true
+                        attributes:
+                          - {"annotation": null, "facets": {"ordered": null, "unique": null}, "isId": false, "kind": "string", "many": false, "merge": {"kind": "attribute", "leaf": {"kind": "text"}, "shape": {"kind": "optional"}}, "name": "name", "provenance": {"leaf": "declared", "ordered": "notApplicable", "presence": "ecoreDefault", "unique": "notApplicable"}, "required": false}
+                          - {"annotation": null, "facets": {"ordered": false, "unique": null}, "isId": false, "kind": "string", "many": true, "merge": {"kind": "attribute", "leaf": {"kind": "text"}, "shape": {"kind": "set", "tie": "aw"}}, "name": "stereotype", "provenance": {"leaf": "declared", "ordered": "declared", "presence": "declared", "unique": "ecoreDefault"}, "required": false}
+                        containments:
+                          - {"annotation": null, "facets": {"ordered": null, "unique": null}, "many": true, "merge": {"kind": "containment", "shape": {"kind": "sequence"}, "target": "TaggedValue"}, "name": "taggedValue", "ordered": true, "provenance": {"leaf": "notApplicable", "ordered": "houseDefault", "presence": "declared", "unique": "notApplicable"}, "required": false, "target": "TaggedValue"}
+                        references: []
+                        superTypes: []
+                    enums: {}
+                    formatVersion: 2
+                    nsURI: http:///SimpleUML.ecore
+                    package: simpleuml
+                    rootClasses: [Classifier, ModelElement, Packageable, TType]
+        "400": {$ref: "#/components/responses/BadModelId"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/op:
+    post:
+      tags: [Model]
+      operationId: postModelOp
+      summary: Apply one edit to the model and send it to the peers.
+      description: |
+        An edit is a path of **slot numbers** from the model root down to one write. The slots
+        come from the model's descriptor (`GET /api/model/{model_id}/metamodel`).
+
+        ### Grammar
+
+            body     := {"Instance": step}
+            step     := {"Variant": [classSlot, step]}   enter the object held here, naming its concrete class
+                      | {"Field": [featureSlot, step]}   enter a feature of the object
+                      | {"Seq": seqStep} | {"Opt": optStep} | {"Map": mapStep}
+                      | "New"                            mint the object here (ends the path)
+                      | {"Leaf": leafOp}                 write the value here (ends the path)
+            seqStep  := {"Insert": {"pos": n, "op": step}}   new child at pos, then step into it
+                      | {"Update": {"pos": n, "op": step}}   step into the child at pos
+                      | {"Delete": {"pos": n}}               remove the child at pos
+            optStep  := {"Set": step} | "Unset"
+            mapStep  := {"Update": {"key": scalar, "op": step}} | {"Remove": {"key": scalar}} | "Clear"
+
+        The root is a single-valued containment, so every edit starts with
+        `{"Instance": {"Variant": [rootClass, ...]}}`, and the first one mints the root:
+        `{"Instance": {"Variant": [rootClass, "New"]}}`. `rootClass` is a non-abstract class at or
+        under one of the descriptor's `rootClasses` (any non-abstract class when the list is empty).
+        `Variant` names the class of the object on **every** edit that reaches through it, not only
+        on the one that minted it.
+
+        ### Slots
+
+        - **classSlot**: the position of the class name among all keys of `classes`, sorted by
+          byte order (uppercase before lowercase; JavaScript's default sort gives the same for
+          ASCII names). simpleuml: `Association` 0, `Class` 1, `Classifier` 2, `DataType` 3,
+          `Enumeration` 4, `EnumerationLiteral` 5, `Generalization` 6, `Model` 7, ... json: `Array` 0,
+          `Boolean` 1, `Entry` 2, `Json` 3, `Number` 4, `Object` 5, `String` 6.
+        - **featureSlot**: the position of the feature name among every feature the class can see,
+          its own and its supertypes' (`superTypes`, transitively), taken from `attributes`,
+          `containments` and `references` together, sorted by byte order. simpleuml `Model`:
+          `name` 0, `ownedElements` 1, `owner` 2, `stereotype` 3, `taggedValue` 4. simpleuml
+          `Class`: `abstract` 0, `attributes` 1, `generalizations` 2, `name` 3, `owner` 4,
+          `stereotype` 5, `taggedValue` 6. json `Object`: `entry` 0; `String`, `Number`: `value` 0.
+        - **enumSlot**: the position of the enum name among the keys of `enums`, sorted; the
+          literal is its index in that enum's array.
+
+        The model editor implements both halves: `src/crdt/table.ts` (slots) and
+        `src/crdt/encode.ts` (operations).
+
+        ### What follows a `Field`: the feature's `merge`
+
+        | `merge` | step after `Field` |
+        |---|---|
+        | attribute, shape `single`, `set`, `bag` or `orderedSet` | `{"Leaf": leafOp}` |
+        | attribute, shape `optional` | `{"Opt": {"Set": {"Leaf": leafOp}}}`, or `{"Opt": "Unset"}` |
+        | attribute, shape `sequence` | `{"Seq": ...}` whose `op` is `{"Leaf": leafOp}` |
+        | attribute, shape `keyed` | `{"Map": ...}` whose `op` is `{"Leaf": leafOp}` |
+        | containment, shape `single` | `{"Variant": [class, step]}` |
+        | containment, shape `optional` | `{"Opt": {"Set": {"Variant": [class, step]}}}`, or `{"Opt": "Unset"}` |
+        | containment, shape `sequence` | `{"Seq": ...}` whose `op` is `{"Variant": [class, step]}` |
+        | containment, shape `keyed` | `{"Map": ...}` whose `op` is `{"Variant": [class, step]}` |
+        | `reference`, `many` false | `{"Leaf": {"Write": {"Str": "..."}}}` or `{"Leaf": "Clear"}` |
+        | `reference`, `many` true | `{"Leaf": {"Add": {"Str": "..."}}}`, `Remove`, or `{"Leaf": "Clear"}` |
+        | `identityReference` | `{"Leaf": {"Link": "<__id>"}}` or `{"Leaf": {"Unlink": "<__id>"}}` |
+        | `unsupported` | refused |
+
+        In a containment, `class` is a non-abstract class at or under `merge.target`. For a keyed
+        containment `merge.target` is the class of the values (json `Object.entry`: `Json`), not
+        the feature's own `target` (`Entry`). An `__id` comes from `/state/identified`.
+
+        ### leafOp
+
+        | leaf (`merge.leaf.kind`, or the shape) | leafOp |
+        |---|---|
+        | `text` | `{"InsertChar": {"pos": n, "ch": "c"}}`, `{"DeleteChar": {"pos": n}}`, `{"DeleteRange": {"start": n, "len": n}}` |
+        | `counter` | `{"Inc": scalar}`, `{"Dec": scalar}`, `"Reset"` (resettable only); scalar `{"Int": n}`, or `{"Float": bits}` for `f32`/`f64` |
+        | `flag` | `"Enable"`, `"Disable"`, `"Clear"` |
+        | `register`, `optionalRegister` | `{"Write": scalar}`, `"Clear"` (not with tie `lww` or `fair`) |
+        | `enum` | `{"Write": {"Enum": [enumSlot, literalIndex]}}` |
+        | shape `set` or `bag` | `{"Add": scalar}`, `{"Remove": scalar}`, `"Clear"` |
+        | shape `orderedSet` | `{"Insert": {"pos": n, "value": scalar}}`, `{"DeleteChar": {"pos": n}}`, `{"DeleteRange": {"start": n, "len": n}}` |
+
+        `scalar` is `"Null"`, `{"Bool": b}`, `{"Int": n}`, `{"Char": "c"}`, `{"Str": "s"}`,
+        `{"Enum": [enumSlot, literalIndex]}`, or `{"Float": bits}`, where `bits` is the IEEE-754 bit
+        pattern of the `f64` as an unsigned integer (1.5 is `4609434218613702656`). Most patterns are
+        above 2^53, so a JavaScript client must write that number from a `BigInt`.
+
+        A text takes one character per edit: typing `Shop` is four `InsertChar` (or one `/ops` batch).
+        A position counts what this replica holds now: `Insert` takes 0 to the length, the others
+        0 to the length minus one; outside that the edit is refused.
+
+        ### Answers
+
+        200 with `"success": true` (`"Applied and broadcasted"`), or 200 with `"success": false`
+        and the reason when the replica refused the edit and wrote nothing: an unknown slot, a step
+        that does not fit the feature, a class the containment does not allow, `New` on an object
+        that exists, a position out of range, a migrated (read-only) model, a model joined by id
+        whose descriptor has not arrived. 400 when the body is not an operation at all: the
+        `JsonKind` operations of the generated `network_node` are refused here with
+        ``unknown variant `JsonKind` ``. `Install`, `Cut` and `Rebase` are not for clients: they
+        are written by `POST /api/models` and `.../migrate`.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ModelOp"}
+            examples:
+              simpleuml-new-root:
+                summary: "simpleuml: mint the root, a Model (class 7)"
+                value: {"Instance": {"Variant": [7, "New"]}}
+              simpleuml-name-root:
+                summary: "simpleuml: first character of Model.name (feature 0, optional text)"
+                value: {"Instance": {"Variant": [7, {"Field": [0, {"Opt": {"Set": {"Leaf": {"InsertChar": {"pos": 0, "ch": "S"}}}}}]}]}}
+              simpleuml-insert-class:
+                summary: "simpleuml: a new Class (class 1) at position 0 of Model.ownedElements (feature 1)"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Insert": {"pos": 0, "op": {"Variant": [1, "New"]}}}}]}]}}
+              simpleuml-name-class:
+                summary: "simpleuml: first character of that Class's name (Class feature 3)"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [3, {"Opt": {"Set": {"Leaf": {"InsertChar": {"pos": 0, "ch": "O"}}}}}]}]}}}}]}]}}
+              simpleuml-flag:
+                summary: "simpleuml: Class.abstract (feature 0, optional flag) on"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [0, {"Opt": {"Set": {"Leaf": "Enable"}}}]}]}}}}]}]}}
+              simpleuml-set-add:
+                summary: "simpleuml: add to Class.stereotype (feature 5, a set of texts)"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [5, {"Leaf": {"Add": {"Str": "entity"}}}]}]}}}}]}]}}
+              simpleuml-reference:
+                summary: "simpleuml: Class.owner (feature 4, a reference held as text)"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [4, {"Leaf": {"Write": {"Str": "Shop"}}}]}]}}}}]}]}}
+              simpleuml-delete:
+                summary: "simpleuml: remove the element at position 1 of Model.ownedElements"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Delete": {"pos": 1}}}]}]}}
+              simpleuml-link:
+                summary: "simpleuml: Generalization.general (class 6, feature 0, identity reference) to the Class alice@7.1"
+                value: {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [2, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [6, {"Field": [0, {"Leaf": {"Link": "alice@7.1"}}]}]}}}}]}]}}}}]}]}}
+              json-new-root:
+                summary: "json: mint the root, an Object (class 5)"
+                value: {"Instance": {"Variant": [5, "New"]}}
+              json-entry:
+                summary: "json: key \"title\" of Object.entry (feature 0, keyed) holds a new String (class 6)"
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Update": {"key": {"Str": "title"}, "op": {"Variant": [6, "New"]}}}}]}]}}
+              json-text:
+                summary: "json: first character of that String's value (feature 0, text)"
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Update": {"key": {"Str": "title"}, "op": {"Variant": [6, {"Field": [0, {"Leaf": {"InsertChar": {"pos": 0, "ch": "H"}}}]}]}}}}]}]}}
+              json-number:
+                summary: "json: key \"count\" holds a Number (class 4); add 3 to its counter"
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Update": {"key": {"Str": "count"}, "op": {"Variant": [4, {"Field": [0, {"Leaf": {"Inc": {"Int": 3}}}]}]}}}}]}]}}
+              json-float:
+                summary: "json: key \"ratio\", add 1.5 (Float carries the f64 bit pattern)"
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Update": {"key": {"Str": "ratio"}, "op": {"Variant": [4, {"Field": [0, {"Leaf": {"Inc": {"Float": 4609434218613702656}}}]}]}}}}]}]}}
+              json-array:
+                summary: "json: key \"tags\" holds an Array (class 0); a new String at position 0 of its items"
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Update": {"key": {"Str": "tags"}, "op": {"Variant": [0, {"Field": [0, {"Seq": {"Insert": {"pos": 0, "op": {"Variant": [6, "New"]}}}}]}]}}}}]}]}}
+              json-remove:
+                summary: "json: remove key \"ratio\""
+                value: {"Instance": {"Variant": [5, {"Field": [0, {"Map": {"Remove": {"key": {"Str": "ratio"}}}}]}]}}
+              refused-new:
+                summary: "Refused: New on a root that exists"
+                value: {"Instance": {"Variant": [7, "New"]}}
+              refused-slot:
+                summary: "Refused: a feature slot Model does not have"
+                value: {"Instance": {"Variant": [7, {"Field": [99, {"Leaf": "Enable"}]}]}}
+              not-an-op:
+                summary: "400: a JSON CRDT operation of network_node"
+                value: {"JsonKind": {"Object": {"Update": ["k", "New"]}}}
+      responses:
+        "200":
+          description: Applied (`success` true) or refused with the reason (`success` false).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpResult"}
+              examples:
+                applied:
+                  value: {"success": true, "message": "Applied and broadcasted"}
+                refused-new:
+                  value: {"success": false, "message": "Operation not enabled: `Model` is already there: `New` opens an object and does not reopen one"}
+                refused-slot:
+                  value: {"success": false, "message": "Operation not enabled: `Model` declares no feature at slot 99; it can see 5"}
+                refused-migrated:
+                  summary: The model was migrated by copy
+                  value: {"success": false, "message": "Operation not enabled: this model was migrated to `a6faf32188c034dd590d06260b0e6dd4_notes` and is read-only from the cut on: write to `a6faf32188c034dd590d06260b0e6dd4_notes` instead"}
+        "400":
+          description: Not an operation, or a malformed model id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                not-an-op:
+                  value: {"error": "Invalid op JSON: unknown variant `JsonKind`, expected one of `Install`, `Instance`, `Cut`, `Rebase` at line 1 column 11"}
+                bad-model-id:
+                  value: {"error": "log id must be 32 lowercase hex characters, optionally followed by `_` and a name, found 6 characters"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/OpExpired"}
+  /api/model/{model_id}/ops:
+    post:
+      tags: [Model]
+      operationId: postModelOps
+      summary: Apply several edits in one step, optionally only if the model has not moved since a read.
+      description: >-
+        The edits are applied in order with nothing delivered between them. With `base` (the
+        `ETag` of a state read, without its quotes) the batch is applied only if the model is
+        still at that version, else 409 and nothing is applied. Without `base` it is applied
+        whatever came in meanwhile. A refused edit stops the batch: the edits before it stay
+        applied (`applied`, `refused_at`). Unknown fields are refused (400), so a misspelled
+        `base` cannot switch the check off.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Batch"}
+            examples:
+              applied:
+                summary: "Type \"s!\" at the end of the Class name \"Order\", against the read at 9d7e2c4a.19"
+                value: {"ops": [{"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [3, {"Opt": {"Set": {"Leaf": {"InsertChar": {"pos": 5, "ch": "s"}}}}}]}]}}}}]}]}}, {"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [3, {"Opt": {"Set": {"Leaf": {"InsertChar": {"pos": 6, "ch": "!"}}}}}]}]}}}}]}]}}], "base": "9d7e2c4a.19"}
+              stale:
+                summary: Against the same, now outdated, read
+                value: {"ops": [{"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [3, {"Opt": {"Set": {"Leaf": {"InsertChar": {"pos": 0, "ch": "x"}}}}}]}]}}}}]}]}}], "base": "9d7e2c4a.19"}
+              refused:
+                summary: The second edit is refused, the first stays applied
+                value: {"ops": [{"Instance": {"Variant": [7, {"Field": [1, {"Seq": {"Update": {"pos": 0, "op": {"Variant": [1, {"Field": [5, {"Leaf": {"Add": {"Str": "aggregate"}}}]}]}}}}]}]}}, {"Instance": {"Variant": [7, "New"]}}]}
+              misspelled:
+                value: {"ops": [], "bse": "9d7e2c4a.19"}
+              not-hosted:
+                value: {"ops": [{"Instance": {"Variant": [7, "New"]}}]}
+      responses:
+        "200": {$ref: "#/components/responses/BatchApplied"}
+        "409": {$ref: "#/components/responses/BatchStale"}
+        "422":
+          description: An edit was refused; those before it were applied.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BatchResult"}
+              examples:
+                refused:
+                  value: {"outcome": "refused", "applied": 1, "of": 2, "refused_at": 1, "message": "operation 2 of 2 refused after 1 applied: Operation not enabled: `Model` is already there: `New` opens an object and does not reopen one", "version": "9d7e2c4a.22"}
+        "404":
+          description: This replica does not host the model.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BatchResult"}
+              examples:
+                not-hosted:
+                  value: {"outcome": "nothosted", "applied": 0, "of": 1, "message": "log 00000000000000000000000000000000 is not hosted here", "version": null}
+        "400":
+          description: Not a batch (an unknown field, an entry that is not an operation), or a malformed model id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                misspelled:
+                  value: {"error": "Invalid batch JSON: unknown field `bse`, expected `ops` or `base` at line 1 column 17"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/BatchExpired"}
+  /api/model/{model_id}/metrics:
+    get:
+      tags: [Model]
+      operationId: getModelMetrics
+      summary: The model's log counters (delivery, causal stability, refusals of foreign frames).
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      responses:
+        "200":
+          description: Counters.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Metrics"}
+              examples:
+                simpleuml:
+                  value: {"delivered_ops": 22, "foreign_log_refusals": 0, "known_replicas": 2, "log_id": "f9d6f90f345ad1536648c43d78f27cb1_simpleuml", "ops_applied": 22, "pending_ops": 0, "replica_id": "alice", "retained_ops": 22, "stable_prefix": 0, "stable_version": {"alice": 0, "bob": 0}}
+        "400": {$ref: "#/components/responses/BadModelId"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/migrate:
+    post:
+      tags: [Migration]
+      operationId: migrateModel
+      summary: Move the model to a revision of its metamodel, by copy (a new model) or by rebase (in place).
+      description: |
+        The revision must already be held here (`POST /api/metamodels`), have the model's `nsURI`
+        and keep every class and feature of the model's descriptor (a rebase may drop the ones it
+        names in `drops`: `"<Class>"` or `"<Class>.<feature>"`).
+
+        - `"strategy": "copy"` (or absent): the model is cut (read-only on every replica from then
+          on) and copied into a new model under the revision, whose id is answered. 201 when the
+          copy is whole, 202 when the replica is still writing it (`copy` `"in progress"`, or
+          `"stopped"` with the reason under `failed`).
+        - `"strategy": "rebase"`: the model keeps its id and is put under the revision; 200.
+
+        409 for a model that is itself a copy still being written.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metamodel_id]
+              properties:
+                metamodel_id: {$ref: "#/components/schemas/MetamodelId"}
+                strategy: {type: string, enum: [copy, rebase], default: copy}
+                drops: {type: array, items: {type: string}, description: Rebase only.}
+            examples:
+              copy:
+                summary: Copy a notes model to the revision that adds Note.done
+                value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0"}
+              rebase:
+                value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "strategy": "rebase", "drops": []}
+              other-metamodel:
+                summary: A revision of another metamodel
+                value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "strategy": "rebase", "drops": []}
+              unknown-metamodel:
+                value: {"metamodel_id": "0000000000000000000000000000000000000000000000000000000000000000"}
+              bad-strategy:
+                value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "strategy": "move"}
+              missing-metamodel:
+                value: {}
+              not-hosted:
+                value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0"}
+      responses:
+        "201":
+          description: Copied; the copy is whole.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Migrated"}
+              examples:
+                copy:
+                  value: {"copy": "whole", "metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "migrated_from": "b080e68978a6629b2a440fc7e19c3e04_notes", "model_id": "a6faf32188c034dd590d06260b0e6dd4_notes"}
+        "202":
+          description: Cut and the copy started; the replica goes on writing it (`copy` `in progress`), or stopped (`stopped`, reason under `failed`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Migrated"}
+        "200":
+          description: Rebased.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [model_id, strategy, metamodel_id]
+                properties:
+                  model_id: {$ref: "#/components/schemas/ModelId"}
+                  strategy: {type: string, enum: [rebase]}
+                  metamodel_id: {$ref: "#/components/schemas/MetamodelId"}
+              examples:
+                rebase:
+                  value: {"metamodel_id": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "model_id": "68b61a221d403efb519956776b9bebb2_notes", "strategy": "rebase"}
+        "400":
+          description: Not JSON, no `metamodel_id`, an unknown `strategy`, `drops` not an array of names, or a malformed model id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                bad-strategy:
+                  value: {"error": "`strategy` is `copy` or `rebase`"}
+                missing-metamodel:
+                  value: {"error": "`metamodel_id` is required"}
+        "404":
+          description: This replica does not host the model.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                not-hosted:
+                  value: {"error": "model 00000000000000000000000000000000 is not hosted here"}
+        "409":
+          description: The model is a copy this replica is still writing; migrate it once whole.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: Refused, with the reason (no such descriptor here, not a revision of the model's metamodel, ...).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                unknown-metamodel:
+                  value: {"error": "this node holds no descriptor for metamodel \"0000000000000000000000000000000000000000000000000000000000000000\""}
+                other-metamodel:
+                  value: {"error": "the migration was refused: the revision is of metamodel `http://example.org/notes`, and the model is of `http://www.example.org/json`"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "504": {$ref: "#/components/responses/Timeout"}
+  /api/model/{model_id}/migration:
+    get:
+      tags: [Migration]
+      operationId: getModelMigration
+      summary: Whether and how the model was migrated, as this replica has delivered it.
+      description: >-
+        `migrated_to` names the copy a cut sent the model to; `refused` lists edits (by origin and
+        sequence number) that arrived after the cut and are not in the copy. `rebase` describes
+        the rebase in force; `waiting_for` names the replicas not yet heard to deliver it. `copy`
+        appears on the replica that wrote the copy.
+      parameters:
+        - {$ref: "#/components/parameters/ModelId"}
+      responses:
+        "200":
+          description: The migration status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MigrationStatus"}
+              examples:
+                none:
+                  value: {"migrated_to": null, "rebase": null, "refused": [], "strategy": null, "superseded": [], "superseded_rebases": []}
+                copied:
+                  value: {"copy": {"applied": 3, "of": 3}, "migrated_to": "a6faf32188c034dd590d06260b0e6dd4_notes", "rebase": null, "refused": [], "strategy": "copy", "superseded": [], "superseded_rebases": []}
+                rebased:
+                  value: {"migrated_to": null, "rebase": {"d1_held": true, "discarded": [], "dropped": [], "hidden": [], "origin": "alice", "seq": 3, "to": "4b52be4bbc5a8aeab5bd371a99e74f34d07f4f74586ab58ec5499aacd8af27a0", "waiting_for": ["bob"]}, "refused": [], "strategy": "rebase", "superseded": [], "superseded_rebases": []}
+        "400": {$ref: "#/components/responses/BadModelId"}
+        "404":
+          description: This replica does not host the model.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              examples:
+                not-hosted:
+                  value: {"error": "model 00000000000000000000000000000000 is not hosted here"}
+        "504": {$ref: "#/components/responses/Timeout"}
+components:
+  parameters:
+    ModelId:
+      name: model_id
+      in: path
+      required: true
+      description: A model id from `POST /api/models` or `GET /api/models`.
+      schema: {$ref: "#/components/schemas/ModelId"}
+      example: f9d6f90f345ad1536648c43d78f27cb1_simpleuml
+    Peer:
+      name: peer
+      in: path
+      required: true
+      description: A peer's replica id, as `GET /api/peers` lists it.
+      schema: {type: string}
+      example: bob
+  headers:
+    ETag:
+      description: The version the state was read at, quoted (`"9d7e2c4a.19"`). Opaque; send it back unquoted as a batch's `base`.
+      schema: {type: string}
+    NoStore:
+      description: Always `no-store`.
+      schema: {type: string}
+  responses:
+    NotFound:
+      description: Unknown path, or a model (or descriptor) this replica does not host.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          examples:
+            not-found:
+              value: {"error": "not found"}
+    BadModelId:
+      description: "`model_id` is not a model id."
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          examples:
+            bad-model-id:
+              value: {"error": "log id must be 32 lowercase hex characters, optionally followed by `_` and a name, found 2 characters"}
+    BadOp:
+      description: The body is not an operation (or batch).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Forbidden:
+      description: A write from a browser origin not in `HTTP_ALLOWED_ORIGINS`.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          examples:
+            foreign-origin:
+              value: {"error": "this origin is not allowed to write to this node"}
+    UnsupportedMediaType:
+      description: A `POST` body not declared `application/json`.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          examples:
+            text-plain:
+              value: {"error": "a request body must be declared application/json"}
+    Timeout:
+      description: The replica's event loop did not answer within 5 s; nothing was written.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    OpExpired:
+      description: The event loop did not take the edit within 5 s; it was not applied and never will be.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: {type: string}
+              applied: {type: boolean, enum: [false]}
+    BatchApplied:
+      description: Every edit applied, in one step; `version` is the model's version after it.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/BatchResult"}
+          examples:
+            applied:
+              value: {"outcome": "applied", "applied": 2, "of": 2, "message": "2 operations applied in one step", "version": "9d7e2c4a.21"}
+    BatchStale:
+      description: The model moved since `base`; nothing applied. Read again, recompute, resend.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/BatchResult"}
+          examples:
+            stale:
+              value: {"outcome": "stale", "applied": 0, "of": 1, "message": "the model moved since the read this batch was computed against: it was at 9d7e2c4a.19 and is at 9d7e2c4a.21; nothing was applied", "version": "9d7e2c4a.21"}
+    BatchExpired:
+      description: The event loop did not take the batch within 5 s; none of it was or ever will be applied.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/BatchResult"}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+    ModelId:
+      type: string
+      pattern: "^[0-9a-f]{32}(_[A-Za-z0-9]{1,32})?$"
+      example: f9d6f90f345ad1536648c43d78f27cb1_simpleuml
+    MetamodelId:
+      description: A descriptor digest, or an object whose `digest` is one (other keys are not read).
+      oneOf:
+        - type: string
+          pattern: "^[0-9a-f]{64}$"
+        - type: object
+          required: [digest]
+          properties:
+            digest: {type: string, pattern: "^[0-9a-f]{64}$"}
+            nsURI: {type: string}
+            package: {type: string}
+    MetamodelListing:
+      type: object
+      required: [digest, nsURI, package]
+      properties:
+        digest: {type: string, description: SHA-256 of the descriptor's compact key-sorted JSON.}
+        nsURI: {type: string}
+        package: {type: string}
+    MetamodelAdded:
+      type: object
+      required: [added, metamodel, metamodels]
+      properties:
+        added: {type: boolean}
+        metamodel: {$ref: "#/components/schemas/MetamodelListing"}
+        metamodels: {type: array, items: {$ref: "#/components/schemas/MetamodelListing"}}
+    Descriptor:
+      description: >-
+        An Arachne metamodel descriptor, `formatVersion` 2. Each feature entry carries `merge`
+        (the rule its edits follow, see `POST /api/model/{model_id}/op`) and `provenance`.
+      type: object
+      required: [formatVersion, nsURI, package, classes]
+      properties:
+        formatVersion: {type: integer, enum: [2]}
+        nsURI: {type: string}
+        package: {type: string}
+        rootClasses: {type: array, items: {type: string}}
+        enums:
+          type: object
+          additionalProperties: {type: array, items: {type: string}}
+        classes:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              abstract: {type: boolean}
+              superTypes: {type: array, items: {type: string}}
+              transparent: {type: string, description: The one feature an instance reads as.}
+              attributes: {type: array, items: {$ref: "#/components/schemas/Feature"}}
+              containments: {type: array, items: {$ref: "#/components/schemas/Feature"}}
+              references: {type: array, items: {$ref: "#/components/schemas/Feature"}}
+    Feature:
+      type: object
+      required: [name, merge, provenance]
+      properties:
+        name: {type: string}
+        merge:
+          type: object
+          required: [kind]
+          description: >-
+            `{"kind": "attribute", "shape": {"kind": ...}, "leaf": {"kind": ...}}`,
+            `{"kind": "containment", "shape": {"kind": ...}, "target": "<Class>"}`,
+            `{"kind": "reference" | "identityReference", "many": bool, "target": "<Class>"}`, or
+            `{"kind": "unsupported", "reason": ...}`.
+          properties:
+            kind: {type: string, enum: [attribute, containment, reference, identityReference, unsupported]}
+        provenance: {type: object}
+    Registered:
+      type: object
+      required: [model_id, metamodel_id, created]
+      properties:
+        model_id: {$ref: "#/components/schemas/ModelId"}
+        metamodel_id:
+          nullable: true
+          allOf: [{$ref: "#/components/schemas/MetamodelId"}]
+        created: {type: boolean, description: true on a create, false on a join.}
+    State:
+      description: Any JSON value, `null` included; the model as a document (see `GET /api/model/{model_id}/state`).
+    OpResult:
+      type: object
+      required: [success, message]
+      properties:
+        success: {type: boolean}
+        message: {type: string}
+    Batch:
+      type: object
+      required: [ops]
+      additionalProperties: false
+      properties:
+        ops: {type: array, items: {$ref: "#/components/schemas/ModelOp"}}
+        base: {type: string, description: "The `ETag` of the read the batch was computed against, without quotes."}
+    BatchResult:
+      type: object
+      required: [outcome, applied, of, message, version]
+      properties:
+        outcome: {type: string, enum: [applied, stale, refused, nothosted, expired]}
+        applied: {type: integer, description: How many edits were applied, counted from the first.}
+        of: {type: integer}
+        refused_at: {type: integer, description: Index of the refused edit (refused only).}
+        message: {type: string}
+        version: {type: string, nullable: true, description: The model's version after this step.}
+    Metrics:
+      type: object
+      description: Counters; the set of keys is stable, the values are for monitoring.
+      additionalProperties: true
+      properties:
+        replica_id: {type: string}
+        log_id: {type: string}
+        delivered_ops: {type: integer}
+        ops_applied: {type: integer}
+        pending_ops: {type: integer, description: Received but waiting for their causal past.}
+        retained_ops: {type: integer}
+        stable_prefix: {type: integer}
+        stable_version: {type: object, additionalProperties: {type: integer}}
+        known_replicas: {type: integer}
+        foreign_log_refusals: {type: integer}
+    Migrated:
+      type: object
+      required: [model_id, metamodel_id, migrated_from, copy]
+      properties:
+        model_id: {$ref: "#/components/schemas/ModelId"}
+        metamodel_id: {$ref: "#/components/schemas/MetamodelId"}
+        migrated_from: {$ref: "#/components/schemas/ModelId"}
+        copy: {type: string, enum: [whole, in progress, stopped]}
+        failed: {type: string}
+    MigrationStatus:
+      type: object
+      required: [migrated_to, rebase, refused, strategy, superseded, superseded_rebases]
+      properties:
+        migrated_to: {type: string, nullable: true}
+        strategy: {type: string, nullable: true, enum: [copy, rebase]}
+        rebase: {type: object, nullable: true}
+        refused: {type: array, items: {type: object}}
+        superseded: {type: array, items: {type: string}}
+        superseded_rebases: {type: array, items: {type: object}}
+        copy:
+          type: object
+          properties:
+            applied: {type: integer}
+            of: {type: integer}
+    ModelOp:
+      description: An edit; clients send `Instance` only (grammar under `POST /api/model/{model_id}/op`).
+      type: object
+      required: [Instance]
+      additionalProperties: false
+      properties:
+        Instance: {$ref: "#/components/schemas/InstanceOp"}
+    InstanceOp:
+      description: One step of an edit path, or its end.
+      oneOf:
+        - type: string
+          enum: [New]
+        - type: object
+          required: [Variant]
+          additionalProperties: false
+          properties:
+            Variant:
+              description: "`[classSlot, InstanceOp]`"
+              type: array
+              minItems: 2
+              maxItems: 2
+              items:
+                oneOf:
+                  - {type: integer, minimum: 0}
+                  - {$ref: "#/components/schemas/InstanceOp"}
+        - type: object
+          required: [Field]
+          additionalProperties: false
+          properties:
+            Field:
+              description: "`[featureSlot, InstanceOp]`"
+              type: array
+              minItems: 2
+              maxItems: 2
+              items:
+                oneOf:
+                  - {type: integer, minimum: 0}
+                  - {$ref: "#/components/schemas/InstanceOp"}
+        - type: object
+          required: [Seq]
+          additionalProperties: false
+          properties:
+            Seq:
+              oneOf:
+                - type: object
+                  required: [Insert]
+                  additionalProperties: false
+                  properties:
+                    Insert: {$ref: "#/components/schemas/PositionedStep"}
+                - type: object
+                  required: [Update]
+                  additionalProperties: false
+                  properties:
+                    Update: {$ref: "#/components/schemas/PositionedStep"}
+                - type: object
+                  required: [Delete]
+                  additionalProperties: false
+                  properties:
+                    Delete:
+                      type: object
+                      required: [pos]
+                      properties:
+                        pos: {type: integer, minimum: 0}
+        - type: object
+          required: [Opt]
+          additionalProperties: false
+          properties:
+            Opt:
+              oneOf:
+                - type: string
+                  enum: [Unset]
+                - type: object
+                  required: [Set]
+                  additionalProperties: false
+                  properties:
+                    Set: {$ref: "#/components/schemas/InstanceOp"}
+        - type: object
+          required: [Map]
+          additionalProperties: false
+          properties:
+            Map:
+              oneOf:
+                - type: string
+                  enum: [Clear]
+                - type: object
+                  required: [Update]
+                  additionalProperties: false
+                  properties:
+                    Update:
+                      type: object
+                      required: [key, op]
+                      properties:
+                        key: {$ref: "#/components/schemas/Scalar"}
+                        op: {$ref: "#/components/schemas/InstanceOp"}
+                - type: object
+                  required: [Remove]
+                  additionalProperties: false
+                  properties:
+                    Remove:
+                      type: object
+                      required: [key]
+                      properties:
+                        key: {$ref: "#/components/schemas/Scalar"}
+        - type: object
+          required: [Leaf]
+          additionalProperties: false
+          properties:
+            Leaf: {$ref: "#/components/schemas/LeafOp"}
+    PositionedStep:
+      type: object
+      required: [pos, op]
+      properties:
+        pos: {type: integer, minimum: 0}
+        op: {$ref: "#/components/schemas/InstanceOp"}
+    LeafOp:
+      description: One write to a value; which ones a feature takes is in the leafOp table under `POST /api/model/{model_id}/op`.
+      oneOf:
+        - type: string
+          enum: [Reset, Enable, Disable, Clear]
+        - type: object
+          additionalProperties: false
+          minProperties: 1
+          maxProperties: 1
+          properties:
+            InsertChar:
+              type: object
+              required: [pos, ch]
+              properties:
+                pos: {type: integer, minimum: 0}
+                ch: {type: string, minLength: 1, maxLength: 1}
+            Insert:
+              type: object
+              required: [pos, value]
+              properties:
+                pos: {type: integer, minimum: 0}
+                value: {$ref: "#/components/schemas/Scalar"}
+            DeleteChar:
+              type: object
+              required: [pos]
+              properties:
+                pos: {type: integer, minimum: 0}
+            DeleteRange:
+              type: object
+              required: [start, len]
+              properties:
+                start: {type: integer, minimum: 0}
+                len: {type: integer, minimum: 0}
+            Inc: {$ref: "#/components/schemas/Scalar"}
+            Dec: {$ref: "#/components/schemas/Scalar"}
+            Write: {$ref: "#/components/schemas/Scalar"}
+            Add: {$ref: "#/components/schemas/Scalar"}
+            Remove: {$ref: "#/components/schemas/Scalar"}
+            Link: {type: string, description: "The target's `__id`."}
+            Unlink: {type: string, description: "The target's `__id`."}
+    Scalar:
+      description: "A value. `Float` is the f64's IEEE-754 bit pattern as an unsigned integer; `Enum` is `[enumSlot, literalIndex]`."
+      oneOf:
+        - type: string
+          enum: ["Null"]
+        - type: object
+          additionalProperties: false
+          minProperties: 1
+          maxProperties: 1
+          properties:
+            Bool: {type: boolean}
+            Int: {type: integer, format: int64}
+            Float: {type: integer, minimum: 0, description: Bit pattern, up to 2^64 - 1.}
+            Char: {type: string, minLength: 1, maxLength: 1}
+            Str: {type: string}
+            Enum:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items: {type: integer, minimum: 0}
