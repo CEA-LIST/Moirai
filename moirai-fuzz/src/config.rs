@@ -16,8 +16,7 @@
 use std::num::NonZeroUsize;
 
 use moirai_protocol::{
-    data_type::query::QueryOperation, replica::ReplicaId,
-    state::log::IsLog,
+    commitment::{commit_protocols::omega::use_omega::UseOmega}, crdt::query::QueryOperation, replica::ReplicaId, state::log::IsLog,
 };
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +152,22 @@ where
 
     pub const fn without_display(mut self) -> Self {
         self.display = false;
+        self
+    }
+}
+
+impl<'a, L, Q> FuzzerConfig<'a, L, Q>
+where
+    L: IsLog + UseOmega,
+    Q: QueryOperation,
+{
+    /// Drive the commitment log's Omega oracle from the simulated network state,
+    /// and capture its majority-backed commitment progress on every replica.
+    pub fn with_omega_oracle(mut self) -> Self {
+        self.oracle_driver = Some(OracleDriver::new(|log, leader| {
+            log.set_leader(leader.clone());
+        }));
+        self.commitment_accessor = Some(L::committed_frontier);
         self
     }
 }
