@@ -43,7 +43,7 @@ use crate::{
 pub struct ReplicaId(pub String);
 
 /// Local index of the replica. It is an alias for its string ID.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ReplicaIdx(pub usize);
 

@@ -1,4 +1,11 @@
-use crate::{broadcast::internalizer::Resolver, clock::{causal_frontier::CausalFrontier, version_vector::Version}, commitment::{commit_protocols::omega::{oracle::IsOracle, support_op::SupportOp, versioned_vote::VersionedVote, vote_log::VoteLog, vote_origin::VoteOrigin}, protocol::AtomicBroadcastProtocol, wire_id::{StableEventId, StableReplicaId}}, replica::{ReplicaId, ReplicaIdx}, state::{effect_context::EffectContext, log::IsLog}};
+use crate::{
+    broadcast::internalizer::Resolver,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
+    commitment::{commit_protocols::omega::{oracle::IsOracle, support_op::SupportOp, versioned_vote::VersionedVote, vote_log::VoteLog, vote_origin::VoteOrigin}, protocol::AtomicBroadcastProtocol, wire_id::{StableEventId, StableReplicaId}},
+    replica::{ReplicaId, ReplicaIdx},
+    state::{effect_context::EffectContext, log::IsLog},
+    event::Event,
+};
 
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -8,6 +15,7 @@ where
 {
     oracle: O,
     vote_log: VoteLog,
+    committed_frontier: Option<CausalFrontier>,
     system_members: Vec<(StableReplicaId, ReplicaId)>,
     own_id: StableReplicaId,
 }
@@ -46,8 +54,9 @@ where
         SupportOp::new(op, self.oracle.query(), is_partial, last_partial)
     }
 
-    fn ab_handler(&mut self, event: crate::event::Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
+    fn ab_handler(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
         self.assert_configured();
+        let event = self.oracle.update(event);
         let resolver = event.version().resolver();
         let (_, vote, is_partial, last_partial) = event.op().clone().split();
         let vote = self.local_id(vote, resolver);
@@ -77,11 +86,13 @@ where
     }
 
     fn ab_last_committed(&self) -> Option<&CausalFrontier> {
-        todo!()
+        self.committed_frontier.as_ref()
     }
 
     fn ab_set_last_committed(&mut self, event_version: &Version) {
         self.vote_log.set_committed(event_version);
+        self.committed_frontier = self.vote_log.last_committed.as_ref()
+            .map(|checkpoint| CausalFrontier::from(checkpoint.version()));
     }
 
     fn get_resolver(&self) -> Option<&Resolver> {
@@ -103,13 +114,15 @@ where
 
     /// Create a protocol with an empty vote log and the supplied configuration.
     pub fn from_parts(
-        oracle: O,
+        mut oracle: O,
         system_members: Vec<(StableReplicaId, ReplicaId)>,
         own_id: StableReplicaId,
     ) -> Self {
+        oracle.configure_members(&system_members);
         Self {
             oracle,
             vote_log: VoteLog::default(),
+            committed_frontier: None,
             system_members,
             own_id,
         }
@@ -127,7 +140,8 @@ where
         self.own_id
     }
 
-    pub fn set_oracle(&mut self, oracle: O) {
+    pub fn set_oracle(&mut self, mut oracle: O) {
+        oracle.configure_members(&self.system_members);
         self.oracle = oracle;
     }
 
@@ -144,6 +158,7 @@ where
     }
 
     pub fn set_members(&mut self, system_members: Vec<(StableReplicaId, ReplicaId)>) {
+        self.oracle.configure_members(&system_members);
         self.system_members = system_members;
     }
 
@@ -164,5 +179,31 @@ where
         let (_, replica) = self.system_members.iter().find(|(id, _)| *id == stable)
             .expect("Unknown stable replica ID");
         resolver.get(replica).expect("TCSB and commitment membership differ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{broadcast::internalizer::Interner,
+        commitment::{commit_protocols::omega::oracle::Omega, examples::commit_set::CommitSet},
+        state::po_log::VecLog};
+
+    type Log = VecLog<CommitSet<u8>>;
+
+    #[test]
+    fn committed_frontier_tracks_the_full_checkpoint() {
+        let mut protocol = OmegaCommit::<Omega>::default();
+        assert!(<OmegaCommit<Omega> as AtomicBroadcastProtocol<Log>>::ab_last_committed(&protocol).is_none());
+        let mut interner = Interner::new();
+        let (origin, _) = interner.intern(&ReplicaId::from("A"));
+        let mut version = Version::new(origin, interner.resolver().clone());
+        version.set_by_idx(origin, 1);
+        protocol.vote_log.insert(VersionedVote::new(origin, version.clone(), true, None));
+        <OmegaCommit<Omega> as AtomicBroadcastProtocol<Log>>::ab_set_last_committed(&mut protocol, &version);
+        assert_eq!(
+            <OmegaCommit<Omega> as AtomicBroadcastProtocol<Log>>::ab_last_committed(&protocol),
+            Some(&CausalFrontier::from(&version)),
+        );
     }
 }

@@ -22,7 +22,7 @@ use crate::commitment::{
         omega_commit::OmegaCommit, oracle::Omega, support_op::SupportOp,
         versioned_vote::VersionedVote, vote_log::VoteLog,
     },
-    examples::{builders::CommitReplica, commit_set::Sorted},
+    examples::{tools::builders::CommitReplica, commit_set::Sorted},
 };
 use crate::{
     crdt::{
