@@ -98,7 +98,7 @@ use std::time::{Duration, Instant};
 
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::{InstanceOp, ModelOp};
-use moirai_protocol::log_id::LogId;
+use moirai_network::log_id::LogId;
 use moirai_semantics::{LeafRule, MergeRule, Shape};
 use rand_chacha::ChaCha8Rng;
 use rand_chacha::rand_core::{Rng, SeedableRng};

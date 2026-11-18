@@ -12,16 +12,18 @@
 //! ```
 
 mod si12;
+#[path = "ec03/side.rs"]
+mod side;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use moirai_crdt::utils::membership::triplet_log;
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::query::QueryableLog;
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_semantics::MetamodelSemantics;
 use serde_json::{Value, json};
+use side::triplet_log;
 
 use si12::*;
 

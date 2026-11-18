@@ -1,0 +1,63 @@
+--- a/moirai-network/src/generic.rs
++++ b/moirai-network/src/generic.rs
+@@ -4143,8 +4143,8 @@
+     use super::*;
+     use crate::transport::{PeerInfo, TransportResult};
+     use crate::workload::Rng;
+-    use moirai_crdt::set::ewflag_set::{EWFlagSet, EWFlagSetLog};
+-    use moirai_protocol::broadcast::message::EventMessage;
++    use moirai_crdt::set::ewflag_set::EWFlagSetLog;
++    use moirai_crdt::set::update::SetUpdate as EWFlagSet;
+     use moirai_protocol::crdt::query::Read;
+ 
+     type Op = EWFlagSet<String>;
+@@ -4265,7 +4265,7 @@
+ 
+     /// A bare peer hosting one log, for frames that come from outside a node.
+     fn peer(id: &str, log_id: LogId) -> LogReplica<Log> {
+-        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], log_id)
++        LogReplica::bootstrap_with_log_id(id.to_string(), &[id], log_id)
+     }
+ 
+     fn add(value: &str) -> Op {
+@@ -4779,7 +4779,7 @@
+         // starts from equal states.
+         for _round in 0..4 {
+             let mut frames: Vec<(usize, TransportMessage<Op>)> = Vec::new();
+-            let mut reference_frames: Vec<(usize, usize, EventMessage<Op>)> = Vec::new();
++            let mut reference_frames: Vec<(usize, usize, _)> = Vec::new();
+             for _ in 0..10 {
+                 let model = rng.below(models.len());
+                 let writer = rng.below(2);
+@@ -5421,8 +5421,9 @@
+         assert_eq!((result.applied, result.version), (0, None));
+     }
+ 
+-    type ListOp = moirai_crdt::list::eg_walker::List<char>;
+-    type ListLog = moirai_protocol::state::graph_log::GraphLog<ListOp>;
++    type ListOp = moirai_crdt::list::update::ListUpdate<char>;
++    type ListLog =
++        moirai_protocol::state::po_log::GraphLog<moirai_crdt::list::eg_walker::List<char>>;
+     type ListNode = GenericNode<ListLog, RecordingTransport<ListOp>>;
+ 
+     fn list_node(id: &str, log_id: LogId) -> ListNode {
+@@ -5605,7 +5606,7 @@
+     }
+ 
+     fn peer_list(id: &str) -> LogReplica<ListLog> {
+-        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], bt())
++        LogReplica::bootstrap_with_log_id(id.to_string(), &[id], bt())
+     }
+ 
+     /// `ab`, written on the node and delivered to the peer.
+--- a/moirai-network/src/http_api.rs
++++ b/moirai-network/src/http_api.rs
+@@ -1297,7 +1297,7 @@
+     use std::sync::mpsc;
+     use std::sync::{Arc, RwLock};
+ 
+-    use moirai_protocol::log_id::LogId;
++    use crate::log_id::LogId;
+     use serde::{Deserialize, Serialize};
+     use serde_json::json;
+ 

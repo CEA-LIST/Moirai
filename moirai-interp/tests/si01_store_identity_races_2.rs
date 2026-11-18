@@ -201,8 +201,7 @@ fn seq(message: &EventMessage<ModelOp>) -> usize {
 /// every replica as far as this one knows, and the log has been handed the
 /// stable version that says so.
 fn stable_through(replica: &Rep, origin: &str) -> usize {
-    replica
-        .stability()
+    side::stability(replica)
         .stable_version
         .iter()
         .find(|(id, _)| id == origin)
@@ -313,7 +312,7 @@ fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_wr
          a's from R_k ({}) on not; a reports {:?}",
         seq(&l),
         seq(&r_k),
-        a.stability().stable_version
+        side::stability(&a).stable_version
     );
     let pruned = served(&a, JSON_TRANSPARENT);
     // Three, not four (ST.10): on `a`, R_j had seen X_j, `j`'s one write so
@@ -407,7 +406,7 @@ fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_wr
                 stable_through(replica, origin) >= upto,
                 "set-up: on {name}, {origin}'s operations up to {upto} are meant to be causally \
                  stable after a round of writes from every replica; {name} reports {:?}",
-                replica.stability().stable_version
+                side::stability(replica).stable_version
             );
         }
     }
@@ -451,7 +450,7 @@ fn si01_touches_pruned_at_causal_stability_keep_every_identity_and_what_later_wr
             "set-up: on {name}, b's removal of j ({}) is meant to be causally stable after a \
              round of writes from every replica; {name} reports {:?}",
             seq(&r3),
-            replica.stability().stable_version
+            side::stability(replica).stable_version
         );
     }
     let removed = agreed([&a, &b, &c], JSON_TRANSPARENT, "stability, j removed");

@@ -21,8 +21,9 @@
 //! ```
 
 mod si12;
+#[path = "ec03/side.rs"]
+mod side;
 
-use moirai_crdt::utils::membership::triplet_log;
 use moirai_interp::migrate::{Migration, migrate};
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::query::QueryableLog;
@@ -30,6 +31,7 @@ use moirai_protocol::broadcast::message::EventMessage;
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::replica::{IsReplica, Replica};
 use serde_json::Value;
+use side::triplet_log;
 
 use si12::*;
 

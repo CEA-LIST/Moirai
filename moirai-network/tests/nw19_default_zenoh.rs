@@ -23,6 +23,9 @@
 //! ```
 #![cfg(feature = "zenoh")]
 
+#[path = "ec03c/side.rs"]
+mod side;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -32,9 +35,9 @@ use std::time::{Duration, Instant};
 use moirai_crdt::set::aw_set::AWSet;
 use moirai_network::generic::Node;
 use moirai_network::HashMap;
-use moirai_protocol::log_id::LogId;
 use moirai_protocol::state::po_log::VecLog;
 use serde_json::{json, Value};
+use side::LogId;
 use zenoh::sample::{Sample, SampleKind};
 use zenoh::Wait;
 

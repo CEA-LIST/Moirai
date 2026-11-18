@@ -3,7 +3,7 @@ mod md03a_common;
 use md03a_common::*;
 use moirai_interp::migrate::{migrate, rebase};
 use moirai_interp::{ModelLog, ModelOp};
-use moirai_protocol::{broadcast::tcsb::StateSnapshot, log_id::LogId, replica::IsReplica};
+use moirai_protocol::broadcast::tcsb::StateSnapshot;
 use serde_json::Value;
 
 #[test]
@@ -191,7 +191,7 @@ fn adoption(order: [usize; 2]) {
     let log: ModelLog =
         serde_json::from_value(serde_json::to_value(r[donor].state()).unwrap()).unwrap();
     // Replace carol by an empty replica; adoption, not replay, provides setup.
-    r[2] = Rep::bootstrap_with_log_id("carol".into(), &NAMES, LogId::parse(MODEL).unwrap());
+    r[2] = side::bootstrap::<ModelLog>("carol", &NAMES);
     r[2].adopt(snapshot, log);
     assert_eq!(
         title_at(&identified(&r[2]), At::Board(1)),
@@ -270,8 +270,7 @@ fn migration(order: [usize; 2], copy: bool) {
             "G4 late old-log link",
         );
         finish(&mut r, &[(0, vec![cut]), (1, vec![late])], order);
-        let mut copied = NAMES
-            .map(|id| Rep::bootstrap_with_log_id(id.into(), &NAMES, LogId::parse(target).unwrap()));
+        let mut copied = NAMES.map(|id| side::bootstrap::<ModelLog>(id, &NAMES));
         broadcast(&mut copied, 1, plan.ops, "G4 copied operations");
         for replica in &copied {
             for doc in [identified(replica), default_read(replica)] {

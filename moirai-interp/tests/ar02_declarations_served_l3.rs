@@ -30,7 +30,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use moirai_crdt::utils::membership::twins_log;
+use moirai_crdt::utils::bootstrap::twins_log;
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::testing::{class_slot, feature_slot, install};
 use moirai_interp::{InstanceOp, ModelLog, ModelOp};

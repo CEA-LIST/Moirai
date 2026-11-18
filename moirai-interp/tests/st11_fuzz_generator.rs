@@ -36,11 +36,22 @@
 //! `moirai-fuzz`'s current API (`CommandGenerator`, `Predicate`), with their
 //! descriptor, seeds, counts and assertions unchanged (spec section 5).
 //!
+//! ST.17 (`cea-cdrt-knowledge/spec/items/ST.17.md`, section 6) adapted the
+//! file to `moirai-fuzz` at `e935355`: `CommandGenerator` moved to
+//! `generator::command_generator`; a churn rate `c` is now
+//! `ChurnConfig::new(c, 1 - c)`; the old `false, false` flags of
+//! `RunConfig::new` (no execution graph, stabilization on) and `true, false`
+//! of `FuzzerConfig::new` (final merge on, nothing saved) are the new
+//! defaults. No assertion, count or seed changed.
+//!
 //! ```bash
 //! nice -n 10 cargo test -j 2 -p moirai-interp --features fuzz --test st11_fuzz_generator
 //! ```
 
 #![cfg(feature = "fuzz")]
+
+#[path = "ec03/side.rs"]
+mod side;
 
 use std::{
     collections::BTreeSet,
@@ -49,9 +60,9 @@ use std::{
 };
 
 use moirai_fuzz::{
-    config::{FuzzerConfig, Predicate, RunConfig},
+    config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
     fuzzer::fuzzer,
-    op_generator::CommandGenerator,
+    generator::command_generator::CommandGenerator,
 };
 use moirai_interp::fuzz::set_descriptor;
 use moirai_interp::leaf::{LeafOp, Scalar};
@@ -62,7 +73,6 @@ use moirai_interp::{InstanceOp, MapOp, ModelLog, ModelOp, Node};
 use moirai_protocol::{
     broadcast::{message::EventMessage, tcsb::Tcsb},
     crdt::query::Read,
-    log_id::LogId,
     replica::{IsReplica, Replica},
     state::log::IsLog,
 };
@@ -149,10 +159,9 @@ fn inc(value: f64) -> InstanceOp {
 /// The replicas of one log, every one of which has delivered the
 /// descriptor's `Install`, sent by the first.
 fn opened(ids: &[&str]) -> Vec<Rep> {
-    let log_id = LogId::from_bytes([0x5c; 16]);
     let mut replicas: Vec<Rep> = ids
         .iter()
-        .map(|id| Rep::bootstrap_with_log_id((*id).into(), ids, log_id.clone()))
+        .map(|id| side::bootstrap::<ModelLog>(id, ids))
         .collect();
     let opening = replicas[0]
         .send(install("st11", &json_descriptor()))
@@ -390,7 +399,7 @@ fn st11_g3_a_remove_that_saw_one_kind_of_a_conflict_draws_the_other_only() {
 fn ip12_three_replicas_a_thousand_operations_ten_seeds_all_converge() {
     set_descriptor(BT_DESCRIPTOR);
     let runs: Vec<RunConfig> = (0..10)
-        .map(|run| RunConfig::new(0.4, 3, 1_000, None, Some(seed(run)), false, false))
+        .map(|run| RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 1_000, None, Some(seed(run))))
         .collect();
     // `fuzzer` panics on a run that does not converge, on a generated
     // operation the log refuses, and on a replica that ends with a different
@@ -399,9 +408,7 @@ fn ip12_three_replicas_a_thousand_operations_ten_seeds_all_converge() {
     let config = FuzzerConfig::<ModelLog, Read<Value>>::new(
         "interp-bt",
         runs,
-        true,
         Predicate::new(Read::new(), |left, right| left == right),
-        false,
     );
     fuzzer::<ModelLog, Read<Value>>(config);
 }
@@ -412,7 +419,7 @@ fn a_generated_operation_is_always_one_the_log_would_accept() {
     // machinery in the way: the generator and `check`'s local mode agree
     // about every operation, over one replica and a thousand draws.
     set_descriptor(BT_DESCRIPTOR);
-    let (mut a, _b) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+    let (mut a, _b) = side::twins_log::<ModelLog>();
     let mut rng = ChaCha8Rng::from_seed(seed(42));
 
     for step in 0..1_000 {

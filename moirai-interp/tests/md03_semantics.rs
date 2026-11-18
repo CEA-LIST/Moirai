@@ -3,7 +3,7 @@ mod md03_common;
 use md03_common::*;
 use moirai_interp::migrate::{migrate, rebase};
 use moirai_interp::{ModelLog, ModelOp};
-use moirai_protocol::{broadcast::tcsb::StateSnapshot, log_id::LogId, replica::IsReplica};
+use moirai_protocol::{broadcast::tcsb::StateSnapshot, replica::IsReplica};
 
 fn g1(order: [usize; 2]) {
     let (b, mut r) = setup();
@@ -123,11 +123,7 @@ fn g4(order: [usize; 2]) {
         serde_json::from_value(serde_json::to_value(r[0].snapshot()).unwrap()).unwrap();
     let log: ModelLog =
         serde_json::from_value(serde_json::to_value(r[0].state()).unwrap()).unwrap();
-    let mut joiner = Rep::bootstrap_with_log_id(
-        "dave".into(),
-        &["alice", "bob", "carol", "dave"],
-        LogId::parse(MODEL).unwrap(),
-    );
+    let mut joiner = side::bootstrap::<ModelLog>("dave", &["alice", "bob", "carol", "dave"]);
     joiner.adopt(snapshot, log);
     assert_foreign(&identified(&joiner), &[&out, LIBRARY], "G4 state transfer");
 }
@@ -160,13 +156,7 @@ fn g5(order: [usize; 2], copy: bool) {
             "late old-log link",
         );
         finish(&mut r, &[(0, vec![cut]), (1, vec![late])], order);
-        let mut copied = NAMES.map(|id| {
-            Rep::bootstrap_with_log_id(
-                id.into(),
-                &NAMES,
-                LogId::parse("dddddddddddddddddddddddddddddddd").unwrap(),
-            )
-        });
+        let mut copied = NAMES.map(|id| side::bootstrap::<ModelLog>(id, &NAMES));
         broadcast(&mut copied, 0, plan.ops, "copy plan");
         for rep in &copied {
             let doc = identified(rep);

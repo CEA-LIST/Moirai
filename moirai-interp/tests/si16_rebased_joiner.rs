@@ -82,6 +82,8 @@
 //! ```
 
 mod si14;
+#[path = "ec03/side.rs"]
+mod side;
 
 use std::collections::BTreeMap;
 
@@ -92,7 +94,6 @@ use moirai_network::query::QueryableLog;
 use moirai_network::state_transfer::TransferableLog;
 use moirai_protocol::broadcast::message::EventMessage;
 use moirai_protocol::broadcast::tcsb::Tcsb;
-use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use serde_json::{Value, json};
 
@@ -154,12 +155,11 @@ impl World {
     /// `members(id)` is the member list replica `id` is bootstrapped with;
     /// each replica interns itself first.
     fn new(schedule: &'static str, members: impl Fn(&str) -> Vec<&'static str>) -> Self {
-        let log_id = LogId::generate();
         let mut reps: Vec<Rep> = IDS
             .iter()
             .map(|id| {
                 let list = members(id);
-                Rep::bootstrap_with_log_id(id.to_string(), &list, log_id.clone())
+                side::bootstrap::<ModelLog>(id, &list)
             })
             .collect();
         let uml = Uml::new(D1);

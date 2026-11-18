@@ -44,7 +44,7 @@ use moirai_network::query::QueryableLog;
 use moirai_network::state_transfer::{LogPayload, TransferableLog};
 use moirai_network::transport::TransportMessage;
 use moirai_protocol::broadcast::message::EventMessage;
-use moirai_protocol::replica::{IsReplica, Replica};
+use moirai_protocol::replica::IsReplica;
 use serde_json::{Value, json};
 
 use si01::*;
@@ -267,8 +267,7 @@ fn seq(message: &EventMessage<ModelOp>) -> usize {
 /// every replica as far as this one knows, and the log has been handed the
 /// stable version that says so.
 fn stable_through(replica: &Rep, origin: &str) -> usize {
-    replica
-        .stability()
+    side::stability(replica)
         .stable_version
         .iter()
         .find(|(id, _)| id == origin)
@@ -303,16 +302,13 @@ fn without(doc: &Value, key: &str) -> Value {
 /// second donor's answer, a sibling log with history), none of which this
 /// schedule meets.
 fn transfer(donor: &mut Rep, joiner: &mut Rep) {
-    use moirai_protocol::broadcast::internalizer::lock_interner;
-    use moirai_protocol::broadcast::tcsb::IsTcsbTest;
-
     let exported = <ModelLog as TransferableLog>::export_log(donor.log());
     let raw = serde_json::to_vec(&exported).expect("set-up: the donor's log serializes");
-    lock_interner(donor.tcsb().interner()).intern(joiner.id());
+    side::admit(donor, joiner);
     let frame = TransportMessage::<ModelOp>::StateResponse {
         snapshot: donor.snapshot(),
         log: LogPayload::encode(exported, &raw),
-        log_id: donor.log_id().clone(),
+        log_id: side::log_id(donor),
     };
     let line = serde_json::to_string(&frame).expect("set-up: the state response serializes");
     let TransportMessage::StateResponse {
@@ -325,7 +321,7 @@ fn transfer(donor: &mut Rep, joiner: &mut Rep) {
         panic!("set-up: the frame read back is not a state response");
     };
     assert!(
-        &log_id == donor.log_id(),
+        log_id == side::log_id(donor),
         "set-up: the state response is for another log"
     );
     assert!(
@@ -451,7 +447,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
          a's from R_k ({}) on not; a reports {:?}",
         seq(&l),
         seq(&r_k),
-        a.stability().stable_version
+        side::stability(&a).stable_version
     );
     let pruned = served(&a);
     ever.extend(identified(&pruned, 3, "joiner, a after T"));
@@ -473,7 +469,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
     let t_id = id_of(member(&pruned, "t"));
 
     // d joins by state transfer from a.
-    let mut d: Rep = Replica::bootstrap_with_log_id("d".to_string(), &["d"], a.log_id().clone());
+    let mut d: Rep = side::joiner(&a, "d");
     transfer(&mut a, &mut d);
     assert!(
         stable_through(&d, "b") >= seq(&l) && stable_through(&d, "a") < seq(&r_k),
@@ -481,7 +477,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
          causally stable and a's from R_k ({}) on not, as on a; d reports {:?}",
         seq(&l),
         seq(&r_k),
-        d.stability().stable_version
+        side::stability(&d).stable_version
     );
     let joined = agreed(
         &[("a", &a), ("d", &d)],
@@ -624,7 +620,7 @@ fn si01_a_joiner_by_state_transfer_from_a_donor_that_pruned_its_touches_finds_wh
                 stable_through(replica, origin) >= upto,
                 "set-up: on {name}, {origin}'s operations up to {upto} are meant to be causally \
                  stable after a round of writes from every replica; {name} reports {:?}",
-                replica.stability().stable_version
+                side::stability(replica).stable_version
             );
         }
     }

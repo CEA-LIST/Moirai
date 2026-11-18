@@ -3,11 +3,12 @@
 mod md03_common;
 use md03_common::*;
 use moirai_interp::{ModelLog, ModelOp};
-use moirai_network::transport::TransportMessage;
+use moirai_network::{
+    generic::LogReplica, log_id::LogId, message::EventMessage, transport::TransportMessage,
+};
 use moirai_protocol::{
-    broadcast::{message::EventMessage, tcsb::StateSnapshot},
-    log_id::LogId,
-    replica::IsReplica,
+    broadcast::tcsb::StateSnapshot,
+    replica::{IsReplica, with_network_id_validation},
 };
 use serde_json::{Value, json};
 use std::{
@@ -57,14 +58,18 @@ fn md03_g0_protocol_construction_and_collision_refused() {
     let mut failures = vec![];
     for bad in BAD {
         let result = std::panic::catch_unwind(|| {
-            Rep::bootstrap_with_log_id((*bad).into(), &[bad], LogId::parse(MODEL).unwrap())
+            LogReplica::<ModelLog>::bootstrap_with_log_id(
+                (*bad).into(),
+                &[bad],
+                LogId::parse(MODEL).unwrap(),
+            )
         });
         match result {
             Err(e) if clear(&panic_text(e.as_ref()), bad) => {}
             _ => failures.push(format!("accepted or unclear local id {bad:?}")),
         }
         let result = std::panic::catch_unwind(|| {
-            Rep::bootstrap_with_log_id(
+            LogReplica::<ModelLog>::bootstrap_with_log_id(
                 "alice".into(),
                 &["alice", bad],
                 LogId::parse(MODEL).unwrap(),
@@ -82,7 +87,11 @@ fn md03_g0_valid_replica_ids_keep_their_bytes() {
     for id in [
         "alice", "bob", "carol", "a", "b", "c", "si05-a", "node_17", "A.Z_09-", ".", "_", "-", "0",
     ] {
-        let rep = Rep::bootstrap_with_log_id(id.into(), &[id], LogId::parse(MODEL).unwrap());
+        let rep = LogReplica::<ModelLog>::bootstrap_with_log_id(
+            id.into(),
+            &[id],
+            LogId::parse(MODEL).unwrap(),
+        );
         assert_eq!(rep.id(), id);
         let snap = serde_json::to_string(&rep.snapshot()).unwrap();
         assert!(serde_json::from_str::<StateSnapshot<ModelOp>>(&snap).is_ok());
@@ -96,6 +105,11 @@ fn md03_g0_events_and_snapshots_refuse_invalid_authors() {
         b.link(At::Board(0), b.related, "bob@17.2"),
         "valid event",
     );
+    let event = EventMessage::new(
+        event.event().clone(),
+        event.resolver().clone(),
+        LogId::parse(MODEL).unwrap(),
+    );
     let event_json = serde_json::to_value(event).unwrap();
     let snapshot = serde_json::to_value(r[0].snapshot()).unwrap();
     let log_json = serde_json::to_value(r[0].state()).unwrap();
@@ -104,25 +118,30 @@ fn md03_g0_events_and_snapshots_refuse_invalid_authors() {
         for author in ["alice", "carol"] {
             let mut e = event_json.clone();
             assert!(replace(&mut e, author, bad) > 0);
-            match serde_json::from_value::<EventMessage<ModelOp>>(e.clone()) {
+            match with_network_id_validation(|| {
+                serde_json::from_value::<EventMessage<ModelOp>>(e.clone())
+            }) {
                 Err(error) if clear(&error.to_string(), bad) => {}
                 _ => failures.push(format!("event author/member {author}->{bad:?}")),
             }
-            match serde_json::from_value::<TransportMessage<ModelOp>>(
-                json!({"type":"Event","event":e}),
-            ) {
+            match with_network_id_validation(|| {
+                serde_json::from_value::<TransportMessage<ModelOp>>(
+                    json!({"type":"Event","event":e}),
+                )
+            }) {
                 Err(error) if clear(&error.to_string(), bad) => {}
                 _ => failures.push(format!("event frame {author}->{bad:?}")),
             }
             let mut log = log_json.clone();
             assert!(replace(&mut log, author, bad) > 0);
-            match serde_json::from_value::<ModelLog>(log) {
+            match with_network_id_validation(|| serde_json::from_value::<ModelLog>(log)) {
                 Err(error) if clear(&error.to_string(), bad) => {}
                 _ => failures.push(format!("transferred log author/member {author}->{bad:?}")),
             }
             let mut s = snapshot.clone();
             assert!(replace(&mut s, author, bad) > 0);
-            match serde_json::from_value::<StateSnapshot<ModelOp>>(s) {
+            match with_network_id_validation(|| serde_json::from_value::<StateSnapshot<ModelOp>>(s))
+            {
                 Err(error) if clear(&error.to_string(), bad) => {}
                 _ => failures.push(format!("snapshot author/member {author}->{bad:?}")),
             }
