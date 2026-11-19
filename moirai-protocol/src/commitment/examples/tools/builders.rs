@@ -20,7 +20,7 @@ use crate::{
 };
 
 use crate::commitment::commit_protocols::lamport::{
-    lamport_commit::LamportCommit, lamport_tracker::LamportTracker,
+    lamport_commit::LamportCommit,
 };
 
 /// A Lamport stability commitment log over a child log.
@@ -53,7 +53,7 @@ impl<L: IsLog> LamportCommitReplica<L> {
             .1
             .clone();
         let ids: Vec<_> = members.iter().map(|(_, id)| id.clone()).collect();
-        let protocol = LamportCommit::from_parts(members, LamportTracker::default());
+        let protocol = LamportCommit::new(members.len());
         Self {
             replica: Replica::bootstrap_with_state(id, &ids, CommitmentLog::new(child, protocol)),
         }

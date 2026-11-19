@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    broadcast::internalizer::Resolver, clock::{causal_frontier::CausalFrontier, version_vector::Version}, replica::ReplicaIdx,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version}, replica::ReplicaIdx,
 };
 
 use super::{versioned_vote::VersionedVote, vote_origin::VoteOrigin};
@@ -14,8 +14,6 @@ pub struct VoteLog {
     /// Presence means still supporting; true means the first successor has arrived.
     pub(crate) partial_leaders: BTreeMap<VersionedVote, BTreeMap<ReplicaIdx, bool>>,
     pub(crate) last_committed: Option<VersionedVote>,
-    /// The local index mapping, also needed to resolve outgoing predecessor IDs.
-    resolver: Option<Resolver>,
 }
 
 impl VoteLog {
@@ -25,22 +23,8 @@ impl VoteLog {
             && self.last_committed.is_none()
     }
 
-    pub fn resolver(&self) -> Option<&Resolver> {
-        self.resolver.as_ref()
-    }
-
-    pub fn update_resolver(&mut self, resolver: Resolver) {
-        self.resolver = Some(resolver);
-    }
-
     pub fn insert(&mut self, vertex: VersionedVote) {
         assert!(vertex.origin_seq() > 0, "Votes must identify actual events");
-        if let Some(resolver) = &self.resolver {
-            assert_eq!(resolver, vertex.version().resolver(), "Mixed local index mappings");
-        } else {
-            self.resolver = Some(vertex.version().resolver().clone());
-        }
-
         let trace = self.causal_votes.entry(vertex.origin_idx()).or_default();
         let previous_seq = trace.last_key_value().map_or(0, |(seq, _)| *seq);
         assert_eq!(previous_seq, vertex.origin_seq() - 1, "Votes must be delivered once, in causal order");
@@ -162,7 +146,9 @@ impl VoteLog {
     }
 
     fn get_partial_leader_by_version(&self, version: &Version) -> Option<&VersionedVote> {
-        self.partial_leaders.keys().find(|v| v.version() == version)
+        self.partial_leaders.keys().find(|v| {
+            v.origin_idx() == version.origin_idx() && v.origin_seq() == version.origin_seq()
+        })
     }
 
     /// Metadata retention boundary ONLY; not a causally closed application cut.

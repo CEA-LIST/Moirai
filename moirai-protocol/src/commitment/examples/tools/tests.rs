@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use crate::{
-    broadcast::internalizer::{Interner, Resolver},
+    broadcast::internalizer::Interner,
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{commit_log::CommitmentLog, wire_id::StableReplicaId},
     crdt::{
@@ -33,16 +33,16 @@ use crate::{
     state::po_log::VecLog,
 };
 
-fn resolver(names: &[&str]) -> Resolver {
+fn clock(names: &[&str]) -> Version {
     let mut interner = Interner::new();
     for name in names {
         interner.intern(&ReplicaId::from(*name));
     }
-    interner.resolver().clone()
+    Version::new(ReplicaIdx(0), interner.resolver().clone())
 }
 
-fn version(r: &Resolver, origin: usize, entries: &[usize]) -> Version {
-    let mut v = Version::new(ReplicaIdx(origin), r.clone());
+fn version(clock: &Version, origin: usize, entries: &[usize]) -> Version {
+    let mut v = Version::from((CausalFrontier::from(clock), ReplicaIdx(origin)));
     for (i, seq) in entries.iter().enumerate() {
         v.set_by_idx(ReplicaIdx(i), *seq);
     }
@@ -50,7 +50,7 @@ fn version(r: &Resolver, origin: usize, entries: &[usize]) -> Version {
 }
 
 fn vote(
-    r: &Resolver,
+    r: &Version,
     origin: usize,
     entries: &[usize],
     leader: usize,
@@ -61,6 +61,7 @@ fn vote(
         version(r, origin, entries),
         partial,
         None,
+        origin,
     )
 }
 
@@ -70,7 +71,7 @@ fn members(n: usize) -> Vec<ReplicaIdx> {
 
 #[test]
 fn disagreeing_successor_cannot_close_support() {
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let mut log = VoteLog::default();
     for v in [
         vote(&r, 0, &[1, 0, 0], 0, false),
@@ -88,7 +89,7 @@ fn disagreeing_successor_cannot_close_support() {
 
 #[test]
 fn first_vertex_has_no_own_predecessor_support() {
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let mut log = VoteLog::default();
     log.insert(vote(&r, 1, &[0, 1, 0], 0, false));
     log.insert(vote(&r, 2, &[0, 0, 1], 0, false));
@@ -102,7 +103,7 @@ fn first_vertex_has_no_own_predecessor_support() {
 
 #[test]
 fn closed_support_is_immutable() {
-    let r = resolver(&["A", "B"]);
+    let r = clock(&["A", "B"]);
     let mut log = VoteLog::default();
     log.insert(vote(&r, 0, &[1, 0], 0, false));
     log.insert(vote(&r, 1, &[0, 1], 0, false));
@@ -118,7 +119,7 @@ fn closed_support_is_immutable() {
 
 #[test]
 fn delayed_concurrent_candidate_does_not_use_pruned_votes() {
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let mut log = VoteLog::default();
     for v in [
         vote(&r, 0, &[1, 0, 0], 0, false),
@@ -153,7 +154,7 @@ fn delayed_concurrent_candidate_does_not_use_pruned_votes() {
 
 #[test]
 fn predecessor_is_deliberately_selected_before_the_outgoing_vote() {
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let mut log = VoteLog::default();
     for v in [
         vote(&r, 0, &[1, 0, 0], 0, false),
@@ -171,7 +172,7 @@ fn predecessor_is_deliberately_selected_before_the_outgoing_vote() {
         previous.as_ref().map(|p| (p.id(), p.seq())),
         Some((ReplicaIdx(0), 2))
     );
-    let b2 = VersionedVote::new(ReplicaIdx(1), version(&r, 1, &[4, 2, 1]), partial, previous);
+    let b2 = VersionedVote::new(ReplicaIdx(1), version(&r, 1, &[4, 2, 1]), partial, previous, 1);
     log.insert(b2.clone());
     log.insert(vote(&r, 0, &[5, 2, 1], 1, false));
     log.insert(vote(&r, 2, &[4, 2, 2], 1, false));
@@ -185,7 +186,7 @@ fn predecessor_is_deliberately_selected_before_the_outgoing_vote() {
 
 #[test]
 fn retention_boundary_saturates_and_keeps_the_checkpoint() {
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let v = vote(&r, 0, &[1, 0, 0], 0, true);
     let f = VoteLog::default().get_causal_frontier(v.version());
     assert_eq!(
@@ -196,13 +197,13 @@ fn retention_boundary_saturates_and_keeps_the_checkpoint() {
 
 #[test]
 fn ordering_and_equality_use_stable_event_identity() {
-    let ab = resolver(&["A", "B"]);
-    let ba = resolver(&["B", "A"]);
+    let ab = clock(&["A", "B"]);
+    let ba = clock(&["B", "A"]);
     let a = vote(&ab, 0, &[2, 1], 0, true);
-    let same_a = vote(&ba, 1, &[1, 2], 1, false);
+    let same_a = VersionedVote::new(ReplicaIdx(1), version(&ba, 1, &[1, 2]), false, None, 0);
     assert_eq!(a.cmp(&same_a), std::cmp::Ordering::Equal);
     assert_eq!(a, same_a);
-    let later = vote(&ba, 0, &[2, 2], 1, true);
+    let later = VersionedVote::new(ReplicaIdx(1), version(&ba, 0, &[2, 2]), true, None, 1);
     assert!(a < later);
 }
 
@@ -293,7 +294,7 @@ fn configured(own: &str, ids: &[&str]) -> Log {
 
 #[test]
 fn causal_stability_does_not_commit_and_queries_sort_the_tail() {
-    let r = resolver(&["A", "B"]);
+    let r = clock(&["A", "B"]);
     let mut log = configured("A", &["A", "B"]);
     for (origin, clock, op) in [(1, vec![0, 1], 20), (0, vec![1, 0], 10)] {
         let v = version(&r, origin, &clock);
@@ -329,7 +330,7 @@ fn duplicate_members_are_rejected() {
 #[test]
 fn footprint_includes_retained_vote_metadata() {
     use deepsize::DeepSizeOf;
-    let r = resolver(&["A", "B", "C"]);
+    let r = clock(&["A", "B", "C"]);
     let mut log = configured("A", &["A", "B", "C"]);
     let before = log.protocol().deep_size_of();
     let v = version(&r, 0, &[1, 0, 0]);

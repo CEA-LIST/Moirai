@@ -7,7 +7,8 @@ use std::{
 use deepsize::DeepSizeOf;
 
 use crate::{
-    broadcast::internalizer::Interner, clock::version_vector::Version, commitment::commit_protocols::omega::vote_origin::VoteOrigin, replica::{ReplicaId, ReplicaIdx},
+    clock::version_vector::Version, commitment::commit_protocols::omega::vote_origin::VoteOrigin,
+    replica::ReplicaIdx,
 };
 
 /// An entry in the vote log, with a replica vote, a vector clock and last seen partial leader
@@ -16,6 +17,8 @@ use crate::{
 pub struct VersionedVote {
     vote_origin: VoteOrigin,
     lamport: usize,
+    /// Lexicographic rank of the origin's name in the fixed membership.
+    origin_order: usize,
     vote: ReplicaIdx,
     version: Version,
     is_partial: bool,
@@ -23,10 +26,19 @@ pub struct VersionedVote {
 }
 
 impl VersionedVote {
-    pub fn new(vote: ReplicaIdx, version: Version, is_partial: bool, last_partial: Option<VoteOrigin>) -> Self {
+    /// `origin_order` is the origin's lexicographic name rank in the fixed
+    /// membership, identical across replicas even when local indices differ.
+    pub fn new(
+        vote: ReplicaIdx,
+        version: Version,
+        is_partial: bool,
+        last_partial: Option<VoteOrigin>,
+        origin_order: usize,
+    ) -> Self {
         Self {
             vote_origin: VoteOrigin::from(&version),
             lamport: version.sum(),
+            origin_order,
             vote,
             version,
             is_partial,
@@ -63,17 +75,24 @@ impl VersionedVote {
     }
 
     pub fn split(self) -> (VoteOrigin, ReplicaIdx, Version, bool, Option<VoteOrigin>) {
-        (self.vote_origin, self.vote, self.version, self.is_partial, self.last_partial)
+        (
+            self.vote_origin,
+            self.vote,
+            self.version,
+            self.is_partial,
+            self.last_partial,
+        )
     }
 }
 
 // Records are keyed by immutable event identity and its causal timestamp.
 // Payload fields are metadata of that event, not independent key components.
-// This comparison is independent of local indices and resolver addresses.
+// Name ranks are computed once at construction, independently of local indices.
 impl Ord for VersionedVote {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.lamport.cmp(&other.lamport)
-            .then_with(|| self.version.origin_id().cmp(other.version.origin_id()))
+        self.lamport
+            .cmp(&other.lamport)
+            .then_with(|| self.origin_order.cmp(&other.origin_order))
             .then_with(|| self.origin_seq().cmp(&other.origin_seq()))
     }
 }
@@ -95,19 +114,5 @@ impl PartialOrd for VersionedVote {
 impl Display for VersionedVote {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "[{:?}@{:?}]", self.vote, self.version)
-    }
-}
-
-impl Default for VersionedVote {
-    /// A zero-sequence vote with an empty-string placeholder replica ID.
-    fn default() -> Self {
-        let mut interner = Interner::new();
-        let (origin, _) = interner.intern(&ReplicaId(String::new()));
-        Self::new(
-            origin,
-            Version::new(origin, interner.resolver().clone()),
-            false,
-            None,
-        )
     }
 }

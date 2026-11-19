@@ -1,28 +1,19 @@
-use std::fmt::Debug;
-
-use crate::{
-    broadcast::internalizer::Resolver,
-    commitment::wire_id::StableReplicaId,
-    replica::{ReplicaId, ReplicaIdx},
-};
-
-use crate::event::Event;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
+    fmt::Debug,
     time::{Duration, Instant},
 };
 
-/// An oracle is a component that provides information about the current state of the system, such as the current leader.
+use crate::{commitment::wire_id::StableReplicaId, event::Event, replica::ReplicaIdx};
+
+/// Supplies the current leader to the commitment protocol.
 pub trait IsOracle: Debug + Clone + Default {
-    /// Query the oracle for the current leader.
     fn query(&self) -> StableReplicaId;
-
     fn set_leader(&mut self, leader: impl Into<StableReplicaId>);
-
     fn update<T>(&mut self, event: Event<T>) -> Event<T>;
 
-    /// Supply the system-wide identity mapping; static oracles need no setup.
-    fn configure_members(&mut self, _: &[(StableReplicaId, ReplicaId)]) {}
+    /// Configure once, in the fixed local TCSB index order. Static oracles need no setup.
+    fn configure_members(&mut self, _: &[StableReplicaId]) {}
 }
 
 /// Oracle output holder; configure a stable member ID before use.
@@ -65,21 +56,18 @@ impl IsOracle for Omega {
     }
 }
 
-/// Selects the smallest stable ID observed within the timeout (in milliseconds).
-/// If no member is active, returns the explicitly configured fallback leader.
+/// Selects the smallest stable ID observed within the timeout.
+/// If no member is active, returns the configured fallback leader.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct EventOmega {
     leader: StableReplicaId,
-    timeout_ms: usize,
-    checkpoints: BTreeSet<(Instant, ReplicaIdx)>,
-    latest: BTreeMap<ReplicaIdx, Instant>,
-    members: BTreeMap<ReplicaId, StableReplicaId>,
+    timeout: Duration,
     stable_ids: Vec<StableReplicaId>,
-    resolver: Option<Resolver>,
+    latest: Vec<Option<Instant>>,
+    checkpoints: BTreeSet<(Instant, StableReplicaId)>,
 }
 
-/// Descriptive alias for the event-driven Omega implementation.
 pub type EventOracle = EventOmega;
 
 impl EventOmega {
@@ -88,93 +76,34 @@ impl EventOmega {
     }
 
     pub fn with_leader(leader: impl Into<StableReplicaId>) -> Self {
-        Self::from_parts(leader, 10_000, BTreeSet::new(), None)
+        Self::with_timeout(leader, Duration::from_secs(10))
     }
 
-    pub fn from_parts(
-        leader: impl Into<StableReplicaId>,
-        timeout_ms: usize,
-        checkpoints: BTreeSet<(Instant, ReplicaIdx)>,
-        resolver: Option<Resolver>,
-    ) -> Self {
-        let mut latest = BTreeMap::new();
-        for (instant, idx) in checkpoints {
-            latest
-                .entry(idx)
-                .and_modify(|old: &mut Instant| *old = (*old).max(instant))
-                .or_insert(instant);
-        }
-        let checkpoints = latest
-            .iter()
-            .map(|(&idx, &instant)| (instant, idx))
-            .collect();
+    /// Membership is configured once by OmegaCommit, before any event is delivered.
+    pub fn with_timeout(leader: impl Into<StableReplicaId>, timeout: Duration) -> Self {
         Self {
             leader: leader.into(),
-            timeout_ms,
-            checkpoints,
-            latest,
-            members: BTreeMap::new(),
+            timeout,
             stable_ids: Vec::new(),
-            resolver,
+            latest: Vec::new(),
+            checkpoints: BTreeSet::new(),
         }
     }
 
-    pub fn update_resolver(&mut self, resolver: Option<Resolver>) {
-        if self.resolver == resolver {
-            return;
+    fn observe_at(&mut self, idx: ReplicaIdx, now: Instant) {
+        let stable = self.stable_ids[idx.0];
+        if let Some(previous) = self.latest[idx.0].replace(now) {
+            self.checkpoints.remove(&(previous, stable));
         }
-        if let (Some(old), Some(new)) = (&self.resolver, &resolver) {
-            self.latest = self
-                .latest
-                .iter()
-                .map(|(&idx, &instant)| {
-                    let id = old.resolve(idx).expect("Unknown checkpoint origin");
-                    (new.get(id).expect("Oracle membership changed"), instant)
-                })
-                .collect();
-            self.checkpoints = self
-                .latest
-                .iter()
-                .map(|(&idx, &instant)| (instant, idx))
-                .collect();
-        } else if resolver.is_none() {
-            self.latest.clear();
-            self.checkpoints.clear();
-        }
-        self.resolver = resolver;
-        self.refresh_stable_ids();
-    }
-
-    fn refresh_stable_ids(&mut self) {
-        self.stable_ids = self
-            .resolver
-            .as_ref()
-            .map(|r| {
-                (0..r.len())
-                    .map(|i| {
-                        *self
-                            .members
-                            .get(r.resolve(ReplicaIdx(i)).unwrap())
-                            .expect("Oracle member missing from stable ID mapping")
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        self.checkpoints.insert((now, stable));
     }
 
     fn query_at(&self, now: Instant) -> StableReplicaId {
-        let timeout =
-            Duration::from_millis(u64::try_from(self.timeout_ms).expect("Timeout exceeds u64"));
         self.checkpoints
             .iter()
             .rev()
-            .take_while(|(instant, _)| now.saturating_duration_since(*instant) <= timeout)
-            .map(|(_, idx)| {
-                self.stable_ids
-                    .get(idx.0)
-                    .copied()
-                    .expect("Configure oracle membership before querying events")
-            })
+            .take_while(|(instant, _)| now.saturating_duration_since(*instant) <= self.timeout)
+            .map(|(_, id)| *id)
             .min()
             .unwrap_or(self.leader)
     }
@@ -187,40 +116,33 @@ impl Default for EventOmega {
 }
 
 impl IsOracle for EventOmega {
-    fn configure_members(&mut self, members: &[(StableReplicaId, ReplicaId)]) {
-        self.members = members
-            .iter()
-            .map(|(stable, id)| (id.clone(), *stable))
-            .collect();
-        assert_eq!(self.members.len(), members.len(), "Duplicate replica IDs");
+    fn configure_members(&mut self, members: &[StableReplicaId]) {
+        if !self.stable_ids.is_empty() {
+            assert_eq!(self.stable_ids, members, "EventOracle membership is fixed");
+            return;
+        }
+        assert!(
+            !members.is_empty(),
+            "EventOracle requires nonempty fixed membership"
+        );
         assert_eq!(
-            members
-                .iter()
-                .map(|(stable, _)| stable)
-                .collect::<BTreeSet<_>>()
-                .len(),
+            members.iter().collect::<BTreeSet<_>>().len(),
             members.len(),
             "Duplicate stable IDs"
         );
-        self.refresh_stable_ids();
+        self.stable_ids = members.to_vec();
+        self.latest = vec![None; members.len()];
     }
 
     fn query(&self) -> StableReplicaId {
         self.query_at(Instant::now())
     }
-
     fn set_leader(&mut self, leader: impl Into<StableReplicaId>) {
         self.leader = leader.into();
     }
 
     fn update<T>(&mut self, event: Event<T>) -> Event<T> {
-        self.update_resolver(Some(event.version().resolver().clone()));
-        let instant = Instant::now();
-        let idx = event.version().origin_idx();
-        if let Some(previous) = self.latest.insert(idx, instant) {
-            self.checkpoints.remove(&(previous, idx));
-        }
-        self.checkpoints.insert((instant, idx));
+        self.observe_at(event.version().origin_idx(), Instant::now());
         event
     }
 }
@@ -232,23 +154,15 @@ mod tests {
         broadcast::internalizer::Interner,
         clock::version_vector::Version,
         event::{id::EventId, lamport::Lamport},
+        replica::ReplicaId,
     };
 
-    fn resolver(names: &[&str]) -> Resolver {
+    fn event(names: &[&str], idx: usize) -> Event<u64> {
         let mut interner = Interner::new();
         for name in names {
             interner.intern(&ReplicaId::from(*name));
         }
-        interner.resolver().clone()
-    }
-    fn members() -> Vec<(StableReplicaId, ReplicaId)> {
-        vec![
-            (StableReplicaId(9), ReplicaId::from("A")),
-            (StableReplicaId(3), ReplicaId::from("B")),
-        ]
-    }
-    fn event(r: &Resolver, idx: usize) -> Event<u64> {
-        let mut version = Version::new(ReplicaIdx(idx), r.clone());
+        let mut version = Version::new(ReplicaIdx(idx), interner.resolver().clone());
         version.set_by_idx(ReplicaIdx(idx), 1);
         Event::new(
             EventId::from(&version),
@@ -261,18 +175,11 @@ mod tests {
     #[test]
     fn timeout_uses_latest_observation_and_stable_ids() {
         let now = Instant::now();
-        let r = resolver(&["A", "B"]);
-        let mut oracle = EventOmega::from_parts(
-            StableReplicaId(9),
-            10,
-            BTreeSet::from([
-                (now - Duration::from_millis(20), ReplicaIdx(1)),
-                (now, ReplicaIdx(1)),
-                (now, ReplicaIdx(0)),
-            ]),
-            Some(r),
-        );
-        oracle.configure_members(&members());
+        let mut oracle = EventOmega::with_timeout(StableReplicaId(9), Duration::from_millis(10));
+        oracle.configure_members(&[StableReplicaId(9), StableReplicaId(3)]);
+        oracle.observe_at(ReplicaIdx(1), now - Duration::from_millis(20));
+        oracle.observe_at(ReplicaIdx(1), now);
+        oracle.observe_at(ReplicaIdx(0), now);
         assert_eq!(oracle.checkpoints.len(), 2);
         assert_eq!(oracle.query_at(now), StableReplicaId(3));
         assert_eq!(
@@ -286,17 +193,36 @@ mod tests {
     }
 
     #[test]
-    fn event_refresh_and_resolver_reordering_preserve_identity() {
-        let ab = resolver(&["A", "B"]);
-        let ba = resolver(&["B", "A"]);
+    fn event_refresh_preserves_payload_and_replaces_the_old_checkpoint() {
         let mut oracle = EventOmega::with_leader(StableReplicaId(9));
-        oracle.configure_members(&members());
-        assert_eq!(*oracle.update(event(&ab, 1)).op(), 42);
-        oracle.update(event(&ab, 1));
+        let ids = [StableReplicaId(9), StableReplicaId(3)];
+        oracle.configure_members(&ids);
+        assert_eq!(*oracle.update(event(&["A", "B"], 1)).op(), 42);
+        oracle.update(event(&["A", "B"], 1));
+        oracle.configure_members(&ids); // Identical setup does not reset activity.
         assert_eq!(oracle.checkpoints.len(), 1);
-        oracle.update_resolver(Some(ba.clone()));
-        oracle.update(event(&ba, 1));
         assert_eq!(oracle.query(), StableReplicaId(3));
+        oracle.update(event(&["A", "B"], 0));
         assert_eq!(oracle.checkpoints.len(), 2);
+    }
+
+    #[test]
+    fn different_fixed_local_orders_elect_the_same_stable_id() {
+        let mut a = EventOmega::with_leader(StableReplicaId(9));
+        let mut b = EventOmega::with_leader(StableReplicaId(3));
+        a.configure_members(&[StableReplicaId(9), StableReplicaId(3)]);
+        b.configure_members(&[StableReplicaId(3), StableReplicaId(9)]);
+        a.update(event(&["A", "B"], 1));
+        b.update(event(&["B", "A"], 0));
+        assert_eq!(a.query(), StableReplicaId(3));
+        assert_eq!(b.query(), StableReplicaId(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "EventOracle membership is fixed")]
+    fn membership_cannot_be_reordered_after_configuration() {
+        let mut oracle = EventOmega::new();
+        oracle.configure_members(&[StableReplicaId(0), StableReplicaId(1)]);
+        oracle.configure_members(&[StableReplicaId(1), StableReplicaId(0)]);
     }
 }

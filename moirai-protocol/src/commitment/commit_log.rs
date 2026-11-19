@@ -39,11 +39,6 @@ where
     }
 
     fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
-        // We update the resolver in the protocol to ensure that we can resolve
-        // replica IDs correctly for the leader votes (in the case new replicas have joined
-        // since the last event).
-        self.ab_protocol.update_resolver(event.version().resolver().clone());
-
         let child_op = A::child_op(event.op()).clone();
         let update_event = event.clone().unfold(child_op);
 
@@ -53,7 +48,7 @@ where
 
         // Check new event candidates for commitment
         let ready: Vec<_> = self.ab_protocol
-            .ab_ready_to_commit(self.ab_protocol.get_resolver().unwrap())
+            .ab_ready_to_commit()
             .into_iter().cloned().collect();
 
         // Iterate through each candidate to commit
@@ -106,7 +101,7 @@ where
 
     /// Returns the frontier representing the strict causal past of the given frontier.
     pub fn strict_causal_past(frontier: &CausalFrontier) -> CausalFrontier {
-        let mut new_frontier = CausalFrontier::new(frontier.resolver().clone());
+        let mut new_frontier = frontier.clone();
 
         for (idx, value) in frontier.iter() {
             if value > 0 {

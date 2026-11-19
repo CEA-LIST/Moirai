@@ -13,7 +13,7 @@ TCSB together:
 ```rust
 use moirai_protocol::{
     commitment::examples::{
-        builders::commit_replicas,
+        tools::builders::commit_replicas,
         commit_set::{CommitSet, SetUpdate},
     },
     crdt::query::Contains,
@@ -40,6 +40,55 @@ For direct log construction, use
 `CommitmentLog::new(child, OmegaCommit::from_parts(oracle, members, own_id))`, then
 `Replica::bootstrap_with_state` with the same membership. Default Omega state is
 unconfigured and must be configured before preparing or handling events.
+
+For Lamport commitment, use `LamportCommit::new(member_count)` or
+`examples::tools::builders::lamport_commit_replicas::<L>(n)`. The count includes
+every configured TCSB member, including this replica. Lamport commitment waits
+for every member; Omega commitment can advance with a majority.
+
+## Fixed membership and clock metadata
+
+Commitment does not store or query a `Resolver`, update identity views, or remap
+existing state. The full membership and each process's local index order must
+remain fixed for the lifetime of a configured protocol. Deliver events through
+TCSB so their clock indices already refer to that process's local member order.
+
+`OmegaCommit::from_parts` builds its stable-to-local ID table once. It uses the
+same ordering as `Replica::bootstrap_with_state`: the local member is first,
+followed by the other members in the supplied order. Pass the same member order
+to both constructors, or use the replica builders above. Different processes
+can still have different local indices. Stable payload IDs and the existing
+lexicographic name tie-break remain identical at every process; name ranks are
+cached at construction instead of being resolved during checkpoint comparisons.
+Membership and the local identity have no mutation setters.
+
+Lamport tracking uses a fixed vector of latest timestamps and one FIFO timestamp
+queue per member. Unseen members keep timestamp zero and block commitment.
+EventOracle uses a fixed local-index-to-stable-ID vector and one latest activity
+time per member. To configure its timeout, use
+`EventOracle::with_timeout(fallback_id, std::time::Duration::from_millis(ms))`;
+OmegaCommit configures the oracle's member table automatically, including when
+replacing the oracle. Reconfiguring an EventOracle with a different index order
+is rejected.
+
+Versions and commitment frontiers retain their original, full fixed-membership
+clock metadata for TCSB, child-log queries, and serialization. Commitment carries
+that metadata through clock/frontier clones and conversions without using it
+for membership decisions or identity translation. TCSB's implementation and
+event payload formats are unchanged.
+
+Resolver-related API changes:
+
+- `AtomicBroadcastProtocol::ab_ready_to_commit()` takes no arguments; the
+  `get_resolver` and `update_resolver` hooks are removed.
+- `LamportCommit::new(member_count)` replaces its membership/tracker constructor
+  and mutable membership accessors. `LamportTracker::new(member_count)` fixes its
+  vector size; `get_stable_frontier()` returns `None` before the first event.
+- `EventOracle::with_timeout` replaces the resolver/checkpoint constructor.
+  `IsOracle::configure_members` receives stable IDs in fixed local index order.
+- `VersionedVote::new` receives the origin's lexicographic name rank as its last
+  argument. Its empty, unconfigured `Default` placeholder is removed; actual
+  votes always carry a version and an explicit fixed origin rank.
 
 ## Protocol and child-log responsibilities
 
@@ -83,7 +132,3 @@ The Rust tests exercise actual local-ID translation, sequence commitment,
 pruning, crash progress, set convergence, memory accounting, and serialization.
 Omit `--offline` if dependencies have not been fetched. The standalone model uses
 only Python's standard library (Python 3.10 or newer); it needs no Cargo feature.
-
-`OmegaCommit::ab_last_committed` currently remains unimplemented. The Python
-model does not validate that accessor, and `CommitmentLog::committed_frontier()`
-will panic until it is implemented.

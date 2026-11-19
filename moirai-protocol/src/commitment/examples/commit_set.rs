@@ -441,7 +441,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let oracle =
-                    EventOracle::from_parts(StableReplicaId(0), 60_000, Default::default(), None);
+                    EventOracle::with_timeout(StableReplicaId(0), std::time::Duration::from_secs(60));
                 let protocol =
                     OmegaCommit::from_parts(oracle, members.clone(), StableReplicaId(i as u16));
                 Replica::bootstrap_with_state(
