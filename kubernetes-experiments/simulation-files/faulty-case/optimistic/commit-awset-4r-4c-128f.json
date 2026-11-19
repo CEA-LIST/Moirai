@@ -1,0 +1,14 @@
+{
+  "simulation_name": "commit-awset-4r-4c-128f",
+  "n_replicas": 4,
+  "n_clients": 4,
+  "n_operations": 1920,
+  "frequency": 32,
+  "with_fault": true,
+  "failure_time": 15,
+  "use_optimistic_requests": true,
+  "use_consistent_requests": false,
+  "replica_image": "moirai-replica-commit:dev",
+  "client_image": "moirai-client:dev",
+  "output_path": "../../../results/faulty-case/optimistic"
+}

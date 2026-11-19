@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: moirai-client-load
+  labels:
+    app: moirai-client
+spec:
+  completionMode: Indexed
+  completions: 4
+  parallelism: 4
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: moirai-client
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: load-generator
+          image: moirai-client:dev
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              exec python3 /app/launcher_client.py
+              --client-id "$((JOB_COMPLETION_INDEX + 1))"
+              --n-operations "$N_OPERATIONS"
+              --frequency "$FREQUENCY"
+              --optimistic "$OPTIMISTIC"
+              --consistent "$CONSISTENT"
+              --target-url "$TARGET_URL"
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+            - name: N_OPERATIONS
+              value: "100"
+            - name: FREQUENCY
+              value: "10"
+            - name: OPTIMISTIC
+              value: "true"
+            - name: CONSISTENT
+              value: "true"
+            - name: TARGET_URL
+              value: http://moirai-multi-http:8081
+          volumeMounts:
+            - name: client-results
+              mountPath: /app/Outputs
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: client-results
+          emptyDir: {}

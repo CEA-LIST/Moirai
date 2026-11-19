@@ -1,0 +1,15 @@
+{
+  "replica_id_base": 1,
+  "replica_name_prefix": "replica-",
+  "listen_port": 19001,
+  "http_port": 8081,
+  "pull_interval_ms": 500,
+  "pull_peer_count": 1,
+  "noop_interval_ms": 300,
+  "event_timeout_ms": 1000,
+  "request_timeout_ms": 10000,
+  "memory_usage_enabled": true,
+  "memory_usage_interval_ms": 1000,
+  "http_optimistic_limit": 64,
+  "http_consistent_limit": 64
+}

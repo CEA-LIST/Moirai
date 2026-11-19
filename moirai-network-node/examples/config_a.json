@@ -1,0 +1,17 @@
+{
+    "replica_id": 1,
+    "listen_port": 19001,
+    "http_port": 8081,
+    "peers": [
+        {
+            "replica_id": 2,
+            "replica_name": "b",
+            "address": "127.0.0.1:19002"
+        }
+    ],
+    "noop_interval_ms": 1000,
+    "event_timeout_ms": 10000,
+    "pull_interval_ms": 500,
+    "pull_peer_count": 1,
+    "replica_name": "a"
+}

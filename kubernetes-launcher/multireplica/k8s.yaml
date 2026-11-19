@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: moirai-multi-replicas
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: moirai-multi-replica
+  ports:
+    - name: replica-tcp
+      port: 19001
+      targetPort: replica-tcp
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moirai-multi-http
+spec:
+  type: ClusterIP
+  selector:
+    app: moirai-multi-replica
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: moirai-multi-replica
+spec:
+  serviceName: moirai-multi-replicas
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: moirai-multi-replica
+  template:
+    metadata:
+      labels:
+        app: moirai-multi-replica
+    spec:
+      terminationGracePeriodSeconds: 0
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: make-replica-config
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - /bootstrap/render-config.py
+            - /bootstrap/replica-template.json
+            - /generated/replica.json
+          env:
+            - name: REPLICA_COUNT
+              value: "3"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /bootstrap
+              readOnly: true
+            - name: generated-config
+              mountPath: /generated
+      containers:
+        - name: replica
+          image: moirai-replica:dev
+          imagePullPolicy: IfNotPresent
+          args: ["/etc/moirai/replica.json"]
+          ports:
+            - name: replica-tcp
+              containerPort: 19001
+              protocol: TCP
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: generated-config
+              mountPath: /etc/moirai
+              readOnly: true
+      volumes:
+        - name: bootstrap
+          configMap:
+            name: moirai-multi-bootstrap
+            defaultMode: 0444
+        - name: generated-config
+          emptyDir: {}

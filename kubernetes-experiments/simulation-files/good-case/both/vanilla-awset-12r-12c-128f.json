@@ -1,0 +1,14 @@
+{
+  "simulation_name": "vanilla-awset-12r-12c-128f",
+  "n_replicas": 12,
+  "n_clients": 12,
+  "n_operations": 300,
+  "frequency": 5,
+  "with_fault": false,
+  "failure_time": 15,
+  "use_optimistic_requests": true,
+  "use_consistent_requests": true,
+  "replica_image": "moirai-replica-vanilla:dev",
+  "client_image": "moirai-client:dev",
+  "output_path": "../../../results/good-case/both"
+}
