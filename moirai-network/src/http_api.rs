@@ -13,7 +13,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use moirai_protocol::log_id::LogId;
+use crate::log_id::LogId;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -1297,7 +1297,7 @@ mod tests {
     use std::sync::mpsc;
     use std::sync::{Arc, RwLock};
 
-    use moirai_protocol::log_id::LogId;
+    use crate::log_id::LogId;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 

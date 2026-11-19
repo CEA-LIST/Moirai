@@ -3,7 +3,6 @@ pub mod clock;
 pub mod commitment;
 pub mod crdt;
 pub mod event;
-pub mod log_id;
 pub mod replica;
 pub mod state;
 pub mod utils;

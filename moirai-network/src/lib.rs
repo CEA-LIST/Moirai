@@ -49,3 +49,7 @@ pub mod zenoh_transport;
 
 pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSet<V> = rustc_hash::FxHashSet<V>;
+
+pub mod log_id;
+mod log_replica;
+pub mod message;

@@ -3,45 +3,38 @@ use std::{
     hash::Hash,
 };
 
-#[cfg(feature = "test_utils")]
+#[cfg(feature = "fuzz")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{Get, QueryOperation, Read},
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
-    utils::boxer::Boxer,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::HashMap;
+use crate::{FxHashMap, map::update::MapUpdate};
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum UWMap<K, O> {
-    Update(K, O),
-    Remove(K),
-    Clear,
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,
     L: IsLog,
 {
-    children: HashMap<K, L>,
+    children: FxHashMap<K, L>,
 }
 
 impl<K, L> Default for UWMapLog<K, L>
@@ -65,7 +58,7 @@ where
         Self::default()
     }
 
-    pub fn children(&self) -> &HashMap<K, L> {
+    pub const fn children(&self) -> &FxHashMap<K, L> {
         &self.children
     }
 
@@ -79,21 +72,27 @@ where
     L: IsLog,
     K: Clone + Debug + Hash + Eq,
 {
-    type Command = UWMap<K, L::Op>;
-    type Op = UWMap<K, L::Op>;
-    type Rejection = L::Rejection;
+    type Command = MapUpdate<K, L::Update>;
+    type Update = MapUpdate<K, L::Update>;
+    type Rejection = Box<L::Rejection>;
+
+    fn adopted_from(&mut self, donor: &Version) {
+        for child in self.children.values_mut() {
+            child.adopted_from(donor);
+        }
+    }
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
-            UWMap::Update(k, v) => {
+            MapUpdate::Update(k, v) => {
                 let owns_path = ctx.is_owned();
                 let existed = self.children.contains_key(&k);
                 let child_op = Event::unfold(event, v);
@@ -123,7 +122,7 @@ where
                     });
                 }
             }
-            UWMap::Remove(k) => {
+            MapUpdate::Remove(k) => {
                 if ctx.is_owned() {
                     ctx.with_map_entry(|| format!("{:?}", k), |ctx| ctx.delete());
                 }
@@ -132,7 +131,7 @@ where
                     child.redundant_by_parent(event.version(), true);
                 }
             }
-            UWMap::Clear => {
+            MapUpdate::Clear => {
                 if ctx.is_owned() {
                     ctx.delete();
                 }
@@ -143,9 +142,9 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         for child in self.children.values_mut() {
-            child.stabilize(version);
+            child.stabilize(frontier);
         }
     }
 
@@ -159,18 +158,18 @@ where
         self.children.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         match op {
-            UWMap::Update(k, v) => self
+            MapUpdate::Update(k, v) => self
                 .children
                 .get(k)
-                .map_or_else(|| Ok(()), |child| child.is_enabled(v)),
-            UWMap::Remove(_) | UWMap::Clear => Ok(()),
+                .map_or_else(|| Ok(()), |child| child.is_enabled(v).map_err(Box::new)),
+            MapUpdate::Remove(_) | MapUpdate::Clear => Ok(()),
         }
     }
 }
 
-impl<K, L, V> EvalNested<Read<HashMap<K, V>>> for UWMapLog<K, L>
+impl<K, L, V> EvalNested<Read<FxHashMap<K, V>>> for UWMapLog<K, L>
 where
     L: IsLog + EvalNested<Read<V>>,
     K: Clone + Debug + Hash + Eq + PartialEq,
@@ -178,9 +177,9 @@ where
 {
     fn execute_query(
         &self,
-        _q: &Read<HashMap<K, V>>,
-    ) -> <Read<HashMap<K, V>> as QueryOperation>::Response {
-        let mut map: HashMap<K, V> = HashMap::default();
+        _q: &Read<FxHashMap<K, V>>,
+    ) -> <Read<FxHashMap<K, V>> as QueryOperation>::Response {
+        let mut map: FxHashMap<K, V> = FxHashMap::default();
         for (k, v) in &self.children {
             let val: V = v.execute_query(&Read::new());
             if val != V::default() {
@@ -198,22 +197,20 @@ where
     K: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(&self, q: &Get<K, Q>) -> <Get<K, Q> as QueryOperation>::Response {
-        if let Some(child) = self.children.get(&q.key) {
-            Some(child.execute_query(&q.nested_query))
-        } else {
-            None
-        }
+        self.children
+            .get(&q.key)
+            .map_or_else(|| None, |child| Some(child.execute_query(&q.nested_query)))
     }
 }
 
 #[cfg(feature = "fuzz")]
 impl<K, L> CommandGenerator for UWMapLog<K, L>
 where
-    L: IsLog<Command = <L as IsLog>::Op> + CommandGenerator,
+    L: IsLog<Command = <L as IsLog>::Update> + CommandGenerator,
     K: Clone + Debug + Hash + Eq + PartialEq + ValueGenerator,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        use moirai_fuzz::value_generator::ValueGenerator;
+        use moirai_fuzz::generator::value_generator::ValueGenerator;
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -232,11 +229,27 @@ where
                 } else {
                     L::new().generate_command(rng)
                 };
-                UWMap::Update(key, child_op)
+                MapUpdate::Update(key, child_op)
             }
-            Choice::Remove => UWMap::Remove(key),
-            Choice::Clear => UWMap::Clear,
+            Choice::Remove => MapUpdate::Remove(key),
+            Choice::Clear => MapUpdate::Clear,
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<K, L> LogFootprint for UWMapLog<K, L>
+where
+    K: Clone + Debug + Eq + Hash + DeepSizeOf,
+    L: IsLog + LogFootprint + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        let children = self
+            .children
+            .values()
+            .map(|v| v.footprint())
+            .collect::<Vec<FootprintNode>>();
+        FootprintNode::parent(self, children)
     }
 }
 
@@ -259,19 +272,20 @@ mod tests {
     use moirai_protocol::{
         crdt::query::{Contains, Get, Read},
         replica::IsReplica,
-        state::{graph_log::GraphLog, po_log::VecLog},
+        state::po_log::{GraphLog, VecLog},
     };
 
     use crate::{
-        HashMap,
-        counter::resettable_counter::Counter,
+        FxHashMap,
+        counter::{Counter, update::CounterUpdate},
         list::{
             eg_walker::List,
-            nested_list::{NestedList, NestedListLog},
+            nested_list::NestedListLog,
+            update::{ListUpdate, NestedListUpdate},
         },
-        map::uw_map::{UWMap, UWMapLog},
-        set::aw_set::AWSet,
-        utils::membership::{triplet_log, twins_log},
+        map::{update::MapUpdate, uw_map::UWMapLog},
+        set::{aw_set::AWSet, update::SetUpdate},
+        utils::bootstrap::{triplet_log, twins_log},
     };
 
     record!(Duet {
@@ -284,7 +298,7 @@ mod tests {
         let (mut replica_a, mut _replica_b) = twins_log::<UWMapLog<String, VecLog<AWSet<i32>>>>();
 
         let _ = replica_a
-            .send(UWMap::Update("a".to_string(), AWSet::Add(10)))
+            .send(MapUpdate::Update("a".to_string(), SetUpdate::Add(10)))
             .unwrap();
         assert_eq!(
             Some(true),
@@ -297,21 +311,21 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
         let event = replica_a
-            .send(UWMap::Update("a".to_string(), Counter::Dec(5)))
+            .send(MapUpdate::Update("a".to_string(), CounterUpdate::Dec(5)))
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_a
-            .send(UWMap::Update("b".to_string(), Counter::Inc(5)))
+            .send(MapUpdate::Update("b".to_string(), CounterUpdate::Inc(5)))
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_a
-            .send(UWMap::Update("a".to_string(), Counter::Inc(15)))
+            .send(MapUpdate::Update("a".to_string(), CounterUpdate::Inc(15)))
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(String::from("a"), 10);
         map.insert(String::from("b"), 5);
         assert_eq!(map, replica_a.query(&Read::new()));
@@ -322,15 +336,15 @@ mod tests {
     fn concurrent_uw_map() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(UWMap::Remove("a".to_string())).unwrap();
+        let event_a = replica_a.send(MapUpdate::Remove("a".to_string())).unwrap();
         let event_b = replica_b
-            .send(UWMap::Update("a".to_string(), Counter::Inc(10)))
+            .send(MapUpdate::Update("a".to_string(), CounterUpdate::Inc(10)))
             .unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(String::from("a"), 10);
         assert_eq!(map, replica_a.query(&Read::new()));
         assert_eq!(map, replica_b.query(&Read::new()));
@@ -345,35 +359,38 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, DuetLog>>();
 
         let event = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                Duet::First(Counter::Inc(15)),
+                Duet::First(CounterUpdate::Inc(15)),
             ))
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_a
-            .send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))))
-            .unwrap();
-        replica_b.receive(event);
-
-        let event = replica_a
-            .send(UWMap::Update(
-                "a".to_string(),
-                Duet::First(Counter::Inc(10)),
-            ))
-            .unwrap();
-        replica_b.receive(event);
-
-        let event = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "b".to_string(),
-                Duet::Second(Counter::Dec(7)),
+                Duet::First(CounterUpdate::Inc(5)),
             ))
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let event = replica_a
+            .send(MapUpdate::Update(
+                "a".to_string(),
+                Duet::First(CounterUpdate::Inc(10)),
+            ))
+            .unwrap();
+        replica_b.receive(event);
+
+        let event = replica_a
+            .send(MapUpdate::Update(
+                "b".to_string(),
+                Duet::Second(CounterUpdate::Dec(7)),
+            ))
+            .unwrap();
+        replica_b.receive(event);
+
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -397,19 +414,22 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, DuetLog>>();
 
         let event = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                Duet::First(Counter::Inc(15)),
+                Duet::First(CounterUpdate::Inc(15)),
             ))
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_a
-            .send(UWMap::Update("b".to_string(), Duet::First(Counter::Inc(5))))
+            .send(MapUpdate::Update(
+                "b".to_string(),
+                Duet::First(CounterUpdate::Inc(5)),
+            ))
             .unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -428,16 +448,16 @@ mod tests {
         assert_eq!(map, replica_b.query(&Read::new()));
 
         let event_a = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                Duet::First(Counter::Inc(10)),
+                Duet::First(CounterUpdate::Inc(10)),
             ))
             .unwrap();
-        let event_b = replica_b.send(UWMap::Remove("a".to_string())).unwrap();
+        let event_b = replica_b.send(MapUpdate::Remove("a".to_string())).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -456,17 +476,17 @@ mod tests {
         assert_eq!(map, replica_b.query(&Read::new()));
 
         let event = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "b".to_string(),
-                Duet::Second(Counter::Dec(7)),
+                Duet::Second(CounterUpdate::Dec(7)),
             ))
             .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(UWMap::Remove("b".to_string())).unwrap();
+        let event = replica_a.send(MapUpdate::Remove("b".to_string())).unwrap();
         replica_b.receive(event);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             String::from("a"),
             DuetValue {
@@ -485,44 +505,47 @@ mod tests {
         >();
 
         let event_a_1 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(2))),
+                MapUpdate::Update(1, MapUpdate::Update("z".to_string(), CounterUpdate::Inc(2))),
             ))
             .unwrap();
 
         let event_a_2 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "b".to_string(),
-                UWMap::Update(2, UWMap::Update("f".to_string(), Counter::Dec(20))),
+                MapUpdate::Update(
+                    2,
+                    MapUpdate::Update("f".to_string(), CounterUpdate::Dec(20)),
+                ),
             ))
             .unwrap();
 
         let event_a_3 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
+                MapUpdate::Update(1, MapUpdate::Update("z".to_string(), CounterUpdate::Inc(8))),
             ))
             .unwrap();
 
         let event_b_1 = replica_b
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                UWMap::Update(1, UWMap::Update("z".to_string(), Counter::Inc(8))),
+                MapUpdate::Update(1, MapUpdate::Update("z".to_string(), CounterUpdate::Inc(8))),
             ))
             .unwrap();
 
         let event_b_2 = replica_b
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                UWMap::Update(2, UWMap::Remove("f".to_string())),
+                MapUpdate::Update(2, MapUpdate::Remove("f".to_string())),
             ))
             .unwrap();
 
         let event_c_1 = replica_c
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "a".to_string(),
-                UWMap::Update(1, UWMap::Remove("z".to_string())),
+                MapUpdate::Update(1, MapUpdate::Remove("z".to_string())),
             ))
             .unwrap();
 
@@ -531,15 +554,15 @@ mod tests {
         replica_a.receive(event_c_1.clone());
 
         replica_b.receive(event_a_1.clone());
-        replica_b.receive(event_c_1.clone());
+        replica_b.receive(event_c_1);
         replica_b.receive(event_a_2.clone());
         replica_b.receive(event_a_3.clone());
 
-        replica_c.receive(event_b_2.clone());
-        replica_c.receive(event_a_3.clone());
-        replica_c.receive(event_b_1.clone());
-        replica_c.receive(event_a_2.clone());
-        replica_c.receive(event_a_1.clone());
+        replica_c.receive(event_b_2);
+        replica_c.receive(event_a_3);
+        replica_c.receive(event_b_1);
+        replica_c.receive(event_a_2);
+        replica_c.receive(event_a_1);
 
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
         assert_eq!(replica_c.query(&Read::new()), replica_b.query(&Read::new()));
@@ -551,38 +574,40 @@ mod tests {
             triplet_log::<UWMapLog<String, NestedListLog<DuetLog>>>();
 
         let event_a_1 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "scores".to_string(),
-                NestedList::insert(0, Duet::First(Counter::Inc(10))),
+                NestedListUpdate::insert(0, Duet::First(CounterUpdate::Inc(10))),
             ))
             .unwrap();
         replica_b.receive(event_a_1.clone());
-        replica_c.receive(event_a_1.clone());
+        replica_c.receive(event_a_1);
 
         let event_a_2 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "scores".to_string(),
-                NestedList::update(0, Duet::Second(Counter::Inc(3))),
+                NestedListUpdate::update(0, Duet::Second(CounterUpdate::Inc(3))),
             ))
             .unwrap();
         let event_b_1 = replica_b
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "scores".to_string(),
-                NestedList::insert(1, Duet::Second(Counter::Dec(4))),
+                NestedListUpdate::insert(1, Duet::Second(CounterUpdate::Dec(4))),
             ))
             .unwrap();
-        let event_c_1 = replica_c.send(UWMap::Remove("scores".to_string())).unwrap();
+        let event_c_1 = replica_c
+            .send(MapUpdate::Remove("scores".to_string()))
+            .unwrap();
 
         replica_a.receive(event_b_1.clone());
         replica_a.receive(event_c_1.clone());
 
         replica_b.receive(event_a_2.clone());
-        replica_b.receive(event_c_1.clone());
+        replica_b.receive(event_c_1);
 
-        replica_c.receive(event_b_1.clone());
-        replica_c.receive(event_a_2.clone());
+        replica_c.receive(event_b_1);
+        replica_c.receive(event_a_2);
 
-        let mut map = HashMap::default();
+        let mut map = FxHashMap::default();
         map.insert(
             "scores".to_string(),
             vec![
@@ -607,9 +632,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let event_a = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
@@ -617,10 +642,12 @@ mod tests {
             .unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(UWMap::Remove("doc".to_string())).unwrap();
+        let event_b = replica_b
+            .send(MapUpdate::Remove("doc".to_string()))
+            .unwrap();
         replica_a.receive(event_b);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
     }
@@ -630,20 +657,22 @@ mod tests {
         let (mut replica_a, _) = twins_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let _ = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
             ))
             .unwrap();
-        let _ = replica_a.send(UWMap::Remove("patate".to_string())).unwrap();
-        let _ = replica_a.send(UWMap::Clear).unwrap();
+        let _ = replica_a
+            .send(MapUpdate::Remove("patate".to_string()))
+            .unwrap();
+        let _ = replica_a.send(MapUpdate::Clear).unwrap();
 
         assert_eq!(
-            replica_a.query(&Read::<HashMap<String, Vec<char>>>::new()),
-            HashMap::default()
+            replica_a.query(&Read::<FxHashMap<String, Vec<char>>>::new()),
+            FxHashMap::default()
         );
     }
 
@@ -652,17 +681,17 @@ mod tests {
         let (mut replica_a, mut replica_b, mut replica_c) =
             triplet_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
-        let event_a = replica_a.send(UWMap::Clear).unwrap();
+        let event_a = replica_a.send(MapUpdate::Clear).unwrap();
         let event_b = replica_b
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "doc".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'A',
                     pos: 0,
                 },
             ))
             .unwrap();
-        let event_c = replica_c.send(UWMap::Clear).unwrap();
+        let event_c = replica_c.send(MapUpdate::Clear).unwrap();
 
         replica_c.receive(event_a.clone());
         replica_c.receive(event_b.clone());
@@ -673,7 +702,7 @@ mod tests {
         replica_b.receive(event_a);
         replica_b.receive(event_c);
 
-        let mut result = HashMap::default();
+        let mut result = FxHashMap::default();
         result.insert("doc".to_string(), vec!['A']);
 
         assert_eq!(replica_a.query(&Read::new()), result);
@@ -687,9 +716,9 @@ mod tests {
             triplet_log::<UWMapLog<String, GraphLog<List<char>>>>();
 
         let event_a_1 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "foo".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'a',
                     pos: 0,
                 },
@@ -697,9 +726,9 @@ mod tests {
             .unwrap();
 
         let event_a_2 = replica_a
-            .send(UWMap::Update(
+            .send(MapUpdate::Update(
                 "bar".to_string(),
-                List::Insert {
+                ListUpdate::Insert {
                     content: 'b',
                     pos: 0,
                 },
@@ -711,15 +740,17 @@ mod tests {
         replica_b.receive(event_a_1);
         replica_b.receive(event_a_2);
 
-        let event_c_1 = replica_c.send(UWMap::Remove("alice".to_string())).unwrap();
-        let event_c_2 = replica_c.send(UWMap::Clear).unwrap();
+        let event_c_1 = replica_c
+            .send(MapUpdate::Remove("alice".to_string()))
+            .unwrap();
+        let event_c_2 = replica_c.send(MapUpdate::Clear).unwrap();
 
         replica_a.receive(event_c_1.clone());
         replica_a.receive(event_c_2.clone());
         replica_b.receive(event_c_1);
         replica_b.receive(event_c_2);
 
-        let result: HashMap<String, Vec<char>> = HashMap::default();
+        let result: FxHashMap<String, Vec<char>> = FxHashMap::default();
 
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_c.query(&Read::new()), result);
@@ -729,45 +760,65 @@ mod tests {
     #[cfg(feature = "fuzz")]
     #[test]
     #[ignore]
-    fn fuzz_uw_map() {
+    fn fuzz_uw_map_list() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         type UWMapNested = UWMapLog<String, GraphLog<List<char>>>;
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 1_000, None, None);
+        let runs = vec![run; 1];
 
-        let config = FuzzerConfig::<UWMapNested, Read<HashMap<String, String>>>::new(
+        let config = FuzzerConfig::<UWMapNested, Read<FxHashMap<String, String>>>::new(
             "uw_map",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
-        fuzzer::<UWMapNested, Read<HashMap<String, String>>>(config);
+        fuzzer::<UWMapNested, Read<FxHashMap<String, String>>>(config);
     }
-}
 
-impl<K, O> Boxer<UWMap<K, O>> for UWMap<K, Box<O>> {
-    fn boxer(self) -> UWMap<K, O> {
-        match self {
-            UWMap::Update(k, v) => UWMap::Update(k, *v),
-            UWMap::Remove(k) => UWMap::Remove(k),
-            UWMap::Clear => UWMap::Clear,
-        }
-    }
-}
+    #[cfg(feature = "fuzz")]
+    #[test]
+    #[ignore]
+    fn fuzz_uw_map_rw_set() {
+        use moirai_fuzz::{
+            config::{
+                CallSampling, ChurnConfig, FuzzerConfig, MetricsSampling, Predicate,
+                ReplicaSampling, RunConfig,
+            },
+            fuzzer::fuzzer,
+        };
 
-impl<K, O> Boxer<UWMap<K, Box<O>>> for UWMap<K, O> {
-    fn boxer(self) -> UWMap<K, Box<O>> {
-        match self {
-            UWMap::Update(k, v) => UWMap::Update(k, Box::new(v)),
-            UWMap::Remove(k) => UWMap::Remove(k),
-            UWMap::Clear => UWMap::Clear,
-        }
+        use crate::{FxHashSet, set::rw_set::RWSet};
+
+        type UWMapNested = UWMapLog<String, VecLog<RWSet<i32>>>;
+        type Value = Read<FxHashMap<String, FxHashSet<i32>>>;
+
+        let replica_zero =
+            MetricsSampling::new(CallSampling::All, ReplicaSampling::Indices(vec![0]));
+
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 1_000, None, None)
+            .with_response_time(replica_zero.clone())
+            .with_effect_time(replica_zero.clone())
+            .with_query_time(replica_zero.clone())
+            .with_log_size(replica_zero.clone())
+            .with_replica_size(replica_zero)
+            .with_track_stability(ReplicaSampling::Indices(vec![0]));
+        let runs = vec![run; 1];
+
+        // let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 50, None, None);
+        // let runs = vec![run.clone(); 1_000];
+
+        let config = FuzzerConfig::<UWMapNested, Value>::new(
+            "uw_map_rw_set",
+            runs,
+            Predicate::new(Read::new(), |a, b| a == b),
+        )
+        .save(moirai_fuzz::config::SaveMode::Summary);
+
+        fuzzer::<UWMapNested, Value>(config);
     }
 }

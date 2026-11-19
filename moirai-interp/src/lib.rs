@@ -32,6 +32,7 @@ pub mod node;
 pub mod op;
 pub(crate) mod rebase;
 pub mod refs;
+pub mod simple_counter;
 #[cfg(feature = "test_utils")]
 pub mod testing;
 

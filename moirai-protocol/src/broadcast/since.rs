@@ -1,26 +1,22 @@
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+use rustc_hash::FxHashSet;
 
-use crate::{
-    clock::version_vector::Version, event::id::EventId, replica::ReplicaId, utils::hashmap::HashSet,
-};
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use crate::{clock::version_vector::Version, event::id::EventId, replica::ReplicaId};
 
 /// Request all events since the given version, except for the events in the `except` set.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Since {
     version: Version,
     /// Except the events in this set
-    except: HashSet<EventId>,
+    except: FxHashSet<EventId>,
 }
 
 impl Since {
     #[allow(clippy::mutable_key_type)]
-    pub fn new(version: Version, except: HashSet<EventId>) -> Self {
+    pub fn new(version: Version, except: FxHashSet<EventId>) -> Self {
         Self { version, except }
     }
 
@@ -29,7 +25,7 @@ impl Since {
     }
 
     #[allow(clippy::mutable_key_type)]
-    pub fn except(&self) -> &HashSet<EventId> {
+    pub fn except(&self) -> &FxHashSet<EventId> {
         &self.except
     }
 

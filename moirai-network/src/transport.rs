@@ -29,9 +29,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Write};
 use std::net::TcpStream;
 
-use moirai_protocol::broadcast::message::{BatchMessage, EventMessage, SinceMessage};
+use crate::log_id::LogId;
+use crate::message::{BatchMessage, EventMessage, SinceMessage};
 use moirai_protocol::broadcast::tcsb::StateSnapshot;
-use moirai_protocol::log_id::LogId;
 
 use crate::state_transfer::LogPayload;
 
@@ -68,7 +68,7 @@ where
     /// and refuse the latter — wholesale adoption would discard whatever a
     /// returning member did while it was away. Merging the two is phase 3.
     StateRequest {
-        #[serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")]
+        #[serde(deserialize_with = "crate::message::deserialize_replica_id")]
         id: PeerId,
         /// The log the requester hosts. A donor hosting a different log answers
         /// `StateUnavailable` instead of a snapshot: adopting state across a
@@ -105,18 +105,18 @@ where
 
     /// Hello handshake - announces replica identity
     Hello {
-        #[serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")]
+        #[serde(deserialize_with = "crate::message::deserialize_replica_id")]
         id: PeerId,
         metadata: Option<String>,
     },
     /// Acknowledgment
     Ack {
-        #[serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")]
+        #[serde(deserialize_with = "crate::message::deserialize_replica_id")]
         from: PeerId,
     },
     /// Peer disconnecting gracefully
     Goodbye {
-        #[serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")]
+        #[serde(deserialize_with = "crate::message::deserialize_replica_id")]
         id: PeerId,
     },
     /// Raw payload

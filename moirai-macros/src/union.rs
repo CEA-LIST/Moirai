@@ -37,7 +37,6 @@ macro_rules! union {
 
             /// Set of Union CRDT child logs, one for each variant
             #[derive(Clone, Debug)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Child>] {
                 $(
                     $variant($log),
@@ -95,7 +94,6 @@ macro_rules! union {
 
             /// Internal Union log state
             #[derive(Clone, Debug, Default)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Container>] {
                 #[default]
@@ -105,26 +103,10 @@ macro_rules! union {
             }
 
             /// Union log
-            ///
-            /// A variant's child is present while one of the events routed to it is not covered
-            /// by a reset from the parent (e.g., the removal of a map key) or by a `Choose` of
-            /// another variant. Once all of them are covered, the child is absent: it no longer
-            /// counts for reads nor for enabling operations, but its log is kept, so that a
-            /// concurrent update delivered later applies to the history the reset saw.
             #[derive(Clone, Debug, Default)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub struct [<$union Log>] {
-                /// Present children
                 pub child: [<$union Container>],
-                /// Absent children, whose routed events have all been covered
-                removed: ::std::vec::Vec<[<$union Child>]>,
-                /// For each present child, the highest sequence number per origin of the events
-                /// routed to it that no reset has covered yet
-                uncovered: ::std::vec::Vec<(
-                    [<$union Variant>],
-                    $crate::moirai_protocol::clock::version_vector::Version,
-                )>,
             }
 
             /// Rejection reasons for union operations
@@ -153,195 +135,31 @@ macro_rules! union {
                 fn reset_child(
                     child: &mut [<$union Child>],
                     version: &$crate::moirai_protocol::clock::version_vector::Version,
-                    conservative: ::std::primitive::bool,
                 ) {
                     match child {
                         $(
                             [<$union Child>]::$variant(log) => {
-                                <$log as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(log, version, conservative);
+                                <$log as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(log, version, true);
                             }
                         )*
-                    }
-                }
-
-                fn stabilize_child(
-                    child: &mut [<$union Child>],
-                    version: &$crate::moirai_protocol::clock::version_vector::Version,
-                ) {
-                    match child {
-                        $(
-                            [<$union Child>]::$variant(log) => {
-                                <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(log, version);
-                            }
-                        )*
-                    }
-                }
-
-                /// Records that an event has been routed to the child of `variant`.
-                fn record_routed(
-                    &mut self,
-                    variant: [<$union Variant>],
-                    id: &$crate::moirai_protocol::event::id::EventId,
-                ) {
-                    let position = match self.uncovered.iter().position(|(v, _)| *v == variant) {
-                        ::std::option::Option::Some(position) => position,
-                        ::std::option::Option::None => {
-                            self.uncovered.push((
-                                variant,
-                                $crate::moirai_protocol::clock::version_vector::Version::new(
-                                    id.idx(),
-                                    ::std::clone::Clone::clone(id.resolver()),
-                                ),
-                            ));
-                            self.uncovered.len() - 1
-                        }
-                    };
-                    let uncovered = &mut self.uncovered[position].1;
-                    if uncovered.seq_by_idx(id.idx()) < id.seq() {
-                        uncovered.set_by_idx(id.idx(), id.seq());
-                    }
-                }
-
-                /// Forgets the uncovered events that `version` covers.
-                /// Events of one origin are delivered in order, so `version` covers every uncovered
-                /// event of an origin iff it covers the highest one.
-                fn forget_covered(
-                    uncovered: &mut $crate::moirai_protocol::clock::version_vector::Version,
-                    version: &$crate::moirai_protocol::clock::version_vector::Version,
-                ) {
-                    let covered: ::std::vec::Vec<_> = uncovered
-                        .iter()
-                        .filter(|(idx, seq)| *seq > 0 && version.seq_by_idx(*idx) >= *seq)
-                        .map(|(idx, _)| idx)
-                        .collect();
-                    for idx in covered {
-                        uncovered.set_by_idx(idx, 0);
-                    }
-                }
-
-                fn present_mut(&mut self, variant: [<$union Variant>]) -> ::std::option::Option<&mut [<$union Child>]> {
-                    match &mut self.child {
-                        [<$union Container>]::Unset => ::std::option::Option::None,
-                        [<$union Container>]::Value(child) => {
-                            if child.variant() == variant {
-                                ::std::option::Option::Some(child.as_mut())
-                            } else {
-                                ::std::option::Option::None
-                            }
-                        }
-                        [<$union Container>]::Conflicts(children) => {
-                            children.iter_mut().find(|child| child.variant() == variant)
-                        }
-                    }
-                }
-
-                fn insert_present(&mut self, child: [<$union Child>]) {
-                    self.child = match ::std::mem::take(&mut self.child) {
-                        [<$union Container>]::Unset => [<$union Container>]::Value(::std::boxed::Box::new(child)),
-                        [<$union Container>]::Value(existing) => {
-                            [<$union Container>]::Conflicts(::std::vec![*existing, child])
-                        }
-                        [<$union Container>]::Conflicts(mut children) => {
-                            children.push(child);
-                            [<$union Container>]::Conflicts(children)
-                        }
-                    };
-                }
-
-                fn take_present(&mut self, variant: [<$union Variant>]) -> ::std::option::Option<[<$union Child>]> {
-                    let (container, taken) = match ::std::mem::take(&mut self.child) {
-                        [<$union Container>]::Unset => ([<$union Container>]::Unset, ::std::option::Option::None),
-                        [<$union Container>]::Value(child) => {
-                            if child.variant() == variant {
-                                ([<$union Container>]::Unset, ::std::option::Option::Some(*child))
-                            } else {
-                                ([<$union Container>]::Value(child), ::std::option::Option::None)
-                            }
-                        }
-                        [<$union Container>]::Conflicts(mut children) => {
-                            let taken = children
-                                .iter()
-                                .position(|child| child.variant() == variant)
-                                .map(|position| children.remove(position));
-                            let container = match children.len() {
-                                0 => [<$union Container>]::Unset,
-                                1 => [<$union Container>]::Value(::std::boxed::Box::new(children.remove(0))),
-                                _ => [<$union Container>]::Conflicts(children),
-                            };
-                            (container, taken)
-                        }
-                    };
-                    self.child = container;
-                    taken
-                }
-
-                fn take_removed(&mut self, variant: [<$union Variant>]) -> ::std::option::Option<[<$union Child>]> {
-                    self.removed
-                        .iter()
-                        .position(|child| child.variant() == variant)
-                        .map(|position| self.removed.remove(position))
-                }
-
-                /// Resets the children of every variant but `kept`, present or absent, at `version`.
-                /// If the reset is conservative, a present child whose routed events are now all
-                /// covered becomes absent.
-                fn reset_children(
-                    &mut self,
-                    version: &$crate::moirai_protocol::clock::version_vector::Version,
-                    conservative: ::std::primitive::bool,
-                    kept: ::std::option::Option<[<$union Variant>]>,
-                ) {
-                    let is_reset = |variant: [<$union Variant>]| kept != ::std::option::Option::Some(variant);
-                    match &mut self.child {
-                        [<$union Container>]::Unset => {}
-                        [<$union Container>]::Value(child) => {
-                            if is_reset(child.variant()) {
-                                Self::reset_child(child, version, conservative);
-                            }
-                        }
-                        [<$union Container>]::Conflicts(children) => {
-                            for child in children.iter_mut().filter(|child| is_reset(child.variant())) {
-                                Self::reset_child(child, version, conservative);
-                            }
-                        }
-                    }
-                    for child in self.removed.iter_mut().filter(|child| is_reset(child.variant())) {
-                        Self::reset_child(child, version, conservative);
-                    }
-                    if !conservative {
-                        return;
-                    }
-
-                    let mut covered = ::std::vec::Vec::new();
-                    for (variant, uncovered) in self.uncovered.iter_mut().filter(|(variant, _)| is_reset(*variant)) {
-                        Self::forget_covered(uncovered, version);
-                        if uncovered.sum() == 0 {
-                            covered.push(*variant);
-                        }
-                    }
-                    self.uncovered.retain(|(variant, _)| !covered.contains(variant));
-                    for variant in covered {
-                        if let ::std::option::Option::Some(child) = self.take_present(variant) {
-                            self.removed.push(child);
-                        }
                     }
                 }
             }
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
                 type Command = [<$union>];
-                type Op = [<$union>];
+                type Update = [<$union>];
                 type Rejection = [<$union Rejection>];
 
                 fn new() -> Self {
                     <Self as ::std::default::Default>::default()
                 }
 
-                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                fn prepare(&self, cmd: Self::Command) -> Self::Update {
                     cmd
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> ::std::result::Result<(), Self::Rejection> {
+                fn is_enabled(&self, op: &Self::Update) -> ::std::result::Result<(), Self::Rejection> {
                     match &self.child {
                         [<$union Container>]::Unset => match op {
                             $union::Choose(_) => ::std::result::Result::Err([<$union Rejection>]::MissingVariant),
@@ -361,7 +179,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -392,7 +210,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -419,126 +237,170 @@ macro_rules! union {
 
                 fn effect(
                     &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    event: $crate::moirai_protocol::event::Event<Self::Update>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match ::std::clone::Clone::clone(event.op()) {
                         $(
                             $union::$variant(o) => {
-                                self.record_routed([<$union Variant>]::$variant, event.id());
                                 ctx.with_variant(::std::stringify!([<$variant:lower>]), |ctx| {
-                                    let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
-                                    let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
-                                    if let ::std::option::Option::Some([<$union Child>]::$variant(log)) = self.present_mut([<$union Variant>]::$variant) {
-                                        <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, ctx);
-                                    } else {
-                                        // An absent child is made present again with its log
-                                        let mut child = self
-                                            .take_removed([<$union Variant>]::$variant)
-                                            .unwrap_or_else(|| [<$union Child>]::$variant(<$log as $crate::moirai_protocol::state::log::IsLog>::new()));
-                                        if let [<$union Child>]::$variant(log) = &mut child {
-                                            <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, ctx);
+                                    match &mut self.child {
+                                        [<$union Container>]::Unset => {
+                                            let log = {
+                                                let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
+                                                log
+                                            };
+                                            self.child = [<$union Container>]::Value(::std::boxed::Box::new([<$union Child>]::$variant(log)));
                                         }
-                                        self.insert_present(child);
+                                        [<$union Container>]::Value(existing_child) => {
+                                            if let [<$union Child>]::$variant(existing_log) = existing_child.as_mut() {
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(existing_log, child_event, ctx);
+                                            } else {
+                                                let mut new_children = ::std::vec::Vec::new();
+                                                new_children.push(::std::clone::Clone::clone(&**existing_child));
+                                                let log = {
+                                                    let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                    let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                    <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
+                                                    log
+                                                };
+                                                new_children.push([<$union Child>]::$variant(log));
+                                                self.child = [<$union Container>]::Conflicts(new_children);
+                                            }
+                                        }
+                                        [<$union Container>]::Conflicts(children) => {
+                                            if let ::std::option::Option::Some([<$union Child>]::$variant(log)) = children
+                                                .iter_mut()
+                                                .find(|c| ::std::matches!(c, [<$union Child>]::$variant(_)))
+                                            {
+                                                let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, ctx);
+                                            } else {
+                                                let log = {
+                                                    let mut log = <$log as $crate::moirai_protocol::state::log::IsLog>::new();
+                                                    let child_event = $crate::moirai_protocol::event::Event::unfold(event, <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o));
+                                                    <$log as $crate::moirai_protocol::state::log::IsLog>::effect(&mut log, child_event, ctx);
+                                                    log
+                                                };
+                                                children.push([<$union Child>]::$variant(log));
+                                            }
+                                        }
                                     }
                                 });
                             }
                         )*
                         $union::Choose(choice) => {
-                            self.reset_children(event.version(), true, ::std::option::Option::Some(choice));
-                        }
-                    }
-                }
-
-                // A union is a node in the type tree, not a leaf: it holds no
-                // operations of its own, so the only thing it can do with a
-                // stable version is hand it to whichever child currently holds
-                // the value. Stopping here severs the *only* path an operation
-                // has out of a PO-Log's unstable half, and a union at the root
-                // of a model — which is what Arachne generates for JSON —
-                // stops it for the whole model. Same traversal as
-                // `redundant_by_parent` below, for the same reason.
-                fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
-                    match &mut self.child {
-                        [<$union Container>]::Unset => {}
-                        [<$union Container>]::Value(union_child) => Self::stabilize_child(union_child, version),
-                        [<$union Container>]::Conflicts(union_childs) => {
-                            for union_child in union_childs {
-                                Self::stabilize_child(union_child, version);
+                            match &mut self.child {
+                                [<$union Container>]::Unset => {}
+                                [<$union Container>]::Value(existing_child) => {
+                                    if existing_child.variant() != choice {
+                                        Self::reset_child(existing_child, event.version());
+                                        if Self::child_is_default(&existing_child) {
+                                            self.child = [<$union Container>]::Unset;
+                                        }
+                                    }
+                                }
+                                [<$union Container>]::Conflicts(children) => {
+                                    for mut child in children.iter_mut() {
+                                        if child.variant() != choice {
+                                            Self::reset_child(child, event.version());
+                                        }
+                                    }
+                                    let no_conflicts = children.iter().all(|child| child.variant() == choice || Self::child_is_default(child));
+                                    if no_conflicts {
+                                        let selected_child = children
+                                            .iter()
+                                            .find(|child| child.variant() == choice)
+                                            .expect("there should be a child with the chosen variant");
+                                        self.child = [<$union Container>]::Value(::std::boxed::Box::new(
+                                            ::std::clone::Clone::clone(selected_child),
+                                        ));
+                                    } else {
+                                        children.retain(|child| !Self::child_is_default(child));
+                                    }
+                                }
                             }
                         }
                     }
-                    for union_child in &mut self.removed {
-                        Self::stabilize_child(union_child, version);
+                }
+
+                fn stabilize(&mut self, frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier) {
+                    match &mut self.child {
+                        [<$union Container>]::Unset => {}
+                        [<$union Container>]::Value(union_child) => {
+                            match union_child.as_mut() {
+                                $(
+                                    [<$union Child>]::$variant(log) => {
+                                        <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(
+                                            log,
+                                            frontier,
+                                        );
+                                    }
+                                )*
+                            }
+                        },
+                        [<$union Container>]::Conflicts(union_childs) => {
+                            for union_child in union_childs {
+                                match union_child {
+                                    $(
+                                        [<$union Child>]::$variant(log) => {
+                                            <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(
+                                                log,
+                                                frontier,
+                                            );
+                                        }
+                                    )*
+                                }
+                            }
+                        }
                     }
                 }
 
-                // Under an optional the union also drops the members the
-                // removal emptied: `OptionalContent::redundant_by_optional`.
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
-                    self.reset_children(version, conservative, ::std::option::Option::None);
+                    match &mut self.child {
+                        [<$union Container>]::Unset => {}
+                        [<$union Container>]::Value(union_child) => match union_child.as_mut() {
+                            $(
+                                [<$union Child>]::$variant(log) => {
+                                    <$log as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
+                                        log,
+                                        version,
+                                        conservative,
+                                    );
+                                }
+                            )*
+                        },
+                        [<$union Container>]::Conflicts(union_childs) => {
+                            for union_child in union_childs {
+                                match union_child {
+                                    $(
+                                        [<$union Child>]::$variant(log) => {
+                                            <$log as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
+                                                log,
+                                                version,
+                                                conservative,
+                                            );
+                                        }
+                                    )*
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // TODO: structurally its Unset, semantically not necessarily, so we may want to split this into two methods
                 fn is_default(&self) -> ::std::primitive::bool {
-                    let present_default = match &self.child {
+                    match &self.child {
                         [<$union Container>]::Unset => true,
                         [<$union Container>]::Value(child) => Self::child_is_default(child.as_ref()),
                         [<$union Container>]::Conflicts(children) => children
                             .iter()
                             .all(Self::child_is_default),
-                    };
-                    present_default && self.removed.iter().all(Self::child_is_default)
-                }
-            }
-
-            impl $crate::union::held_by_optional::OptionalContent for [<$union Log>] {
-                fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
-                    self.reset_children(version, conservative, ::std::option::Option::None);
-                    self.drop_emptied_children();
-                }
-            }
-
-            impl [<$union Log>] {
-                /// Drop every present child a removal left at its default,
-                /// keeping those a concurrent write kept.
-                ///
-                /// Only under an optional ([`OptionalContent`](moirai_macros::union::held_by_optional::OptionalContent)):
-                /// an emptied child leaves an optional, and so, one at a
-                /// time, does an emptied member of a conflict, whichever of
-                /// the removal and a concurrent write to the other member a
-                /// replica delivers first. A keyed collection keeps the
-                /// emptied members a concurrent write reached, so this is not
-                /// part of the union's own reset. A dropped child keeps no
-                /// log, so its record of uncovered events goes with it.
-                fn drop_emptied_children(&mut self) {
-                    self.child = match ::std::mem::take(&mut self.child) {
-                        [<$union Container>]::Unset => [<$union Container>]::Unset,
-                        [<$union Container>]::Value(child) => {
-                            if Self::child_is_default(&child) {
-                                [<$union Container>]::Unset
-                            } else {
-                                [<$union Container>]::Value(child)
-                            }
-                        }
-                        [<$union Container>]::Conflicts(children) => {
-                            let mut kept: ::std::vec::Vec<[<$union Child>]> = children
-                                .into_iter()
-                                .filter(|child| !Self::child_is_default(child))
-                                .collect();
-                            match kept.len() {
-                                0 => [<$union Container>]::Unset,
-                                1 => [<$union Container>]::Value(::std::boxed::Box::new(kept.remove(0))),
-                                _ => [<$union Container>]::Conflicts(kept),
-                            }
-                        }
-                    };
-                    let present: ::std::vec::Vec<[<$union Variant>]> = match &self.child {
-                        [<$union Container>]::Unset => ::std::vec::Vec::new(),
-                        [<$union Container>]::Value(child) => ::std::vec![child.variant()],
-                        [<$union Container>]::Conflicts(children) => children.iter().map(|child| child.variant()).collect(),
-                    };
-                    self.uncovered.retain(|(variant, _)| present.contains(variant));
+                    }
                 }
             }
 
@@ -682,88 +544,4 @@ macro_rules! union {
             }
         }
     };
-}
-
-/// What an optional asks of the log it holds.
-///
-/// An optional drops a child a removal emptied, whether the removal is its
-/// own unset or one above it, and whether that child is an object (a
-/// `record!` or a `union!`) or a leaf value: emptied means its log holds
-/// nothing, so a text, whose reset records the deletion, stays. A union
-/// under an optional also drops, one at a time, each member a removal
-/// emptied (the value ST.01 fixes: an optional holding the conflict
-/// `[A, B]`, unset while a write reaches `B`, serves `B` alone on every
-/// replica), where a keyed collection keeps, of a removed key, the members
-/// a write the removal had not seen reached (a member every write of which
-/// the removal saw is absent there too, its log kept).
-/// `IsLog::redundant_by_parent` does not say who is asking, so `OptionLog`
-/// hands its removals down through this trait instead, and what the content
-/// does with them is decided by its type: nothing outside the logs carries
-/// it, and nothing is stored in either log, so the state they serialize is
-/// unchanged.
-///
-/// The trait's one method has no default body, so every impl states what
-/// its log does with a removal an optional hands down, and an impl that
-/// does not state it does not compile. `record!` hands the removal to its
-/// fields as from any other parent; `union!` hands it to its members as
-/// from any other parent and then drops each member it emptied; `Box` and
-/// `BoxedLog` forward it to what they hold; `POLog`, `GraphLog` and
-/// `OptionLog` take it as from any other parent. `OptionLog` holds only a
-/// log that implements the trait, so a wrapper between an optional and its
-/// content must state in its impl what it does with the removal, whether
-/// it forwards it or not: it cannot lose the rule silently by taking a
-/// default.
-pub mod held_by_optional {
-    use moirai_protocol::{
-        clock::version_vector::Version,
-        crdt::replicated_data_type::ReplicatedDataType,
-        state::{
-            graph_log::GraphLog,
-            log::{BoxedLog, IsLog},
-            po_log::POLog,
-        },
-    };
-
-    /// The content of an optional: see [the module](self).
-    pub trait OptionalContent: IsLog {
-        /// A removal handed down by the optional that holds this log, its
-        /// own unset or one above it. There is no default: every impl states
-        /// what its log does with it.
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool);
-    }
-
-    impl<L: OptionalContent> OptionalContent for Box<L> {
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            (**self).redundant_by_optional(version, conservative);
-        }
-    }
-
-    impl<L: OptionalContent> OptionalContent for BoxedLog<L> {
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            self.inner_mut()
-                .redundant_by_optional(version, conservative);
-        }
-    }
-
-    impl<O, U> OptionalContent for POLog<O, U>
-    where
-        O: ReplicatedDataType,
-        POLog<O, U>: IsLog,
-    {
-        /// As from any other parent.
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            IsLog::redundant_by_parent(self, version, conservative);
-        }
-    }
-
-    impl<O> OptionalContent for GraphLog<O>
-    where
-        O: ReplicatedDataType,
-        GraphLog<O>: IsLog,
-    {
-        /// As from any other parent.
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            IsLog::redundant_by_parent(self, version, conservative);
-        }
-    }
 }

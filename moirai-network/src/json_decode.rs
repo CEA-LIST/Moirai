@@ -46,7 +46,9 @@ pub(crate) fn check_depth(depth: usize, limit: usize) -> Result<(), Error> {
 /// A finite stack budget for serde's recursive visitors and their error cleanup.
 /// Nested calls (HTTP operation decoding) reuse the stack while space remains.
 fn with_stack<T>(f: impl FnOnce() -> T) -> T {
-    stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, f)
+    moirai_protocol::replica::with_network_id_validation(|| {
+        stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, f)
+    })
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, Error> {

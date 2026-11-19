@@ -1,38 +1,33 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash};
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::CommandGenerator;
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
-        query::{Contains, QueryOperation, Read},
+        query::{QueryOperation, Read},
     },
     event::Event,
     state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::{
-    HashSet,
-    flag::ew_flag::EWFlag,
-    map::uw_map::{UWMap, UWMapLog},
+    FxHashSet,
+    flag::{ew_flag::EWFlag, update::FlagUpdate},
+    map::{update::MapUpdate, uw_map::UWMapLog},
+    set::update::SetUpdate,
 };
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub enum EWFlagSet<V> {
-    Add(V),
-    Remove(V),
-    Clear,
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
     inner: UWMapLog<V, VecLog<EWFlag>>,
@@ -53,27 +48,23 @@ impl<V> IsLog for EWFlagSetLog<V>
 where
     V: Clone + Hash + Debug + Eq,
 {
-    type Command = EWFlagSet<V>;
-    type Op = EWFlagSet<V>;
+    type Command = SetUpdate<V>;
+    type Update = SetUpdate<V>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
-        Ok(())
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
         let op = match event.op() {
-            EWFlagSet::Add(k) => UWMap::Update(k.clone(), EWFlag::Enable),
-            EWFlagSet::Remove(k) => UWMap::Update(k.clone(), EWFlag::Disable),
-            EWFlagSet::Clear => UWMap::Clear,
+            SetUpdate::Add(k) => MapUpdate::Update(k.clone(), FlagUpdate::Enable),
+            SetUpdate::Remove(k) => MapUpdate::Update(k.clone(), FlagUpdate::Disable),
+            SetUpdate::Clear => MapUpdate::Clear,
         };
         let event = Event::unfold(event, op);
         // The EWFlagSetLog is semantically a leaf CRDT, so we ignore the path and sink for now
@@ -81,8 +72,8 @@ where
         self.inner.effect(event, &mut silent_ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.inner.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.inner.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -94,15 +85,15 @@ where
     }
 }
 
-impl<V> EvalNested<Read<HashSet<V>>> for EWFlagSetLog<V>
+impl<V> EvalNested<Read<FxHashSet<V>>> for EWFlagSetLog<V>
 where
     V: Clone + Debug + Hash + Eq + PartialEq,
 {
     fn execute_query(
         &self,
-        _q: &Read<HashSet<V>>,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
-        let mut set = HashSet::default();
+        _q: &Read<FxHashSet<V>>,
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
+        let mut set = FxHashSet::default();
         let values = self.inner.execute_query(&Read::new());
         for (k, val) in values {
             if val {
@@ -113,29 +104,28 @@ where
     }
 }
 
-/// `Contains` reads the flag stored under the value, and `false` when the map
-/// holds no entry for it at all.
-impl<V> EvalNested<Contains<V>> for EWFlagSetLog<V>
+#[cfg(feature = "fuzz")]
+impl<V> CommandGenerator for EWFlagSetLog<V>
 where
-    V: Clone + Debug + Hash + Eq + PartialEq,
+    V: ValueGenerator + Clone + Hash + Debug + Eq,
 {
-    fn execute_query(&self, q: &Contains<V>) -> <Contains<V> as QueryOperation>::Response {
-        match self.inner.children().get(&q.0) {
-            Some(v) => v.execute_query(&Read::new()),
-            None => false,
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+        let value = <V as ValueGenerator>::generate(rng, &V::Config::default());
+        match rng.random_range(0..8) {
+            0 => SetUpdate::Clear,
+            1 | 2 => SetUpdate::Remove(value),
+            _ => SetUpdate::Add(value),
         }
     }
 }
 
 #[cfg(feature = "fuzz")]
-impl CommandGenerator for EWFlagSetLog<usize> {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
-        let value = rng.random_range(0..16);
-        match rng.random_range(0..8) {
-            0 => EWFlagSet::Clear,
-            1 | 2 => EWFlagSet::Remove(value),
-            _ => EWFlagSet::Add(value),
-        }
+impl<V> LogFootprint for EWFlagSetLog<V>
+where
+    V: Clone + Hash + Debug + Eq + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
     }
 }
 
@@ -144,49 +134,49 @@ mod tests {
     use moirai_protocol::replica::IsReplica;
 
     use super::*;
-    use crate::utils::membership::twins_log;
+    use crate::utils::bootstrap::twins_log;
 
     #[test]
     fn default_uw_map() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
-        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Add("a")).unwrap();
         replica_b.receive(event_a);
 
-        let event_b = replica_b.send(EWFlagSet::<&str>::Remove("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Remove("a")).unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(
-            replica_a.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec![])
+            replica_a.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec![])
         );
         assert_eq!(
-            replica_b.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec![])
+            replica_b.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec![])
         );
     }
 
     #[test]
     fn test_ewflag_set() {
         let (mut replica_a, mut replica_b) = twins_log::<EWFlagSetLog<&str>>();
-        let event_a = replica_a.send(EWFlagSet::<&str>::Add("a")).unwrap();
-        let event_b = replica_b.send(EWFlagSet::<&str>::Add("b")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Add("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(EWFlagSet::<&str>::Remove("a")).unwrap();
-        let event_b = replica_b.send(EWFlagSet::<&str>::Add("c")).unwrap();
+        let event_a = replica_a.send(SetUpdate::<&str>::Remove("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::<&str>::Add("c")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
         assert_eq!(
-            replica_a.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec!["b", "c"])
+            replica_a.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec!["b", "c"])
         );
         assert_eq!(
-            replica_b.query(&Read::<HashSet<&str>>::new()),
-            HashSet::from_iter(vec!["b", "c"])
+            replica_b.query(&Read::<FxHashSet<&str>>::new()),
+            FxHashSet::from_iter(vec!["b", "c"])
         );
     }
 
@@ -195,19 +185,23 @@ mod tests {
     #[ignore]
     fn fuzz_ewflag_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<HashSet<usize>>>::new(
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
+        let config = FuzzerConfig::<EWFlagSetLog<usize>, Read<FxHashSet<usize>>>::new(
             "ewflag_set",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
-        fuzzer::<EWFlagSetLog<usize>, Read<HashSet<usize>>>(config);
+        fuzzer::<EWFlagSetLog<usize>, Read<FxHashSet<usize>>>(config);
     }
 }

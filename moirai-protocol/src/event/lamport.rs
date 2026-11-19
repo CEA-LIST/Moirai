@@ -2,8 +2,6 @@ use std::fmt::Display;
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::clock::version_vector::Version;
 
@@ -13,7 +11,7 @@ use crate::clock::version_vector::Version;
 /// But it is not necessarily the same value as the Lamport algorithm would produce.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Lamport(usize);
 
 impl Lamport {

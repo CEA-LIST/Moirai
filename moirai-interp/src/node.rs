@@ -51,16 +51,19 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use moirai_crdt::list::eg_walker::{List, ReadAt};
+use moirai_crdt::list::{
+    eg_walker::{List, ReadAt},
+    update::ListUpdate,
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     event::{
         Event,
         id::{EventId, ResolvedEventId},
         lamport::Lamport,
     },
     replica::ReplicaIdx,
-    state::{cache::CachedLog, effect_context::EffectContext, graph_log::GraphLog, log::IsLog},
+    state::{cache::CachedLog, effect_context::EffectContext, log::IsLog, po_log::GraphLog},
 };
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MergeRule, MetamodelSemantics, SetTie, Shape, TieBreak,
@@ -702,7 +705,6 @@ pub struct ObjectNode {
     ///
     /// Pruned as operations stabilize ([`ObjectNode::stabilize`]), and kept
     /// in the order of the resolved id for the same reason as `creators`.
-    #[cfg_attr(feature = "serde", serde(default))]
     pub(crate) touches: Vec<Touch>,
     /// Keyed by the *visible* slot; minted on first write, from the rule.
     pub(crate) fields: BTreeMap<FeatureSlot, Node>,
@@ -822,17 +824,11 @@ pub enum SlotNode {
 /// An ordered collection: `NestedListLog`'s ordering half verbatim, and a
 /// mapping half that mints by rule.
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(bound(serialize = "", deserialize = ""))
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SeqNode {
     /// The order, kept current by every effect: `CachedLog` replays an event
     /// onto its cached read-out when the event is after everything the list
-    /// holds, and drops the read-out otherwise. See [`positions_serde`] for
-    /// what crosses a state transfer.
-    #[cfg_attr(feature = "serde", serde(with = "positions_serde"))]
+    /// holds, and drops the read-out otherwise.
     pub(crate) positions: Positions,
     /// Keyed by the id of the operation that inserted the child, as
     /// `NestedListLog` keys its own children. A hash map and not a sorted one
@@ -840,8 +836,8 @@ pub struct SeqNode {
     /// *local* replica index, which is not the same order on two replicas.
     /// Read order comes from `positions`, never from this map; the one place
     /// that needs a fixed order is serialization, which sorts by the resolved
-    /// id. See [`children_serde`].
-    #[cfg_attr(feature = "serde", serde(with = "children_serde"))]
+    /// id (EC.03b).
+    #[cfg_attr(feature = "serde", serde(with = "sequence_children"))]
     pub(crate) children: HashMap<EventId, Node>,
     /// The entries a rebase hides (SI.14, M20): inserted with an object of a
     /// class the revision in force removes. They stay in `positions`, so a
@@ -852,10 +848,6 @@ pub struct SeqNode {
     /// Kept in the order of the resolved id, so that two replicas holding one
     /// state serialize it to the same bytes, and absent from the bytes while
     /// empty, which is every sequence no rebase has hidden an entry of.
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Vec::is_empty")
-    )]
     pub(crate) hidden: Vec<EventId>,
 }
 
@@ -863,82 +855,71 @@ pub struct SeqNode {
 /// kept beside it.
 pub(crate) type Positions = CachedLog<GraphLog<List<EventId>>, Vec<EventId>>;
 
-/// A sequence's ordering half as the graph and the cache's frontier.
-///
-/// `CachedLog`'s own serialization skips the frontier, the join of every
-/// version the list has taken in, and a log without one answers that every
-/// version is after everything it holds. A joiner by state transfer would then
-/// read the position of an operation concurrent with one it adopted in the
-/// current order rather than in the order its writer saw. So the frontier
-/// travels beside the graph, and the cached order, which is derived from the
-/// graph, does not: it is recomputed on the first read.
 #[cfg(feature = "serde")]
-mod positions_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+mod sequence_children {
+    use super::*;
+    use serde::{Deserialize, Serialize};
 
-    use super::{CachedLog, EventId, GraphLog, List, Positions, Version};
-
-    #[derive(Serialize)]
-    struct Out<'a> {
-        inner: &'a GraphLog<List<EventId>>,
-        frontier: Option<&'a Version>,
-    }
-
-    #[derive(Deserialize)]
-    struct In {
-        inner: GraphLog<List<EventId>>,
-        frontier: Option<Version>,
-    }
-
-    pub(super) fn serialize<S: Serializer>(
-        positions: &Positions,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        Out {
-            inner: positions.inner(),
-            frontier: positions.frontier(),
-        }
-        .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Positions, D::Error> {
-        let In { inner, frontier } = In::deserialize(deserializer)?;
-        Ok(CachedLog::from_parts(inner, frontier))
-    }
-}
-
-/// A sequence's children as a list of pairs rather than as a JSON object.
-///
-/// The key is an [`EventId`], which is a struct and not a string, and a JSON
-/// object's keys are strings. The state transfer this log has to survive is
-/// JSON (`state_transfer.rs`), so the map travels as the pairs it is — sorted
-/// by the *resolved* id, which names the replica by its string id and so
-/// orders the same on both sides, keeping two replicas' bytes identical for
-/// one state.
-#[cfg(feature = "serde")]
-mod children_serde {
-    use moirai_protocol::event::id::ResolvedEventId;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    use super::{EventId, HashMap, Node};
-
-    pub(super) fn serialize<S: Serializer>(
+    pub fn serialize<S: serde::Serializer>(
         children: &HashMap<EventId, Node>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        let mut pairs: Vec<(&EventId, &Node)> = children.iter().collect();
-        pairs.sort_by_key(|(id, _)| ResolvedEventId::from(*id));
-        pairs.serialize(serializer)
+        let mut entries: Vec<_> = children.iter().collect();
+        entries.sort_by_key(|(id, _)| ResolvedEventId::from(*id));
+        entries.serialize(serializer)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<HashMap<EventId, Node>, D::Error> {
-        Ok(Vec::<(EventId, Node)>::deserialize(deserializer)?
-            .into_iter()
-            .collect())
+        let entries = Vec::<(EventId, Node)>::deserialize(deserializer)?;
+        let mut children = HashMap::with_capacity(entries.len());
+        for (id, child) in entries {
+            if children.insert(id, child).is_some() {
+                return Err(serde::de::Error::custom("duplicate sequence child"));
+            }
+        }
+        Ok(children)
+    }
+}
+
+impl Node {
+    pub(crate) fn adopted_from(&mut self, donor: &Version) {
+        match self {
+            Node::Unbound => {}
+            Node::Refs(refs) => {
+                for link in &mut refs.links {
+                    link.id.rebind(donor.resolver());
+                }
+            }
+            Node::Slot(slot) => slot.for_each_mut(|object| {
+                for child in object.fields.values_mut() {
+                    child.adopted_from(donor);
+                }
+            }),
+            Node::Seq(seq) => {
+                seq.positions.adopted_from(donor);
+                for child in seq.children.values_mut() {
+                    child.adopted_from(donor);
+                }
+            }
+            Node::Opt(opt) => {
+                if let Some(child) = opt.child.as_deref_mut() {
+                    child.adopted_from(donor);
+                }
+                for object in &mut opt.ghost {
+                    for child in object.fields.values_mut() {
+                        child.adopted_from(donor);
+                    }
+                }
+            }
+            Node::Map(map) => {
+                for child in map.children.values_mut() {
+                    child.adopted_from(donor);
+                }
+            }
+            Node::Leaf(leaf) => leaf.adopted_from(donor),
+        }
     }
 }
 
@@ -958,10 +939,6 @@ pub struct OptNode {
     /// here instead of minting one, which reads the same, since an object
     /// here is at its default. Every class here is one the child does not
     /// hold, and the list is kept in class order.
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Vec::is_empty")
-    )]
     pub(crate) ghost: Vec<ObjectNode>,
 }
 
@@ -983,36 +960,35 @@ pub struct OptNode {
 /// default, which is `UWMapLog::execute_query`'s own rule and therefore how
 /// both paths spell "removed".
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(bound(serialize = "", deserialize = ""))
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MapNode {
-    #[cfg_attr(feature = "serde", serde(with = "entries_serde"))]
+    #[cfg_attr(feature = "serde", serde(with = "map_children"))]
     pub(crate) children: BTreeMap<Scalar, Node>,
 }
 
-/// A map's children as a list of pairs, for the same reason a sequence's are:
-/// the key is a [`Scalar`] and a JSON object's keys are strings.
 #[cfg(feature = "serde")]
-mod entries_serde {
-    use super::{BTreeMap, Node, Scalar};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+mod map_children {
+    use super::*;
+    use serde::{Deserialize, Serialize};
 
-    pub(super) fn serialize<S: Serializer>(
+    pub fn serialize<S: serde::Serializer>(
         children: &BTreeMap<Scalar, Node>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         children.iter().collect::<Vec<_>>().serialize(serializer)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<BTreeMap<Scalar, Node>, D::Error> {
-        Ok(Vec::<(Scalar, Node)>::deserialize(deserializer)?
-            .into_iter()
-            .collect())
+        let entries = Vec::<(Scalar, Node)>::deserialize(deserializer)?;
+        let mut children = BTreeMap::new();
+        for (key, child) in entries {
+            if children.insert(key, child).is_some() {
+                return Err(serde::de::Error::custom("duplicate map child"));
+            }
+        }
+        Ok(children)
     }
 }
 
@@ -1328,30 +1304,33 @@ impl Node {
     /// severs the only path an operation has out of a PO-Log's unstable half,
     /// and a container at the root of a model severs it for the whole model.
     /// `ip11` is the test that this one does not.
-    pub fn stabilize(&mut self, version: &Version) {
+    ///
+    /// Not to a sequence's ordering graph: it never compacts, as at
+    /// `748a185`, so a position reads at any version ([`order_at`]).
+    /// Léo's eg-walker folds a stable prefix; adopting that fold is EC.03d.
+    pub fn stabilize(&mut self, frontier: &CausalFrontier) {
         match self {
             Node::Unbound => {}
-            Node::Slot(slot) => slot.for_each_mut(|object| object.stabilize(version)),
+            Node::Slot(slot) => slot.for_each_mut(|object| object.stabilize(frontier)),
             Node::Seq(seq) => {
                 for child in seq.children.values_mut() {
-                    child.stabilize(version);
+                    child.stabilize(frontier);
                 }
-                seq.positions.stabilize(version);
             }
             Node::Opt(opt) => {
                 if let Some(child) = opt.child.as_mut() {
-                    child.stabilize(version);
+                    child.stabilize(frontier);
                 }
                 for object in &mut opt.ghost {
-                    object.stabilize(version);
+                    object.stabilize(frontier);
                 }
             }
             Node::Map(map) => {
                 for child in map.children.values_mut() {
-                    child.stabilize(version);
+                    child.stabilize(frontier);
                 }
             }
-            Node::Leaf(leaf) => leaf.stabilize(version),
+            Node::Leaf(leaf) => leaf.stabilize(frontier),
             // A link stays until an unlink, a removal of its source or one of
             // its target that had seen it takes it away; nothing about it
             // changes when it becomes stable.
@@ -1616,8 +1595,8 @@ impl Node {
 
     /// How many operations the leaves below this node still hold unstably.
     ///
-    /// Leaves only: a sequence's ordering graph is an `EventGraph`, whose
-    /// `stabilize` is a no-op by construction, so counting it would hide the
+    /// Leaves only: a sequence's ordering graph is an `EventGraph`, which
+    /// is never stabilized ([`Node::stabilize`]), so counting it would hide the
     /// fall `ip11` is looking for behind a number that never moves.
     #[cfg(feature = "test_utils")]
     pub fn polog_len(&self) -> usize {
@@ -1663,10 +1642,10 @@ impl SlotNode {
 }
 
 impl ObjectNode {
-    fn stabilize(&mut self, version: &Version) {
-        self.forget_stable_touches(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.forget_stable_touches(frontier);
         for field in self.fields.values_mut() {
-            field.stabilize(version);
+            field.stabilize(frontier);
         }
     }
 
@@ -1677,20 +1656,23 @@ impl ObjectNode {
     /// and of the stable touches from one replica the latest says all that
     /// the earlier ones do: whatever removal had seen the latest had seen
     /// them too.
-    fn forget_stable_touches(&mut self, stable: &Version) {
+    fn forget_stable_touches(&mut self, stable: &CausalFrontier) {
         self.touches.retain(|touch| {
-            !(touch.id.is_predecessor_of(stable) && covered_at(&touch.covered_by, stable))
+            !(stable.contains(&touch.id)
+                && touch
+                    .covered_by
+                    .iter()
+                    .any(|removal| stable.contains(removal)))
         });
         let mut latest: HashMap<ReplicaIdx, usize> = HashMap::new();
         for touch in &self.touches {
-            if touch.id.is_predecessor_of(stable) {
+            if stable.contains(&touch.id) {
                 let seq = latest.entry(touch.id.idx()).or_default();
                 *seq = (*seq).max(touch.id.seq());
             }
         }
         self.touches.retain(|touch| {
-            !touch.id.is_predecessor_of(stable)
-                || latest.get(&touch.id.idx()) == Some(&touch.id.seq())
+            !stable.contains(&touch.id) || latest.get(&touch.id.idx()) == Some(&touch.id.seq())
         });
     }
 
@@ -1869,7 +1851,7 @@ impl<'a> Emit<'a> {
 /// `GraphLog::effect` ignores its effect context outright
 /// (`graph_log.rs`), so a silent one is passed here rather than threaded down
 /// a recursion that would carry it for nobody.
-fn positions_effect(positions: &mut Positions, event: Event<List<EventId>>) {
+fn positions_effect(positions: &mut Positions, event: Event<ListUpdate<EventId>>) {
     positions.effect(event, &mut EffectContext::silent());
 }
 
@@ -2200,7 +2182,7 @@ pub(crate) fn apply(
                     // what the ordering graph carries as its content.
                     positions_effect(
                         &mut seq.positions,
-                        ctx.event(List::Insert {
+                        ctx.event(ListUpdate::Insert {
                             pos,
                             content: ctx.id.clone(),
                         }),
@@ -2231,7 +2213,7 @@ pub(crate) fn apply(
                     // it is no write into the child, and an update here would
                     // keep the child alive against a concurrent removal.
                     if !ctx.silent {
-                        positions_effect(&mut seq.positions, ctx.event(List::Update { pos }));
+                        positions_effect(&mut seq.positions, ctx.event(ListUpdate::Update { pos }));
                         emit.update();
                     }
                     let child = seq
@@ -2247,7 +2229,7 @@ pub(crate) fn apply(
                         (pos, target_at(seq, ctx, pos, at)?)
                     };
                     emit.list_element(target.clone()).delete();
-                    positions_effect(&mut seq.positions, ctx.event(List::Delete { pos }));
+                    positions_effect(&mut seq.positions, ctx.event(ListUpdate::Delete { pos }));
                     // `uw_map.rs:150-152`: the child is reset, not dropped,
                     // so a concurrent update to it survives its removal.
                     if let Some(child) = seq.children.get_mut(&target) {
@@ -2535,7 +2517,12 @@ fn order_at<'s>(seq: &'s SeqNode, ctx: Ctx<'_>) -> std::borrow::Cow<'s, [EventId
     if seq.positions.is_after_everything(ctx.version) {
         std::borrow::Cow::Borrowed(seq.order_ref())
     } else {
-        std::borrow::Cow::Owned(seq.positions.inner().eval(&ReadAt::new(ctx.version)))
+        std::borrow::Cow::Owned(
+            seq.positions
+                .inner()
+                .eval(&ReadAt::new(ctx.version))
+                .expect("an ordering graph never folds, so every version reads"),
+        )
     }
 }
 

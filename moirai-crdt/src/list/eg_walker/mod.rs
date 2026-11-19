@@ -1,268 +1,79 @@
+//! Positional list replay with update-wins semantics.
+//!
+//! `GraphLog::stabilize` folds the largest causally stable critical prefix into
+//! the snapshot: every retained event must observe the entire discarded prefix.
+//! `ReadAt` returns `HistoryStabilized` for versions before or concurrent with the
+//! retained prefix. Save and restore its frontier with the snapshot.
+
 mod causal_cursor;
 mod document;
+mod hooks;
 mod item;
 mod presence_state;
+mod replay;
 
 use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
+    cmp::Ordering,
+    fmt::{Debug, Display, Formatter},
+    marker::PhantomData,
 };
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
+use hooks::EgWalkerHooks;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CausalOpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::Eval,
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{CausalReset, ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Reset, Sequential, Stabilization,
+        },
     },
-    event::{id::EventId, tagged_op::TaggedOp},
     state::{
         cache::IncrementalCache,
-        stable_state::IsStableState,
         unstable_state::{CausalReplay, IsUnstableCore},
     },
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
+use replay::replay;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::list::eg_walker::{
-    causal_cursor::transition,
-    document::Document,
-    item::{ItemId, LifeDot},
-};
+use crate::list::update::ListUpdate;
 
-// Single-character, position-based, pure op-based CRDT operations
+/// Eg-Walker positional list semantics.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum List<V> {
-    /// Insert `content` at the visible position observed by the issuing replica.
-    Insert { content: V, pos: usize },
-    /// Delete the visible item at `pos` in the issuing replica's parent version.
-    Delete { pos: usize },
-    /// Delete `len` visible items starting at `start`.
-    DeleteRange { start: usize, len: usize },
-    /// Mark the item at `pos` as freshly alive without changing its payload.
-    ///
-    /// This operation models update-wins behavior for nested values: a concurrent
-    /// delete can only remove life dots it observed, so an unseen update dot keeps
-    /// the item visible.
-    Update { pos: usize },
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct List<V>(PhantomData<V>);
+
+impl<V: Clone + Debug> List<V> {
+    fn visible_len<U: CausalReplay<ListUpdate<V>>>(stable: &[V], unstable: &U) -> usize {
+        replay(stable, unstable, unstable.iter()).visible_len()
+    }
 }
 
-#[derive(Clone, Debug)]
-struct DeleteEffect {
-    item_id: ItemId,
-    // A delete removes exactly the dots that were visible in its parent context.
-    // Capturing them once avoids any reachability query during advance/retreat.
-    removed_dots: Vec<LifeDot>,
-}
-
-impl<V> List<V>
-where
-    V: Clone + Debug,
-{
-    pub fn insert(content: V, pos: usize) -> Self {
-        Self::Insert { content, pos }
-    }
-
-    pub fn delete(pos: usize) -> Self {
-        Self::Delete { pos }
-    }
-
-    pub fn delete_range(start: usize, len: usize) -> Self {
-        Self::DeleteRange { start, len }
-    }
-
-    pub fn update(pos: usize) -> Self {
-        Self::Update { pos }
-    }
-
-    /// Move the prepare view backwards across `event_id`.
-    ///
-    /// During replay, consecutive events can have different parent versions. To
-    /// interpret the next event, EgWalker first retreats prepare-state effects
-    /// that are present in the current version but absent from the next event's
-    /// parents. The effect view is intentionally untouched.
-    fn retreat<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
-    where
-        U: IsUnstableCore<List<V>>,
-    {
-        match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => {
-                let item_id = ItemId::event(event_id.clone());
-                let life_dot = LifeDot::event(event_id.clone());
-                if let Some(item_idx) = doc.position_of(&item_id) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.retreat_insert(&life_dot);
-                }
+impl<V> ListUpdate<V> {
+    /// Apply an already-sequential operation to a snapshot or cache.
+    /// Concurrent operations must go through causal replay first.
+    fn apply_sequential(self, value: &mut Vec<V>) {
+        match self {
+            Self::Insert { content, pos } => value.insert(pos, content),
+            Self::Delete { pos } => {
+                value.remove(pos);
             }
-            List::Update { .. } => {
-                let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(item_idx) = doc.position_of(target) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.retreat_update(&LifeDot::event(event_id.clone()));
-                }
+            Self::DeleteRange { start, len } => {
+                value.drain(start..start + len);
             }
-            List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
-
-                for effect in targets.iter() {
-                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
-                        let item = doc.item_mut(item_idx).unwrap();
-                        item.retreat_delete(&effect.removed_dots);
-                    }
-                }
-            }
+            Self::Update { .. } => {}
         }
-    }
-
-    /// Move the prepare view forwards across `event_id`.
-    ///
-    /// This is the inverse of `retreat`: it reapplies prepare-state effects that
-    /// are needed to reach the next event's parent version. The effect view remains
-    /// the final accumulated replay result.
-    fn advance<U>(doc: &mut Document<V>, state: &U, event_id: &EventId)
-    where
-        U: IsUnstableCore<List<V>>,
-    {
-        match &state.get(event_id).unwrap().op() {
-            List::Insert { .. } => {
-                let item_id = ItemId::event(event_id.clone());
-                let life_dot = LifeDot::event(event_id.clone());
-                if let Some(item_idx) = doc.position_of(&item_id) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.advance_insert(life_dot);
-                }
-            }
-            List::Update { .. } => {
-                let target = doc.update_targets.get(event_id).unwrap();
-                if let Some(item_idx) = doc.position_of(target) {
-                    let item = doc.item_mut(item_idx).unwrap();
-                    item.advance_update(LifeDot::event(event_id.clone()));
-                }
-            }
-            List::DeleteRange { .. } | List::Delete { .. } => {
-                let targets = Arc::clone(doc.delete_targets.get(event_id).unwrap());
-
-                for effect in targets.iter() {
-                    if let Some(item_idx) = doc.position_of(&effect.item_id) {
-                        let item = doc.item_mut(item_idx).unwrap();
-                        item.advance_delete(&effect.removed_dots);
-                    }
-                }
-            }
-        }
-    }
-
-    fn delete_visible_item(doc: &mut Document<V>, pos: usize) -> Option<DeleteEffect> {
-        let idx = doc.visible_item_at(pos)?;
-        let item = doc.item_mut(idx).unwrap();
-        let removed_dots = item.apply_delete();
-        Some(DeleteEffect {
-            item_id: item.id.clone(),
-            removed_dots,
-        })
-    }
-
-    /// Apply one event after the prepare view has been moved to its parent version.
-    ///
-    /// Positional indices are interpreted against `prepare`. The operation also
-    /// updates `effect`, which is the state eventually materialized by reads.
-    fn apply(doc: &mut Document<V>, tagged_op: &TaggedOp<List<V>>) {
-        match tagged_op.op() {
-            List::Delete { pos } => {
-                let Some(effect) = Self::delete_visible_item(doc, *pos) else {
-                    debug_assert!(false, "No visible item found at position {pos}");
-                    return;
-                };
-                doc.delete_targets
-                    .insert(tagged_op.id().clone(), Arc::from([effect]));
-            }
-            List::DeleteRange { start, len } => {
-                let mut effects = Vec::new();
-
-                for _ in 0..*len {
-                    let Some(effect) = Self::delete_visible_item(doc, *start) else {
-                        return;
-                    };
-                    effects.push(effect);
-                }
-
-                doc.delete_targets
-                    .insert(tagged_op.id().clone(), effects.into());
-            }
-            List::Update { pos } => {
-                let Some(idx) = doc.visible_item_at(*pos) else {
-                    debug_assert!(false, "No visible item found at position {pos}");
-                    return;
-                };
-
-                let item_id = {
-                    let item = doc.item_mut(idx).unwrap();
-                    // Updating an existing element adds a fresh life dot for the same identity.
-                    // If concurrent with a delete, that dot is not part of the delete effect.
-                    let update_dot = LifeDot::event(tagged_op.id().clone());
-                    item.apply_update(update_dot);
-                    item.id.clone()
-                };
-                doc.update_targets.insert(tagged_op.id().clone(), item_id);
-            }
-            List::Insert { content, pos } => {
-                doc.insert_event(tagged_op.id().clone(), content.clone(), *pos);
-            }
-        }
-    }
-
-    fn replay_document<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Document<'a, V>
-    where
-        U: CausalReplay<List<V>> + 'a,
-        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
-        V: 'a,
-    {
-        let mut document = Document::new(stable);
-
-        for tagged_op in events {
-            let parents = unstable.direct_predecessors(tagged_op.id());
-            let transition = transition(unstable, document.prepared_head.as_ref(), &parents);
-
-            for event_id in transition.retreat {
-                Self::retreat(&mut document, unstable, &event_id);
-            }
-
-            for event_id in transition.advance {
-                Self::advance(&mut document, unstable, &event_id);
-            }
-
-            Self::apply(&mut document, tagged_op);
-            document.prepared_head = Some(tagged_op.id().clone());
-        }
-
-        document
-    }
-
-    /// Replay an event stream and materialize its final effect view.
-    fn replay<'a, U, I>(stable: &'a [V], unstable: &'a U, events: I) -> Vec<V>
-    where
-        U: CausalReplay<List<V>> + 'a,
-        I: IntoIterator<Item = &'a TaggedOp<List<V>>>,
-        V: 'a,
-    {
-        Self::replay_document(stable, unstable, events).materialize()
-    }
-
-    fn visible_len<U>(stable: &[V], unstable: &U) -> usize
-    where
-        U: CausalReplay<List<V>>,
-    {
-        Self::replay_document(stable, unstable, unstable.iter()).visible_len()
     }
 }
 
@@ -270,18 +81,76 @@ where
 pub enum ListRejection {
     /// The operation refers to a visible position outside the current read state.
     OutOfBounds { pos: usize, len: usize },
+    /// The storage does not provide the causal services required for replay.
+    CausalReplayUnavailable,
 }
 
 impl Display for ListRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ListRejection::OutOfBounds { pos, len } => {
+            Self::OutOfBounds { pos, len } => {
                 write!(
                     f,
                     "Position {pos} is out of bounds for document of length {len}"
                 )
             }
+            Self::CausalReplayUnavailable => {
+                write!(f, "Eg-Walker requires causal replay services")
+            }
         }
+    }
+}
+
+impl<U, V> Precondition<U> for List<V>
+where
+    U: CausalReplay<Self::Update>,
+    V: Debug + Clone,
+{
+    fn is_enabled(
+        stable: &Self::Stable,
+        unstable: &U,
+        update: &Self::Update,
+    ) -> Result<(), Self::Rejection> {
+        unstable.validate(update, stable)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct StableList<V>(Vec<V>);
+
+impl<V> Default for StableList<V> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<V> From<Vec<V>> for StableList<V> {
+    fn from(value: Vec<V>) -> Self {
+        Self(value)
+    }
+}
+
+impl<V> std::ops::Deref for StableList<V> {
+    type Target = [V];
+    fn deref(&self) -> &[V] {
+        &self.0
+    }
+}
+
+impl<V> Sequential for StableList<V>
+where
+    V: Debug + Clone,
+{
+    type Update = ListUpdate<V>;
+
+    fn is_default(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn apply(&mut self, update: &Self::Update) {
+        update.clone().apply_sequential(&mut self.0);
     }
 }
 
@@ -289,118 +158,92 @@ impl<V> ReplicatedDataType for List<V>
 where
     V: Debug + Clone,
 {
-    type StableState = Vec<V>;
+    type Stable = StableList<V>;
     type Rejection = ListRejection;
+    type Update = ListUpdate<V>;
+}
 
+impl<U, V> CausalCompaction<U> for List<V>
+where
+    V: Debug + Clone,
+    U: IsUnstableCore<ListUpdate<V>>,
+{
     const DISABLE_R_WHEN_NOT_R: bool = true;
     const DISABLE_R_WHEN_R: bool = true;
-    const DISABLE_STABILIZE: bool = true;
 }
 
-impl<V, U> UsesUnstableService<U> for List<V>
+impl<U, V> CausalReset<U> for List<V>
 where
     V: Debug + Clone,
-    U: CausalReplay<Self>,
+    U: CausalReplay<Self::Update>,
 {
-    /// Validate positional operations against the current visible document.
-    ///
-    /// EgWalker operations store user-facing positions, so enablement is checked by
-    /// reading the current state and comparing the requested position with its
-    /// length.
-    fn is_enabled(
-        op: &Self,
-        stable: &Self::StableState,
-        unstable: &U,
-    ) -> Result<(), Self::Rejection> {
-        let state_len = Self::visible_len(stable, unstable);
-        match op {
-            List::Insert { pos, .. } => {
-                (*pos <= state_len)
-                    .then_some(())
-                    .ok_or(ListRejection::OutOfBounds {
-                        pos: *pos,
-                        len: state_len,
-                    })
-            }
-            List::Update { pos } | List::Delete { pos } => {
-                (*pos < state_len)
-                    .then_some(())
-                    .ok_or(ListRejection::OutOfBounds {
-                        pos: *pos,
-                        len: state_len,
-                    })
-            }
-            List::DeleteRange { start, len } => start
-                .checked_add(*len)
-                .filter(|end| *end <= state_len)
-                .map(|_| ())
-                .ok_or(ListRejection::OutOfBounds {
-                    pos: start.saturating_add(*len),
-                    len: state_len,
-                }),
-        }
-    }
-
-    fn causal_reset(
+    fn reset(
         version: &Version,
         conservative: bool,
-        stable: &Self::StableState,
+        stable: &Self::Stable,
         unstable: &U,
-    ) -> CausalReset<Self> {
+    ) -> Reset<Self::Update> {
         if !conservative {
-            return CausalReset::Prune;
+            return Reset::Prune;
         }
-        let predecessors = unstable.predecessors(version);
-        let len = Self::replay_document(stable, unstable, predecessors).visible_len();
-        CausalReset::Inject(vec![List::DeleteRange { start: 0, len }])
+
+        unstable.conservative_reset(version, stable)
     }
 }
 
-impl<V, U> Eval<Read<Vec<V>>, U> for List<V>
+impl<U, V> CausalStabilize<U> for List<V>
 where
     V: Debug + Clone,
-    U: CausalReplay<Self>,
+    U: CausalReplay<Self::Update>,
 {
-    fn execute_query(_q: &Read<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
-        Self::replay(stable, unstable, unstable.iter())
+    fn causal_stabilize(
+        frontier: &CausalFrontier,
+        stable: &Self::Stable,
+        unstable: &U,
+    ) -> Stabilization<Self::Stable> {
+        unstable.stabilize(frontier, stable)
+    }
+}
+
+impl<V, U> Eval<StableList<V>, U, Read<Vec<V>>> for List<V>
+where
+    V: Debug + Clone,
+    U: CausalReplay<ListUpdate<V>>,
+{
+    fn execute_query(
+        stable: &<Self as ReplicatedDataType>::Stable,
+        unstable: &U,
+        _q: &Read<Vec<V>>,
+    ) -> Vec<V> {
+        replay(&stable.0, unstable, unstable.iter()).to_list()
     }
 }
 
 /// Convenience read for character lists.
-impl<U> Eval<Read<String>, U> for List<char>
+impl<U> Eval<StableList<char>, U, Read<String>> for List<char>
 where
-    U: CausalReplay<Self>,
+    U: CausalReplay<ListUpdate<char>>,
 {
-    fn execute_query(_q: &Read<String>, stable: &Self::StableState, unstable: &U) -> String {
-        let chars: Vec<char> = Self::execute_query(&Read::new(), stable, unstable);
+    fn execute_query(
+        stable: &<Self as ReplicatedDataType>::Stable,
+        unstable: &U,
+        _q: &Read<String>,
+    ) -> String {
+        let chars: Vec<char> = Self::execute_query(stable, unstable, &Read::new());
         chars.into_iter().collect()
     }
 }
 
-impl<V> IncrementalCache<List<V>> for Vec<V>
+impl<V> IncrementalCache<ListUpdate<V>> for Vec<V>
 where
     V: Clone,
 {
-    fn apply(&mut self, op: &List<V>) {
-        match op {
-            List::Insert { content, pos } => {
-                self.insert(*pos, content.clone());
-            }
-            List::Delete { pos } => {
-                self.remove(*pos);
-            }
-            List::DeleteRange { start, len } => {
-                self.drain(*start..*start + *len);
-            }
-            List::Update { .. } => {}
-        }
+    fn apply(&mut self, op: &ListUpdate<V>) {
+        op.clone().apply_sequential(self);
     }
 }
 
 /// Read the list at a historical version.
-///
-/// The unstable log supplies the predecessor events for the requested version,
-/// and the same replay algorithm is used on that restricted stream.
 pub struct ReadAt<V> {
     version: Version,
     _marker: std::marker::PhantomData<V>,
@@ -416,73 +259,76 @@ impl<V> ReadAt<V> {
 }
 
 impl<V> QueryOperation for ReadAt<V> {
-    type Response = V;
-}
+    type Response = Result<V, HistoryStabilized>;
 
-impl<V, U> Eval<ReadAt<Vec<V>>, U> for List<V>
-where
-    V: Debug + Clone,
-    U: CausalReplay<Self>,
-{
-    fn execute_query(q: &ReadAt<Vec<V>>, stable: &Self::StableState, unstable: &U) -> Vec<V> {
-        let predecessors = unstable.predecessors(&q.version);
-        Self::replay(stable, unstable, predecessors)
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "ReadAt"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![format!("version={}", self.version)]
     }
 }
 
-impl<V> IsStableState<List<V>> for Vec<V>
+impl<V, U> Eval<StableList<V>, U, ReadAt<Vec<V>>> for List<V>
 where
     V: Debug + Clone,
+    U: CausalReplay<ListUpdate<V>>,
 {
-    /// The stable state is the already-materialized snapshot used as replay baseline.
-    fn is_default(&self) -> bool {
-        self.is_empty()
-    }
-
-    /// Apply an operation to stable state using sequential list semantics.
-    ///
-    /// When a stable snapshot is built or supplied, it stores the plain list value.
-    /// Unstable replay then starts from this state and interprets only the remaining
-    /// events.
-    fn apply(&mut self, value: List<V>) {
-        match value {
-            List::Insert { content, pos } => self.insert(pos, content),
-            List::Delete { pos } => {
-                self.remove(pos);
+    fn execute_query(
+        stable: &<Self as ReplicatedDataType>::Stable,
+        unstable: &U,
+        q: &ReadAt<Vec<V>>,
+    ) -> Result<Vec<V>, HistoryStabilized> {
+        if let Some(roots) = unstable.roots() {
+            let frontier = CausalFrontier::from(&q.version);
+            match &frontier.partial_cmp(roots) {
+                Some(Ordering::Less) | None => {
+                    return Err(HistoryStabilized {
+                        frontier: roots.clone(),
+                    });
+                }
+                _ => {}
             }
-            List::DeleteRange { start, len } => {
-                self.drain(start..start + len);
-            }
-            List::Update { .. } => {}
         }
-    }
-
-    fn clear(&mut self) {
-        Vec::clear(self);
-    }
-
-    /// Redundant-operation pruning for EgWalker stable state is still pending.
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<List<V>>,
-        _tagged_op: &TaggedOp<List<V>>,
-    ) {
+        let predecessors = unstable.predecessors(&q.version);
+        Ok(replay(&stable.0, unstable, predecessors).to_list())
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryStabilized {
+    pub frontier: CausalFrontier,
+}
+
+impl Display for HistoryStabilized {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "history before or concurrent with frontier {} has been pruned.",
+            self.frontier
+        )
+    }
+}
+
+impl std::error::Error for HistoryStabilized {}
 
 #[cfg(feature = "fuzz")]
-impl<V> CausalOpGenerator for List<V>
+impl<V, U> OpGenerator<U> for List<V>
 where
+    U: CausalReplay<Self::Update>,
     V: ValueGenerator + Debug + Clone,
 {
     type Config = ();
 
-    fn generate_causal(
+    fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        stable: &Self::StableState,
-        unstable: &impl CausalReplay<Self>,
-    ) -> Self {
+        stable: &Self::Stable,
+        unstable: &U,
+    ) -> Self::Update {
         // Fuzzing generates only user operations that are enabled in the current
         // visible document, because out-of-bounds operations are rejected before
         // they enter the log.
@@ -494,7 +340,7 @@ where
             DeleteRange,
         }
 
-        let list = Self::execute_query(&Read::new(), stable, unstable);
+        let list = Self::execute_query(stable, unstable, &Read::new());
 
         let choice = if list.is_empty() {
             &Choice::Insert
@@ -508,15 +354,15 @@ where
 
         match choice {
             Choice::Insert => {
-                use moirai_fuzz::value_generator::ValueGenerator;
+                use moirai_fuzz::generator::value_generator::ValueGenerator;
 
                 let pos = rng.random_range(0..=list.len());
                 let c = V::generate(rng, &<V as ValueGenerator>::Config::default());
-                List::insert(c, pos)
+                ListUpdate::insert(c, pos)
             }
             Choice::Delete => {
                 let pos = rng.random_range(0..list.len());
-                List::delete(pos)
+                ListUpdate::delete(pos)
             }
             Choice::DeleteRange => {
                 let start = rng.random_range(0..list.len());
@@ -526,7 +372,7 @@ where
                 } else {
                     rng.random_range(1..=max_len)
                 };
-                List::delete_range(start, len)
+                ListUpdate::delete_range(start, len)
             }
         }
     }

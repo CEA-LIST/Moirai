@@ -1,90 +1,73 @@
-use std::{
-    fmt::Debug,
-    ops::{Add, AddAssign, SubAssign},
-};
-
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-use moirai_protocol::{
-    crdt::redundancy::RedundancyRelation, event::tagged_op::TaggedOp,
-    state::stable_state::IsStableState,
-};
+use moirai_protocol::crdt::replicated_data_type::Sequential;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
-use crate::counter::{
-    resettable_counter::Counter as ResettableCounter, simple_counter::Counter as SimpleCounter,
-};
+use crate::counter::{CounterValue, update::CounterUpdate};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub struct CounterStable<V>(V);
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "V::Accumulator: Serialize",
+        deserialize = "V::Accumulator: Deserialize<'de>"
+    ))
+)]
 
-impl<V> CounterStable<V> {
-    pub fn into_inner(self) -> V {
+pub struct CounterStable<V: CounterValue>(V::Accumulator);
+
+impl<V: CounterValue> CounterStable<V> {
+    pub fn into_inner(self) -> V::Accumulator {
         self.0
     }
-    pub fn as_inner(&self) -> &V {
+    pub const fn as_inner(&self) -> &V::Accumulator {
         &self.0
     }
-    pub fn as_inner_mut(&mut self) -> &mut V {
+    pub const fn as_inner_mut(&mut self) -> &mut V::Accumulator {
         &mut self.0
     }
 }
 
-impl<V> IsStableState<ResettableCounter<V>> for CounterStable<V>
+impl<V> Sequential for CounterStable<V>
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V: CounterValue,
 {
+    type Update = CounterUpdate<V>;
+
     fn is_default(&self) -> bool {
-        self.0 == V::default()
+        V::value(&self.0) == V::default()
     }
 
-    fn apply(&mut self, value: ResettableCounter<V>) {
+    fn apply(&mut self, value: &Self::Update) {
         match value {
-            ResettableCounter::Inc(v) => self.0 += v,
-            ResettableCounter::Dec(v) => self.0 -= v,
-            ResettableCounter::Reset => unreachable!(),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0 = V::default();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<ResettableCounter<V>>,
-        tagged_op: &TaggedOp<ResettableCounter<V>>,
-    ) {
-        if let ResettableCounter::Reset = tagged_op.op() {
-            <CounterStable<V> as IsStableState<ResettableCounter<V>>>::clear(self)
+            Self::Update::Inc(v) => V::increment(&mut self.0, *v),
+            Self::Update::Dec(v) => V::decrement(&mut self.0, *v),
+            Self::Update::Reset => unreachable!(),
         }
     }
 }
 
-impl<V> IsStableState<SimpleCounter<V>> for CounterStable<V>
+#[cfg(feature = "test_utils")]
+impl<V: CounterValue> DeepSizeOf for CounterStable<V>
 where
-    V: Add + AddAssign + SubAssign + Default + Copy + Debug + PartialEq,
+    V::Accumulator: DeepSizeOf,
 {
-    fn is_default(&self) -> bool {
-        self.0 == V::default()
-    }
-
-    fn apply(&mut self, value: SimpleCounter<V>) {
-        match value {
-            SimpleCounter::Inc(v) => self.0 += v,
-            SimpleCounter::Dec(v) => self.0 -= v,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0 = V::default();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<SimpleCounter<V>>,
-        _tagged_op: &TaggedOp<SimpleCounter<V>>,
-    ) {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.0.deep_size_of_children(context)
     }
 }
+
+impl<V: CounterValue> Copy for CounterStable<V> where V::Accumulator: Copy {}
+
+impl<V: CounterValue> PartialEq for CounterStable<V>
+where
+    V::Accumulator: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<V: CounterValue> Eq for CounterStable<V> where V::Accumulator: Eq {}

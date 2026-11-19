@@ -247,9 +247,9 @@ use moirai_network::any_transport::AnyTransport;
 use moirai_network::dashboard::DashboardConfig;
 use moirai_network::discovery::DiscoveryConfig;
 use moirai_network::generic::{LogReplica, Node, ServedDescriptor};
+use moirai_network::log_id::LogId;
 use moirai_network::transport::TransportError;
 use moirai_network::transport_config::{TransportConfig, TransportKind};
-use moirai_protocol::log_id::LogId;
 use moirai_semantics::{from_descriptor, metamodel_digest};
 use serde_json::{Value, json};
 

@@ -7,8 +7,6 @@ use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::{
     clock::version_vector::Version,
@@ -16,8 +14,8 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Event<O> {
     id: EventId,
     lamport: Lamport,

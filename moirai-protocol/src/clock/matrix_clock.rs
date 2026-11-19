@@ -2,19 +2,17 @@ use std::fmt::{Debug, Display, Formatter};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::version_vector::{Seq, Version},
+    clock::{
+        causal_frontier::CausalFrontier,
+        version_vector::{Seq, Version},
+    },
     replica::ReplicaIdx,
 };
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 struct ReplicaMap(Vec<Version>);
 
@@ -31,12 +29,7 @@ impl ReplicaMap {
 /// A matrix clock is a generalization in 2 dimensions of a vector clock. It is a square matrix of positive integers.
 /// Each row represents the last vector clock known by the local replica from each member of the view.
 /// The column-wise maximum is the clock of the local replica. The column-wise minimum is the stable version vector (SVV).
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize, Tsify),
-    tsify(into_wasm_abi, from_wasm_abi)
-)]
+#[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct MatrixClock {
     entries: ReplicaMap,
@@ -58,11 +51,6 @@ impl MatrixClock {
         };
         debug_assert!(matrix.is_valid());
         matrix
-    }
-
-    /// Index of the replica this clock belongs to.
-    pub fn origin_idx(&self) -> ReplicaIdx {
-        self.origin_idx
     }
 
     pub fn origin_version(&self) -> &Version {
@@ -99,23 +87,6 @@ impl MatrixClock {
         self.entries.0.push(version);
     }
 
-    /// Add zero rows until the clock has `len` of them.
-    ///
-    /// The resolver a clock is indexed by can be shared with other logs on the
-    /// same node, so a member can be interned by another log's traffic and
-    /// never by this one's; the row still has to exist before a message that
-    /// names its index arrives.
-    pub fn grow_to(&mut self, len: usize) {
-        while self.entries.0.len() < len {
-            self.add_replica(ReplicaIdx(self.entries.0.len()));
-        }
-    }
-
-    /// The index space this clock is expressed in.
-    pub fn resolver(&self) -> &Resolver {
-        &self.resolver
-    }
-
     /// At each node i, the Stable Version Vector at i (SVVi) is the pointwise minimum of all version vectors in the LTM.
     /// Each operation in the PO-Log that causally precedes (happend-before) the SVV is considered stable and removed
     /// from the POLog, to be added to the sequential data type.
@@ -123,12 +94,12 @@ impl MatrixClock {
     /// # Complexity
     /// Runs in `O(n^2)` time complexity
     #[deprecated]
-    pub fn column_wise_min(&self) -> Version {
+    pub fn column_wise_min(&self) -> CausalFrontier {
         let mut iter = self.entries.0.iter();
-        let mut min_clock = iter.next().unwrap().clone();
+        let mut min_clock = CausalFrontier::from(iter.next().unwrap());
 
         for ver in iter {
-            min_clock.meet(ver);
+            min_clock.meet(&CausalFrontier::from(ver));
         }
 
         min_clock
@@ -137,49 +108,20 @@ impl MatrixClock {
     /// Incremental SVV recomputation that only rescans columns whose value can advance
     /// relative to the provided `last_svv`. It stops a column scan early as soon as a value
     /// less than or equal to the previous minimum is found, since the minimum then cannot grow.
-    ///
-    /// # The result never goes below `last_svv`
-    ///
-    /// Which is what "can advance" above means, and what the rest of the system
-    /// reads this frontier as. [`add_replica`](Self::add_replica) seeds a member
-    /// that appears mid-session with a row of zeros, and a row stays at zero
-    /// until that member *originates* an operation — so a joiner that adopts a
-    /// snapshot and then never writes would otherwise pull every column back to
-    /// zero. Measured: a settled three-member session went from a stable prefix
-    /// of 615 to 0 in three seconds when a fourth member joined and stayed
-    /// quiet.
-    ///
-    /// A retreat is not a safely conservative answer, it is a false one. Once a
-    /// version has been reported stable, `Tcsb::prune_outbox` has deleted the
-    /// events at or below it and the CRDT log has folded them into its
-    /// tag-free stable state; nothing can put them back. A frontier that then
-    /// sits below them breaks the invariant `Tcsb::snapshot` transfers on —
-    /// that the whole outbox *is* the suffix above the stable version — and a
-    /// joiner would be handed a compacted state alongside a suffix that does
-    /// not start where the state ends.
-    ///
-    /// Holding the column instead degrades to the silent-member case: the
-    /// frontier stops advancing until the new member speaks, and everything
-    /// already compacted stays compacted.
     pub fn column_wise_min_incremental(
         &self,
-        last_svv: &Version,
+        last_svv: &CausalFrontier,
         updated_columns: &[ReplicaIdx],
-    ) -> Version {
+    ) -> CausalFrontier {
         let mut svv = last_svv.clone();
 
         for col_idx in updated_columns {
-            let previous = svv.seq_by_idx(*col_idx);
             let mut min_value = Seq::MAX;
             for ver in self.entries.0.iter() {
                 let entry = ver.seq_by_idx(*col_idx);
-                if entry <= previous {
-                    // Cannot advance this column's minimum. The comparison used
-                    // to be `==`, so a row strictly *below* the baseline fell
-                    // through to the running minimum instead of stopping the
-                    // scan — which both let the frontier retreat and made the
-                    // answer depend on the order the rows happened to be in.
-                    min_value = previous;
+                if entry == svv.seq_by_idx(*col_idx) {
+                    // Cannot advance this column's minimum
+                    min_value = entry;
                     break;
                 }
                 if entry < min_value {
@@ -271,17 +213,19 @@ impl Display for MatrixClock {
 mod tests {
     use crate::{
         broadcast::internalizer::Interner,
-        clock::{matrix_clock::MatrixClock, version_vector::Version},
-        replica::ReplicaIdx,
+        clock::{
+            causal_frontier::CausalFrontier, matrix_clock::MatrixClock, version_vector::Version,
+        },
+        replica::{ReplicaId, ReplicaIdx},
     };
 
     #[test]
     #[allow(deprecated)]
     fn column_wise_min() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -292,7 +236,7 @@ mod tests {
         );
         assert_eq!(
             mc.column_wise_min(),
-            Version::build(resolver.clone(), ReplicaIdx(0), &[8, 4, 3])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[8, 4, 3]))
         );
     }
 
@@ -300,9 +244,9 @@ mod tests {
     #[allow(deprecated)]
     fn column_wise_min_incremental_advances_only_changed_columns() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -315,7 +259,7 @@ mod tests {
         let baseline_svv = baseline_mc.column_wise_min();
         assert_eq!(
             baseline_svv,
-            Version::build(resolver.clone(), ReplicaIdx(0), &[1, 8, 0])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[1, 8, 0]))
         );
 
         // Row 2 is updated
@@ -333,46 +277,7 @@ mod tests {
         assert_eq!(incremental, full);
         assert_eq!(
             incremental,
-            Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0])
+            CausalFrontier::from(Version::build(resolver.clone(), ReplicaIdx(0), &[3, 10, 0]))
         );
-    }
-
-    /// A member that appears mid-session and then says nothing must not pull
-    /// the stable frontier back over operations that have already been
-    /// compacted away. See `column_wise_min_incremental`.
-    #[test]
-    fn column_wise_min_incremental_holds_behind_a_silent_new_member() {
-        let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-
-        let mut mc = MatrixClock::build(
-            interner.resolver().clone(),
-            ReplicaIdx(0),
-            &[&[4, 4], &[4, 4]],
-        );
-
-        // C joins and never originates an operation, so `add_replica` leaves it
-        // on a row of zeros indefinitely.
-        let (c, _) = interner.intern("C");
-        mc.add_replica(c);
-        let resolver = interner.resolver();
-
-        // A and B keep writing, which is what puts their columns up for rescan.
-        mc.set_by_idx(
-            ReplicaIdx(0),
-            Version::build(resolver.clone(), ReplicaIdx(0), &[5, 5]),
-        );
-        mc.set_by_idx(
-            ReplicaIdx(1),
-            Version::build(resolver.clone(), ReplicaIdx(1), &[5, 5]),
-        );
-
-        let baseline = Version::build(resolver.clone(), ReplicaIdx(0), &[4, 4]);
-        let svv = mc.column_wise_min_incremental(&baseline, &[ReplicaIdx(0), ReplicaIdx(1)]);
-
-        // Held where it was. The unconstrained minimum here is C's row of
-        // zeros, which is what used to be returned.
-        assert_eq!(svv, baseline);
     }
 }

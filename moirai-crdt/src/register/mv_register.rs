@@ -1,90 +1,97 @@
-use std::{convert::Infallible, fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
         query::{QueryOperation, Read},
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        redundancy::RedundancyRelation,
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
     state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::{Rng, RngExt};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
-use crate::HashSet;
+use crate::{FxHashSet, register::update::RegisterUpdate};
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum MVRegister<V> {
-    Clear,
-    Write(V),
-}
+pub struct MVRegister<V>(PhantomData<V>);
 
 impl<V> ReplicatedDataType for MVRegister<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
-    type StableState = Vec<Self>;
+    type Update = RegisterUpdate<V>;
+    type Stable = Vec<Self::Update>;
     type Rejection = Infallible;
+}
+
+impl<V, U> CausalCompaction<U> for MVRegister<V>
+where
+    V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<Self::Update>,
+{
+    fn compact_stable(
+        stable: &mut Self::Stable,
+        rdnt: RedundancyRelation<Self::Update>,
+        new: &TaggedOp<Self::Update>,
+    ) {
+        stable.retain(|old| !rdnt(old, None, false, new));
+    }
 
     fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
     ) -> bool
     where
         Self: 'a,
     {
-        matches!(new_tagged_op.op(), MVRegister::Clear)
+        matches!(new_tagged_op.op(), RegisterUpdate::Clear)
     }
 
     fn redundant_by_when_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 
     fn redundant_by_when_not_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 }
 
-impl<V, U> UsesUnstableService<U> for MVRegister<V>
-where
-    V: Debug + Clone + Eq + Hash,
-    U: IsUnstableCore<Self>,
-{
-}
+impl<V, U> CausalStabilize<U> for MVRegister<V> where V: Debug + Clone + Eq + Hash {}
 
-impl<V, U> Eval<Read<HashSet<V>>, U> for MVRegister<V>
+impl<V, U> CausalReset<U> for MVRegister<V> where V: Debug + Clone + Eq + Hash {}
+
+impl<V, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<FxHashSet<V>>> for MVRegister<V>
 where
     V: Debug + Clone + Eq + Hash,
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<<Self as ReplicatedDataType>::Update>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
-        stable: &<MVRegister<V> as ReplicatedDataType>::StableState,
+        stable: &Vec<<Self as ReplicatedDataType>::Update>,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
-        let mut set = HashSet::<V>::default();
+        _q: &Read<FxHashSet<V>>,
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
+        let mut set = FxHashSet::<V>::default();
         for o in stable.iter().chain(unstable.iter().map(|t| t.op())) {
-            if let MVRegister::Write(v) = o {
+            if let RegisterUpdate::Write(v) = o {
                 set.insert(v.clone());
             }
         }
@@ -93,8 +100,9 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for MVRegister<V>
+impl<V, U> OpGenerator<U> for MVRegister<V>
 where
+    U: IsUnstableCore<Self::Update>,
     V: Clone + Debug + Eq + Hash + ValueGenerator,
 {
     type Config = ();
@@ -102,14 +110,23 @@ where
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &Self::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
-    ) -> Self {
+        _stable: &Self::Stable,
+        _unstable: &U,
+    ) -> Self::Update {
         if rng.random_ratio(1, 5) {
-            Self::Clear
+            Self::Update::Clear
         } else {
-            Self::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
+            Self::Update::Write(V::generate(rng, &<V as ValueGenerator>::Config::default()))
         }
+    }
+}
+
+impl<V, U> Precondition<U> for MVRegister<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    fn is_enabled(_: &Self::Stable, _: &U, _: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
     }
 }
 
@@ -118,10 +135,10 @@ mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica};
 
     use crate::{
-        HashSet,
-        register::mv_register::MVRegister,
+        FxHashSet,
+        register::mv_register::{MVRegister, RegisterUpdate},
         utils::{
-            membership::{triplet, twins},
+            bootstrap::{triplet, twins},
             set_from_slice,
         },
     };
@@ -130,16 +147,16 @@ mod tests {
     fn simple_mv_register() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("a")).unwrap();
+        let event = replica_a.send(RegisterUpdate::Write("a")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(
             replica_a.query(&Read::new()),
-            HashSet::from_iter(["a"].iter().cloned())
+            FxHashSet::from_iter(std::iter::once(&"a").cloned())
         );
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
 
-        let event = replica_b.send(MVRegister::Write("b")).unwrap();
+        let event = replica_b.send(RegisterUpdate::Write("b")).unwrap();
         replica_a.receive(event);
 
         let result = set_from_slice(&["b"]);
@@ -151,20 +168,20 @@ mod tests {
     fn concurrent_mv_register() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("c")).unwrap();
+        let event = replica_a.send(RegisterUpdate::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["c"]));
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["c"]));
 
-        let event = replica_b.send(MVRegister::Write("d")).unwrap();
+        let event = replica_b.send(RegisterUpdate::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["d"]));
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["d"]));
 
-        let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
-        let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
+        let event_a = replica_a.send(RegisterUpdate::Write("a")).unwrap();
+        let event_b = replica_b.send(RegisterUpdate::Write("b")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -179,22 +196,22 @@ mod tests {
     fn multiple_concurrent_mv_register() {
         let (mut replica_a, mut replica_b, _replica_c) = triplet::<MVRegister<&str>>();
 
-        let event = replica_a.send(MVRegister::Write("c")).unwrap();
+        let event = replica_a.send(RegisterUpdate::Write("c")).unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["c"]));
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["c"]));
 
-        let event = replica_b.send(MVRegister::Write("d")).unwrap();
+        let event = replica_b.send(RegisterUpdate::Write("d")).unwrap();
         replica_a.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["d"]));
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["d"]));
 
-        let event_a = replica_a.send(MVRegister::Write("a")).unwrap();
-        let event_aa = replica_a.send(MVRegister::Write("aa")).unwrap();
+        let event_a = replica_a.send(RegisterUpdate::Write("a")).unwrap();
+        let event_aa = replica_a.send(RegisterUpdate::Write("aa")).unwrap();
 
-        let event_b = replica_b.send(MVRegister::Write("b")).unwrap();
+        let event_b = replica_b.send(RegisterUpdate::Write("b")).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -211,14 +228,14 @@ mod tests {
     fn mv_register_instability() {
         let (mut replica_a, mut replica_b) = twins::<MVRegister<u32>>();
 
-        let event_a_1 = replica_a.send(MVRegister::Write(4)).unwrap();
+        let event_a_1 = replica_a.send(RegisterUpdate::Write(4)).unwrap();
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[4]));
-        let event_b_1 = replica_b.send(MVRegister::Write(5)).unwrap();
+        let event_b_1 = replica_b.send(RegisterUpdate::Write(5)).unwrap();
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[5]));
         replica_a.receive(event_b_1);
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[4, 5]));
 
-        let event_b_2 = replica_b.send(MVRegister::Write(2)).unwrap();
+        let event_b_2 = replica_b.send(RegisterUpdate::Write(2)).unwrap();
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[2]));
         replica_a.receive(event_b_2);
         replica_b.receive(event_a_1);
@@ -232,20 +249,26 @@ mod tests {
     #[ignore]
     fn fuzz_mv_register() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
+        use crate::register::mv_register::MVRegister;
+
         type Log = VecLog<MVRegister<i32>>;
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
-        let config = FuzzerConfig::<Log, Read<HashSet<i32>>>::new(
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
+        let config = FuzzerConfig::<Log, Read<FxHashSet<i32>>>::new(
             "mv_register",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
-        fuzzer::<Log, Read<HashSet<i32>>>(config);
+        fuzzer::<Log, Read<FxHashSet<i32>>>(config);
     }
 }

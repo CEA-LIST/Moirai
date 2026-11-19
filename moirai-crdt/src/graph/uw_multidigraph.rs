@@ -4,9 +4,14 @@ use std::{
 };
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::CommandGenerator, value_generator::ValueGenerator};
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    generator::{command_generator::CommandGenerator, value_generator::ValueGenerator},
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -17,36 +22,10 @@ use moirai_protocol::{
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
 use rand::{Rng, seq::IteratorRandom};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
-use crate::HashMap;
+use crate::{FxHashMap, graph::update::LabelledMultidigraphUpdate};
 
 type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, E), El>>;
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub enum UWGraph<V, E, No, Lo> {
-    UpdateVertex {
-        id: V,
-        child: No,
-    },
-    RemoveVertex {
-        id: V,
-    },
-    UpdateArc {
-        source: V,
-        target: V,
-        id: E,
-        child: Lo,
-    },
-    RemoveArc {
-        source: V,
-        target: V,
-        id: E,
-    },
-}
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
@@ -57,8 +36,8 @@ where
     Vl: IsLog,
     El: IsLog,
 {
-    vertices: HashMap<V, Vl>,
-    arcs: HashMap<(V, V, E), El>,
+    vertices: FxHashMap<V, Vl>,
+    arcs: FxHashMap<(V, V, E), El>,
 }
 
 #[derive(Clone, Debug)]
@@ -84,14 +63,14 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LabelledGraphRejection::VertexNotFound(v) => write!(f, "Vertex not found: {:?}", v),
-            LabelledGraphRejection::ArcNotFound(v1, v2, e) => {
+            Self::VertexNotFound(v) => write!(f, "Vertex not found: {:?}", v),
+            Self::ArcNotFound(v1, v2, e) => {
                 write!(f, "Arc not found: {:?} -> {:?} (id: {:?})", v1, v2, e)
             }
-            LabelledGraphRejection::VertexDisabled(r) => {
+            Self::VertexDisabled(r) => {
                 write!(f, "Vertex operation disabled in child log: {}", r)
             }
-            LabelledGraphRejection::ArcDisabled(r) => {
+            Self::ArcDisabled(r) => {
                 write!(f, "Arc operation disabled in child log: {}", r)
             }
         }
@@ -105,28 +84,28 @@ where
     V: Clone + Debug + Hash + Eq,
     E: Clone + Debug + Eq + PartialEq + Hash,
 {
-    type Command = UWGraph<V, E, Vl::Op, El::Op>;
-    type Op = UWGraph<V, E, Vl::Op, El::Op>;
+    type Command = LabelledMultidigraphUpdate<V, E, Vl::Update, El::Update>;
+    type Update = LabelledMultidigraphUpdate<V, E, Vl::Update, El::Update>;
     type Rejection = LabelledGraphRejection<V, E, Vl, El>;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
     // TODO: add sink when vertex/arc creation/destruction
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
             // Update the child at vertex `v`
-            UWGraph::UpdateVertex { id: v, child: op } => {
+            LabelledMultidigraphUpdate::UpdateVertex { id: v, child: op } => {
                 let child_op = Event::unfold(event, op);
                 self.vertices.entry(v).or_default().effect(child_op, ctx);
             }
             // Remove the vertex `v`, all its incident arcs, and reset its child
-            UWGraph::RemoveVertex { id: v } => {
+            LabelledMultidigraphUpdate::RemoveVertex { id: v } => {
                 if let Some(child) = self.vertices.get_mut(&v) {
                     child.redundant_by_parent(event.version(), true);
                 }
@@ -143,7 +122,7 @@ where
                 }
             }
             // Update the child at arc `(v1, v2, e)`
-            UWGraph::UpdateArc {
+            LabelledMultidigraphUpdate::UpdateArc {
                 source: v1,
                 target: v2,
                 id: e,
@@ -156,7 +135,7 @@ where
                     .effect(child_op, ctx);
             }
             // Remove the arc `(v1, v2, e)` and reset its child
-            UWGraph::RemoveArc {
+            LabelledMultidigraphUpdate::RemoveArc {
                 source: v1,
                 target: v2,
                 id: e,
@@ -168,13 +147,13 @@ where
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         for v in self.arcs.values_mut() {
-            v.stabilize(version);
+            v.stabilize(frontier);
         }
 
         for v in self.vertices.values_mut() {
-            v.stabilize(version);
+            v.stabilize(frontier);
         }
     }
 
@@ -192,9 +171,9 @@ where
         self.arcs.is_empty() && self.vertices.is_empty()
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
         match op {
-            UWGraph::UpdateVertex { id, child } => {
+            LabelledMultidigraphUpdate::UpdateVertex { id, child } => {
                 if let Some(log) = self.vertices.get(id) {
                     log.is_enabled(child)
                         .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
@@ -204,7 +183,7 @@ where
                         .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
                 }
             }
-            UWGraph::RemoveVertex { id: v } => {
+            LabelledMultidigraphUpdate::RemoveVertex { id: v } => {
                 if let Some(child) = self.vertices.get(v)
                     && !child.is_default()
                 {
@@ -213,7 +192,7 @@ where
                     Err(LabelledGraphRejection::VertexNotFound(v.clone()))
                 }
             }
-            UWGraph::UpdateArc {
+            LabelledMultidigraphUpdate::UpdateArc {
                 source,
                 target,
                 id,
@@ -240,7 +219,7 @@ where
                     ))
                 }
             }
-            UWGraph::RemoveArc { source, target, id } => {
+            LabelledMultidigraphUpdate::RemoveArc { source, target, id } => {
                 if let Some(child) = self.arcs.get(&(source.clone(), target.clone(), id.clone()))
                     && !child.is_default()
                 {
@@ -266,8 +245,8 @@ where
 {
     fn default() -> Self {
         Self {
-            arcs: HashMap::default(),
-            vertices: HashMap::default(),
+            arcs: FxHashMap::default(),
+            vertices: FxHashMap::default(),
         }
     }
 }
@@ -285,7 +264,7 @@ where
         _q: &Read<LabeledMultidigraph<V, E, VLabel, ELabel>>,
     ) -> <Read<LabeledMultidigraph<V, E, VLabel, ELabel>> as QueryOperation>::Response {
         let mut graph = LabeledMultidigraph::new();
-        let mut node_idx = HashMap::default();
+        let mut node_idx = FxHashMap::default();
         for (v, child) in self.vertices.iter() {
             if child.is_default() {
                 continue;
@@ -320,14 +299,13 @@ where
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Content<Id, Val> {
     pub id: Id,
     pub val: Val,
 }
 
 impl<Id, Val> Content<Id, Val> {
-    pub fn new(id: Id, val: Val) -> Self {
+    pub const fn new(id: Id, val: Val) -> Self {
         Self { id, val }
     }
 }
@@ -346,8 +324,8 @@ impl<V, E, Vl, El> CommandGenerator for UWGraphLog<V, E, Vl, El>
 where
     V: ValueGenerator + Clone + Hash + Debug + Eq,
     E: ValueGenerator + Clone + Hash + Debug + Eq,
-    Vl: CommandGenerator + IsLog<Command = <Vl as IsLog>::Op> + Debug,
-    El: CommandGenerator + IsLog<Command = <El as IsLog>::Op> + Debug,
+    Vl: CommandGenerator + IsLog<Command = <Vl as IsLog>::Update> + Debug,
+    El: CommandGenerator + IsLog<Command = <El as IsLog>::Update> + Debug,
 {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use rand::distr::{Distribution, weighted::WeightedIndex};
@@ -400,14 +378,14 @@ where
                 } else {
                     Vl::new().generate_command(rng)
                 };
-                UWGraph::UpdateVertex {
+                LabelledMultidigraphUpdate::UpdateVertex {
                     id: v,
                     child: child_op,
                 }
             }
             Choice::RemoveVertex => {
                 let v = vertices.iter().choose(rng).unwrap();
-                UWGraph::RemoveVertex { id: (*v).clone() }
+                LabelledMultidigraphUpdate::RemoveVertex { id: (*v).clone() }
             }
             Choice::UpdateArc => {
                 let v1 = vertices.iter().choose(rng).unwrap();
@@ -423,7 +401,7 @@ where
                     El::new().generate_command(rng)
                 };
 
-                UWGraph::UpdateArc {
+                LabelledMultidigraphUpdate::UpdateArc {
                     source: (**v1).clone(),
                     target: (**v2).clone(),
                     id: edge,
@@ -432,13 +410,26 @@ where
             }
             Choice::RemoveArc => {
                 let (source, target, id) = arcs.iter().choose(rng).unwrap();
-                UWGraph::RemoveArc {
+                LabelledMultidigraphUpdate::RemoveArc {
                     source: source.clone(),
                     target: target.clone(),
                     id: id.clone(),
                 }
             }
         }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<V, E, Vl, El> LogFootprint for UWGraphLog<V, E, Vl, El>
+where
+    V: Clone + Hash + Debug + Eq + DeepSizeOf,
+    E: Clone + Hash + Debug + Eq + DeepSizeOf,
+    Vl: IsLog + LogFootprint + DeepSizeOf,
+    El: IsLog + LogFootprint + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
     }
 }
 
@@ -454,11 +445,12 @@ mod tests {
     use petgraph::graph::DiGraph;
 
     #[cfg(feature = "fuzz")]
+    use crate::graph::uw_multidigraph::LabeledMultidigraph;
     use crate::{
-        counter::resettable_counter::Counter,
-        graph::uw_multidigraph::{LabeledMultidigraph, UWGraph, UWGraphLog},
-        register::unique_register::Register,
-        utils::membership::{triplet_log, twins_log},
+        counter::{Counter, update::CounterUpdate},
+        graph::{update::LabelledMultidigraphUpdate, uw_multidigraph::UWGraphLog},
+        register::{unique_register::Register, update::RegisterUpdate},
+        utils::bootstrap::{triplet_log, twins_log},
     };
 
     type Lww = VecLog<Register<i32, LwwPolicy>>;
@@ -469,43 +461,43 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(2),
+                child: RegisterUpdate::Write(2),
             })
             .unwrap();
         replica_a.receive(event);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(2),
+                child: CounterUpdate::Inc(2),
             })
             .unwrap();
         let event_b = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(5),
+                child: CounterUpdate::Inc(5),
             })
             .unwrap();
         let event_b_2 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 2,
-                child: Counter::Dec(9),
+                child: CounterUpdate::Dec(9),
             })
             .unwrap();
 
@@ -514,28 +506,28 @@ mod tests {
         replica_a.receive(event_b_2);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(5),
+                child: RegisterUpdate::Write(5),
             })
             .unwrap();
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(10),
+                child: RegisterUpdate::Write(10),
             })
             .unwrap();
         let event_b_2 = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(8),
+                child: RegisterUpdate::Write(8),
             })
             .unwrap();
 
         replica_b.receive(event_a);
 
         let event_b_3 = replica_b
-            .send(UWGraph::RemoveArc {
+            .send(LabelledMultidigraphUpdate::RemoveArc {
                 source: "A",
                 target: "B",
                 id: 1,
@@ -546,27 +538,27 @@ mod tests {
         replica_a.receive(event_b_3);
 
         let event = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(3),
+                child: RegisterUpdate::Write(3),
             })
             .unwrap();
         replica_b.receive(event);
 
         let event = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(4),
+                child: RegisterUpdate::Write(4),
             })
             .unwrap();
         replica_a.receive(event);
 
         let event = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "B",
                 target: "A",
                 id: 1,
-                child: Counter::Inc(3),
+                child: CounterUpdate::Inc(3),
             })
             .unwrap();
         replica_b.receive(event);
@@ -586,15 +578,15 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(2),
+                child: RegisterUpdate::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
@@ -618,13 +610,15 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
-        let event_b = replica_b.send(UWGraph::RemoveVertex { id: "A" }).unwrap();
+        let event_b = replica_b
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "A" })
+            .unwrap();
         replica_a.receive(event_b);
 
         assert_eq!(replica_a.query(&Read::new()).node_count(), 0);
@@ -636,29 +630,31 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(2),
+                child: RegisterUpdate::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(2),
+                child: CounterUpdate::Inc(2),
             })
             .unwrap();
-        let event_b = replica_b.send(UWGraph::RemoveVertex { id: "B" }).unwrap();
+        let event_b = replica_b
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "B" })
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -675,9 +671,9 @@ mod tests {
         assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(3),
+                child: RegisterUpdate::Write(3),
             })
             .unwrap();
         replica_b.receive(event_a);
@@ -701,23 +697,23 @@ mod tests {
             triplet_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event_a_1 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(4),
+                child: RegisterUpdate::Write(4),
             })
             .unwrap();
         let event_a_2 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(3),
+                child: RegisterUpdate::Write(3),
             })
             .unwrap();
         let event_a_3 = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(51),
+                child: CounterUpdate::Inc(51),
             })
             .unwrap();
 
@@ -729,24 +725,24 @@ mod tests {
         replica_c.receive(event_a_3);
 
         let event_b_1 = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         replica_c.receive(event_b_1.clone());
         let event_c_1 = replica_c
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         let event_c_2 = replica_c
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(2),
+                child: CounterUpdate::Inc(2),
             })
             .unwrap();
         replica_b.receive(event_c_1.clone());
@@ -758,13 +754,15 @@ mod tests {
         ));
 
         let event_a_1 = replica_a
-            .send(UWGraph::RemoveArc {
+            .send(LabelledMultidigraphUpdate::RemoveArc {
                 source: "A",
                 target: "B",
                 id: 1,
             })
             .unwrap();
-        let event_a_2 = replica_a.send(UWGraph::RemoveVertex { id: "B" }).unwrap();
+        let event_a_2 = replica_a
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "B" })
+            .unwrap();
         replica_b.receive(event_a_1.clone());
         replica_b.receive(event_a_2.clone());
 
@@ -797,39 +795,41 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins_log::<UWGraphLog<&str, u8, Lww, Cntr>>();
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "A",
-                child: Register::Write(1),
+                child: RegisterUpdate::Write(1),
             })
             .unwrap();
         replica_b.receive(event_a);
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(2),
+                child: RegisterUpdate::Write(2),
             })
             .unwrap();
         replica_a.receive(event_b);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "A",
                 target: "B",
                 id: 1,
-                child: Counter::Inc(7),
+                child: CounterUpdate::Inc(7),
             })
             .unwrap();
         replica_b.receive(event_a);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "B",
                 target: "A",
                 id: 1,
-                child: Counter::Inc(8),
+                child: CounterUpdate::Inc(8),
             })
             .unwrap();
-        let event_b = replica_b.send(UWGraph::RemoveVertex { id: "B" }).unwrap();
+        let event_b = replica_b
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "B" })
+            .unwrap();
         replica_a.receive(event_b);
         replica_b.receive(event_a);
 
@@ -846,9 +846,9 @@ mod tests {
         assert_eq!(replica_a.query(&Read::new()).edge_count(), 0);
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "B",
-                child: Register::Write(3),
+                child: RegisterUpdate::Write(3),
             })
             .unwrap();
         replica_b.receive(event_a);
@@ -871,22 +871,26 @@ mod tests {
     #[ignore]
     fn fuzz_uw_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, RunConfig},
             fuzzer::fuzzer,
         };
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<
             UWGraphLog<usize, usize, Lww, Cntr>,
             Read<LabeledMultidigraph<usize, usize, Option<i32>, i32>>,
         >::new(
             "uw_graph",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| {
                 a.node_count() == b.node_count() && a.edge_count() == b.edge_count()
             }),
-            false,
         );
         fuzzer::<
             UWGraphLog<usize, usize, Lww, Cntr>,

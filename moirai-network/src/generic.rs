@@ -3,7 +3,7 @@
 //! This module provides [`GenericNode`], which is parameterised with a single
 //! log type `L` that implements [`IsLog`].
 //!
-//! The operation type `L::Op` must satisfy the transport bounds:
+//! The operation type `L::Update` must satisfy the transport bounds:
 //! `Serialize + DeserializeOwned + Clone + Debug + Send + 'static`
 //!
 
@@ -22,12 +22,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::message::{BatchMessage, EventMessage};
 use moirai_protocol::broadcast::batch::Batch;
 use moirai_protocol::broadcast::internalizer::{lock_interner, Interner, SharedInterner};
-use moirai_protocol::broadcast::message::{BatchMessage, EventMessage};
-use moirai_protocol::broadcast::tcsb::Tcsb;
-use moirai_protocol::log_id::LogId;
-use moirai_protocol::replica::{IsReplica, Replica};
+
+use crate::log_id::LogId;
 use moirai_protocol::state::log::IsLog;
 
 use crate::any_transport::AnyTransport;
@@ -41,7 +40,7 @@ use crate::HashMap;
 /// A replica over the transport `MOIRAI_TRANSPORT` names: Zenoh when it is
 /// unset or says `zenoh`, TCP routed per peer when it says `tcp`. The alias to
 /// build a node with unless there is a reason not to.
-pub type Node<L> = GenericNode<L, AnyTransport<<L as IsLog>::Op>>;
+pub type Node<L> = GenericNode<L, AnyTransport<<L as IsLog>::Update>>;
 
 /// Former name of [`Node`], from when TCP was the only way to reach a peer.
 #[deprecated(
@@ -53,7 +52,7 @@ pub type TcpNode<L> = Node<L>;
 /// One hosted log together with its causal bookkeeping: the per-model bundle a
 /// node keeps, which is not a peer, a process or a connection. See
 /// [`GenericNode`].
-pub type LogReplica<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
+pub use crate::log_replica::LogReplica;
 
 /// The application's registration hook: the operations that open a newly
 /// created model's log, given its id and the descriptor it was registered
@@ -125,7 +124,7 @@ pub type MigrateFn<L> = fn(
     &LogReplica<L>,
     &LogId,
     &ServedDescriptor,
-) -> Result<(<L as IsLog>::Op, Vec<<L as IsLog>::Op>), String>;
+) -> Result<(<L as IsLog>::Update, Vec<<L as IsLog>::Update>), String>;
 
 /// The application's migration status of a hosted log, served verbatim on
 /// `GET /api/model/{id}/migration`. See [`GenericNode::enable_migration`].
@@ -137,7 +136,7 @@ pub type MigrationFn<L> = fn(&LogReplica<L>) -> serde_json::Value;
 /// itself; or the reason it refuses, in which case nothing is written. See
 /// [`GenericNode::enable_rebase`].
 pub type RebaseFn<L> =
-    fn(&LogReplica<L>, &ServedDescriptor, &[String]) -> Result<<L as IsLog>::Op, String>;
+    fn(&LogReplica<L>, &ServedDescriptor, &[String]) -> Result<<L as IsLog>::Update, String>;
 
 /// How many times the descriptor a hosted log is under has changed: a node
 /// serves the model under the descriptor in force, and checks this number
@@ -234,9 +233,9 @@ impl<T> NetworkOp for T where T: Serialize + DeserializeOwned + Clone + Debug + 
 /// because causal stability is per log. What the logs share is the member
 /// table ([`SharedInterner`]), because that describes the session and not any
 /// one model.
-pub struct GenericNode<L: IsLog, T: CrdtTransport<Op = L::Op>>
+pub struct GenericNode<L: IsLog, T: CrdtTransport<Op = L::Update>>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     replica_id: String,
     /// The logs this node hosts, one per model.
@@ -273,7 +272,7 @@ where
     ///
     /// Ids only, and nothing more is knowable here: which metamodel a log is
     /// bound to lives in that log's first operation, which this node does not
-    /// hold, and `L::Op` is opaque to this type anyway.
+    /// hold, and `L::Update` is opaque to this type anyway.
     ///
     /// An id leaves the set when [`host_log`] starts hosting it, so a model
     /// this node has joined stops being offered as one it could join.
@@ -283,8 +282,8 @@ where
     /// [`host_log`]: GenericNode::host_log
     seen_not_hosted: BTreeSet<LogId>,
     transport: T,
-    adapter_op_rx: Receiver<Intake<L::Op>>,
-    adapter_op_tx: Sender<Intake<L::Op>>,
+    adapter_op_rx: Receiver<Intake<L::Update>>,
+    adapter_op_tx: Sender<Intake<L::Update>>,
     /// Minted once per node process and the first half of every version this
     /// node serves; see [`version_of`]. A version is a count of deliveries,
     /// and a count restarts from zero with the process, so without this a
@@ -348,7 +347,7 @@ where
     /// called on create only, never on join: the header travels with the
     /// log, and the creator writes it exactly once.
     descriptor_key_fn: Option<fn(&serde_json::Value) -> Option<String>>,
-    register_fn: Option<RegisterFn<L::Op>>,
+    register_fn: Option<RegisterFn<L::Update>>,
     /// The application's naming hook, installed by
     /// [`Self::enable_model_naming`]: the name a create gives the id it
     /// mints. `None` mints the bare form.
@@ -359,7 +358,7 @@ where
     /// `register_fn` writes. `None` guards nothing. What it protects is the
     /// application's business; the node knows nothing about the shape of an
     /// operation.
-    op_guard_fn: Option<OpGuardFn<L::Op>>,
+    op_guard_fn: Option<OpGuardFn<L::Update>>,
     /// The application's two migration hooks, installed together by
     /// [`Self::enable_migration`]; `None` until then, and both migration
     /// routes answer [`MigrateRefused::NotEnabled`].
@@ -368,7 +367,7 @@ where
     /// The application's check of what only a migration writes, run on
     /// every adapter-submitted operation once [`Self::enable_migration`]
     /// installed it.
-    migration_only_fn: Option<MigrationOnlyFn<L::Op>>,
+    migration_only_fn: Option<MigrationOnlyFn<L::Update>>,
     /// The application's rebase hooks, installed together by
     /// [`Self::enable_rebase`]; `None` until then, and a rebase answers
     /// [`MigrateRefused::NotEnabled`].
@@ -381,14 +380,14 @@ where
     /// the successor, the operations still to apply, and how far it got.
     /// Kept once finished, without its plan, so the source's status goes on
     /// reporting it.
-    copies: BTreeMap<LogId, CopyJob<L::Op>>,
+    copies: BTreeMap<LogId, CopyJob<L::Update>>,
     /// Outbound reporting, when `DASHBOARD_URL` was configured. `None` is the
     /// pre-existing behaviour in full: no thread, no request, and the delivery
     /// trace left switched off.
-    dashboard: Option<DashboardSink<L::Op>>,
+    dashboard: Option<DashboardSink<L::Update>>,
     /// The operations behind events not yet reported. Empty and untouched while
     /// `dashboard` is `None`.
-    ops_by_event: OpsByEvent<L::Op>,
+    ops_by_event: OpsByEvent<L::Update>,
     last_report: Option<Instant>,
     last_state_render: Option<Instant>,
     started_at: Instant,
@@ -402,7 +401,7 @@ struct HostedLog<L: IsLog> {
     /// Log of all operations delivered to this log (for the operations
     /// endpoint). Display only: it over-counts remote operations while both
     /// peers dial each other.
-    operation_log: Vec<L::Op>,
+    operation_log: Vec<L::Update>,
     /// Operations *originated* here and accepted by the CRDT.
     ///
     /// Separate from `operation_log`, which counts deliveries. This one is
@@ -519,7 +518,7 @@ enum BindingState {
 
 impl<L: IsLog> HostedLog<L>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     fn new(replica: LogReplica<L>) -> Self {
         Self {
@@ -580,13 +579,12 @@ mod cost {
     use std::sync::Arc;
 
     use deepsize::{Context, DeepSizeOf};
-    use moirai_protocol::broadcast::tcsb::IsTcsbTest;
 
     use super::*;
 
     impl<L: IsLog> DeepSizeOf for HostedLog<L>
     where
-        L::Op: NetworkOp + DeepSizeOf,
+        L::Update: NetworkOp + DeepSizeOf,
     {
         /// The log's causal bookkeeping (inbox, outbox, matrix clock, the
         /// stable version, the log id, and the shared member table once per
@@ -627,7 +625,7 @@ mod cost {
     /// and on the heap, walked with the context the caller is charging.
     fn entry_size<L: IsLog>(log_id: &LogId, log: &HostedLog<L>, context: &mut Context) -> usize
     where
-        L::Op: NetworkOp + DeepSizeOf,
+        L::Update: NetworkOp + DeepSizeOf,
     {
         std::mem::size_of::<LogId>()
             + log_id.deep_size_of_children(context)
@@ -647,7 +645,7 @@ mod cost {
 
     impl<L: IsLog> DeepSizeOf for Entries<'_, L>
     where
-        L::Op: NetworkOp + DeepSizeOf,
+        L::Update: NetworkOp + DeepSizeOf,
     {
         fn deep_size_of_children(&self, context: &mut Context) -> usize {
             self.0
@@ -662,16 +660,16 @@ mod cost {
 
     impl<L: IsLog> DeepSizeOf for Entry<'_, L>
     where
-        L::Op: NetworkOp + DeepSizeOf,
+        L::Update: NetworkOp + DeepSizeOf,
     {
         fn deep_size_of_children(&self, context: &mut Context) -> usize {
             entry_size(self.0, self.1, context)
         }
     }
 
-    impl<L: IsLog<Command = <L as IsLog>::Op>, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+    impl<L: IsLog<Command = <L as IsLog>::Update>, T: CrdtTransport<Op = L::Update>> GenericNode<L, T>
     where
-        L::Op: NetworkOp + DeepSizeOf,
+        L::Update: NetworkOp + DeepSizeOf,
     {
         /// The deep size of the hosted-log map, `m(N)` in the plan: every
         /// entry's key and log, inline and on the heap, the member table
@@ -698,7 +696,7 @@ mod cost {
             let mut tables: Vec<*const Mutex<Interner>> = self
                 .logs
                 .values()
-                .map(|log| Arc::as_ptr(log.replica.tcsb().interner()))
+                .map(|log| Arc::as_ptr(log.replica.tcsb().shared_interner()))
                 .chain(std::iter::once(Arc::as_ptr(&self.interner)))
                 .collect();
             tables.sort_unstable();
@@ -1337,9 +1335,9 @@ pub struct BatchResult {
     pub version: Option<String>,
 }
 
-impl<L: IsLog<Command = <L as IsLog>::Op>, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+impl<L: IsLog<Command = <L as IsLog>::Update>, T: CrdtTransport<Op = L::Update>> GenericNode<L, T>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     fn unit_result_to_op_result<E: Display>(
         result: Result<(), E>,
@@ -1379,7 +1377,7 @@ where
         log_id: LogId,
     ) -> Self {
         let interner = Interner::new().into_shared();
-        let replica: LogReplica<L> = IsReplica::bootstrap_with_log_id_and_interner(
+        let replica: LogReplica<L> = LogReplica::bootstrap_with_log_id_and_interner(
             replica_id.clone(),
             members,
             log_id.clone(),
@@ -1440,7 +1438,7 @@ where
         if self.logs.contains_key(&log_id) {
             return Err(HostError::AlreadyHosted(log_id));
         }
-        let replica: LogReplica<L> = IsReplica::bootstrap_with_log_id_and_interner(
+        let replica: LogReplica<L> = LogReplica::bootstrap_with_log_id_and_interner(
             self.replica_id.clone(),
             &[self.replica_id.as_str()],
             log_id.clone(),
@@ -1775,7 +1773,7 @@ where
     pub fn enable_registration(
         &mut self,
         descriptor_key_fn: fn(&serde_json::Value) -> Option<String>,
-        register_fn: RegisterFn<L::Op>,
+        register_fn: RegisterFn<L::Update>,
     ) {
         self.descriptor_key_fn = Some(descriptor_key_fn);
         self.register_fn = Some(register_fn);
@@ -1812,7 +1810,7 @@ where
     /// disagree.
     ///
     /// [`enable_registration`]: GenericNode::enable_registration
-    pub fn enable_op_guard(&mut self, guard: OpGuardFn<L::Op>) {
+    pub fn enable_op_guard(&mut self, guard: OpGuardFn<L::Update>) {
         self.op_guard_fn = Some(guard);
     }
 
@@ -1948,7 +1946,7 @@ where
         &mut self,
         migrate: MigrateFn<L>,
         status: MigrationFn<L>,
-        migration_only: MigrationOnlyFn<L::Op>,
+        migration_only: MigrationOnlyFn<L::Update>,
     ) {
         self.migrate_fn = Some(migrate);
         self.migration_fn = Some(status);
@@ -2099,7 +2097,7 @@ where
 
     /// The refusal of an adapter-submitted operation that only a migration
     /// writes; `Ok` when no migration hooks are installed.
-    fn check_migration_only(&self, op: &L::Op) -> Result<(), String> {
+    fn check_migration_only(&self, op: &L::Update) -> Result<(), String> {
         self.migration_only_fn.map_or(Ok(()), |check| check(op))
     }
 
@@ -2173,7 +2171,7 @@ where
     fn carry_out_migration(
         &mut self,
         log_id: &LogId,
-        plan: MigrationPlan<L::Op>,
+        plan: MigrationPlan<L::Update>,
         deadline: Instant,
     ) -> Result<Migrated, MigrateRefused> {
         let model_id = self.begin_migration(log_id, plan)?;
@@ -2205,7 +2203,7 @@ where
         &self,
         log_id: &LogId,
         metamodel_id: serde_json::Value,
-    ) -> Result<MigrationPlan<L::Op>, MigrateRefused> {
+    ) -> Result<MigrationPlan<L::Update>, MigrateRefused> {
         let (Some(migrate), Some(descriptor_key)) = (self.migrate_fn, self.descriptor_key_fn)
         else {
             return Err(MigrateRefused::NotEnabled);
@@ -2249,7 +2247,7 @@ where
     fn begin_migration(
         &mut self,
         log_id: &LogId,
-        plan: MigrationPlan<L::Op>,
+        plan: MigrationPlan<L::Update>,
     ) -> Result<LogId, MigrateRefused> {
         let MigrationPlan {
             successor,
@@ -2415,7 +2413,7 @@ where
 
     /// The copy this node is still writing into `log_id`, when `log_id` is
     /// the successor of one.
-    fn copy_writing(&self, log_id: &LogId) -> Option<&CopyJob<L::Op>> {
+    fn copy_writing(&self, log_id: &LogId) -> Option<&CopyJob<L::Update>> {
         self.copies
             .values()
             .find(|job| job.successor == *log_id && !job.finished())
@@ -2526,7 +2524,7 @@ where
     }
 
     /// Get a sender that can be used to submit ops from other threads.
-    pub fn op_sender(&self) -> Sender<Intake<L::Op>> {
+    pub fn op_sender(&self) -> Sender<Intake<L::Update>> {
         self.adapter_op_tx.clone()
     }
 
@@ -2535,7 +2533,7 @@ where
     /// The HTTP implementation lives in `http_api.rs` and communicates with the
     /// generic node through channels.
     pub fn start_http(&self, port: u16) {
-        crate::http_api::start_http_api::<L::Op>(
+        crate::http_api::start_http_api::<L::Update>(
             port,
             self.replica_id.clone(),
             self.default_log.clone(),
@@ -2554,7 +2552,7 @@ where
     ///
     /// [`start_http`]: GenericNode::start_http
     pub fn start_http_on(&self, listener: TcpListener) {
-        crate::http_api::start_http_api_on::<L::Op>(
+        crate::http_api::start_http_api_on::<L::Update>(
             listener,
             self.replica_id.clone(),
             self.default_log.clone(),
@@ -2639,7 +2637,7 @@ where
     /// Adopting a snapshot is a replace, not a merge, so serving one would
     /// discard them silently. Refusing costs the requester one round trip and
     /// gives phase 3 a defined starting point.
-    fn state_response_for(&self, requester: &str, log_id: &LogId) -> TransportMessage<L::Op> {
+    fn state_response_for(&self, requester: &str, log_id: &LogId) -> TransportMessage<L::Update> {
         let Some(log) = self.logs.get(log_id) else {
             // Not a joiner of anything held here. Stamped with the default
             // log — the transport's contract is "the log the donor hosts" —
@@ -2732,7 +2730,7 @@ where
         // The table is the node's, so every hosted log grows the row on its
         // next touch. A requester that never adopts this answer stays a silent
         // member and holds stability for good, as any silent member does.
-        lock_interner(&self.interner).intern(requester);
+        lock_interner(&self.interner).intern(&requester.into());
         TransportMessage::StateResponse {
             snapshot: log.replica.snapshot(),
             log: LogPayload::encode(exported, &raw),
@@ -2745,7 +2743,7 @@ where
         &mut self,
         log_id: &LogId,
         from: &PeerId,
-        snapshot: moirai_protocol::broadcast::tcsb::StateSnapshot<L::Op>,
+        snapshot: moirai_protocol::broadcast::tcsb::StateSnapshot<L::Update>,
         payload: LogPayload,
     ) {
         let Some(import) = self.import_log else {
@@ -2758,6 +2756,13 @@ where
         let Some(log) = self.logs.get(log_id) else {
             return;
         };
+        if let Err(member) = snapshot.validate_members() {
+            eprintln!(
+                "[{}] refusing state from {}: unknown snapshot member {}",
+                self.replica_id, from, member
+            );
+            return;
+        }
         // A second donor's answer to the same request must not undo the first.
         // `adopt` replaces rather than merges, so re-adopting after delivering
         // anything would silently roll the log back.
@@ -2793,7 +2798,7 @@ where
         }
         match payload
             .decode_within(MAX_STATE_TRANSFER_LOG_BYTES as u64)
-            .and_then(import)
+            .and_then(|value| snapshot.resolver().with_members(|| import(value)))
         {
             Some(state) => {
                 let members = snapshot.resolver().len();
@@ -2848,7 +2853,7 @@ where
 
     /// Apply an operation to the default log: send to the CRDT, then broadcast
     /// to peers.
-    pub fn apply_op(&mut self, op: L::Op) -> OpResult {
+    pub fn apply_op(&mut self, op: L::Update) -> OpResult {
         let default_log = self.default_log.clone();
         self.apply_op_to(&default_log, op)
     }
@@ -2859,7 +2864,7 @@ where
     /// names the default log, which is never guarded; neither is a log hosted
     /// with no binding. What only a migration writes is refused on every log
     /// (see [`Self::enable_migration`]).
-    fn submit_op(&mut self, log_id: Option<LogId>, op: L::Op) -> OpResult {
+    fn submit_op(&mut self, log_id: Option<LogId>, op: L::Update) -> OpResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
         if let Err(reason) = self.check_migration_only(&op) {
             return OpResult {
@@ -2891,7 +2896,7 @@ where
     /// (no guard installed, the default log, a log hosted with no binding),
     /// and `Err` when the log is bound to a descriptor this node no longer
     /// holds, which refuses every operation.
-    fn intake_guard(&self, log_id: &LogId) -> Result<Option<IntakeGuard<L::Op>>, String> {
+    fn intake_guard(&self, log_id: &LogId) -> Result<Option<IntakeGuard<L::Update>>, String> {
         let Some(guard) = self.op_guard_fn else {
             return Ok(None);
         };
@@ -3037,7 +3042,7 @@ where
     pub fn submit_batch(
         &mut self,
         log_id: Option<LogId>,
-        ops: Vec<L::Op>,
+        ops: Vec<L::Update>,
         base: Option<&str>,
     ) -> BatchResult {
         let log_id = log_id.unwrap_or_else(|| self.default_log.clone());
@@ -3150,7 +3155,7 @@ where
     /// guarded, this is not.
     ///
     /// [`submit_op`]: GenericNode::submit_op
-    pub fn apply_op_to(&mut self, log_id: &LogId, op: L::Op) -> OpResult {
+    pub fn apply_op_to(&mut self, log_id: &LogId, op: L::Update) -> OpResult {
         match self.apply_local(log_id, op) {
             Ok(event_msg) => {
                 self.broadcast(TransportMessage::Event { event: event_msg });
@@ -3169,7 +3174,11 @@ where
     /// Apply an operation to the log named `log_id` and record it, and hand
     /// back the event it became for the caller to broadcast; or the reason it
     /// was refused, in which case nothing was applied.
-    fn apply_local(&mut self, log_id: &LogId, op: L::Op) -> Result<EventMessage<L::Op>, String> {
+    fn apply_local(
+        &mut self,
+        log_id: &LogId,
+        op: L::Update,
+    ) -> Result<EventMessage<L::Update>, String> {
         let Some(log) = self.logs.get_mut(log_id) else {
             return Err(format!("log {log_id} is not hosted here"));
         };
@@ -3208,7 +3217,7 @@ where
         Ok(event_msg)
     }
 
-    fn broadcast(&mut self, msg: TransportMessage<L::Op>) {
+    fn broadcast(&mut self, msg: TransportMessage<L::Update>) {
         if let Err(e) = self.transport.broadcast(msg) {
             eprintln!("[{}] Broadcast failed: {}", self.replica_id, e);
         }
@@ -3230,7 +3239,7 @@ where
     /// one frame per step.
     ///
     /// [`handle_transport_message`]: GenericNode::handle_transport_message
-    fn broadcast_batch(&mut self, mut events: Vec<EventMessage<L::Op>>) {
+    fn broadcast_batch(&mut self, mut events: Vec<EventMessage<L::Update>>) {
         let Some(last) = events.last() else {
             return;
         };
@@ -3271,7 +3280,7 @@ where
     /// time this path on its own.
     ///
     /// [`apply_op_to`]: GenericNode::apply_op_to
-    pub fn handle_transport_message(&mut self, from: PeerId, msg: TransportMessage<L::Op>) {
+    pub fn handle_transport_message(&mut self, from: PeerId, msg: TransportMessage<L::Update>) {
         match msg {
             TransportMessage::Event { event } => match self.logs.get_mut(event.log_id()) {
                 Some(log) => {
@@ -3389,7 +3398,7 @@ where
     /// Keep the operation behind `event`, so a delivery record can be joined
     /// with what was actually applied. Local operations only — see
     /// [`OpsByEvent`]. No-op unless a dashboard is attached.
-    fn remember_op(&mut self, event: &moirai_protocol::event::Event<L::Op>) {
+    fn remember_op(&mut self, event: &moirai_protocol::event::Event<L::Update>) {
         if self.dashboard.is_none() {
             return;
         }
@@ -4036,9 +4045,9 @@ where
 // Convenience constructor
 // =============================================================================
 
-impl<L: IsLog<Command = <L as IsLog>::Op>> GenericNode<L, AnyTransport<L::Op>>
+impl<L: IsLog<Command = <L as IsLog>::Update>> GenericNode<L, AnyTransport<L::Update>>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     /// Create a node over the transport `MOIRAI_TRANSPORT` names, Zenoh when
     /// it is unset (convenience wrapper around [`with_transport`]). Panics if
@@ -4104,21 +4113,21 @@ where
     }
 }
 
-impl<L: IsLog + QueryableLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+impl<L: IsLog + QueryableLog, T: CrdtTransport<Op = L::Update>> GenericNode<L, T>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     /// Enable the `GET /api/state` endpoint by wiring up the query function.
     /// Call this after `new()` and before `run()`.
     pub fn enable_state_query(&mut self) {
-        self.query_fn = Some(L::query_state_json);
-        self.identified_query_fn = Some(L::query_identified_state_json);
+        self.query_fn = Some(|replica| L::query_state_json(replica.inner()));
+        self.identified_query_fn = Some(|replica| L::query_identified_state_json(replica.inner()));
     }
 }
 
-impl<L: IsLog + TransferableLog, T: CrdtTransport<Op = L::Op>> GenericNode<L, T>
+impl<L: IsLog + TransferableLog, T: CrdtTransport<Op = L::Update>> GenericNode<L, T>
 where
-    L::Op: NetworkOp,
+    L::Update: NetworkOp,
 {
     /// Allow this replica to serve and to accept a state transfer.
     ///
@@ -4143,8 +4152,8 @@ mod tests {
     use super::*;
     use crate::transport::{PeerInfo, TransportResult};
     use crate::workload::Rng;
-    use moirai_crdt::set::ewflag_set::{EWFlagSet, EWFlagSetLog};
-    use moirai_protocol::broadcast::message::EventMessage;
+    use moirai_crdt::set::ewflag_set::EWFlagSetLog;
+    use moirai_crdt::set::update::SetUpdate as EWFlagSet;
     use moirai_protocol::crdt::query::Read;
 
     type Op = EWFlagSet<String>;
@@ -4265,7 +4274,7 @@ mod tests {
 
     /// A bare peer hosting one log, for frames that come from outside a node.
     fn peer(id: &str, log_id: LogId) -> LogReplica<Log> {
-        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], log_id)
+        LogReplica::bootstrap_with_log_id(id.to_string(), &[id], log_id)
     }
 
     fn add(value: &str) -> Op {
@@ -4779,7 +4788,7 @@ mod tests {
         // starts from equal states.
         for _round in 0..4 {
             let mut frames: Vec<(usize, TransportMessage<Op>)> = Vec::new();
-            let mut reference_frames: Vec<(usize, usize, EventMessage<Op>)> = Vec::new();
+            let mut reference_frames: Vec<(usize, usize, _)> = Vec::new();
             for _ in 0..10 {
                 let model = rng.below(models.len());
                 let writer = rng.below(2);
@@ -5421,8 +5430,9 @@ mod tests {
         assert_eq!((result.applied, result.version), (0, None));
     }
 
-    type ListOp = moirai_crdt::list::eg_walker::List<char>;
-    type ListLog = moirai_protocol::state::graph_log::GraphLog<ListOp>;
+    type ListOp = moirai_crdt::list::update::ListUpdate<char>;
+    type ListLog =
+        moirai_protocol::state::po_log::GraphLog<moirai_crdt::list::eg_walker::List<char>>;
     type ListNode = GenericNode<ListLog, RecordingTransport<ListOp>>;
 
     fn list_node(id: &str, log_id: LogId) -> ListNode {
@@ -5605,7 +5615,7 @@ mod tests {
     }
 
     fn peer_list(id: &str) -> LogReplica<ListLog> {
-        IsReplica::bootstrap_with_log_id(id.to_string(), &[id], bt())
+        LogReplica::bootstrap_with_log_id(id.to_string(), &[id], bt())
     }
 
     /// `ab`, written on the node and delivered to the peer.

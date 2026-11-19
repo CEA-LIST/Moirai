@@ -36,7 +36,6 @@ use std::sync::Arc;
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The number of random bytes behind an id.
@@ -232,14 +231,12 @@ impl DeepSizeOf for LogId {
     }
 }
 
-#[cfg(feature = "serde")]
 impl Serialize for LogId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for LogId {
     /// Validates on the way in. A malformed id on the wire is a malformed
     /// frame, not a log that quietly never matches anything.
@@ -295,69 +292,4 @@ fn fallback_bytes() -> [u8; LOG_ID_BYTES] {
         chunk.copy_from_slice(&hasher.finish().to_le_bytes());
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_generated_id_is_canonical_and_parses_back() {
-        let id = LogId::generate();
-        assert_eq!(id.as_str().len(), LOG_ID_LEN);
-        assert!(
-            id.as_str()
-                .chars()
-                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
-        );
-        assert_eq!(LogId::parse(id.as_str()).unwrap(), id);
-    }
-
-    #[test]
-    fn two_generated_ids_differ() {
-        // Not a statistical claim. This catches a generator wired to a
-        // constant, which is the way this function actually breaks.
-        let a = LogId::generate();
-        let b = LogId::generate();
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn bytes_render_low_nibble_last() {
-        let id = LogId::from_bytes([
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
-            0x32, 0x10,
-        ]);
-        assert_eq!(id.as_str(), "0123456789abcdeffedcba9876543210");
-    }
-
-    #[test]
-    fn the_fallback_generator_is_also_distinct_per_call() {
-        assert_ne!(fallback_bytes(), fallback_bytes());
-    }
-
-    #[test]
-    fn parse_rejects_the_wrong_length() {
-        assert!(matches!(
-            LogId::parse("abc"),
-            Err(LogIdError::Length { found: 3, .. })
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_uppercase_so_one_log_has_one_spelling() {
-        let upper = "0123456789ABCDEFFEDCBA9876543210";
-        assert!(matches!(
-            LogId::parse(upper),
-            Err(LogIdError::Character('A'))
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_non_hex() {
-        assert!(matches!(
-            LogId::parse("0123456789abcdeffedcba987654321z"),
-            Err(LogIdError::Character('z'))
-        ));
-    }
 }

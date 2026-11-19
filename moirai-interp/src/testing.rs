@@ -12,9 +12,8 @@ use std::sync::Arc;
 
 use moirai_protocol::{
     broadcast::tcsb::Tcsb,
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     event::Event,
-    log_id::LogId,
     replica::{IsReplica, Replica},
     state::{effect_context::EffectContext, log::IsLog},
 };
@@ -244,14 +243,14 @@ impl Default for Harness {
 
 impl IsLog for Harness {
     type Command = crate::op::InstanceOp;
-    type Op = crate::op::InstanceOp;
+    type Update = crate::op::InstanceOp;
     type Rejection = Refusal;
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         command
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         check(
             &self.sem,
             Some(&self.root),
@@ -263,7 +262,7 @@ impl IsLog for Harness {
     }
 
     #[allow(unused_variables)]
-    fn effect(&mut self, event: Event<Self::Op>, effect_ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, effect_ctx: &mut EffectContext<'_>) {
         #[cfg(feature = "sink")]
         let path = effect_ctx.path().clone();
         #[cfg(feature = "sink")]
@@ -292,8 +291,8 @@ impl IsLog for Harness {
         .expect("the harness only ever applies what it checked");
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.root.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.root.stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -330,25 +329,16 @@ pub fn install_fixture(sem: &Arc<MetamodelSemantics>, root: &str) {
     set_fixture(sem, root);
 }
 
-/// [`moirai_crdt::utils::membership::twins_log`] over a fixture.
+/// [`moirai_crdt::utils::bootstrap::twins_log`] over a fixture.
 pub fn twins(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTwins {
     set_fixture(sem, root);
-    let log_id = LogId::generate();
-    (
-        Replica::bootstrap_with_log_id("a".to_string(), &["a", "b"], log_id.clone()),
-        Replica::bootstrap_with_log_id("b".to_string(), &["a", "b"], log_id),
-    )
+    moirai_crdt::utils::bootstrap::twins_log::<Harness>()
 }
 
-/// [`moirai_crdt::utils::membership::triplet_log`] over a fixture.
+/// [`moirai_crdt::utils::bootstrap::triplet_log`] over a fixture.
 pub fn triplet(sem: &Arc<MetamodelSemantics>, root: &str) -> HarnessTriplet {
     set_fixture(sem, root);
-    let log_id = LogId::generate();
-    (
-        Replica::bootstrap_with_log_id("a".to_string(), &["a", "b", "c"], log_id.clone()),
-        Replica::bootstrap_with_log_id("b".to_string(), &["a", "b", "c"], log_id.clone()),
-        Replica::bootstrap_with_log_id("c".to_string(), &["a", "b", "c"], log_id),
-    )
+    moirai_crdt::utils::bootstrap::triplet_log::<Harness>()
 }
 
 /// The one object a slot holds, for a test that knows there is one.
@@ -569,7 +559,7 @@ pub type ModelTwins = (
 
 /// Open one model on two replicas.
 pub fn opened(model_id: &str, descriptor: &Value) -> ModelTwins {
-    let (mut a, mut b) = moirai_crdt::utils::membership::twins_log::<crate::log::ModelLog>();
+    let (mut a, mut b) = moirai_crdt::utils::bootstrap::twins_log::<crate::log::ModelLog>();
     let event = a
         .send(install(model_id, descriptor))
         .expect("a fresh log takes its first `Install`");

@@ -69,8 +69,7 @@ use std::fmt::{self, Debug};
 
 use moirai_protocol::{
     broadcast::{message::EventMessage, tcsb::Tcsb},
-    log_id::LogId,
-    replica::{IsReplica, Replica},
+    replica::{IsReplica, Replica, ReplicaIdx},
     state::log::IsLog,
 };
 use moirai_semantics::{
@@ -81,7 +80,7 @@ use serde_json::Value;
 use crate::leaf::LeafLog;
 
 /// A replica of one path.
-pub type Rep<L> = Replica<L, Tcsb<<L as IsLog>::Op>>;
+pub type Rep<L> = Replica<L, Tcsb<<L as IsLog>::Update>>;
 
 // ---------------------------------------------------------------------------
 // 1. The rows
@@ -686,7 +685,7 @@ pub struct Arm<'a, E, L: IsLog> {
     /// An edit as this path's operation. The second argument is the sending
     /// replica's *interpreted* read-out, which is what the existing encoders
     /// that resolve a path against a document are given.
-    pub encode: &'a dyn Fn(&E, &Value) -> L::Op,
+    pub encode: &'a dyn Fn(&E, &Value) -> L::Update,
     /// A replica's read-out under the calling crate's canonical projection.
     pub read: &'a dyn Fn(&Rep<L>) -> Value,
 }
@@ -1008,6 +1007,40 @@ struct Stamp {
     version: BTreeMap<String, usize>,
 }
 
+/// A replica's causal-stability bookkeeping, as `748a185`'s
+/// `StabilitySnapshot` showed it: the stable sequence number of every member
+/// it knows, what it delivered, how many members it knows, and the events it
+/// holds pending and retained.
+#[derive(Debug, PartialEq, Eq)]
+struct Stability {
+    stable_version: Vec<(String, usize)>,
+    delivered: usize,
+    known_replicas: usize,
+    pending: usize,
+    retained: usize,
+}
+
+fn stability<L: IsLog>(replica: &Rep<L>) -> Stability {
+    let tcsb = replica.tcsb();
+    let resolver = tcsb.interner().resolver();
+    let stable = tcsb.last_stable_version();
+    Stability {
+        stable_version: (0..resolver.len())
+            .map(ReplicaIdx)
+            .map(|idx| {
+                let id = resolver
+                    .resolve(idx)
+                    .map_or_else(|| format!("<idx {}>", idx.0), ToString::to_string);
+                (id, stable.seq_by_idx(idx))
+            })
+            .collect(),
+        delivered: replica.delivered_count(),
+        known_replicas: resolver.len(),
+        pending: tcsb.inbox_len(),
+        retained: tcsb.outbox_len(),
+    }
+}
+
 fn stamp<O>(message: &EventMessage<O>) -> Stamp {
     let event = message.event();
     let resolver = event.id().resolver();
@@ -1019,7 +1052,7 @@ fn stamp<O>(message: &EventMessage<O>) -> Stamp {
             (
                 resolver
                     .resolve(idx)
-                    .map_or_else(|| format!("<idx {}>", idx.0), str::to_string),
+                    .map_or_else(|| format!("<idx {}>", idx.0), ToString::to_string),
                 seq,
             )
         })
@@ -1033,8 +1066,8 @@ fn stamp<O>(message: &EventMessage<O>) -> Stamp {
 }
 
 type Pair<I, G> = (
-    EventMessage<<I as IsLog>::Op>,
-    EventMessage<<G as IsLog>::Op>,
+    EventMessage<<I as IsLog>::Update>,
+    EventMessage<<G as IsLog>::Update>,
 );
 
 struct Run<'r, 'a, E, I: IsLog, G: IsLog> {
@@ -1056,10 +1089,10 @@ where
     // A log whose client command is its stored operation. Every log the matrix
     // runs is one — the interpreted log and every crate Arachne generates —
     // and saying so is what lets one encoder feed `send`.
-    I: IsLog<Command = <I as IsLog>::Op>,
-    G: IsLog<Command = <G as IsLog>::Op>,
-    I::Op: Clone + Debug,
-    G::Op: Clone + Debug,
+    I: IsLog<Command = <I as IsLog>::Update>,
+    G: IsLog<Command = <G as IsLog>::Update>,
+    I::Update: Clone + Debug,
+    G::Update: Clone + Debug,
 {
     fn send(&mut self, seat: usize, edit: &E, what: &str) -> Result<(Pair<I, G>, Stamp), String> {
         let view = (self.interp.read)(&self.ir[seat]);
@@ -1145,8 +1178,8 @@ where
                 serde_json::to_string(&generated).unwrap_or_default(),
             ));
         }
-        let interp_stability = self.ir[seat].stability();
-        let gen_stability = self.gr[seat].stability();
+        let interp_stability = stability(&self.ir[seat]);
+        let gen_stability = stability(&self.gr[seat]);
         if interp_stability != gen_stability {
             return Err(format!(
                 "{what}: replica {} holds different causal-stability state on the two paths\n  \
@@ -1218,11 +1251,11 @@ where
         };
         self.ir
             .iter()
-            .all(|replica| covered(&replica.stability().stable_version))
+            .all(|replica| covered(&stability(replica).stable_version))
             && self
                 .gr
                 .iter()
-                .all(|replica| covered(&replica.stability().stable_version))
+                .all(|replica| covered(&stability(replica).stable_version))
     }
 
     /// Heartbeats from every seat, delivered everywhere, until every replica
@@ -1258,25 +1291,23 @@ where
     // A log whose client command is its stored operation. Every log the matrix
     // runs is one — the interpreted log and every crate Arachne generates —
     // and saying so is what lets one encoder feed `send`.
-    I: IsLog<Command = <I as IsLog>::Op>,
-    G: IsLog<Command = <G as IsLog>::Op>,
-    I::Op: Clone + Debug,
-    G::Op: Clone + Debug,
+    I: IsLog<Command = <I as IsLog>::Update>,
+    G: IsLog<Command = <G as IsLog>::Update>,
+    I::Update: Clone + Debug,
+    G::Update: Clone + Debug,
 {
     let names: Vec<&str> = SEATS[..schedule.members].to_vec();
-    let interp_log = LogId::generate();
-    let gen_log = LogId::generate();
     let mut run = Run {
         cell,
         interp,
         generated,
         ir: names
             .iter()
-            .map(|id| Replica::bootstrap_with_log_id(id.to_string(), &names, interp_log.clone()))
+            .map(|id| Replica::bootstrap((*id).into(), &names))
             .collect(),
         gr: names
             .iter()
-            .map(|id| Replica::bootstrap_with_log_id(id.to_string(), &names, gen_log.clone()))
+            .map(|id| Replica::bootstrap((*id).into(), &names))
             .collect(),
         sent: vec![0; schedule.members],
         conflict: Vec::new(),
@@ -1442,10 +1473,10 @@ where
     // A log whose client command is its stored operation. Every log the matrix
     // runs is one — the interpreted log and every crate Arachne generates —
     // and saying so is what lets one encoder feed `send`.
-    I: IsLog<Command = <I as IsLog>::Op>,
-    G: IsLog<Command = <G as IsLog>::Op>,
-    I::Op: Clone + Debug,
-    G::Op: Clone + Debug,
+    I: IsLog<Command = <I as IsLog>::Update>,
+    G: IsLog<Command = <G as IsLog>::Update>,
+    I::Update: Clone + Debug,
+    G::Update: Clone + Debug,
 {
     let mut total = Stats::default();
     let mut settled = BTreeSet::new();
@@ -1493,10 +1524,10 @@ where
     // A log whose client command is its stored operation. Every log the matrix
     // runs is one — the interpreted log and every crate Arachne generates —
     // and saying so is what lets one encoder feed `send`.
-    I: IsLog<Command = <I as IsLog>::Op>,
-    G: IsLog<Command = <G as IsLog>::Op>,
-    I::Op: Clone + Debug,
-    G::Op: Clone + Debug,
+    I: IsLog<Command = <I as IsLog>::Update>,
+    G: IsLog<Command = <G as IsLog>::Update>,
+    I::Update: Clone + Debug,
+    G::Update: Clone + Debug,
 {
     let assigned = check_coverage(krate, sem, cells)?;
     run_cells(krate, cells, interp, generated).finish(krate, assigned)
@@ -1567,10 +1598,10 @@ where
     // A log whose client command is its stored operation. Every log the matrix
     // runs is one — the interpreted log and every crate Arachne generates —
     // and saying so is what lets one encoder feed `send`.
-    I: IsLog<Command = <I as IsLog>::Op>,
-    G: IsLog<Command = <G as IsLog>::Op>,
-    I::Op: Clone + Debug,
-    G::Op: Clone + Debug,
+    I: IsLog<Command = <I as IsLog>::Update>,
+    G: IsLog<Command = <G as IsLog>::Update>,
+    I::Update: Clone + Debug,
+    G::Update: Clone + Debug,
 {
     let mut total = Stats::default();
     let mut failures = Vec::new();
@@ -1746,7 +1777,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     use moirai_protocol::{
-        clock::version_vector::Version,
+        clock::{causal_frontier::CausalFrontier, version_vector::Version},
         event::Event,
         state::{effect_context::EffectContext, log::IsLog},
     };
@@ -1767,10 +1798,10 @@ mod tests {
 
     impl IsLog for LastDelivered {
         type Command = ToyOp;
-        type Op = ToyOp;
+        type Update = ToyOp;
         type Rejection = std::convert::Infallible;
 
-        fn prepare(&self, command: Self::Command) -> Self::Op {
+        fn prepare(&self, command: Self::Command) -> Self::Update {
             command
         }
 
@@ -1780,7 +1811,7 @@ mod tests {
             }
         }
 
-        fn stabilize(&mut self, _version: &Version) {}
+        fn stabilize(&mut self, _frontier: &CausalFrontier) {}
 
         fn redundant_by_parent(&mut self, _version: &Version, _conservative: bool) {}
 
@@ -1802,10 +1833,10 @@ mod tests {
 
     impl IsLog for SplitsAtStability {
         type Command = ToyOp;
-        type Op = ToyOp;
+        type Update = ToyOp;
         type Rejection = std::convert::Infallible;
 
-        fn prepare(&self, command: Self::Command) -> Self::Op {
+        fn prepare(&self, command: Self::Command) -> Self::Update {
             command
         }
 
@@ -1815,8 +1846,8 @@ mod tests {
             }
         }
 
-        fn stabilize(&mut self, version: &Version) {
-            let origins = version.iter().filter(|(_, seq)| *seq >= 1).count();
+        fn stabilize(&mut self, frontier: &CausalFrontier) {
+            let origins = frontier.iter().filter(|(_, seq)| *seq >= 1).count();
             if origins >= 2
                 && let Some(last) = self.delivered.last()
             {
@@ -1843,7 +1874,9 @@ mod tests {
 
     /// Every schedule of `toy_cell` run on `L` as both arms, and the first
     /// failure of each schedule kind the runner reports.
-    fn verdict<L: IsLog<Op = ToyOp, Command = ToyOp>>(read: &dyn Fn(&Rep<L>) -> Value) -> String {
+    fn verdict<L: IsLog<Update = ToyOp, Command = ToyOp>>(
+        read: &dyn Fn(&Rep<L>) -> Value,
+    ) -> String {
         let encode = |op: &ToyOp, _: &Value| op.clone();
         let one = Arm {
             name: "interpreted",

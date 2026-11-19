@@ -11,6 +11,12 @@ impl<O> IsUnstableCore<O> for Vec<TaggedOp<O>>
 where
     O: Debug + Clone,
 {
+    fn rebind(&mut self, resolver: &crate::broadcast::internalizer::Resolver) {
+        for event in self.iter_mut() {
+            event.rebind(resolver);
+        }
+    }
+
     fn append(&mut self, event: Event<O>) {
         let tagged_op = TaggedOp::from(&event);
         self.push(tagged_op);

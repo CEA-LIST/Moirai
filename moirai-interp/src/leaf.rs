@@ -36,36 +36,45 @@
 //! the local structural check of criterion I-A9.
 
 use std::fmt;
-use std::ops::{Add, AddAssign, SubAssign};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_crdt::{
     bag::{Count, CountLog, counts},
-    counter::{resettable_counter::Counter, simple_counter::Counter as SimpleCounter},
-    flag::{dw_flag::DWFlag, ew_flag::EWFlag},
-    list::eg_walker::{List, ReadAt},
-    map::uw_map::{UWMap, UWMapLog},
+    counter::{Counter, CounterValue, update::CounterUpdate},
+    flag::{dw_flag::DWFlag, ew_flag::EWFlag, update::FlagUpdate},
+    list::{
+        eg_walker::{List, ReadAt},
+        update::ListUpdate,
+    },
+    map::{update::MapUpdate, uw_map::UWMapLog},
     register::{
         mv_register::MVRegister,
         po_register::PORegister,
         to_register::TORegister,
-        unique_register::{FairRegister, LwwRegister, Register},
+        unique_register::{FairRegister, LwwRegister},
+        update::RegisterUpdate,
     },
-    set::{aw_set::AWSet, rw_set::RWSet},
+    set::{aw_set::AWSet, rw_set::RWSet, update::SetUpdate},
 };
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         policy::{FairPolicy, LwwPolicy, Policy},
         query::Read,
     },
     event::{Event, tag::Tag},
-    state::{effect_context::EffectContext, graph_log::GraphLog, log::IsLog, po_log::VecLog},
+    state::{
+        effect_context::EffectContext,
+        log::IsLog,
+        po_log::{GraphLog, VecLog},
+    },
 };
 use moirai_semantics::{FlagWins, LeafRule, MetamodelSemantics, NumKind, SetTie, TieBreak};
 use serde_json::{Map, Value};
+
+use crate::simple_counter::SimpleCounter;
 
 /// Every value a leaf can hold, across every metamodel the table can express.
 ///
@@ -288,9 +297,7 @@ fn mismatch<T>(op: &LeafOp, leaf: &'static str) -> Result<T, LeafMismatch> {
 ///
 /// Exactly the six `to_rust_type` returns for a numeric Ecore builtin, and
 /// the reason there are twelve counter arms rather than four.
-pub trait CounterWidth:
-    Add<Output = Self> + AddAssign + SubAssign + Default + Copy + fmt::Debug + PartialEq
-{
+pub trait CounterWidth: CounterValue {
     /// The word a refusal sentence uses.
     const WIDTH: &'static str;
     /// Narrow a scalar to this width, or refuse.
@@ -480,6 +487,10 @@ macro_rules! dispatch {
 }
 
 impl LeafLog {
+    pub(crate) fn adopted_from(&mut self, donor: &Version) {
+        dispatch!(self, log => log.adopted_from(donor));
+    }
+
     /// The scalar leaf a rule names, minted empty.
     ///
     /// The only way a leaf comes into being: nothing here goes through
@@ -753,9 +764,16 @@ impl LeafLog {
         Ok(())
     }
 
-    /// Hand a stable version to the arm.
-    pub fn stabilize(&mut self, version: &Version) {
-        dispatch!(self, log => log.stabilize(version))
+    /// Hand a stable frontier to the arm.
+    ///
+    /// Not to a text or an ordered set: they never compact, as at `748a185`,
+    /// so a text reads at any version ([`LeafLog::text_at`]). Léo's eg-walker
+    /// folds a stable prefix; adopting that fold is EC.03d.
+    pub fn stabilize(&mut self, frontier: &CausalFrontier) {
+        match self {
+            LeafLog::Text(_) | LeafLog::OrderedSet(_) => {}
+            other => dispatch!(other, log => log.stabilize(frontier)),
+        }
     }
 
     /// A parent removed this leaf: update-wins, so what is causally below the
@@ -775,6 +793,7 @@ impl LeafLog {
         match self {
             LeafLog::Text(log) => Some(
                 log.execute_query(&ReadAt::<Vec<char>>::new(version))
+                    .expect("a text never folds, so every version reads")
                     .into_iter()
                     .collect(),
             ),
@@ -908,15 +927,14 @@ impl LeafLog {
         use moirai_protocol::state::unstable_state::IsUnstableCore;
 
         match self {
-            // An `EventGraph` is its own unstable state and its `stabilize`
-            // is a no-op by construction (`List`'s `DISABLE_STABILIZE`), so
+            // An `EventGraph` is its own unstable state and a text is never
+            // stabilized ([`LeafLog::stabilize`]), so
             // this number does not fall for text — on either path, which is
             // why `ip11` excludes text by naming the exclusion rather than by
             // forgetting it.
             LeafLog::Text(log) => IsUnstableCore::len(log.unstable()),
-            // An ordered set is the same `GraphLog<List<_>>` as text, so the
-            // same `DISABLE_STABILIZE` applies and this number does not fall
-            // for it either.
+            // An ordered set is the same `GraphLog<List<_>>` as text, and is
+            // not stabilized either, so this number does not fall for it.
             LeafLog::OrderedSet(log) => IsUnstableCore::len(log.unstable()),
             LeafLog::CounterI8(log) => log.unstable().len(),
             LeafLog::CounterI16(log) => log.unstable().len(),
@@ -984,7 +1002,7 @@ fn sorted_array(
 /// the kind check alone when the operation is a peer's.
 fn enabled<L: IsLog>(
     log: &L,
-    inner: &L::Op,
+    inner: &L::Update,
     op: &LeafOp,
     leaf: &'static str,
     strict: bool,
@@ -1001,19 +1019,19 @@ fn enabled<L: IsLog>(
 /// A leaf's own effects never reach a collector: the interpreted tree reports
 /// through [`crate::node::Emit`], at the path it walked, so the context here
 /// is a silent one.
-fn apply<L: IsLog>(log: &mut L, event: Event<LeafOp>, inner: L::Op) {
+fn apply<L: IsLog>(log: &mut L, event: Event<LeafOp>, inner: L::Update) {
     let event = event.unfold(inner);
     log.effect(event, &mut EffectContext::silent());
 }
 
-fn text_op(op: &LeafOp) -> Result<List<char>, LeafMismatch> {
+fn text_op(op: &LeafOp) -> Result<ListUpdate<char>, LeafMismatch> {
     match op {
-        LeafOp::InsertChar { pos, ch } => Ok(List::Insert {
+        LeafOp::InsertChar { pos, ch } => Ok(ListUpdate::Insert {
             content: *ch,
             pos: *pos,
         }),
-        LeafOp::DeleteChar { pos } => Ok(List::Delete { pos: *pos }),
-        LeafOp::DeleteRange { start, len } => Ok(List::DeleteRange {
+        LeafOp::DeleteChar { pos } => Ok(ListUpdate::Delete { pos: *pos }),
+        LeafOp::DeleteRange { start, len } => Ok(ListUpdate::DeleteRange {
             start: *start,
             len: *len,
         }),
@@ -1021,14 +1039,14 @@ fn text_op(op: &LeafOp) -> Result<List<char>, LeafMismatch> {
     }
 }
 
-fn ordered_set_op(op: &LeafOp) -> Result<List<Scalar>, LeafMismatch> {
+fn ordered_set_op(op: &LeafOp) -> Result<ListUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Insert { pos, value } => Ok(List::Insert {
+        LeafOp::Insert { pos, value } => Ok(ListUpdate::Insert {
             content: value.clone(),
             pos: *pos,
         }),
-        LeafOp::DeleteChar { pos } => Ok(List::Delete { pos: *pos }),
-        LeafOp::DeleteRange { start, len } => Ok(List::DeleteRange {
+        LeafOp::DeleteChar { pos } => Ok(ListUpdate::Delete { pos: *pos }),
+        LeafOp::DeleteRange { start, len } => Ok(ListUpdate::DeleteRange {
             start: *start,
             len: *len,
         }),
@@ -1036,35 +1054,35 @@ fn ordered_set_op(op: &LeafOp) -> Result<List<Scalar>, LeafMismatch> {
     }
 }
 
-fn counter_op<V: CounterWidth>(op: &LeafOp) -> Result<Counter<V>, LeafMismatch> {
+fn counter_op<V: CounterWidth>(op: &LeafOp) -> Result<CounterUpdate<V>, LeafMismatch> {
     match op {
         LeafOp::Inc(value) => V::from_scalar(value)
-            .map(Counter::Inc)
+            .map(CounterUpdate::Inc)
             .ok_or_else(|| LeafMismatch {
                 op: value.kind(),
                 leaf: V::WIDTH,
             }),
         LeafOp::Dec(value) => V::from_scalar(value)
-            .map(Counter::Dec)
+            .map(CounterUpdate::Dec)
             .ok_or_else(|| LeafMismatch {
                 op: value.kind(),
                 leaf: V::WIDTH,
             }),
-        LeafOp::Reset => Ok(Counter::Reset),
+        LeafOp::Reset => Ok(CounterUpdate::Reset),
         other => mismatch(other, V::WIDTH),
     }
 }
 
-fn simple_counter_op<V: CounterWidth>(op: &LeafOp) -> Result<SimpleCounter<V>, LeafMismatch> {
+fn simple_counter_op<V: CounterWidth>(op: &LeafOp) -> Result<CounterUpdate<V>, LeafMismatch> {
     match op {
         LeafOp::Inc(value) => V::from_scalar(value)
-            .map(SimpleCounter::Inc)
+            .map(CounterUpdate::Inc)
             .ok_or_else(|| LeafMismatch {
                 op: value.kind(),
                 leaf: V::WIDTH,
             }),
         LeafOp::Dec(value) => V::from_scalar(value)
-            .map(SimpleCounter::Dec)
+            .map(CounterUpdate::Dec)
             .ok_or_else(|| LeafMismatch {
                 op: value.kind(),
                 leaf: V::WIDTH,
@@ -1111,80 +1129,80 @@ fn simple_counter_effect<V: CounterWidth>(
     Ok(())
 }
 
-fn ew_flag_op(op: &LeafOp) -> Result<EWFlag, LeafMismatch> {
+fn ew_flag_op(op: &LeafOp) -> Result<FlagUpdate, LeafMismatch> {
     match op {
-        LeafOp::Enable => Ok(EWFlag::Enable),
-        LeafOp::Disable => Ok(EWFlag::Disable),
-        LeafOp::Clear => Ok(EWFlag::Clear),
+        LeafOp::Enable => Ok(FlagUpdate::Enable),
+        LeafOp::Disable => Ok(FlagUpdate::Disable),
+        LeafOp::Clear => Ok(FlagUpdate::Clear),
         other => mismatch(other, "enable-wins flag"),
     }
 }
 
-fn dw_flag_op(op: &LeafOp) -> Result<DWFlag, LeafMismatch> {
+fn dw_flag_op(op: &LeafOp) -> Result<FlagUpdate, LeafMismatch> {
     match op {
-        LeafOp::Enable => Ok(DWFlag::Enable),
-        LeafOp::Disable => Ok(DWFlag::Disable),
-        LeafOp::Clear => Ok(DWFlag::Clear),
+        LeafOp::Enable => Ok(FlagUpdate::Enable),
+        LeafOp::Disable => Ok(FlagUpdate::Disable),
+        LeafOp::Clear => Ok(FlagUpdate::Clear),
         other => mismatch(other, "disable-wins flag"),
     }
 }
 
-fn mv_register_op(op: &LeafOp) -> Result<MVRegister<Scalar>, LeafMismatch> {
+fn mv_register_op(op: &LeafOp) -> Result<RegisterUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Write(value) => Ok(MVRegister::Write(value.clone())),
-        LeafOp::Clear => Ok(MVRegister::Clear),
+        LeafOp::Write(value) => Ok(RegisterUpdate::Write(value.clone())),
+        LeafOp::Clear => Ok(RegisterUpdate::Clear),
         other => mismatch(other, "multi-value register"),
     }
 }
 
-fn unique_register_op<P>(op: &LeafOp) -> Result<Register<Scalar, P>, LeafMismatch> {
+fn unique_register_op(op: &LeafOp) -> Result<RegisterUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Write(value) => Ok(Register::Write(value.clone())),
+        LeafOp::Write(value) => Ok(RegisterUpdate::Write(value.clone())),
         other => mismatch(other, "register"),
     }
 }
 
-fn po_register_op(op: &LeafOp) -> Result<PORegister<Scalar>, LeafMismatch> {
+fn po_register_op(op: &LeafOp) -> Result<RegisterUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Write(value) => Ok(PORegister::Write(value.clone())),
-        LeafOp::Clear => Ok(PORegister::Clear),
+        LeafOp::Write(value) => Ok(RegisterUpdate::Write(value.clone())),
+        LeafOp::Clear => Ok(RegisterUpdate::Clear),
         other => mismatch(other, "partial-order register"),
     }
 }
 
-fn to_register_op(op: &LeafOp) -> Result<TORegister<Scalar>, LeafMismatch> {
+fn to_register_op(op: &LeafOp) -> Result<RegisterUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Write(value) => Ok(TORegister::Write(value.clone())),
-        LeafOp::Clear => Ok(TORegister::Clear),
+        LeafOp::Write(value) => Ok(RegisterUpdate::Write(value.clone())),
+        LeafOp::Clear => Ok(RegisterUpdate::Clear),
         other => mismatch(other, "total-order register"),
     }
 }
 
-fn aw_set_op(op: &LeafOp) -> Result<AWSet<Scalar>, LeafMismatch> {
+fn aw_set_op(op: &LeafOp) -> Result<SetUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Add(value) => Ok(AWSet::Add(value.clone())),
-        LeafOp::Remove(value) => Ok(AWSet::Remove(value.clone())),
-        LeafOp::Clear => Ok(AWSet::Clear),
+        LeafOp::Add(value) => Ok(SetUpdate::Add(value.clone())),
+        LeafOp::Remove(value) => Ok(SetUpdate::Remove(value.clone())),
+        LeafOp::Clear => Ok(SetUpdate::Clear),
         other => mismatch(other, "add-wins set"),
     }
 }
 
-fn rw_set_op(op: &LeafOp) -> Result<RWSet<Scalar>, LeafMismatch> {
+fn rw_set_op(op: &LeafOp) -> Result<SetUpdate<Scalar>, LeafMismatch> {
     match op {
-        LeafOp::Add(value) => Ok(RWSet::Add(value.clone())),
-        LeafOp::Remove(value) => Ok(RWSet::Remove(value.clone())),
-        LeafOp::Clear => Ok(RWSet::Clear),
+        LeafOp::Add(value) => Ok(SetUpdate::Add(value.clone())),
+        LeafOp::Remove(value) => Ok(SetUpdate::Remove(value.clone())),
+        LeafOp::Clear => Ok(SetUpdate::Clear),
         other => mismatch(other, "remove-wins set"),
     }
 }
 
 /// A bag operation as `AWBagLog` spells it: an add is one increment of the
 /// value's own counter, a remove one decrement, a clear the map's clear.
-fn bag_op(op: &LeafOp) -> Result<UWMap<Scalar, Counter<Count>>, LeafMismatch> {
+fn bag_op(op: &LeafOp) -> Result<MapUpdate<Scalar, CounterUpdate<Count>>, LeafMismatch> {
     match op {
-        LeafOp::Add(value) => Ok(UWMap::Update(value.clone(), Counter::Inc(1))),
-        LeafOp::Remove(value) => Ok(UWMap::Update(value.clone(), Counter::Dec(1))),
-        LeafOp::Clear => Ok(UWMap::Clear),
+        LeafOp::Add(value) => Ok(MapUpdate::Update(value.clone(), CounterUpdate::Inc(1))),
+        LeafOp::Remove(value) => Ok(MapUpdate::Update(value.clone(), CounterUpdate::Dec(1))),
+        LeafOp::Clear => Ok(MapUpdate::Clear),
         other => mismatch(other, "bag"),
     }
 }
@@ -1204,9 +1222,9 @@ mod tests {
 
     use std::cell::Cell;
 
-    use moirai_crdt::utils::membership::twins_log;
+    use moirai_crdt::utils::bootstrap::twins_log;
     use moirai_protocol::{
-        clock::version_vector::Version,
+        clock::{causal_frontier::CausalFrontier, version_vector::Version},
         crdt::{eval::EvalNested, query::Read},
         event::Event,
         replica::IsReplica,
@@ -1252,23 +1270,23 @@ mod tests {
 
     impl IsLog for LeafCell {
         type Command = LeafOp;
-        type Op = LeafOp;
+        type Update = LeafOp;
         type Rejection = LeafMismatch;
 
-        fn prepare(&self, command: Self::Command) -> Self::Op {
+        fn prepare(&self, command: Self::Command) -> Self::Update {
             command
         }
 
-        fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+        fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
             self.0.is_enabled(op)
         }
 
-        fn effect(&mut self, event: Event<Self::Op>, _ctx: &mut EffectContext<'_>) {
+        fn effect(&mut self, event: Event<Self::Update>, _ctx: &mut EffectContext<'_>) {
             self.0.effect(event).expect("the arm takes the operation");
         }
 
-        fn stabilize(&mut self, version: &Version) {
-            self.0.stabilize(version);
+        fn stabilize(&mut self, frontier: &CausalFrontier) {
+            self.0.stabilize(frontier);
         }
 
         fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
