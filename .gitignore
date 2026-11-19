@@ -4,3 +4,7 @@
 *.vscode
 .DS_Store
 __MACOSX/
+**/__pycache__
+**/results
+**/simulation-files
+**/client-results
