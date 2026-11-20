@@ -533,9 +533,10 @@ fn feature_rule(
         })?;
     // A map key enum is written by name; the table holds its slot in `enums`.
     let mut raw = raw.clone();
+    let keyed = raw.pointer("/shape/kind").and_then(Value::as_str) == Some("keyed");
     if let Some(key) = raw
         .pointer_mut("/shape/key")
-        .filter(|key| key.get("kind").and_then(Value::as_str) == Some("enum"))
+        .filter(|key| keyed && key.get("kind").and_then(Value::as_str) == Some("enum"))
     {
         let named = key.get("class").and_then(Value::as_str).ok_or_else(|| {
             malformed(
