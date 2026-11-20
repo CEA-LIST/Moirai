@@ -531,6 +531,26 @@ fn feature_rule(
             feature: feature.to_string(),
             key: "merge",
         })?;
+    // A map key enum is written by name; the table holds its slot in `enums`.
+    let mut raw = raw.clone();
+    if let Some(key) = raw
+        .pointer_mut("/shape/key")
+        .filter(|key| key.get("kind").and_then(Value::as_str) == Some("enum"))
+    {
+        let named = key.get("class").and_then(Value::as_str).ok_or_else(|| {
+            malformed(
+                format!("{class}.{feature}"),
+                "a map key enum is not named: `merge.shape.key.class` is not a string",
+            )
+        })?;
+        let slot = enum_slots
+            .get(named)
+            .ok_or_else(|| SemanticsError::UnknownClass {
+                at: format!("{class}.{feature}"),
+                name: named.to_string(),
+            })?;
+        key["class"] = slot.0.into();
+    }
     let raw = RawMerge::deserialize(raw).map_err(|err| {
         malformed(
             format!("{class}.{feature}"),
