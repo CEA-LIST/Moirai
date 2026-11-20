@@ -404,6 +404,33 @@ macro_rules! union {
                 }
             }
 
+            /// Held by an optional, the union also drops each member the
+            /// removal emptied, keeping those a concurrent write reached. A
+            /// keyed collection keeps its emptied members, so this is not part
+            /// of `redundant_by_parent`.
+            impl $crate::union::held_by_optional::OptionalContent for [<$union Log>] {
+                fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
+                    <Self as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(self, version, conservative);
+                    self.child = match ::std::mem::take(&mut self.child) {
+                        [<$union Container>]::Value(child) if !Self::child_is_default(&child) => {
+                            [<$union Container>]::Value(child)
+                        }
+                        [<$union Container>]::Conflicts(children) => {
+                            let mut kept: ::std::vec::Vec<[<$union Child>]> = children
+                                .into_iter()
+                                .filter(|child| !Self::child_is_default(child))
+                                .collect();
+                            match kept.len() {
+                                0 => [<$union Container>]::Unset,
+                                1 => [<$union Container>]::Value(::std::boxed::Box::new(kept.remove(0))),
+                                _ => [<$union Container>]::Conflicts(kept),
+                            }
+                        }
+                        _ => [<$union Container>]::Unset,
+                    };
+                }
+            }
+
             impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>> for [<$union Log>] {
                 fn execute_query(
                     &self,
@@ -544,4 +571,40 @@ macro_rules! union {
             }
         }
     };
+}
+
+/// What an optional's content does with a removal the optional hands down,
+/// its own unset or a removal above it: the optional then drops the content
+/// if it is left at its default. The trait has no default body, so a content
+/// log (a user wrapper included) states what it does with the removal or is
+/// refused as an optional's content at compile time.
+pub mod held_by_optional {
+    use moirai_protocol::{
+        clock::version_vector::Version,
+        crdt::replicated_data_type::ReplicatedDataType,
+        state::{log::IsLog, po_log::POLog},
+    };
+
+    /// The content of an optional: see [the module](self).
+    pub trait OptionalContent: IsLog {
+        /// A removal handed down by the optional that holds this log.
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool);
+    }
+
+    impl<L: OptionalContent> OptionalContent for Box<L> {
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            (**self).redundant_by_optional(version, conservative);
+        }
+    }
+
+    /// As from any other parent.
+    impl<R, U> OptionalContent for POLog<R, U>
+    where
+        R: ReplicatedDataType,
+        POLog<R, U>: IsLog,
+    {
+        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+            IsLog::redundant_by_parent(self, version, conservative);
+        }
+    }
 }

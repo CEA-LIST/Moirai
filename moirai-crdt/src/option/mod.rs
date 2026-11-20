@@ -9,6 +9,7 @@ use moirai_fuzz::{
     generator::command_generator::CommandGenerator,
     observers::footprint::{FootprintNode, LogFootprint},
 };
+pub use moirai_macros::union::held_by_optional::OptionalContent;
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
@@ -37,7 +38,7 @@ where
 
 impl<L> IsLog for OptionLog<L>
 where
-    L: IsLog,
+    L: OptionalContent,
 {
     type Command = OptionUpdate<L::Update>;
     type Update = OptionUpdate<L::Update>;
@@ -71,12 +72,7 @@ where
                 if ctx.is_owned() {
                     ctx.delete();
                 }
-                if let Some(child) = self.child.as_mut() {
-                    child.redundant_by_parent(event.version(), true);
-                    if child.is_default() {
-                        self.child = None;
-                    }
-                }
+                self.drop_emptied(event.version(), true);
             }
         }
     }
@@ -88,9 +84,8 @@ where
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        if let Some(ref mut child) = self.child {
-            child.redundant_by_parent(version, conservative);
-        }
+        // A removal above empties the child as an unset does.
+        self.drop_emptied(version, conservative);
     }
 
     fn is_default(&self) -> bool {
@@ -100,7 +95,7 @@ where
 
 impl<L, V> EvalNested<Read<Option<V>>> for OptionLog<L>
 where
-    L: IsLog + EvalNested<Read<V>>,
+    L: OptionalContent + EvalNested<Read<V>>,
     V: Clone + Default + PartialEq,
 {
     fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {
@@ -123,6 +118,32 @@ where
     }
 }
 
+impl<L> OptionLog<L>
+where
+    L: OptionalContent,
+{
+    /// Hand a removal to the content and drop the content it left at its
+    /// default.
+    fn drop_emptied(&mut self, version: &Version, conservative: bool) {
+        if let Some(child) = self.child.as_mut() {
+            child.redundant_by_optional(version, conservative);
+            if child.is_default() {
+                self.child = None;
+            }
+        }
+    }
+}
+
+/// An optional held by an optional takes the removal as from any parent.
+impl<L> OptionalContent for OptionLog<L>
+where
+    L: OptionalContent,
+{
+    fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+        IsLog::redundant_by_parent(self, version, conservative);
+    }
+}
+
 impl<L> Default for OptionLog<L>
 where
     L: IsLog,
@@ -135,7 +156,7 @@ where
 #[cfg(feature = "fuzz")]
 impl<L> CommandGenerator for OptionLog<L>
 where
-    L: CommandGenerator + IsLog<Command = <L as IsLog>::Update>,
+    L: CommandGenerator + OptionalContent + IsLog<Command = <L as IsLog>::Update>,
 {
     fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
         match &self.child {
