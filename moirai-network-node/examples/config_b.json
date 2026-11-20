@@ -1,6 +1,6 @@
 {
     "replica_id": 2,
-    "listen_port": 19002,
+    "listen_port": 19003,
     "http_port": 8082,
     "peers": [
         {

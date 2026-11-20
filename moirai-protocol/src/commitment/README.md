@@ -99,6 +99,10 @@ delivery, `ab_handler` updates vote support. The wrapper collects
 stabilizes the child using the full checkpoint frontier, calls `ab_prune`, then
 `ab_set_last_committed`.
 
+External protocols can use `protocol_mut()` to poll their independent decision
+channel, then call `commit_ready()` from the replica owner's loop. This drains
+the same checkpoints as `effect()` without waiting for another causal event.
+
 The child must preserve uncommitted operations and apply each committed batch in
 a deterministic causal order. The example `CommitSet` and the sequence fixture
 in `examples/tests.rs` sort batches and optimistic tails with `Sorted<LwwPolicy>`.

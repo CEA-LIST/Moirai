@@ -11,11 +11,9 @@ fn main() -> std::io::Result<()> {
     let config = support::config()?;
     // Falling back to self lets surviving members elect a live leader when older
     // event observations expire. EventOracle observes events inside OmegaCommit.
-    let oracle = EventOracle::from_parts(
+    let oracle = EventOracle::with_timeout(
         StableReplicaId(config.replica_id),
-        usize::try_from(config.event_timeout_ms.get()).map_err(std::io::Error::other)?,
-        Default::default(),
-        None,
+        std::time::Duration::from_millis(config.event_timeout_ms.get()),
     );
     let protocol =
         OmegaCommit::from_parts(oracle, config.members(), StableReplicaId(config.replica_id));

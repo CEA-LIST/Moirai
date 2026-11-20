@@ -6,7 +6,7 @@
         {
             "replica_id": 2,
             "replica_name": "b",
-            "address": "127.0.0.1:19002"
+            "address": "127.0.0.1:19003"
         }
     ],
     "noop_interval_ms": 1000,

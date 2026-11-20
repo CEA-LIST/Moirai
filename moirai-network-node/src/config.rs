@@ -34,7 +34,7 @@ pub struct Config {
     /// `null` disables idle no-ops. Remote events and reads do not reset the timer.
     #[serde(default = "noop_interval")]
     pub noop_interval_ms: Option<NonZeroU64>,
-    /// Used only by the core EventOracle in the commit_set example.
+    /// Used by the core EventOracle in the commit_set and creek_set examples.
     #[serde(default = "event_timeout", alias = "heartbeat_interval_ms")]
     pub event_timeout_ms: NonZeroU64,
     #[serde(default = "request_timeout")]

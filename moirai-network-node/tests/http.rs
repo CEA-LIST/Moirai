@@ -2,9 +2,7 @@ use moirai_network_node::{Application, Config, Node, NodeHandle};
 use moirai_protocol::{
     commitment::{
         commit_log::CommitmentLog,
-        commit_protocols::lamport::{
-            lamport_commit::LamportCommit, lamport_tracker::LamportTracker,
-        },
+        commit_protocols::lamport::lamport_commit::LamportCommit,
         examples::commit_set::{CommitSet, SetUpdate},
     },
     crdt::query::Read,
@@ -51,7 +49,7 @@ fn start_node_with_limits(
     drop(reservation);
     let server = thread::spawn(move || {
         type Child = VecLog<CommitSet<String>>;
-        let protocol = LamportCommit::from_parts(config.members(), LamportTracker::default());
+        let protocol = LamportCommit::new(config.members().len());
         let log = CommitmentLog::new(Child::default(), protocol);
         let app: Application<CommitmentLog<Child, LamportCommit>> = Application {
             query: |replica| {

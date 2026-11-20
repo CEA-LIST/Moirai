@@ -5,7 +5,7 @@ use moirai_protocol::{
     commitment::{
         commit_log::CommitmentLog,
         commit_protocols::{
-            lamport::{lamport_commit::LamportCommit, lamport_tracker::LamportTracker},
+            lamport::lamport_commit::LamportCommit,
             omega::{omega_commit::OmegaCommit, oracle::EventOracle},
         },
         examples::commit_set::{CommitSet, SetUpdate},
@@ -77,7 +77,7 @@ fn application<A: AtomicBroadcastProtocol<Child>>() -> Application<CommitmentLog
 
 fn plain(id: u16, members: &[u16], noop: Option<u64>, bus: &Bus) -> Node<Plain, MemoryTransport> {
     let config = config(id, members, noop);
-    let protocol = LamportCommit::from_parts(config.members(), LamportTracker::default());
+    let protocol = LamportCommit::new(config.members().len());
     let transport = MemoryTransport {
         id,
         bus: bus.clone(),
@@ -94,7 +94,7 @@ fn plain(id: u16, members: &[u16], noop: Option<u64>, bus: &Bus) -> Node<Plain, 
 
 fn commit(id: u16, members: &[u16], bus: &Bus) -> Node<Commit, MemoryTransport> {
     let config = config(id, members, Some(5));
-    let oracle = EventOracle::from_parts(StableReplicaId(id), 30, Default::default(), None);
+    let oracle = EventOracle::with_timeout(StableReplicaId(id), Duration::from_millis(30));
     let protocol = OmegaCommit::from_parts(oracle, config.members(), StableReplicaId(id));
     Node::with_transport(
         config,

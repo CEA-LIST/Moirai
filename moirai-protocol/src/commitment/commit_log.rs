@@ -46,18 +46,7 @@ where
         self.child.effect(update_event, ctx);
         self.ab_protocol.ab_handler(event, ctx);
 
-        // Check new event candidates for commitment
-        let ready: Vec<_> = self.ab_protocol
-            .ab_ready_to_commit()
-            .into_iter().cloned().collect();
-
-        // Iterate through each candidate to commit
-        for version in ready {
-            let frontier = CausalFrontier::from(&version);
-            self.child.stabilize(&frontier);
-            self.ab_protocol.ab_prune(&version);
-            self.ab_protocol.ab_set_last_committed(&version);
-        }
+        self.commit_ready();
     }
 
     fn stabilize(&mut self, _: &CausalFrontier) {
@@ -78,6 +67,23 @@ where
     L: IsLog,
     A: AtomicBroadcastProtocol<L>,
 {
+    /// Apply checkpoints made ready by an external protocol, even while the
+    /// causal log is idle. Uses the same path as ordinary event delivery.
+    pub fn commit_ready(&mut self) {
+        // Check new event candidates for commitment
+        let ready: Vec<_> = self.ab_protocol
+            .ab_ready_to_commit()
+            .into_iter().cloned().collect();
+
+        // Iterate through each candidate to commit
+        for version in ready {
+            let frontier = CausalFrontier::from(&version);
+            self.child.stabilize(&frontier);
+            self.ab_protocol.ab_prune(&version);
+            self.ab_protocol.ab_set_last_committed(&version);
+        }
+    }
+
     pub fn new(child: L, ab_protocol: A) -> Self {
         Self {
             child,
@@ -97,6 +103,11 @@ where
     /// Read-only access to commitment state, including candidate support.
     pub const fn protocol(&self) -> &A {
         &self.ab_protocol
+    }
+
+    /// Mutable access for an external protocol's polling hook.
+    pub fn protocol_mut(&mut self) -> &mut A {
+        &mut self.ab_protocol
     }
 
     /// Returns the frontier representing the strict causal past of the given frontier.

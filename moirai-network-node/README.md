@@ -1,9 +1,9 @@
 # Moirai network node
 
 A small runtime for static-membership Moirai replicas. TCP is the default
-transport. Commitment and leader selection belong to `moirai-protocol`; this
-crate contains no oracle implementation, heartbeat protocol, or commitment
-algorithm.
+transport. Built-in commitment and leader selection come from `moirai-protocol`.
+The optional [Creek adapter](src/external-commit/creek/README.md) adds Paxos
+commitment on an independent worker and TCP channel, derived from the same config.
 
 ## Build and run
 
@@ -25,11 +25,18 @@ workspace does not need editing. Binaries are generated under
 | --- | --- | --- |
 | `vanilla_set` | Core `CommitSet<String>` | `CommitmentLog<_, LamportCommit>`; waits for all configured members |
 | `commit_set` | Core `CommitSet<String>` | `CommitmentLog<_, OmegaCommit<EventOracle>>`; majority commitment |
+| `creek_set` | Core `CommitSet<String>` | `CommitmentLog<_, Creek<EventOracle>>`; parallel Paxos on a separate TCP channel at each base port + 1 |
 
-Both implement sequential set operations, ordered by the core Lamport policy,
+The first two implement sequential set operations, ordered by the core Lamport policy,
 and support `Add`, `Remove`, `Clear`, and `NoOp`. This replaces the obsolete AWSet
 examples and their removed core APIs. Concurrent operations follow the core
 policy's timestamp and replica-ID tie-breaking rules.
+
+`creek_set` instead commits causal batches in Paxos checkpoint order, using the
+core Lamport policy within each newly committed batch. It uses the same single
+JSON configuration as the other examples. Its independent Paxos listener and
+peer ports are derived by adding one to each configured replication port. See its
+[protocol and running instructions](src/external-commit/creek/README.md).
 
 ## Architecture
 
@@ -47,6 +54,7 @@ maps, operation-history endpoints, or pause/resume controls.
 | `wire` | Compact bincode DTOs built through public core APIs |
 | `http_api` | Three routes, translated into requests to the replica thread |
 | `config` | JSON configuration and static numeric membership |
+| `external-commit/creek` | Worker-owned ID-only Paxos, metadata/decision handoff, and commitment hook |
 
 HTTP workers wait for replies independently, so a strong update waiting for
 commitment does not block local reads or weak updates. The client request queue
@@ -99,8 +107,16 @@ allow integration with other log/protocol implementations. `tick()` embeds one
 iteration in an external loop without starting HTTP. `handle()` returns a
 thread-safe client handle; `handle.stop()` ends `run` cooperatively and resolves
 pending requests. A hook error also stops the run and resolves pending requests.
-Both built-in examples use `run(None)`: the core handles their protocols without
-an extra worker or hook.
+The `vanilla_set` and `commit_set` examples use `run(None)`: the core handles
+their protocols. Creek starts an independent consensus loop with
+`protocol.spawn_tcp(&config, WorkerConfig::default())` and uses
+`run(Some(&mut creek::drive))` to read ready checkpoints and stabilize the child
+log. Keep the returned worker guard alive
+throughout `run`. The hook performs no consensus network work; TCP polling,
+Paxos voting, retries, and decision repair run on the worker thread with private
+consensus state. Only metadata snapshots and chosen IDs pass through the shared
+handoff; Paxos processing does not hold its mutex. Log-memory measurements
+exclude the independent worker's journal and state.
 
 ### Additional transports
 
@@ -110,6 +126,9 @@ complete byte payloads. It must perform bounded work, preserve partial I/O, and
 either queue an entire message or reject it. TCP additionally verifies the wire
 version and full static member list during connection setup. Other adapters must
 provide the same identity/membership agreement. No oracle interface is required.
+Creek's consensus worker accepts a separate `Transport + Send + 'static` via
+`Creek::spawn(transport, worker_config)`, while the causal transport stays on
+the replica owner thread.
 
 ## Configuration
 
@@ -119,7 +138,7 @@ provide the same identity/membership agreement. No oracle interface is required.
   "replica_name": "a",
   "listen_port": 19001,
   "http_port": 8081,
-  "peers": [{"replica_id": 2, "replica_name": "b", "address": "127.0.0.1:19002"}],
+  "peers": [{"replica_id": 2, "replica_name": "b", "address": "127.0.0.1:19003"}],
   "pull_interval_ms": 500,
   "pull_peer_count": 1,
   "noop_interval_ms": 1000,
@@ -140,6 +159,13 @@ canonical decimal strings; display names do not affect identity or ordering.
 peers to an empty list, and `http_port` to `null` (HTTP disabled). The other
 defaults are shown above. Timer values must be positive; `noop_interval_ms` also
 accepts `null`.
+
+For `creek_set`, reserve the configured replication port and the next port.
+For example, local replicas use 19001/19002 and 19003/19004; the supplied A/B
+configs follow that spacing. Creek rejects zero/overflowing base ports and a
+local HTTP port that collides with the derived port. Kubernetes Services and
+network policies must permit both replication and derived consensus ports.
+No second config file is needed. See the Creek README for endpoint mapping.
 
 HTTP limits must be positive integers and count concurrent requests, not requests
 per second. Consistent requests hold their slot while waiting for commitment;
@@ -162,9 +188,9 @@ throughput guarantee for these defaults.
   Client updates reset the deadline, including rejected updates. Reads, incoming
   remote events, and pulls do not reset it. Disabled no-ops leave idle commitment
   and event-driven leader progress dependent on client traffic.
-- **Event timeout:** `commit_set` constructs the core `EventOracle` with
-  `event_timeout_ms` and the local ID as fallback. The core oracle observes
-  causally delivered event origins inside `OmegaCommit`. No external observer or
+- **Event timeout:** `commit_set` and `creek_set` construct the core `EventOracle`
+  with `event_timeout_ms` and the local ID as fallback. The core oracle observes
+  causally delivered event origins inside `OmegaCommit` or `Creek`. No external observer or
   heartbeat traffic is added. Choose a no-op interval comfortably below the
   event timeout, allowing for network and scheduling delays.
 

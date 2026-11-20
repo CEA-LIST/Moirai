@@ -1,7 +1,9 @@
 //! A single-owner replica loop with replaceable transports and a small HTTP API.
 //!
-//! See the crate README and the `vanilla_set` / `commit_set` examples for setup.
+//! See the crate README and the `vanilla_set`, `commit_set`, and `creek_set` examples.
 pub mod config;
+#[path = "external-commit/mod.rs"]
+pub mod external_commit;
 mod http_api;
 pub mod node;
 pub mod tcp;
