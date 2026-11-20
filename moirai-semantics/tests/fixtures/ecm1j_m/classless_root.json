@@ -1,0 +1,93 @@
+{
+  "classes": {
+    "model::Model": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": true,
+          "merge": {
+            "kind": "containment",
+            "shape": {
+              "kind": "sequence"
+            },
+            "target": "model::Part"
+          },
+          "name": "parts",
+          "ordered": true,
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "houseDefault",
+            "presence": "declared",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "model::Part"
+        }
+      ],
+      "references": [],
+      "superTypes": []
+    },
+    "model::Part": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "enum": "Mode",
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "enum",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "class": "Mode",
+              "kind": "enum",
+              "tie": "mv"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "mode",
+          "provenance": {
+            "leaf": "houseDefault",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        }
+      ],
+      "containments": [],
+      "references": [],
+      "superTypes": []
+    }
+  },
+  "enums": {
+    "Mode": [
+      "ON",
+      "OFF"
+    ]
+  },
+  "formatVersion": 2,
+  "nsURI": "urn:lib",
+  "package": "lib",
+  "packages": {
+    "model": {
+      "nsPrefix": "model",
+      "nsURI": "urn:lib/model"
+    }
+  },
+  "rootClasses": [
+    "model::Model"
+  ]
+}
