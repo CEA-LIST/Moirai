@@ -4,8 +4,10 @@
 #   R1 EC.M2's in-process check, moirai-interp/tests/ecm2/check.sh (S1..S7, B1..B3, L1, L2);
 #   R2 EC.03c2c's node-cluster check, moirai-interp/tests/ec03c2c/check.sh (21 targets, release node);
 #   R3 the targets of moirai-interp --features network whose build reads a regenerated fixture and
-#      that R1 and R2 do not run (the list below, from the targets' dep-info at 684f817, and the five
-#      nw targets that read json.metamodel.json through moirai_interp::testing::JSON_DESCRIPTOR).
+#      that R1 and R2 do not run (the list below, from the targets' dep-info at 684f817, and the nw
+#      targets that read json.metamodel.json through moirai_interp::testing::JSON_DESCRIPTOR; not
+#      nw04, all ignored, nor nw27, which needs NW.27's own harness and fails at set-up here).
+#      nw11_b is skipped: it checks a wildcard bind, which loopback_bind.so rewrites to loopback.
 # Writes <out>/names.txt: `<step> <target> :: <test> <outcome>` and `<step> exit <code>` lines, sorted.
 # Given a baseline <out>, compares: exit 1 when a baseline line is missing or changed, or a new
 # line names a target other than ecr1a_describe_fixtures.
@@ -26,8 +28,7 @@ NODES_LOCK=/volatile/home/vp242103/.cache/cea-crdt-scratch/nodes.lock
 R3="ec03b_host md03_common md03_replica_ids md03_semantics md03a_common md03a_semantics
 si05_references_by_identity si05_round3_be10455 si07_h1_harness_read si07_i1_intake si07_p1_dead_source
 si08_r2_nested_targets si08_target_side si13_migration_l3
-nw03_joiner_writes_l3 nw04_joiner_with_history_l3 nw07_named_model_ids_l3 nw11_http_origin_policy_l2
-nw27_model_replication"
+nw03_joiner_writes_l3 nw07_named_model_ids_l3 nw11_http_origin_policy_l2"
 
 names_of() { # step log: check.sh's parser, `<step> <target> :: <name> <outcome>`
     awk -v s="$1" '/^ *Running .*\(.*\/deps\/[^)]*\)$/{b=$NF; sub(/^\(.*\/deps\//,"",b); sub(/\)$/,"",b); sub(/-[0-9a-f]+$/,"",b); t=b}
@@ -58,7 +59,8 @@ cc -shared -fPIC -O2 -o "$OUT/loopback_bind.so" "$REPO/moirai-interp/tests/ec03c
     MOIRAI_E2E_RELAY_BIN="$TARGET/debug/moirai-relay" MOIRAI_E2E_BOOTNODE_BIN="$TARGET/debug/moirai-bootnode" \
     LD_PRELOAD="$OUT/loopback_bind.so" EC03C2_BIND_LOG="$OUT/binds.log" \
     flock "$NODES_LOCK" nice -n 10 cargo test -j 2 --offline --no-fail-fast -p moirai-interp \
-    --features network "${args[@]}" -- --test-threads=1) >"$OUT/R3.log" 2>&1
+    --features network "${args[@]}" -- --test-threads=1 \
+    --skip nw11_b_the_http_listener_binds_the_configured_address_and_only_it) >"$OUT/R3.log" 2>&1
 echo "R3 exit $?" >>"$OUT/lines.txt"
 names_of R3 "$OUT/R3.log" >>"$OUT/lines.txt"
 sort "$OUT/lines.txt" >"$OUT/names.txt"
