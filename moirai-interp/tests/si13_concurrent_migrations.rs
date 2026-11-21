@@ -27,6 +27,8 @@
 //! ```
 
 mod si13;
+#[path = "ec03/side.rs"]
+mod side;
 
 use moirai_interp::migrate::migrate;
 use moirai_interp::{ModelLog, ModelOp};
@@ -34,7 +36,6 @@ use moirai_network::query::QueryableLog;
 use moirai_network::state_transfer::TransferableLog;
 use moirai_protocol::broadcast::message::EventMessage;
 use moirai_protocol::broadcast::tcsb::Tcsb;
-use moirai_protocol::log_id::LogId;
 use moirai_protocol::replica::{IsReplica, Replica};
 use serde_json::Value;
 
@@ -66,10 +67,9 @@ fn send(replica: &mut Rep, op: ModelOp, what: &str) -> Msg {
 
 /// Four replicas of one model, each with its own member table.
 fn replicas() -> Vec<Rep> {
-    let log_id = LogId::generate();
     MEMBERS
         .iter()
-        .map(|id| Rep::bootstrap_with_log_id(id.to_string(), &MEMBERS, log_id.clone()))
+        .map(|id| side::bootstrap::<ModelLog>(id, &MEMBERS))
         .collect()
 }
 

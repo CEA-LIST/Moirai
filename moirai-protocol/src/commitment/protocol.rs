@@ -1,13 +1,17 @@
+use std::cmp::Ordering;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     broadcast::internalizer::Resolver,
-    clock::version_vector::Version,
+    clock::causal_frontier::CausalFrontier,
     commitment::{
         leader_vote::SupportDelta,
         oracle::{IsOracle, Omega},
     },
     event::id::EventId,
     replica::ReplicaIdx,
-    utils::hashmap::{HashMap, HashSet},
+    state::unstable_state::IsUnstableCausal,
 };
 
 /// Commitment protocol, which is responsible for
@@ -23,13 +27,11 @@ where
     /// The resolver that maps replica indices to replica IDs, but also provides the members of the system.
     /// It is used to determine the quorum of votes for a candidate leader.
     resolver: Resolver,
-    /// The last committed anchor, which is either the greatest version
-    /// that has been committed by a quorum of replicas
-    /// or the last stable version (LSV) from the TCSB
-    last_committed: Option<Version>,
+    /// The committed causal cut, advanced by quorum-backed anchors.
+    last_committed: Option<CausalFrontier>,
     /// Incrementally maintained positive support relationships for each candidate.
-    /// Map key = supported event
-    support: HashMap<EventId, HashSet<ReplicaIdx>>,
+    /// Candidates covered by the committed frontier are removed and cannot be reintroduced.
+    support: FxHashMap<EventId, FxHashSet<ReplicaIdx>>,
 }
 
 impl<Oracle> CommitmentProtocol<Oracle>
@@ -41,7 +43,7 @@ where
             oracle,
             resolver,
             last_committed: None,
-            support: HashMap::default(),
+            support: FxHashMap::default(),
         }
     }
 
@@ -53,20 +55,17 @@ where
         &mut self.oracle
     }
 
-    pub fn resolver(&self) -> &Resolver {
-        &self.resolver
-    }
-
     pub fn update_resolver(&mut self, resolver: Resolver) {
         self.resolver = resolver;
     }
 
-    pub fn last_committed(&self) -> Option<&Version> {
+    pub fn last_committed(&self) -> Option<&CausalFrontier> {
         self.last_committed.as_ref()
     }
 
-    pub fn update_last_committed(&mut self, version: Version) {
-        self.last_committed = Some(version);
+    #[allow(clippy::mutable_key_type)]
+    pub fn support_mut(&mut self) -> &mut FxHashMap<EventId, FxHashSet<ReplicaIdx>> {
+        &mut self.support
     }
 
     /// Applies newly decided support relationships and returns the anchors reached while
@@ -80,6 +79,11 @@ where
 
         for delta in deltas {
             let candidate = delta.candidate;
+            if let Some(frontier) = &self.last_committed
+                && frontier.contains(&candidate)
+            {
+                continue;
+            }
 
             let maybe_new_leader = {
                 let supporters = self.support.entry(candidate.clone()).or_default();
@@ -97,23 +101,22 @@ where
             }
         }
 
-        // TODO: If anchor != None, maybe we can perform some garbage collection of the `support` table?
-
         new_anchors
     }
 
-    pub fn advance_commitment(&mut self, candidate: &Version) -> bool {
-        let advances = match &self.last_committed {
-            Some(last_committed) => EventId::from(last_committed).is_predecessor_of(candidate),
-            None => true,
-        };
-
-        if advances {
-            self.last_committed = Some(candidate.clone());
-            return true;
+    pub fn advance_commitment(&mut self, candidate: &CausalFrontier) {
+        fn is_causally_after(last_committed: &CausalFrontier, candidate: &CausalFrontier) -> bool {
+            candidate.partial_cmp(last_committed) == Some(Ordering::Greater)
         }
 
-        false
+        if let Some(last_committed) = &self.last_committed {
+            assert!(
+                is_causally_after(last_committed, candidate),
+                "Candidate frontier must be causally after the last committed frontier"
+            );
+        }
+
+        self.last_committed = Some(candidate.clone());
     }
 
     /// Simple majority quorum, which is the minimum number of votes required to commit a candidate leader.
@@ -128,6 +131,28 @@ where
         }
         members
     }
+
+    pub fn prune_support<O>(
+        &mut self,
+        frontier: &CausalFrontier,
+        unstable: &impl IsUnstableCausal<O>,
+    ) {
+        self.support.retain(|id, _| {
+            !frontier.contains(id)
+                && unstable
+                    .version(id)
+                    .is_some_and(|version| version.includes_frontier(frontier))
+        });
+        self.maybe_shrink();
+    }
+
+    // Shrink the support table if it is too large compared to the number of entries.
+    fn maybe_shrink(&mut self) {
+        if self.support.capacity() > 64 && self.support.len() <= self.support.capacity() / 4 {
+            self.support
+                .shrink_to(self.support.len().saturating_mul(2).max(64));
+        }
+    }
 }
 
 impl Default for CommitmentProtocol<Omega> {
@@ -136,7 +161,7 @@ impl Default for CommitmentProtocol<Omega> {
             oracle: Omega::new(),
             resolver: Resolver::default(),
             last_committed: None,
-            support: HashMap::default(),
+            support: FxHashMap::default(),
         }
     }
 }

@@ -1,3 +1,8 @@
+// EC.M2 row N8: our `st02_held/threaded.rs` at `748a185`, translated to
+// his `IsLog`: `Op` -> `Update`, `stabilize` takes his `CausalFrontier`, and
+// the associated constant `STABILIZE_MOVES_OPERATIONS`, which his trait does
+// not have, is not forwarded.
+
 //! ST.02, B2 (`cea-cdrt-knowledge/spec/items/ST.02.md`): the compositions of
 //! `composition.rs` with a wrapper a user writes between each `OptionLog` and
 //! its content, `Threaded<L>`, which implements `IsLog` and `EvalNested` by
@@ -13,7 +18,7 @@ mod composition;
 
 use composition::*;
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
@@ -30,34 +35,32 @@ fn elsewhere<R: Send>(work: impl FnOnce() -> R + Send) -> R {
 
 impl<L: IsLog + Send> IsLog for Threaded<L>
 where
-    L::Op: Send,
+    L::Update: Send,
 {
     type Command = L::Command;
-    type Op = L::Op;
+    type Update = L::Update;
     type Rejection = L::Rejection;
-
-    const STABILIZE_MOVES_OPERATIONS: bool = L::STABILIZE_MOVES_OPERATIONS;
 
     fn new() -> Self {
         Threaded(L::new())
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         self.0.prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.0.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         let inner = &mut self.0;
         elsewhere(move || inner.effect(event, ctx))
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         let inner = &mut self.0;
-        elsewhere(move || inner.stabilize(version))
+        elsewhere(move || inner.stabilize(frontier))
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -74,7 +77,7 @@ impl<L, Q> EvalNested<Q> for Threaded<L>
 where
     Q: QueryOperation,
     L: IsLog + EvalNested<Q> + Send,
-    L::Op: Send,
+    L::Update: Send,
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         self.0.execute_query(q)

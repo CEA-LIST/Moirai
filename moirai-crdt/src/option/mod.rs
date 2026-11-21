@@ -1,10 +1,17 @@
+pub mod update;
+
 use std::convert::Infallible;
 
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::CommandGenerator;
+use deepsize::DeepSizeOf;
+#[cfg(feature = "fuzz")]
+use moirai_fuzz::{
+    generator::command_generator::CommandGenerator,
+    observers::footprint::{FootprintNode, LogFootprint},
+};
 pub use moirai_macros::union::held_by_optional::OptionalContent;
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{
         eval::EvalNested,
         query::{QueryOperation, Read},
@@ -14,40 +21,14 @@ use moirai_protocol::{
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use crate::option::update::OptionUpdate;
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub enum Optional<O> {
-    Set(O),
-    Unset,
-}
-
-/// An optional: a log that holds one content log or nothing.
-///
-/// It is a log only over content that implements [`OptionalContent`]: the
-/// logs `record!` and `union!` generate, `POLog`, `GraphLog`, `OptionLog`,
-/// and `Box` and `BoxedLog` of any of them. Over a log that does not implement
-/// it, a keyed map (`UWMapLog`, `RWMapLog`), a list (`NestedListLog`) or a
-/// user log, a composition that uses it as a log does not compile; that
-/// composition is unsupported.
-///
-/// On its own unset and on a removal above it, it hands the removal to its
-/// content through [`OptionalContent::redundant_by_optional`] and drops the
-/// content when the removal left it at its default
-/// ([`IsLog::is_default`]), whatever the content is, an `OptionLog`
-/// included. Nesting an `OptionLog` in an `OptionLog` is unsupported: no
-/// generator composes it, and no twin holds it to the interpreter.
-#[derive(Clone, Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(bound(
-        serialize = "L: serde::Serialize",
-        deserialize = "L: serde::de::DeserializeOwned"
-    ))
-)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct OptionLog<L>
 where
     L: IsLog,
@@ -59,21 +40,21 @@ impl<L> IsLog for OptionLog<L>
 where
     L: OptionalContent,
 {
-    type Command = Optional<L::Op>;
-    type Op = Optional<L::Op>;
+    type Command = OptionUpdate<L::Update>;
+    type Update = OptionUpdate<L::Update>;
     type Rejection = Infallible;
 
     fn new() -> Self {
         Self::default()
     }
 
-    fn prepare(&self, cmd: Self::Command) -> Self::Op {
+    fn prepare(&self, cmd: Self::Command) -> Self::Update {
         cmd
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         match event.op().clone() {
-            Optional::Set(o) => {
+            OptionUpdate::Set(o) => {
                 if self.child.is_some() {
                     ctx.update();
                 } else {
@@ -87,69 +68,28 @@ where
                 });
                 self.child = self.child.take().filter(|c| !c.is_default());
             }
-            Optional::Unset => {
+            OptionUpdate::Unset => {
                 if ctx.is_owned() {
                     ctx.delete();
                 }
-                if let Some(child) = self.child.as_mut() {
-                    // Held by an optional: a `union!` child drops each member
-                    // the unset emptied, as the optional drops an emptied
-                    // child just below.
-                    child.redundant_by_optional(event.version(), true);
-                    if child.is_default() {
-                        self.child = None;
-                    }
-                }
+                self.drop_emptied(event.version(), true);
             }
         }
     }
 
-    fn stabilize(&mut self, version: &Version) {
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
         if let Some(ref mut child) = self.child {
-            child.stabilize(version);
+            child.stabilize(frontier);
         }
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        if let Some(ref mut child) = self.child {
-            // A removal above this optional empties its child as an unset
-            // does, so a `union!` child drops its emptied members here too,
-            // and a child it emptied, object or leaf value, leaves, as on an
-            // unset.
-            child.redundant_by_optional(version, conservative);
-            if child.is_default() {
-                self.child = None;
-            }
-        }
+        // A removal above empties the child as an unset does.
+        self.drop_emptied(version, conservative);
     }
 
     fn is_default(&self) -> bool {
-        match self.child {
-            Some(ref child) => child.is_default(),
-            None => true,
-        }
-    }
-}
-
-#[cfg(feature = "fuzz")]
-impl<L> CommandGenerator for OptionLog<L>
-where
-    L: CommandGenerator + OptionalContent + IsLog<Command = <L as IsLog>::Op>,
-{
-    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
-        match &self.child {
-            Some(child) => {
-                if rng.random_bool(1.0 / 5.0) {
-                    Optional::Unset
-                } else {
-                    Optional::Set(child.generate_command(rng))
-                }
-            }
-            None => Optional::Set(<L as CommandGenerator>::generate_command(
-                &L::default(),
-                rng,
-            )),
-        }
+        self.child.as_ref().is_none_or(|child| child.is_default())
     }
 }
 
@@ -159,23 +99,9 @@ where
     V: Clone + Default + PartialEq,
 {
     fn execute_query(&self, _q: &Read<Option<V>>) -> <Read<Option<V>> as QueryOperation>::Response {
-        match self.child {
-            Some(ref child) => Some(child.execute_query(&Read::new())),
-            None => Default::default(),
-        }
-    }
-}
-
-/// An optional held by an optional takes a removal it hands down as from any
-/// other parent: it hands the removal on to its own content and drops that
-/// content if the removal left it at its default. Unsupported as a
-/// composition: see [`OptionLog`].
-impl<L> OptionalContent for OptionLog<L>
-where
-    L: OptionalContent,
-{
-    fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-        IsLog::redundant_by_parent(self, version, conservative);
+        self.child.as_ref().map_or_else(Default::default, |child| {
+            Some(child.execute_query(&Read::new()))
+        })
     }
 }
 
@@ -187,8 +113,34 @@ where
         Self::default()
     }
 
-    pub fn child(&self) -> Option<&L> {
+    pub const fn child(&self) -> Option<&L> {
         self.child.as_ref()
+    }
+}
+
+impl<L> OptionLog<L>
+where
+    L: OptionalContent,
+{
+    /// Hand a removal to the content and drop the content it left at its
+    /// default.
+    fn drop_emptied(&mut self, version: &Version, conservative: bool) {
+        if let Some(child) = self.child.as_mut() {
+            child.redundant_by_optional(version, conservative);
+            if child.is_default() {
+                self.child = None;
+            }
+        }
+    }
+}
+
+/// An optional held by an optional takes the removal as from any parent.
+impl<L> OptionalContent for OptionLog<L>
+where
+    L: OptionalContent,
+{
+    fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
+        IsLog::redundant_by_parent(self, version, conservative);
     }
 }
 
@@ -201,27 +153,63 @@ where
     }
 }
 
+#[cfg(feature = "fuzz")]
+impl<L> CommandGenerator for OptionLog<L>
+where
+    L: CommandGenerator + OptionalContent + IsLog<Command = <L as IsLog>::Update>,
+{
+    fn generate_command(&self, rng: &mut impl rand::Rng) -> Self::Command {
+        match &self.child {
+            Some(child) => {
+                if rng.random_bool(1.0 / 5.0) {
+                    OptionUpdate::Unset
+                } else {
+                    OptionUpdate::Set(child.generate_command(rng))
+                }
+            }
+            None => OptionUpdate::Set(<L as CommandGenerator>::generate_command(
+                &L::default(),
+                rng,
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<L> LogFootprint for OptionLog<L>
+where
+    L: LogFootprint + IsLog + DeepSizeOf,
+{
+    fn footprint(&self) -> FootprintNode {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
-        counter::resettable_counter::Counter,
-        option::{OptionLog, Optional},
-        utils::membership::twins_log,
+        counter::{Counter, update::CounterUpdate},
+        option::{OptionLog, OptionUpdate},
+        utils::bootstrap::twins_log,
     };
 
     #[test]
     fn simple_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
+        let event = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Optional::Unset).unwrap();
+        let event = replica_a.send(OptionUpdate::Unset).unwrap();
         replica_b.receive(event);
 
-        let event = replica_a.send(Optional::Set(Counter::Inc(5))).unwrap();
+        let event = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(5)))
+            .unwrap();
         replica_b.receive(event);
 
         assert_eq!(replica_a.query(&Read::new()), Some(5));
@@ -232,8 +220,12 @@ mod tests {
     fn concurrent_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
-        let event_b = replica_b.send(Optional::Set(Counter::Inc(5))).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
+        let event_b = replica_b
+            .send(OptionUpdate::Set(CounterUpdate::Inc(5)))
+            .unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -246,11 +238,15 @@ mod tests {
     fn concurrent_unset_optional() {
         let (mut replica_a, mut replica_b) = twins_log::<OptionLog<VecLog<Counter<i32>>>>();
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(10))).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(10)))
+            .unwrap();
         replica_b.receive(event_a);
 
-        let event_a = replica_a.send(Optional::Set(Counter::Inc(2))).unwrap();
-        let event_b = replica_b.send(Optional::Unset).unwrap();
+        let event_a = replica_a
+            .send(OptionUpdate::Set(CounterUpdate::Inc(2)))
+            .unwrap();
+        let event_b = replica_b.send(OptionUpdate::Unset).unwrap();
 
         replica_a.receive(event_b);
         replica_b.receive(event_a);
@@ -264,19 +260,23 @@ mod tests {
     #[ignore]
     fn fuzz_optional_counter() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
 
         type OptionalCounter = OptionLog<VecLog<Counter<i32>>>;
 
-        let runs = vec![RunConfig::new(0.4, 8, 1_000, None, None, false, false)];
+        let runs = vec![RunConfig::new(
+            ChurnConfig::new(0.4, 0.6),
+            8,
+            1_000,
+            None,
+            None,
+        )];
         let config = FuzzerConfig::<OptionalCounter, Read<Option<i32>>>::new(
             "optional_counter",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<OptionalCounter, Read<Option<i32>>>(config);

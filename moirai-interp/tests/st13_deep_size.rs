@@ -14,12 +14,22 @@
 //! rules give for it plus its inline size, at every replica. `st13_c2b`: a
 //! table two logs share by `Arc` is counted by each log alone and once in one
 //! walk over both, which is `deepsize`'s `Arc` rule and `moirai-fuzz`'s
-//! stated reading of a sample (`memory.rs:3-4`). `st13_c3`: an object's
+//! stated reading of a sample (`memory.rs:3-4` until `e935355`; since,
+//! `observers/replica_observer.rs`, one traversal context per replica).
+//! `st13_c3`: an object's
 //! fields and a keyed collection's entries are charged per entry on one
 //! basis, the inline size of one entry, `size_of::<(FeatureSlot, Node)>()`
 //! and `size_of::<(Scalar, Node)>()`, on top of what the key and the value
 //! hold. `st13_c4`: a sampled fuzz run over `json.ecore`, whose keyed objects
 //! are removed and so carry covered touches, runs to its end.
+//!
+//! ST.17 (`cea-cdrt-knowledge/spec/items/ST.17.md`, section 6) adapted C4 to
+//! `moirai-fuzz` at `e935355`: a churn rate `c` is now
+//! `ChurnConfig::new(c, 1 - c)`; the old `false, false` flags of
+//! `RunConfig::new` and `true, false` of `FuzzerConfig::new` are the new
+//! defaults; the memory sampling `e935355` removed is its two size metrics,
+//! with what the run must show for them; and the seed's premise is asserted
+//! (C4's comment). No other assertion, count or seed changed.
 //!
 //! ```bash
 //! nice -n 10 cargo test -j 2 --offline -p moirai-interp --features fuzz --test st13_deep_size
@@ -30,13 +40,15 @@
 use std::{
     collections::HashSet,
     mem::{size_of, size_of_val},
+    num::NonZeroUsize,
     sync::{Arc, LazyLock},
 };
 
 use deepsize::DeepSizeOf;
 use moirai_fuzz::{
-    config::{FuzzerConfig, Predicate, RunConfig},
-    fuzzer::fuzzer,
+    config::{ChurnConfig, FuzzerConfig, MetricsSampling, Predicate, RunConfig},
+    fuzzer::{ExecutionReport, fuzzer},
+    observers::footprint::LogFootprint,
 };
 use moirai_interp::fuzz::set_descriptor;
 use moirai_interp::leaf::{LeafOp, Scalar};
@@ -550,6 +562,54 @@ fn st13_c3_object_fields_and_map_entries_are_charged_on_one_basis() {
 // C4: a sampled run over keyed objects
 // ===========================================================================
 
+/// What a sampled run must show (ST.17 spec, section 5): at every replica of
+/// every run, samples taken on both of `moirai-fuzz`'s size paths, and a
+/// final replica size and a final log footprint that each count at least the
+/// descriptor the log holds verbatim (ST.12's D1), so a path that sampled
+/// nothing, or a footprint that leaves the log out, fails.
+fn assert_sampled(label: &str, report: &ExecutionReport, descriptor: usize) {
+    let mut wrong = Vec::new();
+    for run in &report.runs {
+        let replicas = &run.results.measurements;
+        if replicas.len() != usize::from(run.results.config.num_replicas) {
+            wrong.push(format!(
+                "run {}: {} replicas measured, of {}",
+                run.run_number,
+                replicas.len(),
+                run.results.config.num_replicas
+            ));
+        }
+        for (index, stats) in replicas.iter().enumerate() {
+            let at = format!("run {}, replica {index}", run.run_number);
+            let samples = (stats.replica_size_sample_count, stats.log_size_sample_count);
+            if !matches!(samples, (Some(r), Some(l)) if r > 0 && l > 0) {
+                wrong.push(format!(
+                    "{at}: {samples:?} samples (replica size, log footprint), at least one of \
+                     each expected"
+                ));
+            }
+            let finals = (
+                stats.final_replica_size,
+                stats
+                    .final_log_size
+                    .as_ref()
+                    .map(|node| node.inclusive_bytes),
+            );
+            if !matches!(finals, (Some(r), Some(l)) if r >= descriptor && l >= descriptor) {
+                wrong.push(format!(
+                    "{at}: final sizes {finals:?} bytes (replica, log footprint), where the log \
+                     holds a descriptor of {descriptor}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{label}: the run did not sample what its logs hold:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// C4: a fuzz run over `json.ecore` that samples memory every 25 operations,
 /// three replicas, 200 operations, churn 0.4, final merge, runs to its end.
 /// Seed 14 because its run makes the root an `Object` and writes keyed
@@ -557,18 +617,66 @@ fn st13_c3_object_fields_and_map_entries_are_charged_on_one_basis() {
 /// include `alpha`, `delta`, `door` and `gamma`), and the keyed branch
 /// draws a removal one time in ten at a map that holds keys
 /// (`fuzz.rs:213-216`), so covered touches are walked in a real sampled run.
+///
+/// Since ST.17 (`moirai-fuzz` at `e935355`, whose runner draws a new run
+/// from the same seed and which removed `with_memory_sampling`): the run
+/// samples every 25 calls at every replica on both size paths, the replica's
+/// `DeepSizeOf` walk and the log's `LogFootprint`, and must show that it
+/// sampled ([`assert_sampled`]); a `json.ecore` log whose key was removed
+/// has its deep size as its footprint (ST.17 spec, section 5); and the
+/// seed's premise is asserted, since a new runner could lose it: the run
+/// converges on a root `Object` holding keys, not on a root conflict (which
+/// the read renders as an object holding `__conflict`). At ST.17's spec time
+/// seed 14 still has it: the final state's keys are `alpha`, `delta`,
+/// `door`, `gamma` and `room`, and the run issues 23 key removals.
 #[test]
 fn st13_c4_a_sampled_fuzz_run_over_json_completes() {
     set_descriptor(JSON_DESCRIPTOR);
+    let every_25 = MetricsSampling::every_call(NonZeroUsize::new(25).expect("not zero"));
     let runs = vec![
-        RunConfig::new(0.4, 3, 200, None, Some(seed(14)), false, false).with_memory_sampling(25),
+        RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 200, None, Some(seed(14)))
+            .with_replica_size(every_25.clone())
+            .with_log_size(every_25),
     ];
     let config = FuzzerConfig::<ModelLog, Read<Value>>::new(
         "interp-json-memory",
         runs,
-        true,
         Predicate::new(Read::new(), |left, right| left == right),
-        false,
     );
-    fuzzer::<ModelLog, Read<Value>>(config);
+    let report = fuzzer::<ModelLog, Read<Value>>(config);
+    assert_sampled("C4", &report, JSON_DESCRIPTOR.len());
+
+    // The seed's premise, on the value the fuzzer recorded for replica 0
+    // after the final merge (`serde_json::Value`'s `Debug`).
+    let converged = report.runs[0]
+        .results
+        .final_value
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        converged.starts_with("Object {\"") && !converged.starts_with("Object {\"__conflict\""),
+        "C4: seed 14's run converged on {}, where a root `Object` holding keys is the premise",
+        converged.chars().take(120).collect::<String>()
+    );
+
+    // The interface the sampled run reads, on a log with covered touches.
+    let (mut a, _b) = opened("st13", &json_descriptor());
+    let string = class_slot(&JSON, "String");
+    for _ in 0..3 {
+        send(
+            &mut a,
+            on_root(InstanceOp::entry(
+                Scalar::text("k"),
+                InstanceOp::variant(string, InstanceOp::New),
+            )),
+        );
+    }
+    send(&mut a, on_root(InstanceOp::remove(Scalar::text("k"))));
+    let log = a.state();
+    let footprint = LogFootprint::footprint(log).inclusive_bytes;
+    let deep = DeepSizeOf::deep_size_of(log);
+    assert_eq!(
+        footprint, deep,
+        "C4: a `json.ecore` log's footprint counts {footprint} bytes, where its deep size is {deep}"
+    );
 }

@@ -1,0 +1,48 @@
+--- a/moirai-crdt/src/list/nested_list.rs
++++ b/moirai-crdt/src/list/nested_list.rs
+@@ -508,45 +508,6 @@
+     }
+ 
+     #[test]
+-    fn concurrent_update_delete_insert_2() {
+-        let (mut replica_a, mut replica_b, mut replica_c) =
+-            triplet_log::<NestedListLog<VecLog<Counter<i32>>>>();
+-
+-        let event_b_1 = replica_b
+-            .send(NestedListUpdate::insert(0, CounterUpdate::Inc(1)))
+-            .unwrap();
+-        replica_a.receive(event_b_1.clone());
+-        replica_c.receive(event_b_1);
+-
+-        let event_b_2 = replica_b.send(NestedListUpdate::delete(0)).unwrap();
+-
+-        let event_a_1 = replica_a
+-            .send(NestedListUpdate::update(0, CounterUpdate::Inc(1)))
+-            .unwrap();
+-
+-        let event_c_1 = replica_c
+-            .send(NestedListUpdate::insert(0, CounterUpdate::Reset))
+-            .unwrap();
+-
+-        let event_c_2 = replica_c.send(NestedListUpdate::delete(1)).unwrap();
+-
+-        replica_a.receive(event_b_2.clone());
+-        replica_a.receive(event_c_1.clone());
+-        replica_a.receive(event_c_2.clone());
+-
+-        replica_b.receive(event_a_1.clone());
+-        replica_b.receive(event_c_1);
+-        replica_b.receive(event_c_2);
+-
+-        replica_c.receive(event_a_1);
+-        replica_c.receive(event_b_2);
+-
+-        assert_eq!(replica_a.query(&Read::new()), vec![1]);
+-        assert_eq!(replica_b.query(&Read::new()), vec![1]);
+-        assert_eq!(replica_c.query(&Read::new()), vec![1]);
+-    }
+-
+-    #[test]
+     fn scenario_1() {
+         let (mut replica_a, mut replica_b) = twins_log::<NestedListLog<VecLog<Counter<i32>>>>();
+ 

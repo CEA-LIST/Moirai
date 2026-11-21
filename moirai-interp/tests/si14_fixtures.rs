@@ -13,10 +13,11 @@
 //! ```
 
 mod si14;
+#[path = "ec03/side.rs"]
+mod side;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use moirai_crdt::utils::membership::triplet_log;
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::migrate::migrate;
 use moirai_interp::testing::table;
@@ -26,6 +27,7 @@ use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_semantics::{FlagWins, LeafRule, MergeRule, TieBreak};
 use serde_json::{Value, json};
+use side::triplet_log;
 
 use si14::si12::{
     At, CAR, D1, D2, DOOR, ids_by_label, install, labels, parsed, project, strip_ids,

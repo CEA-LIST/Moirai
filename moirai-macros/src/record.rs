@@ -2,37 +2,55 @@
 ///
 /// The generic form lets callers choose the value projection for each field when querying the
 /// record. The explicit form uses `Log => Value` fields and generates a concrete, nominal value
-/// type, which also supports recursive records through [`BoxedLog`](crate::moirai_protocol::state::log::BoxedLog).
-
+/// type.
+///
+/// A field may also use `field: Operation, Log => Value`, matching `union!`'s
+/// variant syntax. `Operation` is the record variant's payload; `Boxer` converts
+/// it to `Log::Update` when forwarding. This separates operation layout from log and
+/// read-value layout, so recursive collection operations need no log adapter.
+/// Existing field forms keep deriving their payload from `Log::Update`.
 #[macro_export]
 macro_rules! record {
-    // Explicit field values produce a concrete record value type.
-    ($name:ident { $($field:ident : $T:ty => $V:ty),+ $(,)? }) => {
-        $crate::record!(@impl [] $name { $($field: $T => $V),+ });
-        $crate::record!(@explicit_eval $name { $($field: $T => $V),+ });
+    // The optional first type is an explicit operation payload. Without it,
+    // derive the operation from the log as before. Normalize once so forwarding
+    // needs no policy flags and large records need no recursive token parser.
+    ($name:ident { $($field:ident : $T:ty $(, $L:ty)? => $V:ty),+ $(,)? }) => {
+        $crate::record!(@impl [] $name {
+            $($field: (
+                $crate::record!(@op $T $(, $L)?),
+                $crate::record!(@log $T $(, $L)?) => $V
+            )),+
+        });
+        $crate::record!(@explicit_eval $name {
+            $($field: $crate::record!(@log $T $(, $L)?) => $V),+
+        });
     };
     // Without explicit values, preserve the generic value projection.
     ($name:ident { $($field:ident : $T:ty),* $(,)? }) => {
         $crate::paste::paste! {
             $crate::record!(@impl [$([<$field:camel Value>]),*] $name {
-                $($field: $T => [<$field:camel Value>]),*
+                $($field: (<$T as $crate::moirai_protocol::state::log::IsLog>::Update, $T => [<$field:camel Value>])),*
             });
             $crate::record!(@generic_eval [$([<$field:camel Value>]),*] $name {
                 $($field: $T => [<$field:camel Value>]),*
             });
         }
     };
+    (@op $O:ty, $L:ty) => { $O };
+    (@op $L:ty) => { <$L as $crate::moirai_protocol::state::log::IsLog>::Update };
+    (@log $O:ty, $L:ty) => { $L };
+    (@log $L:ty) => { $L };
     (@impl [$($value_param:ident),*] $name:ident {
-        $($field:ident : $T:ty => $V:ty),* $(,)?
+        $($field:ident : ($O:ty, $T:ty => $V:ty)),* $(,)?
     }) => {
         $crate::paste::paste! {
             /// Set of operations that can be applied to the record.
             /// Each operation corresponds to an operation on one of the fields, or a "New" operation to initialize the record.
             #[derive(Clone, Debug)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+            #[cfg_attr(feature = "serde",derive(serde::Serialize, serde::Deserialize))]
             pub enum $name {
                 $(
-                    [<$field:camel>](<$T as $crate::moirai_protocol::state::log::IsLog>::Op),
+                    [<$field:camel>]($O),
                 )*
                 New,
             }
@@ -54,7 +72,7 @@ macro_rules! record {
             }
 
             /// Returned value when reading the record, containing the values of all fields.
-            #[derive(Debug, Clone, Default, PartialEq)]
+            #[derive(Debug, Clone, Default, PartialEq, Eq)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Value>]<$($value_param),*> {
                 $(
@@ -64,7 +82,6 @@ macro_rules! record {
 
             /// Record log type, containing a log for each field.
             #[derive(Debug, Default, Clone)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Log>] {
                 $(
                     $field: $T,
@@ -117,7 +134,7 @@ macro_rules! record {
             /// The record just forwards operations to the corresponding field log.
             impl $crate::moirai_protocol::state::log::IsLog for [<$name Log>] {
                 type Command = $name;
-                type Op = $name;
+                type Update = $name;
                 type Rejection = [<$name Rejection>];
 
                 fn new() -> Self {
@@ -128,13 +145,13 @@ macro_rules! record {
                     }
                 }
 
-                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                fn prepare(&self, cmd: Self::Command) -> Self::Update {
                     cmd
                 }
 
                 fn effect(
                     &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    event: $crate::moirai_protocol::event::Event<Self::Update>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match ::std::clone::Clone::clone(event.op()) {
@@ -148,6 +165,8 @@ macro_rules! record {
                                     ctx.update_typed(::std::stringify!($name));
                                 }
 
+                                let op: <$T as $crate::moirai_protocol::state::log::IsLog>::Update =
+                                    <$O as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(op);
                                 let child_op = $crate::moirai_protocol::event::Event::unfold(event, op);
                                 ctx.with_field(::std::stringify!($field), |ctx| {
                                     if !is_default {
@@ -167,11 +186,11 @@ macro_rules! record {
                     }
                 }
 
-                fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                fn stabilize(&mut self, frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier) {
                     $(
                         <$T as $crate::moirai_protocol::state::log::IsLog>::stabilize(
                             &mut self.$field,
-                            version,
+                            frontier,
                         );
                     )*
                 }
@@ -199,16 +218,20 @@ macro_rules! record {
 
                 fn is_enabled(
                     &self,
-                    op: &Self::Op,
+                    op: &Self::Update,
                 ) -> ::std::result::Result<(), Self::Rejection> {
                     match op {
                         $(
-                            $name::[<$field:camel>](o) =>
-                                <$T as $crate::moirai_protocol::state::log::IsLog>::is_enabled(
-                                    &self.$field,
+                            $name::[<$field:camel>](o) => {
+                                <$O as $crate::moirai_protocol::utils::boxer::Boxer<_>>::with_boxed(
                                     o,
+                                    |op| <$T as $crate::moirai_protocol::state::log::IsLog>::is_enabled(
+                                        &self.$field,
+                                        op,
+                                    ),
                                 )
-                                .map_err([<$name Rejection>]::[<$field:camel>]),
+                                .map_err([<$name Rejection>]::[<$field:camel>])
+                            },
                         )*
                         // "New" can only be applied if the record is in its default state
                         $name::New => if <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self) {
@@ -222,17 +245,11 @@ macro_rules! record {
 
             }
 
-            /// Once a removal empties a record, it leaves the optional that
-            /// holds it. Its fields take the removal as from any other
-            /// parent, and an optional among them decides for its own
-            /// content first.
+            /// Held by an optional, a record takes the removal as from any
+            /// parent; an optional among its fields drops what it emptied.
             impl $crate::union::held_by_optional::OptionalContent for [<$name Log>] {
                 fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
-                    <Self as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(
-                        self,
-                        version,
-                        conservative,
-                    );
+                    <Self as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(self, version, conservative);
                 }
             }
 
@@ -264,7 +281,7 @@ macro_rules! record {
         }
     };
     (@explicit_eval $name:ident {
-        $($field:ident : $T:ty => $V:ty),+ $(,)?
+        $($field:ident : $T:ty => $V:ty),* $(,)?
     }) => {
         $crate::paste::paste! {
             impl $crate::moirai_protocol::crdt::eval::EvalNested<
@@ -282,7 +299,7 @@ macro_rules! record {
                                 &self.$field,
                                 &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
                             ),
-                        )+
+                        )*
                     }
                 }
             }

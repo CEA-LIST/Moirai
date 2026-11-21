@@ -18,6 +18,9 @@
 #[path = "nw15_common/nodes.rs"]
 mod nodes;
 
+#[path = "ec03c/side.rs"]
+mod side;
+
 use std::collections::BTreeMap;
 use std::net::TcpListener;
 

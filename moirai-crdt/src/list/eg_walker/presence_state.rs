@@ -29,7 +29,7 @@ impl PreparePresence {
         }
     }
 
-    pub fn is_integrated(&self) -> bool {
+    pub const fn is_integrated(&self) -> bool {
         self.inserted
     }
 
@@ -72,7 +72,7 @@ impl PreparePresence {
             Some(_) => {
                 self.delete_counts.remove(dot);
             }
-            None => {}
+            None => panic!("Eg-Walker invariant: no active delete for life dot {dot:?}"),
         }
     }
 }

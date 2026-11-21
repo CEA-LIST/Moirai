@@ -3,113 +3,88 @@ use std::{convert::Infallible, fmt::Debug};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::op_generator::OpGenerator;
+use moirai_fuzz::generator::op_generator::OpGenerator;
 use moirai_protocol::{
     crdt::{
         eval::Eval,
         query::Read,
         redundancy::RedundancyRelation,
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Sequential,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{stable_state::IsStableState, unstable_state::IsUnstableCore},
+    state::unstable_state::IsUnstableCore,
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "serde")]
-use tsify::Tsify;
 
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tsify))]
+use crate::flag::update::FlagUpdate;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum DWFlag {
-    Enable,
-    Disable,
-    Clear,
-}
-
-impl IsStableState<DWFlag> for Option<bool> {
-    fn is_default(&self) -> bool {
-        self.is_none()
-    }
-
-    fn apply(&mut self, value: DWFlag) {
-        match value {
-            // A batch of causally stable operations is folded in one at a time, in the
-            // order each replica happened to deliver them, so the stable value has to be
-            // a function of the *set* that stabilized. Disable wins over everything it is
-            // concurrent with, and a causally later Enable clears the stable state through
-            // `prune_redundant_ops` before it gets here, so a stable Disable is never
-            // legitimately overwritten by an Enable.
-            DWFlag::Enable => {
-                if *self != Some(false) {
-                    *self = Some(true)
-                }
-            }
-            DWFlag::Disable => *self = Some(false),
-            DWFlag::Clear => *self = None,
-        }
-    }
-
-    fn clear(&mut self) {
-        *self = None;
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<DWFlag>,
-        _tagged_op: &TaggedOp<DWFlag>,
-    ) {
-        <Option<bool> as IsStableState<DWFlag>>::clear(self);
-    }
-}
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DWFlag;
 
 impl ReplicatedDataType for DWFlag {
-    type StableState = Option<bool>;
+    type Update = FlagUpdate;
+    type Stable = FlagState;
     type Rejection = Infallible;
+}
 
+impl<U: IsUnstableCore<FlagUpdate>> CausalCompaction<U> for DWFlag {
+    fn compact_stable(
+        stable: &mut FlagState,
+        _: RedundancyRelation<FlagUpdate>,
+        _: &TaggedOp<FlagUpdate>,
+    ) {
+        stable.0 = None;
+    }
     fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
     ) -> bool
     where
         Self: 'a,
     {
-        matches!(new_tagged_op.op(), DWFlag::Clear)
+        matches!(new_tagged_op.op(), FlagUpdate::Clear)
     }
 
     fn redundant_by_when_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_event_id: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 
     fn redundant_by_when_not_redundant(
-        _old_op: &Self,
+        _old_op: &Self::Update,
         _old_tag: Option<&Tag>,
         is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
+        _new_tagged_op: &TaggedOp<Self::Update>,
     ) -> bool {
         !is_conc
     }
 }
 
-impl<U> UsesUnstableService<U> for DWFlag where U: IsUnstableCore<Self> {}
+impl<U> CausalReset<U> for DWFlag {}
 
-impl<U> Eval<Read<bool>, U> for DWFlag
+impl<U> CausalStabilize<U> for DWFlag {}
+
+impl<U> Eval<FlagState, U, Read<bool>> for DWFlag
 where
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<FlagUpdate>,
 {
-    fn execute_query(_q: &Read<bool>, stable: &Self::StableState, unstable: &U) -> bool {
+    fn execute_query(stable: &FlagState, unstable: &U, _q: &Read<bool>) -> bool {
         let mut flag = false;
 
-        if let Some(v) = stable {
+        if let Some(v) = stable.0 {
             if !v {
                 return false;
             } else {
@@ -120,12 +95,12 @@ where
         // In DWFlag, any concurrent Disable wins over Enable
         for op in unstable.iter().map(|t| t.op()) {
             match op {
-                DWFlag::Disable => {
+                FlagUpdate::Disable => {
                     flag = false;
                     break;
                 }
-                DWFlag::Enable => flag = true,
-                DWFlag::Clear => unreachable!(),
+                FlagUpdate::Enable => flag = true,
+                FlagUpdate::Clear => unreachable!(),
             }
         }
         flag
@@ -133,21 +108,54 @@ where
 }
 
 #[cfg(feature = "fuzz")]
-impl OpGenerator for DWFlag {
+impl<U> OpGenerator<U> for DWFlag
+where
+    U: IsUnstableCore<FlagUpdate>,
+{
     type Config = ();
 
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as ReplicatedDataType>::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
-    ) -> Self {
+        _stable: &<Self as ReplicatedDataType>::Stable,
+        _unstable: &U,
+    ) -> Self::Update {
         let choice = rand::seq::IteratorRandom::choose(
-            [DWFlag::Enable, DWFlag::Disable, DWFlag::Clear].iter(),
+            [FlagUpdate::Enable, FlagUpdate::Disable, FlagUpdate::Clear].iter(),
             rng,
         )
         .unwrap();
         choice.clone()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct FlagState(Option<bool>);
+
+impl Sequential for FlagState {
+    type Update = FlagUpdate;
+    fn is_default(&self) -> bool {
+        self.0.is_none()
+    }
+    fn apply(&mut self, update: &FlagUpdate) {
+        match update {
+            FlagUpdate::Enable => {
+                // A remaining stable disable is concurrent with this enable.
+                if self.0 != Some(false) {
+                    self.0 = Some(true);
+                }
+            }
+            FlagUpdate::Disable => self.0 = Some(false),
+            FlagUpdate::Clear => self.0 = None,
+        }
+    }
+}
+
+impl<U> Precondition<U> for DWFlag {
+    fn is_enabled(_: &FlagState, _: &U, _: &FlagUpdate) -> Result<(), Infallible> {
+        Ok(())
     }
 }
 
@@ -160,9 +168,9 @@ mod tests {
     };
 
     use crate::{
-        flag::dw_flag::DWFlag,
-        map::uw_map::{UWMap, UWMapLog},
-        utils::membership::{twins, twins_log},
+        flag::{dw_flag::DWFlag, update::FlagUpdate},
+        map::{update::MapUpdate, uw_map::UWMapLog},
+        utils::bootstrap::{twins, twins_log},
     };
 
     // Test the Disable-Wins Flag CRDT using two replicas (twins)
@@ -171,21 +179,21 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<DWFlag>();
 
         // Replica A enables the flag
-        let event = replica_a.send(DWFlag::Enable).unwrap();
+        let event = replica_a.send(FlagUpdate::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(&Read::new()), true);
+        assert!(replica_a.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica B disables the flag
-        let event = replica_b.send(DWFlag::Disable).unwrap();
+        let event = replica_b.send(FlagUpdate::Disable).unwrap();
         replica_a.receive(event);
-        assert_eq!(replica_b.query(&Read::new()), false);
+        assert!(!replica_b.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
 
         // Replica A enables again
-        let event = replica_a.send(DWFlag::Enable).unwrap();
+        let event = replica_a.send(FlagUpdate::Enable).unwrap();
         replica_b.receive(event);
-        assert_eq!(replica_a.query(&Read::new()), true);
+        assert!(replica_a.query(&Read::new()));
         assert_eq!(replica_a.query(&Read::new()), replica_b.query(&Read::new()));
     }
 
@@ -194,59 +202,50 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<DWFlag>();
 
         // Concurrent Enable and Disable: Disable wins
-        let event_a = replica_a.send(DWFlag::Enable).unwrap();
-        assert_eq!(replica_a.query(&Read::new()), true);
+        let event_a = replica_a.send(FlagUpdate::Enable).unwrap();
+        assert!(replica_a.query(&Read::new()));
 
-        let event_b = replica_b.send(DWFlag::Disable).unwrap();
-        assert_eq!(replica_b.query(&Read::new()), false);
+        let event_b = replica_b.send(FlagUpdate::Disable).unwrap();
+        assert!(!replica_b.query(&Read::new()));
 
-        replica_a.receive(event_b.clone());
-        replica_b.receive(event_a.clone());
+        replica_a.receive(event_b);
+        replica_b.receive(event_a);
 
-        assert_eq!(replica_a.query(&Read::new()), false);
-        assert_eq!(replica_b.query(&Read::new()), false);
+        assert!(!replica_a.query(&Read::new()));
+        assert!(!replica_b.query(&Read::new()));
     }
 
-    /// Two replicas that stabilize the same concurrent `Enable` and `Disable`
-    /// in opposite orders read the same flag.
-    ///
-    /// A replica learns that its peer holds an operation only from a later
-    /// message, so on a bare flag log the message that carries the
-    /// acknowledgement is itself a flag operation and retires what it
-    /// acknowledges. Under a map the second round lands on another key, and the
-    /// two flag operations become causally stable on both replicas with nothing
-    /// having retired them — each replica folding them in the order it
-    /// delivered them, which is `Enable` then `Disable` on `a` and the reverse
-    /// on `b`. Folding by overwriting made the stable value whichever operation
-    /// stabilized last, so `a` read `true` and `b` read `false`. Disable wins
-    /// over an operation it is concurrent with, whichever order the fold sees.
+    /// A concurrent `Enable` and `Disable` under a map key, made causally stable
+    /// on both replicas by a second round of writes on another key. Each replica
+    /// folds the two into its stable state in its own delivery order, and
+    /// `apply` overwrites, so the stable value is whichever stabilized last.
+    /// Disable wins over an operation it is concurrent with, on both replicas.
     #[test]
-    fn two_replicas_stabilizing_in_opposite_orders_agree() {
+    fn dw_flag_converges_when_replicas_stabilize_in_different_orders() {
         let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<DWFlag>>>();
 
         let enable = replica_a
-            .send(UWMap::Update("flag", DWFlag::Enable))
+            .send(MapUpdate::Update("flag", FlagUpdate::Enable))
             .unwrap();
         let disable = replica_b
-            .send(UWMap::Update("flag", DWFlag::Disable))
+            .send(MapUpdate::Update("flag", FlagUpdate::Disable))
             .unwrap();
         replica_a.receive(disable);
         replica_b.receive(enable);
 
-        // The second round is what makes the first one causally stable on both.
         let spacer_a = replica_a
-            .send(UWMap::Update("spacer", DWFlag::Enable))
+            .send(MapUpdate::Update("spacer", FlagUpdate::Enable))
             .unwrap();
         let spacer_b = replica_b
-            .send(UWMap::Update("spacer", DWFlag::Enable))
+            .send(MapUpdate::Update("spacer", FlagUpdate::Enable))
             .unwrap();
         replica_a.receive(spacer_b);
         replica_b.receive(spacer_a);
 
         let read_a = replica_a.query(&Get::new(&"flag", Read::<bool>::new()));
         let read_b = replica_b.query(&Get::new(&"flag", Read::<bool>::new()));
-        assert_eq!(read_a, Some(false), "the concurrent disable wins on `a`");
-        assert_eq!(read_b, Some(false), "the concurrent disable wins on `b`");
+        assert_eq!(read_a, Some(false), "the concurrent disable wins on a");
+        assert_eq!(read_b, Some(false), "the concurrent disable wins on b");
     }
 
     #[cfg(feature = "fuzz")]
@@ -254,20 +253,18 @@ mod tests {
     #[ignore]
     fn fuzz_dw_flag() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 8, 1_000, None, None, false, false);
-        let runs = vec![run.clone(); 1];
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 8, 1_000, None, None);
+        let runs = vec![run; 1];
 
         let config = FuzzerConfig::<VecLog<DWFlag>, Read<bool>>::new(
             "dw_flag",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
         fuzzer::<VecLog<DWFlag>, Read<bool>>(config);

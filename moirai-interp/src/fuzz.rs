@@ -17,7 +17,8 @@
 use std::cell::RefCell;
 
 use deepsize::{Context, DeepSizeOf};
-use moirai_fuzz::op_generator::CommandGenerator;
+use moirai_fuzz::generator::command_generator::CommandGenerator;
+use moirai_fuzz::observers::footprint::{FootprintNode, LogFootprint};
 use moirai_semantics::{
     ClassSlot, FeatureSlot, LeafRule, MetamodelSemantics, TieBreak, metamodel_digest,
 };
@@ -410,6 +411,15 @@ fn literal(sem: &MetamodelSemantics, class: ClassSlot, rng: &mut impl Rng) -> Sc
 /// An object's fields and a map's entries are charged on one basis: each
 /// entry its inline size, `size_of::<(K, V)>()`, plus what its key and its
 /// value hold (see [`entries`]).
+/// The log's footprint for `moirai-fuzz`'s log-size samples: one node, sized
+/// by the same walk as [`DeepSizeOf`] below, so a log-size sample and a
+/// replica-size sample count the model the same way.
+impl LogFootprint for ModelLog {
+    fn footprint(&self) -> FootprintNode {
+        FootprintNode::leaf(self)
+    }
+}
+
 impl DeepSizeOf for ModelLog {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         let header = self.header().map_or(0, |header| {

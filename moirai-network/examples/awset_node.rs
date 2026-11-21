@@ -71,7 +71,7 @@ use moirai_network::composite::CompositeTransport;
 use moirai_network::generic::GenericNode;
 use moirai_network::HashMap;
 use moirai_protocol::broadcast::tcsb::Tcsb;
-use moirai_protocol::clock::version_vector::Version;
+use moirai_protocol::clock::{causal_frontier::CausalFrontier, version_vector::Version};
 use moirai_protocol::crdt::query::Read;
 use moirai_protocol::event::Event;
 use moirai_protocol::replica::{IsReplica, Replica};
@@ -86,23 +86,23 @@ struct AWSetLog(VecLog<AWSet<String>>);
 // Delegate all IsLog methods to the inner VecLog
 impl IsLog for AWSetLog {
     type Command = <VecLog<AWSet<String>> as IsLog>::Command;
-    type Op = <VecLog<AWSet<String>> as IsLog>::Op;
+    type Update = <VecLog<AWSet<String>> as IsLog>::Update;
     type Rejection = <VecLog<AWSet<String>> as IsLog>::Rejection;
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         self.0.prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.0.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         self.0.effect(event, ctx)
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.0.stabilize(version)
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.0.stabilize(frontier)
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -127,7 +127,7 @@ where
 
 // Implement QueryableLog to enable GET /api/state endpoint
 impl moirai_network::query::QueryableLog for AWSetLog {
-    fn query_state_json(replica: &Replica<Self, Tcsb<Self::Op>>) -> serde_json::Value {
+    fn query_state_json(replica: &Replica<Self, Tcsb<Self::Update>>) -> serde_json::Value {
         let value = replica.query(&Read::new());
         serde_json::to_value(&value).unwrap_or_else(
             |e| serde_json::json!({ "error": format!("Failed to serialize state: {}", e) }),
@@ -162,11 +162,10 @@ fn main() {
     // Create the node with AWSet CRDT, on TCP whatever MOIRAI_TRANSPORT says
     let transport = CompositeTransport::new(replica_id.clone(), listen_port, peer_addresses)
         .expect("Failed to create TCP transport");
-    let mut node = GenericNode::<AWSetLog, CompositeTransport<AWSet<String>>>::with_transport(
-        replica_id.clone(),
-        &member_refs,
-        transport,
-    );
+    let mut node = GenericNode::<
+        AWSetLog,
+        CompositeTransport<moirai_crdt::set::update::SetUpdate<String>>,
+    >::with_transport(replica_id.clone(), &member_refs, transport);
 
     // Enable state querying - requires QueryableLog trait implementation
     node.enable_state_query();

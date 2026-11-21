@@ -28,13 +28,15 @@ mod si05;
 
 use std::collections::BTreeSet;
 
-use moirai_crdt::utils::membership::triplet_log;
+#[path = "ec03/side.rs"]
+mod side;
 use moirai_interp::leaf::LeafOp;
 use moirai_interp::testing::{class_slot, feature_slot, install, table};
 use moirai_interp::{InstanceOp, ModelOp, Node};
 use moirai_protocol::replica::IsReplica;
 use moirai_semantics::{ClassSlot, FeatureSlot};
 use serde_json::Value;
+use side::triplet_log;
 
 use si05::*;
 

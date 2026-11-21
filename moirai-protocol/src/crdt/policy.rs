@@ -140,13 +140,13 @@ mod tests {
         broadcast::internalizer::Interner,
         crdt::policy::FairTag,
         event::{id::EventId, lamport::Lamport, tag::Tag},
-        replica::ReplicaIdx,
+        replica::{ReplicaId, ReplicaIdx},
     };
 
     fn fair_cmp(num_members: usize, lamport: usize, left: usize, right: usize) -> Ordering {
         let mut interner = Interner::new();
         for idx in 0..num_members {
-            interner.intern(&format!("R{idx}"));
+            interner.intern(&ReplicaId(format!("R{idx}")));
         }
 
         let resolver = interner.resolver();
@@ -165,9 +165,9 @@ mod tests {
     #[test]
     fn test_fair() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -190,9 +190,9 @@ mod tests {
     #[test]
     fn test_fair_2() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
 
@@ -223,9 +223,9 @@ mod tests {
     #[test]
     fn test_fair_reflexive() {
         let mut interner = Interner::new();
-        interner.intern("A");
-        interner.intern("B");
-        interner.intern("C");
+        interner.intern(&ReplicaId("A".to_string()));
+        interner.intern(&ReplicaId("B".to_string()));
+        interner.intern(&ReplicaId("C".to_string()));
 
         let resolver = interner.resolver();
         let a = Tag::new(
@@ -259,7 +259,7 @@ mod tests {
         let expected = [2, 3, 0, 1];
         let mut interner = Interner::new();
         for idx in 0..4 {
-            interner.intern(&format!("R{idx}"));
+            interner.intern(&ReplicaId(format!("R{idx}")));
         }
 
         let resolver = interner.resolver();

@@ -1,13 +1,10 @@
 use std::fmt::{Debug, Display};
 
 use crate::{
-    clock::version_vector::Version,
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
+    crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    replica::{ReplicaId, ReplicaIdOwned},
+    replica::ReplicaId,
     state::effect_context::EffectContext,
 };
 
@@ -15,7 +12,7 @@ pub trait IsLog: Default {
     /// Client input command type
     type Command: Debug + Clone;
     /// Stored operation type
-    type Op: Debug + Clone;
+    type Update: Debug + Clone;
     /// Rejection type for operations that are not enabled in the current state
     type Rejection: Debug + Display;
 
@@ -23,35 +20,22 @@ pub trait IsLog: Default {
         Self::default()
     }
 
-    /// Tell the log which replica hosts it.
-    ///
-    /// A replica calls it when it is bootstrapped and again when it adopts a
-    /// donor's state. The member table cannot say which member is local: an
-    /// adoption rebuilds it in the donor's order, donor first. Most logs do not
-    /// need to know, so the default ignores it.
-    fn hosted_by(&mut self, _replica: &ReplicaId) {}
+    /// Name the replica hosting this log, independently of its member index.
+    fn hosted_by(&mut self, _id: &ReplicaId) {}
 
-    /// Tell the log that its state was taken over from `donor`'s, and which
-    /// members the hosting replica knows once it has adopted it.
-    ///
-    /// A replica calls it from [`Replica::adopt`](crate::replica::Replica::adopt),
-    /// after [`IsLog::hosted_by`]. The matrix clock the replica adopts holds
-    /// the donor's row of every member and, as the donor's own row,
-    /// everything the donor delivered; a log that keeps its own record of
-    /// what each member has delivered rebuilds it here to match. Most logs
-    /// keep none, so the default ignores it.
-    fn adopted_from(&mut self, _donor: &ReplicaId, _members: &[ReplicaIdOwned]) {}
+    /// Rebind local bookkeeping after adoption; `donor` uses the host's resolver.
+    fn adopted_from(&mut self, _donor: &Version) {}
 
     /// Prepare a client command as the operation stored and replicated by this log.
-    fn prepare(&self, command: Self::Command) -> Self::Op;
+    fn prepare(&self, command: Self::Command) -> Self::Update;
 
     /// Check if an update operation is enabled in the current state.
-    fn is_enabled(&self, _op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, _op: &Self::Update) -> Result<(), Self::Rejection> {
         Ok(())
     }
 
     /// Apply an event to the log, updating the state.
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>);
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>);
 
     /// Evaluate a query operation on the log, returning a value.
     fn eval<Q>(&self, q: &Q) -> Q::Response
@@ -62,20 +46,7 @@ pub trait IsLog: Default {
         Self::execute_query(self, q)
     }
 
-    /// Whether [`IsLog::stabilize`] can move an operation out of this log's
-    /// unstable state and into its stable one.
-    ///
-    /// `true` is the safe answer and the default. It is `false` only for a log
-    /// whose operations never become stable, and the one caller that reads it
-    /// is [`CachedLog`](crate::state::cache::CachedLog), which keeps a
-    /// materialised read-out beside the log: stabilization is meant to leave a
-    /// read-out alone, but a log where nothing moves cannot change one even if
-    /// the data type beneath it is wrong, and `stabilize` runs on every
-    /// delivery, so the distinction is worth the constant.
-    const STABILIZE_MOVES_OPERATIONS: bool = true;
-
-    /// Stabilize the log at a given version.
-    fn stabilize(&mut self, version: &Version);
+    fn stabilize(&mut self, frontier: &CausalFrontier);
 
     /// Prune the log by removing events that are redundant.
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool);
@@ -96,40 +67,38 @@ pub trait DefaultSinkExpansion: IsLog {
 
 impl<L: IsLog> DefaultSinkExpansion for L {}
 
-/// Blanket implementation of `IsLog` for `Box<L>` where `L: IsLog`
+/// Explicit indirection for inline recursive logs.
 impl<L: IsLog> IsLog for Box<L> {
-    type Command = Box<L::Command>;
-    type Op = Box<L::Op>;
-    type Rejection = L::Rejection;
+    type Command = L::Command;
+    type Update = L::Update;
+    type Rejection = Box<L::Rejection>;
 
     fn new() -> Self {
         Box::new(L::new())
     }
 
-    fn hosted_by(&mut self, replica: &ReplicaId) {
-        (**self).hosted_by(replica);
+    fn hosted_by(&mut self, id: &ReplicaId) {
+        (**self).hosted_by(id);
     }
 
-    fn adopted_from(&mut self, donor: &ReplicaId, members: &[ReplicaIdOwned]) {
-        (**self).adopted_from(donor, members);
+    fn adopted_from(&mut self, donor: &Version) {
+        (**self).adopted_from(donor);
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
-        Box::new((**self).prepare(*command))
+    fn prepare(&self, command: Self::Command) -> Self::Update {
+        (**self).prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        (**self).is_enabled(op)
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
+        (**self).is_enabled(op).map_err(Box::new)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        let inner_op = *event.op().clone();
-        let inner_event = event.unfold(inner_op);
-        (**self).effect(inner_event, ctx);
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
+        (**self).effect(event, ctx);
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        (**self).stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        (**self).stabilize(frontier);
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
@@ -138,94 +107,5 @@ impl<L: IsLog> IsLog for Box<L> {
 
     fn is_default(&self) -> bool {
         (**self).is_default()
-    }
-}
-
-/// Log adapter that preserves indirection in read responses.
-///
-/// `Box<L>` is a transparent log wrapper. Use `BoxedLog<L>` when recursive
-/// generated log types need `Read<V>` to produce `Box<V>`.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(bound(
-        serialize = "L: serde::Serialize",
-        deserialize = "L: serde::de::DeserializeOwned"
-    ))
-)]
-pub struct BoxedLog<L: IsLog>(Box<L>);
-
-impl<L: IsLog> BoxedLog<L> {
-    pub fn inner(&self) -> &L {
-        &self.0
-    }
-
-    pub fn inner_mut(&mut self) -> &mut L {
-        &mut self.0
-    }
-
-    pub fn into_inner(self) -> Box<L> {
-        self.0
-    }
-}
-
-impl<L: IsLog> Default for BoxedLog<L> {
-    fn default() -> Self {
-        Self(Box::default())
-    }
-}
-
-impl<L: IsLog> IsLog for BoxedLog<L> {
-    type Command = Box<L::Command>;
-    type Op = Box<L::Op>;
-    type Rejection = Box<L::Rejection>;
-
-    fn new() -> Self {
-        Self(Box::new(L::new()))
-    }
-
-    fn hosted_by(&mut self, replica: &ReplicaId) {
-        self.0.as_mut().hosted_by(replica);
-    }
-
-    fn adopted_from(&mut self, donor: &ReplicaId, members: &[ReplicaIdOwned]) {
-        self.0.as_mut().adopted_from(donor, members);
-    }
-
-    fn prepare(&self, command: Self::Command) -> Self::Op {
-        Box::new(self.0.as_ref().prepare(*command))
-    }
-
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
-        self.0.as_ref().is_enabled(op.as_ref()).map_err(Box::new)
-    }
-
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
-        let inner_op = *event.op().clone();
-        let inner_event = event.unfold(inner_op);
-        self.0.as_mut().effect(inner_event, ctx);
-    }
-
-    fn stabilize(&mut self, version: &Version) {
-        self.0.as_mut().stabilize(version);
-    }
-
-    fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {
-        self.0.as_mut().redundant_by_parent(version, conservative);
-    }
-
-    fn is_default(&self) -> bool {
-        self.0.as_ref().is_default()
-    }
-}
-
-impl<L, V> EvalNested<Read<Box<V>>> for BoxedLog<L>
-where
-    L: IsLog + EvalNested<Read<V>>,
-{
-    fn execute_query(&self, _q: &Read<Box<V>>) -> Box<V> {
-        Box::new(self.0.as_ref().execute_query(&Read::new()))
     }
 }

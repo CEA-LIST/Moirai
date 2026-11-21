@@ -82,7 +82,7 @@ use std::time::{Duration, Instant};
 
 use moirai_interp::ModelOp;
 use moirai_interp::leaf::{LeafOp, Scalar};
-use moirai_protocol::log_id::LogId;
+use moirai_network::log_id::LogId;
 use serde_json::{Value, json};
 
 use si13::cluster::{CONVERGE_TIMEOUT, Cluster, Spec};

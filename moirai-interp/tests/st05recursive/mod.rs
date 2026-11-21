@@ -31,6 +31,9 @@
 //! writer had delivered the removal.
 #![allow(dead_code)]
 
+#[path = "../ec03/side.rs"]
+mod side;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use moirai_interp::leaf::Scalar;
@@ -38,7 +41,7 @@ use moirai_interp::{InstanceOp, ModelLog, ModelOp};
 use moirai_network::query::QueryableLog;
 use moirai_protocol::broadcast::message::EventMessage;
 use moirai_protocol::broadcast::tcsb::StateSnapshot;
-use moirai_protocol::replica::{IsReplica, Replica};
+use moirai_protocol::replica::IsReplica;
 use serde_json::{Map, Value, json};
 
 use super::si01::{ID, Lang, OPAQUE, Rep, all_ids, default_read, elements, inc_int, strip};
@@ -1160,8 +1163,7 @@ pub fn joiner(donor: &Rep) -> Rep {
         serde_json::to_string(&donor.snapshot()).expect("set-up: the donor's snapshot serializes");
     let snapshot: StateSnapshot<ModelOp> =
         serde_json::from_str(&snapshot_wire).expect("set-up: the donor's snapshot comes back");
-    let mut d: Rep =
-        Replica::bootstrap_with_log_id("d".to_string(), &["d"], donor.log_id().clone());
+    let mut d: Rep = side::joiner(donor, "d");
     d.adopt(snapshot, log);
     d
 }

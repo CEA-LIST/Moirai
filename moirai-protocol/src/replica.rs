@@ -1,28 +1,28 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-#[cfg(feature = "serde")]
-use crate::broadcast::tcsb::StateSnapshot;
-#[cfg(feature = "test_utils")]
-use crate::{broadcast::tcsb::IsTcsbTest, clock::version_vector::Version};
+use crate::broadcast::tcsb::{StateSnapshot, Tcsb};
 use crate::{
     broadcast::{
-        internalizer::{Interner, SharedInterner, lock_interner},
+        internalizer::Interner,
         message::{BatchMessage, EventMessage, SinceMessage},
-        tcsb::{IsTcsb, StabilitySnapshot},
+        tcsb::IsTcsb,
     },
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
-    log_id::LogId,
     state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
 };
 
-pub type ReplicaId = str;
-pub type ReplicaIdOwned = String;
+/// Replica identifier
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct ReplicaId(pub String);
 
-/// Validate an identity before it enters a replica table or wire message.
+/// Validate an identity before it enters a network member table.
 pub fn validate_replica_id(id: &str) -> Result<(), String> {
     if !id.is_empty()
         && id
@@ -37,20 +37,36 @@ pub fn validate_replica_id(id: &str) -> Result<(), String> {
     }
 }
 
-/// Decode a replica identity without panicking on untrusted input.
 #[cfg(feature = "serde")]
-pub fn deserialize_replica_id<'de, D>(deserializer: D) -> Result<ReplicaIdOwned, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let id = <String as serde::Deserialize>::deserialize(deserializer)?;
-    validate_replica_id(&id).map_err(serde::de::Error::custom)?;
-    Ok(id)
+impl<'de> serde::Deserialize<'de> for ReplicaId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = <String as serde::Deserialize>::deserialize(deserializer)?;
+        if NETWORK_IDS.with(std::cell::Cell::get) {
+            validate_replica_id(&id).map_err(serde::de::Error::custom)?;
+        }
+        Ok(Self(id))
+    }
+}
+
+thread_local! {
+    static NETWORK_IDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keep network identity grammar out of the protocol's unrestricted local IDs.
+pub fn with_network_id_validation<R>(decode: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NETWORK_IDS.with(|enabled| enabled.set(self.0));
+        }
+    }
+    let _restore = Restore(NETWORK_IDS.with(|enabled| enabled.replace(true)));
+    decode()
 }
 
 /// Local index of the replica. It is an alias for its string ID.
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaIdx(pub usize);
 
@@ -74,59 +90,26 @@ where
     fn receive_batch(&mut self, message: BatchMessage<Self::Payload>);
     /// Return a `since` message representing a request for all events causally after the given version.
     fn since(&self) -> SinceMessage;
-    /// Send a command to the network. Returns the message to be sent, or the log's rejection.
+    /// Send a command to the network. Returns the message to be sent, or `None` if the command is not enabled.
     fn send(&mut self, cmd: Self::Command) -> Result<EventMessage<Self::Payload>, L::Rejection>;
     /// Return a batch message containing all events causally after the given version.
     fn pull(&mut self, since: SinceMessage) -> BatchMessage<Self::Payload>;
-    // TODO: add a method for state transfer
     /// Query the current state of the replica with the given query operation.
-    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
+    fn query<Q>(&self, q: &Q) -> Q::Response
     where
+        Q: QueryOperation,
         L: EvalNested<Q>;
     /// Update the state of the replica with the given operation.
     fn update(&mut self, cmd: Self::Command) -> Result<(), L::Rejection> {
         self.send(cmd)?;
         Ok(())
     }
-    /// Bootstrap a replica hosting a *fresh* log.
-    ///
-    /// Mints an id, which is right for the replica that creates a log and
-    /// wrong for every replica meant to join one that already exists — two
-    /// replicas that mint separately host two different logs and refuse each
-    /// other's events. Use [`bootstrap_with_log_id`] wherever the log is
-    /// shared.
-    ///
-    /// [`bootstrap_with_log_id`]: IsReplica::bootstrap_with_log_id
-    fn bootstrap(id: ReplicaIdOwned, members: &[&ReplicaId]) -> Self
-    where
-        Self: Sized,
-    {
-        Self::bootstrap_with_log_id(id, members, LogId::generate())
-    }
-    /// Bootstrap a replica hosting the log named by `log_id`.
-    fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self;
-    /// [`bootstrap_with_log_id`], except the member table is `interner`,
-    /// shared with every other log the caller hosts.
-    ///
-    /// The table describes the session's members, not any one log's: a node
-    /// hosting several logs holds one and hands each of them the handle, so
-    /// that sixteen logs do not mean sixteen copies of the same peer list.
-    /// `id` and `members` are interned into it when not already there.
-    ///
-    /// [`bootstrap_with_log_id`]: IsReplica::bootstrap_with_log_id
-    fn bootstrap_with_log_id_and_interner(
-        id: ReplicaIdOwned,
-        members: &[&ReplicaId],
-        log_id: LogId,
-        interner: SharedInterner,
-    ) -> Self;
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Replica<L, T> {
     /// Replica ID (must be unique across all replicas in the system)
-    id: ReplicaIdOwned,
+    id: ReplicaId,
     /// Communication-layer
     tcsb: T,
     /// Replica state
@@ -136,10 +119,10 @@ pub struct Replica<L, T> {
 impl<L, T> IsReplica<L> for Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Op> + Debug,
+    T: IsTcsb<L::Update> + Debug,
 {
     type Command = L::Command;
-    type Payload = L::Op;
+    type Payload = L::Update;
 
     fn prepare(&self, cmd: Self::Command) -> Self::Payload {
         self.state.prepare(cmd)
@@ -153,9 +136,14 @@ where
     }
 
     fn receive_batch(&mut self, message: BatchMessage<Self::Payload>) {
+        let is_empty = message.batch().events().is_empty();
+
         self.tcsb.receive_batch(message);
-        while let Some(e) = self.tcsb.next_causally_ready() {
-            self.deliver(e);
+
+        if !is_empty {
+            while let Some(e) = self.tcsb.next_causally_ready() {
+                self.deliver(e);
+            }
         }
     }
 
@@ -171,8 +159,9 @@ where
         self.tcsb.pull(since)
     }
 
-    fn query<Q: QueryOperation>(&self, q: &Q) -> Q::Response
+    fn query<Q>(&self, q: &Q) -> Q::Response
     where
+        Q: QueryOperation,
         L: EvalNested<Q>,
     {
         self.state.eval(q)
@@ -185,105 +174,14 @@ where
     fn id(&self) -> &ReplicaId {
         &self.id
     }
-
-    fn bootstrap_with_log_id(id: ReplicaIdOwned, members: &[&ReplicaId], log_id: LogId) -> Self {
-        Self::bootstrap_with_log_id_and_interner(id, members, log_id, Interner::new().into_shared())
-    }
-
-    fn bootstrap_with_log_id_and_interner(
-        id: ReplicaIdOwned,
-        members: &[&ReplicaId],
-        log_id: LogId,
-        interner: SharedInterner,
-    ) -> Self {
-        assert!(
-            members.contains(&&(*id)),
-            "Bootstrap replica ID {} must be included in members list {:?}",
-            id,
-            members
-        );
-        let idx = {
-            let mut table = lock_interner(&interner);
-            let (idx, _) = table.intern(&id);
-            for member in members {
-                table.intern(member);
-            }
-            idx
-        };
-        let mut state = L::new();
-        state.hosted_by(&id);
-        Self {
-            id,
-            tcsb: T::new(idx, interner, log_id),
-            state,
-        }
-    }
 }
 
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Op>,
+    T: IsTcsb<L::Update> + Debug,
 {
-    /// Current causal-stability bookkeeping. See [`StabilitySnapshot`].
-    ///
-    /// Available without `test_utils` on purpose: this is what a running
-    /// replica has to expose for causal stability to be measurable at all.
-    pub fn stability(&self) -> StabilitySnapshot {
-        self.tcsb.stability()
-    }
-
-    /// The log this replica hosts.
-    pub fn log_id(&self) -> &LogId {
-        self.tcsb.log_id()
-    }
-
-    /// Messages refused for belonging to another log. See
-    /// [`IsTcsb::foreign_log_refusals`].
-    pub fn foreign_log_refusals(&self) -> u64 {
-        self.tcsb.foreign_log_refusals()
-    }
-
-    /// The CRDT log itself, so that a donor can serialize it for a joiner.
-    ///
-    /// Not the *value*: `query` renders the state for reading, which cannot be
-    /// replayed onto. State transfer moves the log.
-    pub fn log(&self) -> &L {
-        &self.state
-    }
-
-    /// `true` when this replica has already delivered an operation originated
-    /// by `id`. The donor-side guard for state transfer; see
-    /// [`IsTcsb::has_history_for`].
-    pub fn has_history_for(&self, id: &ReplicaId) -> bool {
-        self.tcsb.has_history_for(id)
-    }
-
-    /// Everything a fresh replica needs to catch up with this one.
-    #[cfg(feature = "serde")]
-    pub fn snapshot(&self) -> StateSnapshot<L::Op> {
-        self.tcsb.snapshot()
-    }
-
-    /// Take over a donor's state wholesale.
-    ///
-    /// The log and the causal bookkeeping have to move together: a matrix clock
-    /// claiming operations the log does not contain would make the joiner
-    /// silently reject them as duplicates forever.
-    #[cfg(feature = "serde")]
-    pub fn adopt(&mut self, snapshot: StateSnapshot<L::Op>, state: L) {
-        let donor = snapshot.origin_id().to_owned();
-        self.tcsb.adopt(snapshot);
-        self.state = state;
-        self.state.hosted_by(&self.id);
-        self.state.adopted_from(&donor, &self.tcsb.members());
-    }
-
-    fn deliver(&mut self, event: Event<L::Op>) {
-        // The single point every delivery passes through, local and remote
-        // alike, and therefore the only honest place to open a trace record.
-        // A no-op unless someone has called `trace::set_enabled` — see the
-        // module header for why this costs nothing when nobody is watching.
+    fn deliver(&mut self, event: Event<L::Update>) {
         crate::state::trace::begin(event.id(), event.lamport());
         // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)
         let mut sink = SinkCollector::new();
@@ -291,80 +189,165 @@ where
 
         self.state.effect(event, &mut ctx);
 
-        let maybe_version = self.tcsb.is_stable();
-        if let Some(version) = maybe_version {
-            self.state.stabilize(version);
+        if let Some(frontier) = self.tcsb.is_stable() {
+            self.state.stabilize(frontier);
         }
     }
+}
 
-    /// Bootstrap a replica whose log already carries `state`.
-    ///
-    /// Mints a log id, so every replica meant to share the state must be built
-    /// with [`bootstrap_with_state_and_log_id`] instead.
-    ///
-    /// [`bootstrap_with_state_and_log_id`]: Replica::bootstrap_with_state_and_log_id
-    pub fn bootstrap_with_state(id: ReplicaIdOwned, members: &[&ReplicaId], state: L) -> Self {
-        Self::bootstrap_with_state_and_log_id(id, members, state, LogId::generate())
+impl<L, T> Replica<L, T>
+where
+    L: IsLog,
+    T: IsTcsb<L::Update> + Debug,
+{
+    /// The CRDT log itself, not its read-out.
+    pub fn log(&self) -> &L {
+        &self.state
     }
 
-    /// [`bootstrap_with_state`], hosting the log named by `log_id`.
-    ///
-    /// [`bootstrap_with_state`]: Replica::bootstrap_with_state
-    pub fn bootstrap_with_state_and_log_id(
-        id: ReplicaIdOwned,
-        members: &[&ReplicaId],
-        mut state: L,
-        log_id: LogId,
-    ) -> Self {
+    pub fn bootstrap<M>(id: ReplicaId, members: &[M]) -> Self
+    where
+        M: AsRef<str> + Debug,
+    {
         assert!(
-            members.contains(&&(*id)),
+            members.iter().any(|member| member.as_ref() == id.as_ref()),
             "Bootstrap replica ID {} must be included in members list {:?}",
             id,
             members
         );
-        let interner = Interner::new().into_shared();
-        let idx = {
-            let mut table = lock_interner(&interner);
-            let (idx, _) = table.intern(&id);
-            for member in members {
-                table.intern(member);
-            }
-            idx
-        };
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(&id);
+        for member in members {
+            interner.intern(&ReplicaId::from(member.as_ref()));
+        }
+        let mut state = L::default();
         state.hosted_by(&id);
         Self {
             id,
-            tcsb: T::new(idx, interner, log_id),
+            tcsb: T::new(idx, interner),
+            state,
+        }
+    }
+
+    pub fn bootstrap_with_state<M>(id: ReplicaId, members: &[M], mut state: L) -> Self
+    where
+        M: AsRef<str> + Debug,
+    {
+        assert!(
+            members.iter().any(|member| member.as_ref() == id.as_ref()),
+            "Bootstrap replica ID {} must be included in members list {:?}",
+            id,
+            members
+        );
+        let mut interner = Interner::new();
+        let (idx, _) = interner.intern(&id);
+        for member in members {
+            interner.intern(&ReplicaId::from(member.as_ref()));
+        }
+        state.hosted_by(&id);
+        Self {
+            id,
+            tcsb: T::new(idx, interner),
             state,
         }
     }
 }
 
-#[cfg(feature = "test_utils")]
-impl<L, T> Replica<L, T>
-where
-    L: IsLog,             // + DeepSizeOf,
-    T: IsTcsbTest<L::Op>, // + DeepSizeOf,
-{
-    pub fn tcsb(&self) -> &T {
+impl<L: IsLog> Replica<L, Tcsb<L::Update>> {
+    pub fn tcsb(&self) -> &Tcsb<L::Update> {
         &self.tcsb
-    }
-
-    pub fn num_delivered_events(&self) -> usize {
-        self.tcsb.matrix_clock().origin_version().sum()
-    }
-
-    /// Versions at which the communication layer advanced causal stability.
-    /// The initial zero version is not included.
-    pub fn stable_version_history(&self) -> &[Version] {
-        self.tcsb.lsv_history()
     }
 
     pub fn state(&self) -> &L {
         &self.state
     }
 
+    pub fn bootstrap_with_interner(
+        id: ReplicaId,
+        members: &[&str],
+        interner: crate::broadcast::internalizer::SharedInterner,
+    ) -> Self {
+        assert!(members.contains(&id.as_ref()), "bootstrap member missing");
+        let idx = {
+            let mut table = crate::broadcast::internalizer::lock_interner(&interner);
+            let (idx, _) = table.intern(&id);
+            for member in members {
+                table.intern(&(*member).into());
+            }
+            idx
+        };
+        let mut state = L::default();
+        state.hosted_by(&id);
+        Self {
+            id,
+            tcsb: Tcsb::with_interner(idx, interner),
+            state,
+        }
+    }
+
+    /// Capture causal bookkeeping to transfer alongside the log.
+    pub fn snapshot(&self) -> StateSnapshot<L::Update> {
+        self.tcsb.snapshot()
+    }
+
+    /// Replace the log and causal bookkeeping with a donor's state.
+    pub fn adopt(&mut self, snapshot: StateSnapshot<L::Update>, mut state: L) {
+        let donor = self.tcsb.adopt(snapshot, &self.id);
+        state.hosted_by(&self.id);
+        state.adopted_from(&donor);
+        self.state = state;
+    }
+}
+
+#[cfg(feature = "test_utils")]
+impl<L> Replica<L, Tcsb<L::Update>>
+where
+    L: IsLog,
+{
+    pub fn new(id: ReplicaId, tcsb: Tcsb<L::Update>, mut state: L) -> Self {
+        state.hosted_by(&id);
+        Self { id, tcsb, state }
+    }
+
+    pub fn delivered_count(&self) -> usize {
+        self.tcsb.matrix_clock().origin_version().sum()
+    }
+
+    pub fn into_state(self) -> L {
+        self.state
+    }
+
     pub fn state_mut(&mut self) -> &mut L {
         &mut self.state
+    }
+}
+
+impl Display for ReplicaId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl PartialEq<str> for ReplicaId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl AsRef<str> for ReplicaId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ReplicaId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
+impl From<&str> for ReplicaId {
+    fn from(id: &str) -> Self {
+        Self(id.to_owned())
     }
 }

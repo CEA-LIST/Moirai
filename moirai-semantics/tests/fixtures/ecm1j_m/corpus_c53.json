@@ -1,0 +1,153 @@
+{
+  "classes": {
+    "RootClass": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "text"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "attribute1",
+          "provenance": {
+            "leaf": "declared",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        }
+      ],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "nestedPackage1::NestedClass1"
+          },
+          "name": "reference1",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "nestedPackage1::NestedClass1"
+        }
+      ],
+      "superTypes": []
+    },
+    "nestedPackage1::NestedClass1": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": []
+    },
+    "noLiterals::NoLitClass": {
+      "abstract": false,
+      "attributes": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "isId": false,
+          "kind": "string",
+          "many": false,
+          "merge": {
+            "kind": "attribute",
+            "leaf": {
+              "kind": "text"
+            },
+            "shape": {
+              "kind": "optional"
+            }
+          },
+          "name": "attribute2",
+          "provenance": {
+            "leaf": "declared",
+            "ordered": "notApplicable",
+            "presence": "ecoreDefault",
+            "unique": "notApplicable"
+          },
+          "required": false
+        }
+      ],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "nestedPackage1::NestedClass1"
+          },
+          "name": "reference2",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "nestedPackage1::NestedClass1"
+        }
+      ],
+      "superTypes": []
+    }
+  },
+  "enums": {
+    "RootEnum": [
+      "literal"
+    ],
+    "noLiterals::NoLitEnum": [
+      "literal"
+    ]
+  },
+  "formatVersion": 2,
+  "nsURI": "http://xtext.org/genmodeltest-v1.0",
+  "package": "root",
+  "packages": {
+    "nestedPackage1": {
+      "nsPrefix": "nestedPackage1",
+      "nsURI": "http://xtext.org/genmodeltest-nested-v1.0"
+    },
+    "noLiterals": {
+      "nsPrefix": "noLiterals",
+      "nsURI": "http://xtext.org/genmodeltest-noliterals-v1.0"
+    }
+  },
+  "rootClasses": [
+    "RootClass",
+    "nestedPackage1::NestedClass1",
+    "noLiterals::NoLitClass"
+  ]
+}

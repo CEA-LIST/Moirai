@@ -33,10 +33,11 @@
 //! ```
 
 mod si14;
+#[path = "ec03/side.rs"]
+mod side;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use moirai_crdt::utils::membership::triplet_log;
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::migrate::{migrate, rebase};
 use moirai_interp::{ModelLog, ModelOp};
@@ -45,6 +46,7 @@ use moirai_protocol::broadcast::message::EventMessage;
 use moirai_protocol::broadcast::tcsb::Tcsb;
 use moirai_protocol::replica::{IsReplica, Replica};
 use serde_json::{Value, json};
+use side::triplet_log;
 
 use si14::si12::{
     At, CAR, CAR_WHEELS, D1, D2, D2_RENAME, DOOR, HAS_DOORS, SEDAN, Uml, ids_by_label, install,
@@ -1454,10 +1456,9 @@ fn checked(failures: &mut Vec<String>, replica: &Rep, base: &Base, want: &Want, 
 /// every failing check is reported.
 #[test]
 fn si14_rh_join_a_replica_that_joined_by_state_transfer_waits_for_every_other_member() {
-    let log_id = moirai_protocol::log_id::LogId::generate();
     let mut reps: Vec<Rep> = JOIN_MEMBERS
         .iter()
-        .map(|id| Rep::bootstrap_with_log_id(id.to_string(), &JOIN_MEMBERS, log_id.clone()))
+        .map(|id| side::bootstrap::<ModelLog>(id, &JOIN_MEMBERS))
         .collect();
     let uml = Uml::new(D1);
     let mut sent = 0u64;

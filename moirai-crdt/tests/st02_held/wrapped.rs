@@ -1,3 +1,8 @@
+// EC.M2 row N8: our `st02_held/wrapped.rs` at `748a185`, translated to
+// his `IsLog`: `Op` -> `Update`, `stabilize` takes his `CausalFrontier`, and
+// the associated constant `STABILIZE_MOVES_OPERATIONS`, which his trait does
+// not have, is not forwarded.
+
 //! ST.02, B2 (`cea-cdrt-knowledge/spec/items/ST.02.md`): the compositions of
 //! `composition.rs` with a wrapper a user writes between each `OptionLog` and
 //! its content, `Wrapped<L>`, which implements `IsLog` (every method, the
@@ -12,7 +17,7 @@ mod composition;
 
 use composition::*;
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     crdt::{eval::EvalNested, query::QueryOperation},
     event::Event,
     state::{effect_context::EffectContext, log::IsLog},
@@ -24,29 +29,27 @@ pub struct Wrapped<L>(L);
 
 impl<L: IsLog> IsLog for Wrapped<L> {
     type Command = L::Command;
-    type Op = L::Op;
+    type Update = L::Update;
     type Rejection = L::Rejection;
-
-    const STABILIZE_MOVES_OPERATIONS: bool = L::STABILIZE_MOVES_OPERATIONS;
 
     fn new() -> Self {
         Wrapped(L::new())
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         self.0.prepare(command)
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.0.is_enabled(op)
     }
 
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         self.0.effect(event, ctx)
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.0.stabilize(version)
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.0.stabilize(frontier)
     }
 
     fn redundant_by_parent(&mut self, version: &Version, conservative: bool) {

@@ -53,7 +53,7 @@ use std::process::Child;
 use std::time::{Duration, Instant};
 
 use moirai_interp::ModelOp;
-use moirai_protocol::log_id::LogId;
+use moirai_network::log_id::LogId;
 use serde_json::{Value, json};
 
 use si12::*;

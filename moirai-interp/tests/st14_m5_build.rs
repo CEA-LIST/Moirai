@@ -28,6 +28,8 @@
 //!     --test st14_sequence_order_cache --test st14_m5_build --no-fail-fast -- --nocapture
 //! ```
 
+#[path = "ec03/side.rs"]
+mod side;
 mod st14;
 
 use std::time::Instant;
@@ -89,7 +91,7 @@ fn st14_m1_the_m5_build_stays_flat_at_the_writer_and_serves_what_m5_served() {
         ));
     }
 
-    let (mut a, mut b) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+    let (mut a, mut b) = side::twins_log::<ModelLog>();
     let opening = send(&mut a, install("m5c", &sysml()));
     b.receive(opening);
 

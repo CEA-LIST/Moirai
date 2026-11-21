@@ -41,6 +41,8 @@
 //! nice -n 10 cargo test -j 2 -p moirai-interp --test st10_json_removed_key
 //! ```
 
+#[path = "ec03/side.rs"]
+mod side;
 use std::{
     collections::BTreeSet,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -54,7 +56,6 @@ use moirai_interp::{InstanceOp, ModelLog, ModelOp};
 use moirai_protocol::{
     broadcast::{message::EventMessage, tcsb::Tcsb},
     crdt::query::Read,
-    log_id::LogId,
     replica::{IsReplica, Replica},
 };
 use moirai_semantics::MetamodelSemantics;
@@ -273,10 +274,9 @@ impl Run {
     /// descriptor's `Install`, sent by the first. The `Install` is not one of
     /// `events`: it is never part of a delivery order.
     fn new(ids: &[&str]) -> Self {
-        let log_id = LogId::from_bytes([0x5b; 16]);
         let mut replicas: Vec<Rep> = ids
             .iter()
-            .map(|id| Rep::bootstrap_with_log_id((*id).into(), ids, log_id.clone()))
+            .map(|id| side::bootstrap::<ModelLog>(id, ids))
             .collect();
         let opening = replicas[0]
             .send(install("st10", &descriptor()))

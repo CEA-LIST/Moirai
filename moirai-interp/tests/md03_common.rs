@@ -3,7 +3,8 @@
 #[path = "si05/mod.rs"]
 pub mod si05;
 use moirai_interp::testing::install;
-use moirai_protocol::{log_id::LogId, replica::IsReplica};
+#[path = "ec03/side.rs"]
+pub mod side;
 use serde_json::{Value, json};
 pub use si05::*;
 
@@ -20,8 +21,7 @@ pub fn values(items: &[&str]) -> std::collections::BTreeSet<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 pub fn replicas() -> [Rep; 3] {
-    let mut reps =
-        NAMES.map(|id| Rep::bootstrap_with_log_id(id.into(), &NAMES, LogId::parse(MODEL).unwrap()));
+    let mut reps = NAMES.map(|id| side::bootstrap::<moirai_interp::ModelLog>(id, &NAMES));
     broadcast(
         &mut reps,
         0,

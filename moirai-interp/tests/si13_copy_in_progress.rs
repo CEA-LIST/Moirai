@@ -74,11 +74,11 @@ use std::time::{Duration, Instant};
 use moirai_interp::migrate::{adapter_refusal, migrate};
 use moirai_interp::{ModelLog, ModelOp};
 use moirai_network::generic::{GenericNode, LogReplica, ServedDescriptor};
+use moirai_network::log_id::LogId;
 use moirai_network::query::QueryableLog;
 use moirai_network::transport::{
     CrdtTransport, PeerId, PeerInfo, TransportMessage, TransportResult,
 };
-use moirai_protocol::log_id::LogId;
 use serde_json::{Value, json};
 
 use si13::cluster::{CONVERGE_TIMEOUT, Cluster, Spec};
@@ -344,7 +344,7 @@ fn cuts_on(broadcast: &Broadcast, log: &str) -> Vec<String> {
 /// The node's identified read of a hosted model, in process.
 fn identified(node: &TestNode, model: &LogId) -> Value {
     node.hosted(model)
-        .map(ModelLog::query_identified_state_json)
+        .map(|replica| ModelLog::query_identified_state_json(replica))
         .unwrap_or(Value::Null)
 }
 

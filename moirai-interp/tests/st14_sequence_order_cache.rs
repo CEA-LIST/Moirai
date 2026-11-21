@@ -29,6 +29,8 @@
 //!     --test st14_sequence_order_cache --test st14_m5_build --no-fail-fast -- --nocapture
 //! ```
 
+#[path = "ec03/side.rs"]
+mod side;
 mod st14;
 
 use st14::*;
@@ -53,7 +55,7 @@ const FLAT: f64 = 1.5;
 /// allocations of each `send` at the writer and of each `receive` at the
 /// receiver.
 fn sequential_updates() -> (Vec<u64>, Vec<u64>, Rep, Rep) {
-    let (mut a, mut b) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+    let (mut a, mut b) = side::twins_log::<ModelLog>();
     let opening = send(&mut a, seq_install());
     b.receive(opening);
     let first = send(&mut a, insert_item(0, 1));
@@ -113,7 +115,7 @@ fn st14_s1_sequential_updates_of_one_list_stay_flat_at_the_writer_and_the_receiv
 /// `b` and `c`. Each replica indexes the three members its own way (its own id
 /// first), so every event that crosses is re-indexed on arrival.
 fn three(setup: &[ModelOp]) -> (Rep, Rep, Rep) {
-    let (mut a, mut b, mut c) = moirai_crdt::utils::membership::triplet_log::<ModelLog>();
+    let (mut a, mut b, mut c) = side::triplet_log::<ModelLog>();
     for op in std::iter::once(seq_install()).chain(setup.iter().cloned()) {
         let event = send(&mut a, op);
         b.receive(event.clone());
@@ -299,13 +301,10 @@ fn st14_c5_sequential_operations_after_two_concurrent_inserts_land_where_the_wri
 /// `serde_json::to_value` of the log, `import_log` its inverse), and the
 /// joiner adopts both.
 fn transfer(donor: &mut Rep, joiner_id: &str) -> Rep {
-    use moirai_protocol::broadcast::internalizer::lock_interner;
-    use moirai_protocol::broadcast::tcsb::{IsTcsbTest, StateSnapshot};
-    use moirai_protocol::replica::Replica;
+    use moirai_protocol::broadcast::tcsb::StateSnapshot;
 
-    let mut joiner: Rep =
-        Replica::bootstrap_with_log_id(joiner_id.to_string(), &[joiner_id], donor.log_id().clone());
-    lock_interner(donor.tcsb().interner()).intern(joiner.id());
+    let mut joiner: Rep = side::joiner(donor, joiner_id);
+    side::admit(donor, &joiner);
     let snapshot: StateSnapshot<moirai_interp::ModelOp> = serde_json::from_str(
         &serde_json::to_string(&donor.snapshot()).expect("a snapshot serializes"),
     )
@@ -405,7 +404,7 @@ const JOINER: std::ops::Range<usize> = 50..600;
 #[test]
 fn st14_t3_after_a_transfer_the_joiners_sequential_updates_cost_what_the_donors_did_on_a_young_list()
  {
-    let (mut a, mut b) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+    let (mut a, mut b) = side::twins_log::<ModelLog>();
     for op in [seq_install(), insert_item(0, 1)] {
         let event = send(&mut a, op);
         b.receive(event);
@@ -669,9 +668,9 @@ fn deliver(
             }
         }
     }
-    let before = member.replica.num_delivered_events();
+    let before = side::delivered(&member.replica);
     member.replica.receive(op.message.clone());
-    let after = member.replica.num_delivered_events();
+    let after = side::delivered(&member.replica);
     assert_eq!(
         after,
         before + 1,

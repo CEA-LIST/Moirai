@@ -2,21 +2,23 @@ use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::event::{Event, id::EventId, lamport::Lamport, tag::Tag};
 
 /// An operation tagged with an event ID and Lamport timestamp.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TaggedOp<O> {
     op: O,
     tag: Tag,
 }
 
 impl<O> TaggedOp<O> {
+    pub(crate) fn rebind(&mut self, resolver: &crate::broadcast::internalizer::Resolver) {
+        self.tag.rebind(resolver);
+    }
+
     pub fn new(id: EventId, lamport: Lamport, op: O) -> Self {
         Self {
             op,

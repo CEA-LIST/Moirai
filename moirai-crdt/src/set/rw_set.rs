@@ -1,88 +1,170 @@
-use std::{convert::Infallible, fmt::Debug, hash::Hash};
+use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 #[cfg(feature = "fuzz")]
-use moirai_fuzz::{op_generator::OpGenerator, value_generator::ValueGenerator};
+use moirai_fuzz::{
+    generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
+};
 use moirai_protocol::{
     crdt::{
         eval::Eval,
         query::{Contains, QueryOperation, Read},
         redundancy::RedundancyRelation,
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Sequential,
+        },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
-    state::{
-        stable_state::IsStableState,
-        unstable_state::{IsUnstableCore, IsUnstablePrune},
-    },
+    state::unstable_state::{IsUnstableCore, IsUnstablePrune},
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::HashSet;
+use crate::{FxHashSet, set::update::SetUpdate};
 
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
-pub enum RWSet<V> {
-    Add(V),
-    Remove(V),
-    Clear,
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct RWSet<V>(PhantomData<V>);
+
+impl<V, U> CausalReset<U> for RWSet<V> where V: Debug + Clone + Eq + Hash {}
+
+impl<V, U> CausalStabilize<U> for RWSet<V>
+where
+    V: Debug + Clone + Eq + Hash,
+{
+    fn on_stabilize(
+        tagged_op: &TaggedOp<Self::Update>,
+        stable: &mut Self::Stable,
+        unstable: &mut (impl IsUnstablePrune<Self::Update> + IsUnstableCore<Self::Update>),
+    ) {
+        // Two cases:
+        // 1. The tagged_op is a 'add'
+        // ...in this case: remove this 'add' if there exists another op with the same arg in unstable,
+        // ...or a stable 'remove' with the same arg.
+        // 2. The tagged_op is a 'remove'
+        // ...in this case: remove this 'remove' unless there exists a 'add' with the same arg in unstable
+        match tagged_op.op() {
+            SetUpdate::Add(v) => {
+                // Replicas may stabilize the same concurrent ops in different orders, so the result
+                // must not depend on that order. A stable 'remove' still present here was not
+                // retired by this 'add' when it was delivered, so the two are concurrent and the
+                // 'remove' wins: keep it, and drop the 'add'.
+                let removed_while_stable = stable
+                    .1
+                    .iter()
+                    .any(|o| matches!(o, SetUpdate::Remove(v2) if v == v2));
+                if removed_while_stable
+                    || unstable.iter().any(|t| {
+                        matches!(t.op(), SetUpdate::Add(v2) | SetUpdate::Remove(v2) if v == v2)
+                            && t.id() != tagged_op.id()
+                    })
+                {
+                    unstable.remove(tagged_op.id());
+                }
+            }
+            SetUpdate::Remove(v) => {
+                if unstable.iter().all(|t| {
+                    matches!(t.op(), SetUpdate::Remove(v2) | SetUpdate::Add(v2) if v != v2)
+                        || t.id() == tagged_op.id()
+                }) {
+                    unstable.remove(tagged_op.id());
+                }
+            }
+            SetUpdate::Clear => unreachable!(),
+        }
+    }
 }
 
-// TODO: maybe two hashsets is better?
-impl<V> IsStableState<RWSet<V>> for (HashSet<V>, Vec<RWSet<V>>)
+impl<U, V> CausalCompaction<U> for RWSet<V>
 where
-    V: Clone + Eq + Hash + Debug,
+    V: Debug + Clone + Eq + Hash,
+    U: IsUnstableCore<SetUpdate<V>>,
 {
-    fn is_default(&self) -> bool {
-        self.0.is_empty() && self.1.is_empty()
-    }
-
-    fn apply(&mut self, value: RWSet<V>) {
-        match value {
-            RWSet::Add(v) => {
-                self.0.insert(v);
-            }
-            RWSet::Remove(_) => {
-                self.1.push(value);
-            }
-            RWSet::Clear => unreachable!(),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0.clear();
-        self.1.clear();
-    }
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<RWSet<V>>,
-        tagged_op: &TaggedOp<RWSet<V>>,
+    fn compact_stable(
+        stable: &mut Self::Stable,
+        _: RedundancyRelation<Self::Update>,
+        new: &TaggedOp<Self::Update>,
     ) {
-        // TODO: reuse the rdnt
-        match tagged_op.op() {
-            RWSet::Add(v) => {
-                self.0.remove(v);
-                self.1.retain(|o| matches!(o, RWSet::Remove(v2) if v != v2));
+        match new.op() {
+            SetUpdate::Add(v) | SetUpdate::Remove(v) => {
+                stable.0.remove(v);
+                stable
+                    .1
+                    .retain(|op| matches!(op, SetUpdate::Remove(other) if other != v));
             }
-            RWSet::Remove(v) => {
-                self.0.remove(v);
-                self.1.retain(|o| matches!(o, RWSet::Remove(v2) if v != v2));
-            }
-            // Upstream v0.6 pairs this with `(Remove(_), Clear) => false` in
-            // `redundant_by_when_redundant`: a `clear` retires the stable adds and
-            // leaves the stable removes standing, so a remove still masks an add it
-            // is concurrent with. Clearing `self.1` here as well would contradict
-            // that rule and split two replicas that fold the same operations.
-            RWSet::Clear => {
-                self.0.clear();
-            }
+            SetUpdate::Clear => stable.0.clear(),
         }
+    }
+
+    fn redundant_itself<'a>(
+        new_tagged_op: &TaggedOp<Self::Update>,
+        _stable: &Self::Stable,
+        _unstable: impl Iterator<Item = &'a TaggedOp<Self::Update>>,
+    ) -> bool
+    where
+        Self: 'a,
+    {
+        matches!(new_tagged_op.op(), SetUpdate::Clear)
+    }
+
+    fn redundant_by_when_redundant(
+        old_op: &Self::Update,
+        _old_tag: Option<&Tag>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self::Update>,
+    ) -> bool {
+        !is_conc
+            && match (old_op, new_tagged_op.op()) {
+                (SetUpdate::Add(v1), SetUpdate::Add(v2))
+                | (SetUpdate::Add(v1), SetUpdate::Remove(v2))
+                | (SetUpdate::Remove(v1), SetUpdate::Add(v2))
+                | (SetUpdate::Remove(v1), SetUpdate::Remove(v2)) => v1 == v2,
+                // There was a mistake in the original paper. 'clear' should not make prior 'remove' redundant,
+                // otherwise it would fail to preserve the remove against concurrent add.
+                (SetUpdate::Add(_), SetUpdate::Clear) => true,
+                (SetUpdate::Remove(_), SetUpdate::Clear) => false,
+                (SetUpdate::Clear, _) => unreachable!(),
+            }
+    }
+
+    fn redundant_by_when_not_redundant(
+        old_op: &Self::Update,
+        old_tag: Option<&Tag>,
+        is_conc: bool,
+        new_tagged_op: &TaggedOp<Self::Update>,
+    ) -> bool {
+        <Self as CausalCompaction<U>>::redundant_by_when_redundant(
+            old_op,
+            old_tag,
+            is_conc,
+            new_tagged_op,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(deserialize = "V: Deserialize<'de> + Eq + Hash"))
+)]
+pub struct Set<V>(FxHashSet<V>, Vec<SetUpdate<V>>);
+
+#[cfg(feature = "test_utils")]
+impl<V: DeepSizeOf + Eq + Hash> DeepSizeOf for Set<V> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
+    }
+}
+
+impl<V> Default for Set<V> {
+    fn default() -> Self {
+        Self(FxHashSet::default(), vec![])
     }
 }
 
@@ -90,131 +172,65 @@ impl<V> ReplicatedDataType for RWSet<V>
 where
     V: Debug + Clone + Hash + Eq,
 {
-    type StableState = (HashSet<V>, Vec<RWSet<V>>);
+    type Stable = Set<V>;
+    type Update = SetUpdate<V>;
     type Rejection = Infallible;
+}
 
-    fn redundant_itself<'a>(
-        new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> bool
-    where
-        Self: 'a,
-    {
-        matches!(new_tagged_op.op(), RWSet::Clear)
+// TODO: maybe two hashsets is better?
+impl<V> Sequential for Set<V>
+where
+    V: Clone + Eq + Hash + Debug,
+{
+    type Update = SetUpdate<V>;
+
+    fn is_default(&self) -> bool {
+        self.0.is_empty() && self.1.is_empty()
     }
 
-    fn redundant_by_when_redundant(
-        old_op: &Self,
-        _old_tag: Option<&Tag>,
-        is_conc: bool,
-        new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        !is_conc
-            && match (old_op, new_tagged_op.op()) {
-                (RWSet::Add(v1), RWSet::Add(v2))
-                | (RWSet::Add(v1), RWSet::Remove(v2))
-                | (RWSet::Remove(v1), RWSet::Add(v2))
-                | (RWSet::Remove(v1), RWSet::Remove(v2)) => v1 == v2,
-                // There was a mistake in the original paper. 'clear' should not make prior 'remove' redundant,
-                // otherwise it would fail to preserve the remove against concurrent add.
-                (RWSet::Add(_), RWSet::Clear) => true,
-                (RWSet::Remove(_), RWSet::Clear) => false,
-                (RWSet::Clear, _) => unreachable!(),
+    fn apply(&mut self, value: &Self::Update) {
+        match value {
+            SetUpdate::Add(v) => {
+                self.0.insert(v.clone());
             }
-    }
-
-    fn redundant_by_when_not_redundant(
-        old_op: &Self,
-        old_tag: Option<&Tag>,
-        is_conc: bool,
-        new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        Self::redundant_by_when_redundant(old_op, old_tag, is_conc, new_tagged_op)
-    }
-
-    fn stabilize<'a>(
-        tagged_op: &TaggedOp<Self>,
-        stable: &mut Self::StableState,
-        unstable: &mut impl IsUnstablePrune<Self>,
-    ) {
-        // Two cases:
-        // 1. The tagged_op is a 'add'
-        // ...in this case: remove this 'add' if there exists another op with the same arg in the
-        // ...po-log, whether it is still unstable or already among the stable removes. A stable
-        // ...'remove' is only ever retired by an operation that is causally after it, and such an
-        // ...operation retires this 'add' too, so an 'add' that finds one has lost for good.
-        // 2. The tagged_op is a 'remove'
-        // ...in this case: remove this 'remove' unless there exists a 'add' with the same arg in unstable
-        match tagged_op.op() {
-            RWSet::Add(v) => {
-                // Replicas may stabilize the same concurrent ops in different orders, so the
-                // result must not depend on that order. A stable 'remove' still present here was
-                // not retired by this 'add' when it was delivered, so the two are concurrent and
-                // the 'remove' wins: keep it, and drop the 'add'.
-                let removed_while_stable = stable
-                    .1
-                    .iter()
-                    .any(|o| matches!(o, RWSet::Remove(v2) if v == v2));
-                if removed_while_stable
-                    || unstable.iter().any(|t| {
-                        matches!(t.op(), RWSet::Add(v2) | RWSet::Remove(v2) if v == v2)
-                            && t.id() != tagged_op.id()
-                    })
-                {
-                    unstable.remove(tagged_op.id());
-                }
+            SetUpdate::Remove(_) => {
+                self.1.push(value.clone());
             }
-            RWSet::Remove(v) => {
-                if unstable.iter().all(|t| {
-                    matches!(t.op(), RWSet::Remove(v2) | RWSet::Add(v2) if v != v2)
-                        || t.id() == tagged_op.id()
-                }) {
-                    unstable.remove(tagged_op.id());
-                }
-            }
-            RWSet::Clear => unreachable!(),
+            SetUpdate::Clear => unreachable!(),
         }
     }
 }
 
-impl<V, U> UsesUnstableService<U> for RWSet<V>
-where
-    V: Debug + Clone + Hash + Eq,
-    U: IsUnstableCore<Self>,
-{
-}
-
-impl<V, U> Eval<Read<HashSet<V>>, U> for RWSet<V>
+impl<V, U> Eval<Set<V>, U, Read<FxHashSet<V>>> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<SetUpdate<V>>,
 {
     fn execute_query(
-        _q: &Read<HashSet<V>>,
-        stable: &<RWSet<V> as ReplicatedDataType>::StableState,
+        stable: &<Self as ReplicatedDataType>::Stable,
         unstable: &U,
-    ) -> <Read<HashSet<V>> as QueryOperation>::Response {
+        _q: &Read<FxHashSet<V>>,
+    ) -> <Read<FxHashSet<V>> as QueryOperation>::Response {
         let mut set = stable.0.clone();
-        let mut removed = HashSet::default();
+        let mut removed = FxHashSet::default();
 
         for o in unstable.iter().map(|t| t.op()) {
             match o {
-                RWSet::Add(v) => {
+                SetUpdate::Add(v) => {
                     if !stable
                         .1
                         .iter()
-                        .any(|o| matches!(o, RWSet::Remove(v2) if v == v2))
+                        .any(|o| matches!(o, SetUpdate::Remove(v2) if v == v2))
                         && !removed.contains(v)
                     {
                         set.insert(v.clone());
                     }
                 }
-                RWSet::Remove(v) => {
+                SetUpdate::Remove(v) => {
                     set.remove(v);
                     removed.insert(v);
                 }
-                RWSet::Clear => unreachable!(),
+                SetUpdate::Clear => unreachable!(),
             }
         }
 
@@ -222,50 +238,45 @@ where
     }
 }
 
-/// `Contains` answers exactly whether the value is in the set `Read` renders,
-/// which is the only specification it has.
-///
-/// `Read` drops a value that any unstable `Remove` mentions, keeps a value that
-/// is among the stable adds, and admits an unstable `Add` only when no stable
-/// `Remove` masks it. Written with `&&` binding tighter than `||`, this used to
-/// read `stable add and no stable remove, or any unstable add`, so an unstable
-/// `Add(v)` answered `true` on its own. That splits two replicas holding the
-/// same operations: on one of them a concurrent `Remove(v)` has already
-/// stabilized and masks the still unstable `Add(v)`, on the other the `Add(v)`
-/// stabilized first and was dropped for having lost to that `Remove(v)`. Both
-/// read the empty set and they used to answer `Contains(v)` differently.
-impl<V, U> Eval<Contains<V>, U> for RWSet<V>
+impl<V, U> Eval<Set<V>, U, Contains<V>> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
-    U: IsUnstableCore<Self>,
+    U: IsUnstableCore<SetUpdate<V>>,
 {
     /// Semantics: there exists an 'add' for the element, and there is no 'remove' for the element.
     fn execute_query(
-        q: &Contains<V>,
-        stable: &<RWSet<V> as ReplicatedDataType>::StableState,
+        stable: &<Self as ReplicatedDataType>::Stable,
         unstable: &U,
+        q: &Contains<V>,
     ) -> <Contains<V> as QueryOperation>::Response {
-        !unstable
+        let stable_removed = stable
+            .1
             .iter()
-            .any(|o| matches!(o.op(), RWSet::Remove(v) if v == &q.0))
-            && (stable.0.contains(&q.0)
-                || (!stable
-                    .1
-                    .iter()
-                    .any(|o| matches!(o, RWSet::Remove(v2) if v2 == &q.0))
-                    && unstable.iter().any(|o| {
-                        if let RWSet::Add(v) = o.op() {
-                            v == &q.0
-                        } else {
-                            false
-                        }
-                    })))
+            .any(|o| matches!(o, SetUpdate::Remove(v) if v == &q.0));
+        let mut present = stable.0.contains(&q.0) && !stable_removed;
+        let mut removed = stable_removed;
+
+        for op in unstable.iter().map(|t| t.op()) {
+            match op {
+                SetUpdate::Add(v) if v == &q.0 && !removed => {
+                    present = true;
+                }
+                SetUpdate::Remove(v) if v == &q.0 => {
+                    present = false;
+                    removed = true;
+                }
+                _ => {}
+            }
+        }
+
+        present
     }
 }
 
 #[cfg(feature = "fuzz")]
-impl<V> OpGenerator for RWSet<V>
+impl<V, U> OpGenerator<U> for RWSet<V>
 where
+    U: IsUnstableCore<SetUpdate<V>>,
     V: ValueGenerator + Clone + Hash + Debug + Eq,
 {
     type Config = ();
@@ -273,9 +284,9 @@ where
     fn generate(
         rng: &mut impl Rng,
         _config: &Self::Config,
-        _stable: &<Self as ReplicatedDataType>::StableState,
-        _unstable: &impl IsUnstableCore<Self>,
-    ) -> Self {
+        _stable: &<Self as ReplicatedDataType>::Stable,
+        _unstable: &U,
+    ) -> Self::Update {
         use rand::distr::{Distribution, weighted::WeightedIndex};
 
         enum Choice {
@@ -288,10 +299,16 @@ where
         let choice = &[Choice::Add, Choice::Remove, Choice::Clear][dist.sample(rng)];
         let value = V::generate(rng, &<V as ValueGenerator>::Config::default());
         match choice {
-            Choice::Add => RWSet::Add(value),
-            Choice::Remove => RWSet::Remove(value),
-            Choice::Clear => RWSet::Clear,
+            Choice::Add => SetUpdate::Add(value),
+            Choice::Remove => SetUpdate::Remove(value),
+            Choice::Clear => SetUpdate::Clear,
         }
+    }
+}
+
+impl<V: Debug + Clone + Eq + Hash, U> Precondition<U> for RWSet<V> {
+    fn is_enabled(_: &Self::Stable, _: &U, _: &Self::Update) -> Result<(), Infallible> {
+        Ok(())
     }
 }
 
@@ -304,11 +321,11 @@ mod tests {
     };
 
     use crate::{
-        HashSet,
-        map::uw_map::{UWMap, UWMapLog},
-        set::rw_set::RWSet,
+        FxHashSet,
+        map::{update::MapUpdate, uw_map::UWMapLog},
+        set::{rw_set::RWSet, update::SetUpdate},
         utils::{
-            membership::{twins, twins_log},
+            bootstrap::{twins, twins_log},
             set_from_slice,
         },
     };
@@ -317,29 +334,29 @@ mod tests {
     fn clear_rw_set() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event = replica_a.send(RWSet::Add("a")).unwrap();
+        let event = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event);
 
-        let event = replica_b.send(RWSet::Add("b")).unwrap();
+        let event = replica_b.send(SetUpdate::Add("b")).unwrap();
         replica_a.receive(event);
 
-        let event = replica_a.send(RWSet::Clear).unwrap();
+        let event = replica_a.send(SetUpdate::Clear).unwrap();
         replica_b.receive(event);
 
-        let result = HashSet::default();
+        let result = FxHashSet::default();
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
-        assert_eq!(replica_a.query(&Contains("a")), false);
-        assert_eq!(replica_b.query(&Contains("b")), false);
+        assert!(!replica_a.query(&Contains("a")));
+        assert!(!replica_b.query(&Contains("b")));
     }
 
     #[test]
     fn clear_preserves_prior_remove_against_concurrent_add() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let remove = replica_a.send(RWSet::Remove("a")).unwrap();
-        let clear = replica_a.send(RWSet::Clear).unwrap();
-        let add = replica_b.send(RWSet::Add("a")).unwrap();
+        let remove = replica_a.send(SetUpdate::Remove("a")).unwrap();
+        let clear = replica_a.send(SetUpdate::Clear).unwrap();
+        let add = replica_b.send(SetUpdate::Add("a")).unwrap();
 
         replica_a.receive(add);
         replica_b.receive(remove);
@@ -348,8 +365,8 @@ mod tests {
         let result = set_from_slice(&[]);
         assert_eq!(replica_a.query(&Read::new()), result);
         assert_eq!(replica_b.query(&Read::new()), result);
-        assert_eq!(replica_a.query(&Contains("a")), false);
-        assert_eq!(replica_b.query(&Contains("a")), false);
+        assert!(!replica_a.query(&Contains("a")));
+        assert!(!replica_b.query(&Contains("a")));
     }
 
     // Note: Following tests are reproduction of same simulation in Figure 18 of the “Pure Operation-Based CRDTs” paper.
@@ -357,7 +374,7 @@ mod tests {
     #[test]
     fn case_one() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event = replica_a.send(RWSet::Add("a")).unwrap();
+        let event = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event);
 
         let result = set_from_slice(&["a"]);
@@ -369,8 +386,8 @@ mod tests {
     fn case_two() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
-        let event_b = replica_b.send(RWSet::Add("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::Add("a")).unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -387,9 +404,9 @@ mod tests {
     fn case_three() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
-        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
-        let event_a_2 = replica_a.send(RWSet::Remove("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::Remove("a")).unwrap();
+        let event_a_2 = replica_a.send(SetUpdate::Remove("a")).unwrap();
 
         replica_b.receive(event_a);
         replica_a.receive(event_b);
@@ -398,13 +415,13 @@ mod tests {
         let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(&Read::new()), result);
         assert_eq!(replica_a.query(&Read::new()), result);
-        assert_eq!(replica_a.query(&Contains("a")), false);
+        assert!(!replica_a.query(&Contains("a")));
     }
 
     #[test]
     fn case_five() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event = replica_a.send(RWSet::Remove("a")).unwrap();
+        let event = replica_a.send(SetUpdate::Remove("a")).unwrap();
         replica_b.receive(event);
 
         // assert_eq!(replica_a.state().unstable().len(), 1);
@@ -413,16 +430,16 @@ mod tests {
         let result = set_from_slice(&[]);
         assert_eq!(replica_b.query(&Read::new()), result);
         assert_eq!(replica_a.query(&Read::new()), result);
-        assert_eq!(replica_b.query(&Contains("a")), false);
-        assert_eq!(replica_a.query(&Contains("a")), false);
+        assert!(!replica_b.query(&Contains("a")));
+        assert!(!replica_a.query(&Contains("a")));
     }
 
     #[test]
     fn concurrent_add_remove() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::Remove("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
@@ -434,21 +451,21 @@ mod tests {
     #[test]
     fn concurrent_add_remove_add() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&["a"]));
 
-        let event_b = replica_b.send(RWSet::Remove("a")).unwrap();
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_b = replica_b.send(SetUpdate::Remove("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event_a);
         replica_a.receive(event_b);
 
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[]));
         assert_eq!(replica_a.query(&Read::new()), set_from_slice(&[]));
 
-        let event_a = replica_a.send(RWSet::Add("a")).unwrap();
+        let event_a = replica_a.send(SetUpdate::Add("a")).unwrap();
         replica_b.receive(event_a);
 
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&["a"]));
@@ -459,10 +476,10 @@ mod tests {
     fn concurrent_add_remove_same_element() {
         let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
 
-        let event_a_1 = replica_a.send(RWSet::Add("a")).unwrap();
-        let event_a_2 = replica_a.send(RWSet::Remove("a")).unwrap();
-        let event_b_1 = replica_b.send(RWSet::Add("a")).unwrap();
-        let event_b_2 = replica_b.send(RWSet::Remove("a")).unwrap();
+        let event_a_1 = replica_a.send(SetUpdate::Add("a")).unwrap();
+        let event_a_2 = replica_a.send(SetUpdate::Remove("a")).unwrap();
+        let event_b_1 = replica_b.send(SetUpdate::Add("a")).unwrap();
+        let event_b_2 = replica_b.send(SetUpdate::Remove("a")).unwrap();
 
         replica_a.receive(event_b_1);
         replica_b.receive(event_a_1);
@@ -473,147 +490,66 @@ mod tests {
         assert_eq!(replica_b.query(&Read::new()), set_from_slice(&[]));
     }
 
-    /// The shortest pair of concurrent edit lists on which two replicas used to
-    /// hold different sets for good.
-    ///
-    /// `a` adds `alpha`; concurrently `b` removes `alpha` and then clears. The
-    /// split was between the two halves of what a `Clear` retires: the stable
-    /// state dropped only the stable adds, while `redundant_by_when_redundant`
-    /// dropped every prior operation including the removes, so `b` read
-    /// `["alpha"]` and `a`, whose `Remove` had stabilized under a still
-    /// unstable `Add`, read `[]`.
-    ///
-    /// Upstream v0.6 closes it by keeping removes on *both* halves — a `Clear`
-    /// retires prior adds and leaves prior removes standing — so a `Remove`
-    /// that precedes a `Clear` goes on masking an `Add` it is concurrent with
-    /// and both replicas read the empty set. This branch previously closed the
-    /// same split the other way, by retiring removes on both halves, which read
-    /// `["alpha"]`; both converge, and the value below is upstream's.
+    /// `a` adds `alpha` while `b` concurrently removes it, under a map key; a
+    /// second round of writes on another key makes both operations causally
+    /// stable on both replicas, each replica stabilizing them in its own
+    /// delivery order. Remove wins over a concurrent add, so both read `{}`.
+    /// On the replica that stabilizes the `Add` after the `Remove`, the `Add`
+    /// arm of `RWSet::stabilize` drops the stable `Remove` unconditionally,
+    /// although the two are concurrent, and the `Add` comes back.
     #[test]
-    fn an_add_concurrent_with_a_remove_and_a_clear() {
-        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
+    fn rw_set_concurrent_add_and_remove_converge_after_stabilization() {
+        let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
 
-        let event_a = replica_a.send(RWSet::Add("alpha")).unwrap();
-        let remove = replica_b.send(RWSet::Remove("alpha")).unwrap();
-        let clear = replica_b.send(RWSet::Clear).unwrap();
-
-        replica_a.receive(remove);
-        replica_a.receive(clear);
-        replica_b.receive(event_a);
-
-        let result = set_from_slice(&[]);
-        assert_eq!(replica_b.query(&Read::new()), result);
-        assert_eq!(replica_a.query(&Read::new()), result);
-    }
-
-    /// The shortest pair of concurrent edits on which two replicas that read
-    /// the same set used to answer `Contains` differently.
-    ///
-    /// `a` adds `alpha`, concurrently `b` removes it, and each delivers the
-    /// other's operation. On `a` the `Remove` is causally stable the moment it
-    /// arrives, because `b` authored it and `a` now holds it, so it goes to the
-    /// stable removes and masks `a`'s own `Add`, which is still unstable
-    /// because `b` has not acknowledged it. On `b` it is the `Add` that is
-    /// causally stable on arrival, and `stabilize` drops it for having lost to
-    /// the `Remove` beside it, so `b` keeps no `Add` at all. Both read the
-    /// empty set; `a` used to answer `Contains("alpha")` with `true` on the
-    /// strength of that masked unstable `Add` and `b` with `false`.
-    #[test]
-    fn an_add_concurrent_with_a_remove_answers_contains_the_same_on_both() {
-        let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-
-        let add = replica_a.send(RWSet::Add("alpha")).unwrap();
-        let remove = replica_b.send(RWSet::Remove("alpha")).unwrap();
+        let add = replica_a
+            .send(MapUpdate::Update("k", SetUpdate::Add("alpha")))
+            .unwrap();
+        let remove = replica_b
+            .send(MapUpdate::Update("k", SetUpdate::Remove("alpha")))
+            .unwrap();
         replica_a.receive(remove);
         replica_b.receive(add);
 
+        let spacer_a = replica_a
+            .send(MapUpdate::Update("spacer", SetUpdate::Add("s")))
+            .unwrap();
+        let spacer_b = replica_b
+            .send(MapUpdate::Update("spacer", SetUpdate::Add("s")))
+            .unwrap();
+        replica_a.receive(spacer_b);
+        replica_b.receive(spacer_a);
+
+        let read_a: FxHashSet<&str> = replica_a
+            .query(&Get::new(&"k", Read::new()))
+            .unwrap_or_default();
+        let read_b: FxHashSet<&str> = replica_b
+            .query(&Get::new(&"k", Read::new()))
+            .unwrap_or_default();
         let result = set_from_slice(&[]);
-        assert_eq!(replica_a.query(&Read::new()), result);
-        assert_eq!(replica_b.query(&Read::new()), result);
-        assert_eq!(replica_a.query(&Contains("alpha")), false);
-        assert_eq!(replica_b.query(&Contains("alpha")), false);
+        assert_eq!(
+            (read_a, read_b),
+            (result.clone(), result),
+            "(replica a, replica b)"
+        );
     }
 
     /// Every ordered pair of concurrent operation lists of length at most two
-    /// over `{Add, Remove}` on two values plus `Clear`, delivered both ways:
-    /// nine hundred and sixty-one pairs, and the two replicas have to read the
-    /// same set on every one of them. Thirty-two did not before the `Clear`
-    /// above cleared the stable removes.
+    /// over `{Add, Remove}` on two values plus `Clear`, placed under
+    /// a map key, with a second round of writes on another key so that both
+    /// replicas stabilize the same operations, each in its own delivery order.
+    /// The replicas must read the same set on every pair.
     #[test]
-    fn every_concurrent_pair_of_at_most_two_operations_converges() {
+    fn rw_set_converges_when_replicas_stabilize_in_different_orders() {
         let mut split = Vec::new();
-        let mut disagree = Vec::new();
-        for (left, right) in pairs() {
-            let (mut replica_a, mut replica_b) = twins::<RWSet<&str>>();
-            let from_a: Vec<_> = left
-                .iter()
-                .filter_map(|op| replica_a.send(op.clone()).ok())
-                .collect();
-            let from_b: Vec<_> = right
-                .iter()
-                .filter_map(|op| replica_b.send(op.clone()).ok())
-                .collect();
-            for event in from_b {
-                replica_a.receive(event);
-            }
-            for event in from_a {
-                replica_b.receive(event);
-            }
-            let read_a: HashSet<&str> = replica_a.query(&Read::new());
-            let read_b: HashSet<&str> = replica_b.query(&Read::new());
-            if read_a != read_b {
-                split.push(format!(
-                    "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
-                ));
-            }
-            for v in ["alpha", "beta"] {
-                let contains_a: bool = replica_a.query(&Contains(v));
-                let contains_b: bool = replica_b.query(&Contains(v));
-                if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
-                    disagree.push(format!(
-                        "{left:?} against {right:?}: Contains({v:?}) is {contains_a} on `a` and {contains_b} on `b`, reads are {read_a:?} and {read_b:?}"
-                    ));
-                }
-            }
-        }
-        assert!(
-            split.is_empty(),
-            "{} concurrent pairs do not converge:\n{}",
-            split.len(),
-            split.join("\n")
-        );
-        assert!(
-            disagree.is_empty(),
-            "{} concurrent pairs answer `Contains` against their own `Read`:\n{}",
-            disagree.len(),
-            disagree.join("\n")
-        );
-    }
-
-    /// The same enumeration, with a second round of writes on another key so
-    /// that the first round becomes causally stable on both replicas at once.
-    ///
-    /// This is the shape the two-replica enumeration above cannot reach: a
-    /// replica only learns that its peer holds an operation from a later
-    /// message, and on a bare log every later message on the same value retires
-    /// what came before it. Under a map the second round lands on `spacer` and
-    /// retires nothing on `k`, so both replicas stabilize the *same* set of
-    /// operations on `k`, each in its own delivery order — which is where a
-    /// stabilizing `Add` used to drop a stable `Remove` it was merely
-    /// concurrent with. Two hundred and forty of these pairs used to split.
-    #[test]
-    fn every_concurrent_pair_converges_when_both_replicas_stabilize_it() {
-        let mut split = Vec::new();
-        let mut disagree = Vec::new();
-        for (left, right) in pairs() {
+        for (left, right) in concurrent_pairs() {
             let (mut replica_a, mut replica_b) = twins_log::<UWMapLog<&str, VecLog<RWSet<&str>>>>();
             let from_a: Vec<_> = left
                 .iter()
-                .filter_map(|op| replica_a.send(UWMap::Update("k", op.clone())).ok())
+                .filter_map(|op| replica_a.send(MapUpdate::Update("k", op.clone())).ok())
                 .collect();
             let from_b: Vec<_> = right
                 .iter()
-                .filter_map(|op| replica_b.send(UWMap::Update("k", op.clone())).ok())
+                .filter_map(|op| replica_b.send(MapUpdate::Update("k", op.clone())).ok())
                 .collect();
             for event in from_b {
                 replica_a.receive(event);
@@ -622,17 +558,17 @@ mod tests {
                 replica_b.receive(event);
             }
             let spacer_a = replica_a
-                .send(UWMap::Update("spacer", RWSet::Add("s")))
+                .send(MapUpdate::Update("spacer", SetUpdate::Add("s")))
                 .unwrap();
             let spacer_b = replica_b
-                .send(UWMap::Update("spacer", RWSet::Add("s")))
+                .send(MapUpdate::Update("spacer", SetUpdate::Add("s")))
                 .unwrap();
             replica_a.receive(spacer_b);
             replica_b.receive(spacer_a);
-            let read_a: HashSet<&str> = replica_a
+            let read_a: FxHashSet<&str> = replica_a
                 .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
-            let read_b: HashSet<&str> = replica_b
+            let read_b: FxHashSet<&str> = replica_b
                 .query(&Get::new(&"k", Read::new()))
                 .unwrap_or_default();
             if read_a != read_b {
@@ -640,45 +576,26 @@ mod tests {
                     "{left:?} against {right:?}: {read_a:?} and {read_b:?}"
                 ));
             }
-            for v in ["alpha", "beta"] {
-                let contains_a = replica_a
-                    .query(&Get::new(&"k", Contains(v)))
-                    .unwrap_or_default();
-                let contains_b = replica_b
-                    .query(&Get::new(&"k", Contains(v)))
-                    .unwrap_or_default();
-                if contains_a != read_a.contains(v) || contains_b != read_b.contains(v) {
-                    disagree.push(format!(
-                        "{left:?} against {right:?}: Contains({v:?}) is {contains_a} on `a` and {contains_b} on `b`, reads are {read_a:?} and {read_b:?}"
-                    ));
-                }
-            }
         }
         assert!(
             split.is_empty(),
-            "{} concurrent pairs do not converge once both replicas stabilize them:\n{}",
+            "{} of 961 concurrent pairs do not converge once both replicas stabilize them, first: {}",
             split.len(),
-            split.join("\n")
-        );
-        assert!(
-            disagree.is_empty(),
-            "{} concurrent pairs answer `Contains` against their own `Read` once both replicas stabilize them:\n{}",
-            disagree.len(),
-            disagree.join("\n")
+            split.first().map(String::as_str).unwrap_or("")
         );
     }
 
-    /// Every ordered pair of operation lists of length at most two over the
-    /// five operations the two enumerations above run.
-    fn pairs() -> Vec<(Vec<RWSet<&'static str>>, Vec<RWSet<&'static str>>)> {
+    type UpdateList = Vec<SetUpdate<&'static str>>;
+
+    fn concurrent_pairs() -> Vec<(UpdateList, UpdateList)> {
         let alphabet = [
-            RWSet::Add("alpha"),
-            RWSet::Remove("alpha"),
-            RWSet::Add("beta"),
-            RWSet::Remove("beta"),
-            RWSet::Clear,
+            SetUpdate::Add("alpha"),
+            SetUpdate::Remove("alpha"),
+            SetUpdate::Add("beta"),
+            SetUpdate::Remove("beta"),
+            SetUpdate::Clear,
         ];
-        let mut lists: Vec<Vec<RWSet<&str>>> = vec![Vec::new()];
+        let mut lists: Vec<Vec<SetUpdate<&str>>> = vec![Vec::new()];
         for one in &alphabet {
             lists.push(vec![one.clone()]);
             for two in &alphabet {
@@ -699,22 +616,20 @@ mod tests {
     #[ignore]
     fn fuzz_rw_set() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.4, 4, 10, None, None, false, false);
-        let runs = vec![run.clone(); 10_000];
+        let run = RunConfig::new(ChurnConfig::new(0.4, 0.6), 4, 10, None, None);
+        let runs = vec![run; 10_000];
 
-        let config = FuzzerConfig::<VecLog<RWSet<String>>, Read<HashSet<String>>>::new(
+        let config = FuzzerConfig::<VecLog<RWSet<String>>, Read<FxHashSet<String>>>::new(
             "rw_set",
             runs,
-            true,
             Predicate::new(Read::new(), |a, b| a == b),
-            false,
         );
 
-        fuzzer::<VecLog<RWSet<String>>, Read<HashSet<String>>>(config);
+        fuzzer::<VecLog<RWSet<String>>, Read<FxHashSet<String>>>(config);
     }
 }

@@ -19,6 +19,9 @@
 //! nice -n 10 cargo test -j 2 -p moirai-network --test nw15_default_tcp
 //! ```
 
+#[path = "ec03c/side.rs"]
+mod side;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
@@ -27,9 +30,9 @@ use std::time::Duration;
 use moirai_crdt::set::aw_set::AWSet;
 use moirai_network::generic::Node;
 use moirai_network::HashMap;
-use moirai_protocol::log_id::LogId;
 use moirai_protocol::state::po_log::VecLog;
 use serde_json::{json, Value};
+use side::LogId;
 
 #[test]
 fn with_moirai_transport_unset_a_node_speaks_newline_json_over_tcp() {

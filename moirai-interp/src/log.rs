@@ -79,7 +79,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use moirai_protocol::{
-    clock::version_vector::Version,
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
     event::Event,
     replica::{ReplicaId, ReplicaIdx},
     state::{effect_context::EffectContext, log::IsLog},
@@ -95,65 +95,6 @@ use crate::leaf::LeafOp;
 use crate::node::{At, Ctx, Emit, Mode, Node, Refusal, Shaped, Site, Target, apply, check};
 use crate::op::{InstanceOp, MapOp, ModelOp, OptOp, SeqOp};
 use crate::rebase::{Revision, Translated};
-
-// Replica names also occur outside event resolvers in transferred migration
-// bookkeeping. Validate those fields without interpreting model ids or links.
-#[cfg(feature = "serde")]
-mod replica_ids {
-    use super::BTreeMap;
-    use moirai_protocol::replica::validate_replica_id;
-    use serde::{Deserialize, Deserializer, de::Error};
-
-    fn check<E: Error>(ids: impl IntoIterator<Item = impl AsRef<str>>) -> Result<(), E> {
-        for id in ids {
-            validate_replica_id(id.as_ref()).map_err(E::custom)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn versions<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<BTreeMap<String, u64>, D::Error> {
-        let value = BTreeMap::<String, u64>::deserialize(d)?;
-        check(value.keys())?;
-        Ok(value)
-    }
-
-    pub(super) fn rows<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<BTreeMap<String, BTreeMap<String, u64>>, D::Error> {
-        let value = BTreeMap::<String, BTreeMap<String, u64>>::deserialize(d)?;
-        check(value.keys())?;
-        for row in value.values() {
-            check(row.keys())?;
-        }
-        Ok(value)
-    }
-
-    pub(super) fn migration<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Option<(String, u64)>, D::Error> {
-        let value = Option::<(String, u64)>::deserialize(d)?;
-        check(value.iter().map(|(id, _)| id))?;
-        Ok(value)
-    }
-
-    pub(super) fn discarded<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Vec<(String, u64)>, D::Error> {
-        let value = Vec::<(String, u64)>::deserialize(d)?;
-        check(value.iter().map(|(id, _)| id))?;
-        Ok(value)
-    }
-
-    pub(super) fn dropped<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Vec<(String, u64, String)>, D::Error> {
-        let value = Vec::<(String, u64, String)>::deserialize(d)?;
-        check(value.iter().map(|(id, _, _)| id))?;
-        Ok(value)
-    }
-}
 
 /// What a model says it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,7 +124,6 @@ pub struct ModelLog {
     /// The descriptor the log was opened with, once a rebase has put the
     /// model under another; `None` while `descriptor` is still that one.
     /// What a node checks the key a model was joined under against (SI.14).
-    #[cfg_attr(feature = "serde", serde(default))]
     opened: Option<String>,
     root: Node,
     unresolved: u64,
@@ -191,38 +131,29 @@ pub struct ModelLog {
     /// id. Causal delivery takes each origin's events in order, so this is
     /// the set of events this replica has delivered, and what the events a
     /// cut had not seen are counted against.
-    #[cfg_attr(feature = "serde", serde(default))]
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     delivered: BTreeMap<String, u64>,
     /// The cut this replica keeps, once it has delivered one: of every cut
     /// it delivered, the one [`Cut::outranks`] puts first (SI.13, D3).
-    #[cfg_attr(feature = "serde", serde(default))]
     cut: Option<Cut>,
     /// The successors of every other cut this replica delivered, sorted and
     /// each once, so that replicas that delivered the same cuts list the
     /// same array whatever order they set them aside in.
-    #[cfg_attr(feature = "serde", serde(default))]
     superseded: Vec<String>,
     /// Every rebase this replica delivered (SI.14), by origin and sequence
     /// number, so that replicas that delivered the same rebases hold the
     /// same list whatever order they delivered them in.
-    #[cfg_attr(feature = "serde", serde(default))]
     rebases: Vec<Rebase>,
     /// The rebase whose revision `sem`, `header`, `descriptor` and `root`
     /// are under, by origin and sequence number; `None` while they are under
     /// the descriptor the model was opened with.
-    #[cfg_attr(feature = "serde", serde(default))]
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::migration"))]
     in_force: Option<(String, u64)>,
     /// The model under the descriptor the rebase in force replaced, kept
     /// until every member has delivered the rebase (SI.14, M23): what the
     /// operations written under that descriptor concurrently with the rebase
     /// are applied to before they are translated, and what another rebase
     /// that outranks this one is mapped from.
-    #[cfg_attr(feature = "serde", serde(default))]
     held: Option<Box<Form>>,
     /// What the rebase in force hid, dropped and discarded (M20, M22).
-    #[cfg_attr(feature = "serde", serde(default))]
     report: Report,
     /// The instance operations delivered and not yet causally stable, with
     /// their causal past: a rebase delivered later lists those written
@@ -244,18 +175,11 @@ pub struct ModelLog {
     /// the causal past of the events delivered from that member: the
     /// replica's matrix-clock row of the member, as its deliveries set it,
     /// which says whom a rebase still waits for (SI.14, R3).
-    #[cfg_attr(feature = "serde", serde(default))]
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::rows"))]
     heard: BTreeMap<String, BTreeMap<String, u64>>,
     /// The members of the log, sorted, as the delivered events' member table
-    /// names them, or as the hosting replica's does once it has adopted a
-    /// donor's state ([`IsLog::adopted_from`]).
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// names them.
     members: Vec<String>,
-    /// This replica, as the replica hosting the log names itself
-    /// ([`IsLog::hosted_by`]) when it is bootstrapped and when it adopts a
-    /// donor's state. Not read off the member table: an adoption rebuilds that
-    /// in the donor's order, donor first (SI.14, round 3).
+    /// This replica, named by its host independently of the member table order.
     #[cfg_attr(feature = "serde", serde(skip))]
     me: Option<String>,
     /// How many times the descriptor in force changed here: a node watches
@@ -284,25 +208,16 @@ struct Form {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Rebase {
     /// The replica that wrote it, and its sequence number there.
-    #[cfg_attr(
-        feature = "serde",
-        serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")
-    )]
     origin: String,
     seq: u64,
     /// Its Lamport stamp, the sum of its version, as a cut's (M22).
     stamp: u64,
     /// Its causal past, as the greatest sequence number per origin: its
     /// version, the base it is defined by (R1).
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     seen: BTreeMap<String, u64>,
     /// The rebase in force for its writer when it wrote it, which its
     /// revision is a revision of: `None` for the descriptor the model was
     /// opened with.
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, deserialize_with = "replica_ids::migration")
-    )]
     under: Option<(String, u64)>,
     /// The revision's digest, its text, and its table.
     to: String,
@@ -310,7 +225,6 @@ struct Rebase {
     sem: Arc<MetamodelSemantics>,
     /// What its writer's read served at its version that the revision's
     /// does not, as the operation carries it ([`ModelOp::Rebase`]).
-    #[cfg_attr(feature = "serde", serde(default))]
     hidden: Vec<String>,
 }
 
@@ -336,10 +250,8 @@ struct Report {
     /// The operations written concurrently under the old descriptor whose
     /// path reaches a removed class or feature, by origin, sequence number
     /// and the first removed name on the path.
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::dropped"))]
     dropped: Vec<(String, u64, String)>,
     /// The operations written under a migration that does not stand.
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::discarded"))]
     discarded: Vec<(String, u64)>,
 }
 
@@ -403,22 +315,17 @@ fn within(seen: &BTreeMap<String, u64>, origin: &str, seq: u64) -> bool {
 struct Cut {
     to: String,
     /// The cut's causal past, as the greatest sequence number per origin.
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "replica_ids::versions"))]
     seen: BTreeMap<String, u64>,
+    /// Served by `model_node` once the model is cut (EC.03c).
+    #[allow(dead_code)]
     identified: Value,
     plain: Value,
     /// The replica that wrote the cut.
-    #[cfg_attr(
-        feature = "serde",
-        serde(deserialize_with = "moirai_protocol::replica::deserialize_replica_id")
-    )]
     origin: String,
     /// Its sequence number at that replica.
-    #[cfg_attr(feature = "serde", serde(default))]
     seq: u64,
     /// Its Lamport stamp: the sum of its version, which is the number of
     /// events of the model in its causal past, itself included.
-    #[cfg_attr(feature = "serde", serde(default))]
     stamp: u64,
 }
 
@@ -751,7 +658,7 @@ impl ModelLog {
     fn note_delivered(&mut self, event: &Event<ModelOp>) {
         let id = event.id();
         let seq = id.seq() as u64;
-        match self.delivered.get_mut(id.origin_id()) {
+        match self.delivered.get_mut(id.origin_id().as_ref()) {
             Some(last) => *last = (*last).max(seq),
             None => {
                 self.delivered.insert(id.origin_id().to_string(), seq);
@@ -815,7 +722,7 @@ impl ModelLog {
         let resolver = version.resolver();
         if self.members.len() != resolver.len() {
             self.members = (0..resolver.len())
-                .filter_map(|idx| resolver.resolve(ReplicaIdx(idx)).map(str::to_string))
+                .filter_map(|idx| resolver.resolve(ReplicaIdx(idx)).map(ToString::to_string))
                 .collect();
             self.members.sort_unstable();
         }
@@ -828,7 +735,7 @@ impl ModelLog {
                 continue;
             };
             let seq = seq as u64;
-            match row.get_mut(origin) {
+            match row.get_mut(origin.as_ref()) {
                 Some(last) => *last = (*last).max(seq),
                 None => {
                     row.insert(origin.to_string(), seq);
@@ -1296,7 +1203,7 @@ fn parse(descriptor: &str) -> Result<MetamodelSemantics, Refusal> {
 
 impl IsLog for ModelLog {
     type Command = ModelOp;
-    type Op = ModelOp;
+    type Update = ModelOp;
     /// The sentence [`ModelLog::refusal`] already produced. Moirai v0.6 gives
     /// `IsLog` a rejection type, and this log had one before the trait did:
     /// the structural check of criterion I-A9 names the class or the feature
@@ -1304,44 +1211,38 @@ impl IsLog for ModelLog {
     /// bare `None`.
     type Rejection = Refusal;
 
-    fn hosted_by(&mut self, replica: &ReplicaId) {
-        self.me = Some(replica.to_string());
+    fn hosted_by(&mut self, id: &ReplicaId) {
+        self.me = Some(id.to_string());
     }
 
-    /// Rebuild what a joiner by state transfer keeps of its own and the
-    /// donor's log does not carry (SI.16): the members, as the hosting
-    /// replica's member table names them after the adoption; the donor's row,
-    /// everything the donor delivered, as the matrix clock the replica
-    /// adopted holds it (its R2), so the donor is heard to deliver whatever
-    /// its state holds; and one change of the descriptor in force when that
-    /// state is under a rebase's revision, so that a node serving the model
-    /// moves its binding off the descriptor the log was opened with.
-    fn adopted_from(&mut self, donor: &ReplicaId, members: &[String]) {
-        let mut members = members.to_vec();
-        members.sort_unstable();
-        members.dedup();
-        self.members = members;
-        let row = self.heard.entry(donor.to_string()).or_default();
-        for (origin, seq) in &self.delivered {
-            let last = row.entry(origin.clone()).or_default();
-            *last = (*last).max(*seq);
+    fn adopted_from(&mut self, donor: &Version) {
+        self.members = donor
+            .resolver()
+            .into_vec()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        self.members.sort_unstable();
+        self.heard
+            .insert(donor.origin_id().to_string(), seen(donor));
+        self.root.adopted_from(donor);
+        if let Some(held) = self.held.as_deref_mut() {
+            held.root.adopted_from(donor);
         }
-        if self.in_force.is_some() {
-            self.generation += 1;
-        }
+        self.generation = u64::from(self.in_force.is_some());
         self.close_window();
     }
 
-    fn prepare(&self, command: Self::Command) -> Self::Op {
+    fn prepare(&self, command: Self::Command) -> Self::Update {
         command
     }
 
-    fn is_enabled(&self, op: &Self::Op) -> Result<(), Self::Rejection> {
+    fn is_enabled(&self, op: &Self::Update) -> Result<(), Self::Rejection> {
         self.refusal(op)
     }
 
     #[allow(unused_variables)]
-    fn effect(&mut self, event: Event<Self::Op>, ctx: &mut EffectContext<'_>) {
+    fn effect(&mut self, event: Event<Self::Update>, ctx: &mut EffectContext<'_>) {
         #[cfg(feature = "sink")]
         let path = ctx.path().clone();
         #[cfg(feature = "sink")]
@@ -1426,7 +1327,7 @@ impl IsLog for ModelLog {
                 }
             }
             ModelOp::Instance(op) => {
-                let op = match resolve_own(op, event.id().origin_id()) {
+                let op = match resolve_own(op, event.id().origin_id().as_ref()) {
                     Some(resolved) => Cow::Owned(resolved),
                     None => Cow::Borrowed(op),
                 };
@@ -1436,13 +1337,14 @@ impl IsLog for ModelLog {
         self.close_window();
     }
 
-    fn stabilize(&mut self, version: &Version) {
-        self.root.stabilize(version);
+    fn stabilize(&mut self, frontier: &CausalFrontier) {
+        self.root.stabilize(frontier);
         if let Some(held) = self.held.as_deref_mut() {
-            held.root.stabilize(version);
+            held.root.stabilize(frontier);
         }
         if !self.pending.is_empty() {
-            let stable = seen(version);
+            // `seen` reads the entries and the member table, not the origin.
+            let stable = seen(&Version::from((frontier, ReplicaIdx(0))));
             self.pending
                 .retain(|pending| !within(&stable, &pending.origin, pending.seq));
         }
@@ -1469,7 +1371,6 @@ mod tests {
 
     use moirai_protocol::{
         broadcast::tcsb::Tcsb,
-        log_id::LogId,
         replica::{IsReplica, Replica},
         state::log::IsLog,
     };
@@ -1770,7 +1671,7 @@ mod tests {
 
         // Take a well-formed `Install` of the other metamodel and deliver it
         // to a log that already holds one.
-        let (mut e, _f) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+        let (mut e, _f) = moirai_crdt::utils::bootstrap::twins_log::<ModelLog>();
         let other_install = e.send(install("m1", &mini_descriptor())).unwrap();
 
         let mut log = a.state().clone();
@@ -1793,7 +1694,7 @@ mod tests {
 
         // Two replicas opening one log at once is the only way this happens,
         // and both of them installed the same bytes.
-        let (mut e, _f) = moirai_crdt::utils::membership::twins_log::<ModelLog>();
+        let (mut e, _f) = moirai_crdt::utils::bootstrap::twins_log::<ModelLog>();
         let event = e.send(install("m1", &descriptor)).unwrap();
         let mut log = a.state().clone();
         deliver(&mut log, event.event().clone());
@@ -1808,11 +1709,8 @@ mod tests {
         // event id that crosses between them is re-indexed on arrival, and a
         // recursion that skipped a level would land a list child on the wrong
         // object.
-        let log_id = LogId::generate();
-        let mut a: Replica<ModelLog, Tcsb<ModelOp>> =
-            Replica::bootstrap_with_log_id("a".to_string(), &["a", "b"], log_id.clone());
-        let mut b: Replica<ModelLog, Tcsb<ModelOp>> =
-            Replica::bootstrap_with_log_id("b".to_string(), &["b", "a"], log_id);
+        let mut a: Replica<ModelLog, Tcsb<ModelOp>> = Replica::bootstrap("a".into(), &["a", "b"]);
+        let mut b: Replica<ModelLog, Tcsb<ModelOp>> = Replica::bootstrap("b".into(), &["b", "a"]);
 
         let event = a.send(install("m1", &bt_descriptor())).unwrap();
         b.receive(event);
@@ -1845,11 +1743,8 @@ mod tests {
         // different `ReplicaIdx`es. `EventId` compares by origin *name* and
         // sequence number (`event/id.rs:100-103`), which is what makes one
         // birth identity mean one object on both.
-        let log_id = LogId::generate();
-        let mut a: Replica<ModelLog, Tcsb<ModelOp>> =
-            Replica::bootstrap_with_log_id("a".to_string(), &["a", "b"], log_id.clone());
-        let mut b: Replica<ModelLog, Tcsb<ModelOp>> =
-            Replica::bootstrap_with_log_id("b".to_string(), &["b", "a"], log_id);
+        let mut a: Replica<ModelLog, Tcsb<ModelOp>> = Replica::bootstrap("a".into(), &["a", "b"]);
+        let mut b: Replica<ModelLog, Tcsb<ModelOp>> = Replica::bootstrap("b".into(), &["b", "a"]);
 
         let event = a.send(install("m1", &bt_descriptor())).unwrap();
         b.receive(event);

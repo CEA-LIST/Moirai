@@ -18,7 +18,7 @@ use petgraph::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HashMap, HashSet,
+    FxHashMap, FxHashSet,
     flag::ew_flag::EWFlag,
     graph::uw_multidigraph::{Content, UWGraphLog},
     map::uw_map::UWMapLog,
@@ -26,8 +26,8 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum RelationType {
     Extends,
     Implements,
@@ -37,13 +37,13 @@ pub enum RelationType {
 }
 
 impl RelationType {
-    fn rank(&self) -> u8 {
+    const fn rank(&self) -> u8 {
         match self {
-            RelationType::Associates => 0,
-            RelationType::Aggregates => 1,
-            RelationType::Composes => 2,
-            RelationType::Implements => 3,
-            RelationType::Extends => 4,
+            Self::Associates => 0,
+            Self::Aggregates => 1,
+            Self::Composes => 2,
+            Self::Implements => 3,
+            Self::Extends => 4,
         }
     }
 }
@@ -61,8 +61,8 @@ impl Ord for RelationType {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PrimitiveType {
     String,
     Number,
@@ -71,8 +71,8 @@ pub enum PrimitiveType {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Class(String),
@@ -80,13 +80,13 @@ pub enum TypeRef {
 
 impl Default for TypeRef {
     fn default() -> Self {
-        TypeRef::Primitive(PrimitiveType::Void)
+        Self::Primitive(PrimitiveType::Void)
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Visibility {
     Public,
     Private,
@@ -95,12 +95,12 @@ pub enum Visibility {
 }
 
 impl Visibility {
-    fn rank(&self) -> u8 {
+    const fn rank(&self) -> u8 {
         match self {
-            Visibility::Public => 0,
-            Visibility::Protected => 1,
-            Visibility::Package => 2,
-            Visibility::Private => 3,
+            Self::Public => 0,
+            Self::Protected => 1,
+            Self::Package => 2,
+            Self::Private => 3,
         }
     }
 }
@@ -119,8 +119,8 @@ impl Ord for Visibility {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Multiplicity {
     Unspecified,
     One,
@@ -135,17 +135,17 @@ pub enum Multiplicity {
 
 impl Multiplicity {
     /// Ranking for total order from most to least constrained
-    fn rank(&self) -> u8 {
+    const fn rank(&self) -> u8 {
         match self {
-            Multiplicity::Exactly(_) => 8,
-            Multiplicity::One => 7,
-            Multiplicity::ZeroOrOne => 6,
-            Multiplicity::OneToMany(_) => 5,
-            Multiplicity::ZeroToMany(_) => 4,
-            Multiplicity::ManyToMany(_, _) => 3,
-            Multiplicity::OneOrMany => 2,
-            Multiplicity::ZeroOrMany => 1,
-            Multiplicity::Unspecified => 0,
+            Self::Exactly(_) => 8,
+            Self::One => 7,
+            Self::ZeroOrOne => 6,
+            Self::OneToMany(_) => 5,
+            Self::ZeroToMany(_) => 4,
+            Self::ManyToMany(_, _) => 3,
+            Self::OneOrMany => 2,
+            Self::ZeroOrMany => 1,
+            Self::Unspecified => 0,
         }
     }
 }
@@ -165,10 +165,10 @@ impl Ord for Multiplicity {
         }
 
         match (self, other) {
-            (Multiplicity::Exactly(a), Multiplicity::Exactly(b)) => a.cmp(b),
-            (Multiplicity::OneToMany(a), Multiplicity::OneToMany(b)) => a.cmp(b),
-            (Multiplicity::ZeroToMany(a), Multiplicity::ZeroToMany(b)) => a.cmp(b),
-            (Multiplicity::ManyToMany(a_min, a_max), Multiplicity::ManyToMany(b_min, b_max)) => {
+            (Self::Exactly(a), Self::Exactly(b)) => a.cmp(b),
+            (Self::OneToMany(a), Self::OneToMany(b)) => a.cmp(b),
+            (Self::ZeroToMany(a), Self::ZeroToMany(b)) => a.cmp(b),
+            (Self::ManyToMany(a_min, a_max), Self::ManyToMany(b_min, b_max)) => {
                 match a_min.cmp(b_min) {
                     Ordering::Equal => a_max.cmp(b_max),
                     other => other,
@@ -209,17 +209,21 @@ record!(Relation {
     typ: VecLog::<TORegister::<RelationType>>,
 });
 
-pub type FeatureSnapshot = FeatureValue<HashSet<PrimitiveType>, Option<Visibility>>;
-pub type OperationSnapshot =
-    OperationValue<bool, Option<Visibility>, HashMap<String, HashSet<TypeRef>>, HashSet<TypeRef>>;
+pub type FeatureSnapshot = FeatureValue<FxHashSet<PrimitiveType>, Option<Visibility>>;
+pub type OperationSnapshot = OperationValue<
+    bool,
+    Option<Visibility>,
+    FxHashMap<String, FxHashSet<TypeRef>>,
+    FxHashSet<TypeRef>,
+>;
 pub type ClassSnapshot = ClassValue<
     bool,
-    HashSet<String>,
-    HashMap<String, FeatureSnapshot>,
-    HashMap<String, OperationSnapshot>,
+    FxHashSet<String>,
+    FxHashMap<String, FeatureSnapshot>,
+    FxHashMap<String, OperationSnapshot>,
 >;
 pub type EndsSnapshot = EndsValue<Option<Multiplicity>, Option<Multiplicity>>;
-pub type RelationSnapshot = RelationValue<EndsSnapshot, HashSet<String>, Option<RelationType>>;
+pub type RelationSnapshot = RelationValue<EndsSnapshot, FxHashSet<String>, Option<RelationType>>;
 
 pub type ClassDiagramCrdt<'a> = UWGraphLog<&'a str, &'a str, ClassLog, RelationLog>;
 pub type ClassDiagram<'a> = DiGraph<
@@ -257,18 +261,10 @@ fn edge_attr(
     let rtype = &edge.weight().val.typ;
 
     let source = &edge.weight().val.ends.source;
-    let multiplicity_from = if let Some(s) = source {
-        format_mult(s)
-    } else {
-        "".to_string()
-    };
+    let multiplicity_from = source.as_ref().map_or_else(|| "".to_string(), format_mult);
     let target = &edge.weight().val.ends.target;
 
-    let multiplicity_to = if let Some(t) = target {
-        format_mult(t)
-    } else {
-        "".to_string()
-    };
+    let multiplicity_to = target.as_ref().map_or_else(|| "".to_string(), format_mult);
 
     let (head, style) = match rtype {
         Some(RelationType::Extends) => ("empty", "normal"),
@@ -320,7 +316,7 @@ fn format_node_name(class: &ClassSnapshot, name_vec: &[String]) -> String {
     format!("{prefix}{name_str}")
 }
 
-fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
+fn format_features(features: &FxHashMap<String, FeatureSnapshot>) -> String {
     features
         .iter()
         .map(|(k, v)| {
@@ -344,7 +340,10 @@ fn format_features(features: &HashMap<String, FeatureSnapshot>) -> String {
         .join("\\l")
 }
 
-fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationSnapshot>) -> String {
+fn format_operations(
+    g: &ClassDiagram,
+    operations: &FxHashMap<String, OperationSnapshot>,
+) -> String {
     operations
         .iter()
         .map(|(k, v)| {
@@ -411,7 +410,6 @@ fn format_operations(g: &ClassDiagram, operations: &HashMap<String, OperationSna
 
 #[cfg(test)]
 mod tests {
-
     // @startuml
     // abstract class EnergyGenerator {
     //     + {abstract} getEnergyOutput(): Number
@@ -463,7 +461,6 @@ mod tests {
     // Manufacturer "1" --> "0..*" WindTurbine : owns
     // Manufacturer "1..*" --> "0..*" WindTurbine : repairs
     // @enduml
-
     use moirai_protocol::{
         broadcast::tcsb::Tcsb,
         crdt::query::Read,
@@ -471,329 +468,335 @@ mod tests {
     };
 
     use crate::{
-        flag::ew_flag::EWFlag,
-        graph::uw_multidigraph::{UWGraph, UWGraphLog},
-        map::uw_map::UWMap,
+        flag::update::FlagUpdate,
+        graph::{update::LabelledMultidigraphUpdate, uw_multidigraph::UWGraphLog},
+        map::update::MapUpdate,
         model::class_diagram::{
             Class, ClassDiagramCrdt, ClassLog, Ends, Feature, Multiplicity, Operation,
             PrimitiveType, Relation, RelationLog, RelationType, TypeRef, Visibility,
             export_fancy_class_diagram,
         },
-        register::{mv_register::MVRegister, to_register::TORegister},
-        utils::membership::twins_log,
+        register::update::RegisterUpdate,
+        utils::bootstrap::twins_log,
     };
 
-    fn wind_turbine_diagram() -> (
-        Replica<
-            UWGraphLog<&'static str, &'static str, ClassLog, RelationLog>,
-            Tcsb<UWGraph<&'static str, &'static str, Class, Relation>>,
-        >,
-        Replica<
-            UWGraphLog<&'static str, &'static str, ClassLog, RelationLog>,
-            Tcsb<UWGraph<&'static str, &'static str, Class, Relation>>,
-        >,
-    ) {
+    type WindTurbineReplica = Replica<
+        UWGraphLog<&'static str, &'static str, ClassLog, RelationLog>,
+        Tcsb<LabelledMultidigraphUpdate<&'static str, &'static str, Class, Relation>>,
+    >;
+
+    fn wind_turbine_diagram() -> (WindTurbineReplica, WindTurbineReplica) {
         let (mut replica_a, mut replica_b) = twins_log::<ClassDiagramCrdt>();
 
         // WindTurbine class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "wt",
-            child: Class::Name(MVRegister::Write("WindTurbine".to_string())),
+            child: Class::Name(RegisterUpdate::Write("WindTurbine".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "wt",
-            child: Class::Operations(UWMap::Update(
+            child: Class::Operations(MapUpdate::Update(
                 "start".to_string(),
-                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
+                Operation::ReturnType(RegisterUpdate::Write(TypeRef::Primitive(
+                    PrimitiveType::Void,
+                ))),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "wt",
-            child: Class::Operations(UWMap::Update(
+            child: Class::Operations(MapUpdate::Update(
                 "shutdown".to_string(),
-                Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(PrimitiveType::Void))),
+                Operation::ReturnType(RegisterUpdate::Write(TypeRef::Primitive(
+                    PrimitiveType::Void,
+                ))),
             )),
         });
         // EnergyGenerator class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "eg",
-            child: Class::Name(MVRegister::Write("EnergyGenerator".to_string())),
+            child: Class::Name(RegisterUpdate::Write("EnergyGenerator".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "eg",
-            child: Class::Operations(UWMap::Update(
+            child: Class::Operations(MapUpdate::Update(
                 "getEnergyOutput".to_string(),
-                Operation::ReturnType(MVRegister::Write(TypeRef::Class("wt".to_string()))),
+                Operation::ReturnType(RegisterUpdate::Write(TypeRef::Class("wt".to_string()))),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "eg",
-            child: Class::Operations(UWMap::Update(
+            child: Class::Operations(MapUpdate::Update(
                 "getEnergyOutput".to_string(),
-                Operation::IsAbstract(EWFlag::Enable),
+                Operation::IsAbstract(FlagUpdate::Enable),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "eg",
-            child: Class::IsAbstract(EWFlag::Enable),
+            child: Class::IsAbstract(FlagUpdate::Enable),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "wt",
             target: "eg",
             id: "ext",
-            child: Relation::Typ(TORegister::Write(RelationType::Extends)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Extends)),
         });
 
         // Rotor class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "rotor",
-            child: Class::Name(MVRegister::Write("Rotor".to_string())),
+            child: Class::Name(RegisterUpdate::Write("Rotor".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "rotor",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "diameter".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "rotor",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "maxRpm".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "rotor",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "maxRpm".to_string(),
-                Feature::Visibility(TORegister::Write(Visibility::Private)),
+                Feature::Visibility(RegisterUpdate::Write(Visibility::Private)),
             )),
         });
         // Blade class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "blade",
-            child: Class::Name(MVRegister::Write("Blade".to_string())),
+            child: Class::Name(RegisterUpdate::Write("Blade".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "blade",
             target: "rotor",
             id: "comprises",
-            child: Relation::Typ(TORegister::Write(RelationType::Composes)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Composes)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "blade",
             target: "rotor",
             id: "comprises",
-            child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+            child: Relation::Ends(Ends::Source(RegisterUpdate::Write(Multiplicity::One))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "blade",
             target: "rotor",
             id: "comprises",
-            child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::Exactly(3)))),
+            child: Relation::Ends(Ends::Target(RegisterUpdate::Write(Multiplicity::Exactly(
+                3,
+            )))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "blade",
             target: "rotor",
             id: "comprises",
-            child: Relation::Label(MVRegister::Write("comprises".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("comprises".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "rotor",
             target: "wt",
             id: "hasRotor",
-            child: Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Aggregates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "rotor",
             target: "wt",
             id: "hasRotor",
-            child: Relation::Label(MVRegister::Write("hasRotor".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("hasRotor".to_string())),
         });
         // Tower class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "tower",
-            child: Class::Name(MVRegister::Write("Tower".to_string())),
+            child: Class::Name(RegisterUpdate::Write("Tower".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "tower",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "heightM".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "tower",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "material".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::String)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "tower",
             target: "wt",
             id: "mountedOn",
-            child: Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Aggregates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "tower",
             target: "wt",
             id: "mountedOn",
-            child: Relation::Label(MVRegister::Write("mountedOn".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("mountedOn".to_string())),
         });
         // Nacelle class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "nacelle",
-            child: Class::Name(MVRegister::Write("Nacelle".to_string())),
+            child: Class::Name(RegisterUpdate::Write("Nacelle".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "nacelle",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "weightTons".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "nacelle",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "internalTempC".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "nacelle",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "internalTempC".to_string(),
-                Feature::Visibility(TORegister::Write(Visibility::Private)),
+                Feature::Visibility(RegisterUpdate::Write(Visibility::Private)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "nacelle",
             target: "wt",
             id: "hasNacelle",
-            child: Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Aggregates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "nacelle",
             target: "wt",
             id: "hasNacelle",
-            child: Relation::Label(MVRegister::Write("hasNacelle".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("hasNacelle".to_string())),
         });
         // EnergyGrid class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "energy_grid",
-            child: Class::Name(MVRegister::Write("EnergyGrid".to_string())),
+            child: Class::Name(RegisterUpdate::Write("EnergyGrid".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "energy_grid",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "gridName".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::String)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "energy_grid",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "capacityMW".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "eg",
             target: "energy_grid",
             id: "feedsInto",
-            child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "eg",
             target: "energy_grid",
             id: "feedsInto",
-            child: Relation::Label(MVRegister::Write("feedsInto".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("feedsInto".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "eg",
             target: "energy_grid",
             id: "feedsInto",
-            child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+            child: Relation::Ends(Ends::Source(RegisterUpdate::Write(Multiplicity::OneOrMany))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "eg",
             target: "energy_grid",
             id: "feedsInto",
-            child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+            child: Relation::Ends(Ends::Target(RegisterUpdate::Write(Multiplicity::One))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "energy_grid",
             target: "energy_grid",
             id: "connectedTo",
-            child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "energy_grid",
             target: "energy_grid",
             id: "connectedTo",
-            child: Relation::Label(MVRegister::Write("connectedTo".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("connectedTo".to_string())),
         });
         // Manufacturer class
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "manufacturer",
-            child: Class::Name(MVRegister::Write("Manufacturer".to_string())),
+            child: Class::Name(RegisterUpdate::Write("Manufacturer".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateVertex {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateVertex {
             id: "manufacturer",
-            child: Class::Features(UWMap::Update(
+            child: Class::Features(MapUpdate::Update(
                 "name".to_string(),
-                Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                Feature::Typ(RegisterUpdate::Write(PrimitiveType::String)),
             )),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "owns",
-            child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "owns",
-            child: Relation::Label(MVRegister::Write("owns".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("owns".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "owns",
-            child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::One))),
+            child: Relation::Ends(Ends::Source(RegisterUpdate::Write(Multiplicity::One))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "owns",
-            child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+            child: Relation::Ends(Ends::Target(RegisterUpdate::Write(
+                Multiplicity::ZeroOrMany,
+            ))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "repairs",
-            child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+            child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "repairs",
-            child: Relation::Label(MVRegister::Write("repairs".to_string())),
+            child: Relation::Label(RegisterUpdate::Write("repairs".to_string())),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "repairs",
-            child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneOrMany))),
+            child: Relation::Ends(Ends::Source(RegisterUpdate::Write(Multiplicity::OneOrMany))),
         });
-        let _ = replica_a.send(UWGraph::UpdateArc {
+        let _ = replica_a.send(LabelledMultidigraphUpdate::UpdateArc {
             source: "manufacturer",
             target: "wt",
             id: "repairs",
-            child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::ZeroOrMany))),
+            child: Relation::Ends(Ends::Target(RegisterUpdate::Write(
+                Multiplicity::ZeroOrMany,
+            ))),
         });
 
         let batch = replica_a.pull(replica_b.since());
@@ -819,15 +822,15 @@ mod tests {
         let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "wt",
-                child: Class::Name(MVRegister::Write("WindGenerator".to_string())),
+                child: Class::Name(RegisterUpdate::Write("WindGenerator".to_string())),
             })
             .unwrap();
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "wt",
-                child: Class::Name(MVRegister::Write("WindTurbineGenerator".to_string())),
+                child: Class::Name(RegisterUpdate::Write("WindTurbineGenerator".to_string())),
             })
             .unwrap();
         // Deliver events
@@ -847,7 +850,9 @@ mod tests {
         let (mut replica_a, mut replica_b) = wind_turbine_diagram();
 
         // A removes the class
-        let event_a = replica_a.send(UWGraph::RemoveVertex { id: "wt" }).unwrap();
+        let event_a = replica_a
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "wt" })
+            .unwrap();
 
         println!(
             "Class Diagram A: {}",
@@ -856,9 +861,9 @@ mod tests {
 
         // B updates the class name
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "wt",
-                child: Class::Name(MVRegister::Write("WindGenerator".to_string())),
+                child: Class::Name(RegisterUpdate::Write("WindGenerator".to_string())),
             })
             .unwrap();
 
@@ -886,7 +891,7 @@ mod tests {
 
         // A removes the class
         let event_a = replica_a
-            .send(UWGraph::RemoveArc {
+            .send(LabelledMultidigraphUpdate::RemoveArc {
                 source: "eg",
                 target: "energy_grid",
                 id: "feedsInto",
@@ -900,11 +905,13 @@ mod tests {
 
         // B updates the class name
         let event_b = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "eg",
                 target: "energy_grid",
                 id: "feedsInto",
-                child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneToMany(2)))),
+                child: Relation::Ends(Ends::Target(RegisterUpdate::Write(
+                    Multiplicity::OneToMany(2),
+                ))),
             })
             .unwrap();
 
@@ -934,39 +941,41 @@ mod tests {
 
         // A removes the class
         let event_a = replica_a
-            .send(UWGraph::RemoveVertex { id: "energy_grid" })
+            .send(LabelledMultidigraphUpdate::RemoveVertex { id: "energy_grid" })
             .unwrap();
 
         let event_b_1 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 id: "operates",
                 source: "energy_grid",
                 target: "manufacturer",
-                child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+                child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
             })
             .unwrap();
         let event_b_2 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 id: "operates",
                 source: "energy_grid",
                 target: "manufacturer",
-                child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
+                child: Relation::Ends(Ends::Source(RegisterUpdate::Write(
+                    Multiplicity::ZeroOrMany,
+                ))),
             })
             .unwrap();
         let event_b_3 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 id: "operates",
                 source: "energy_grid",
                 target: "manufacturer",
-                child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+                child: Relation::Ends(Ends::Target(RegisterUpdate::Write(Multiplicity::One))),
             })
             .unwrap();
         let event_b_4 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 id: "operates",
                 source: "energy_grid",
                 target: "manufacturer",
-                child: Relation::Label(MVRegister::Write("operates".to_string())),
+                child: Relation::Label(RegisterUpdate::Write("operates".to_string())),
             })
             .unwrap();
 
@@ -1004,43 +1013,43 @@ mod tests {
 
         // A updates the feature visibility and type
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "maxRpm".to_string(),
-                    Feature::Visibility(TORegister::Write(Visibility::Public)),
+                    Feature::Visibility(RegisterUpdate::Write(Visibility::Public)),
                 )),
             })
             .unwrap();
         let event_a_2 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "maxRpm".to_string(),
-                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                    Feature::Typ(RegisterUpdate::Write(PrimitiveType::String)),
                 )),
             })
             .unwrap();
         let event_a_3 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "maxRpm".to_string(),
-                    Feature::Typ(MVRegister::Write(PrimitiveType::String)),
+                    Feature::Typ(RegisterUpdate::Write(PrimitiveType::String)),
                 )),
             })
             .unwrap();
         let event_a_4 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Remove("diameter".to_string())),
+                child: Class::Features(MapUpdate::Remove("diameter".to_string())),
             })
             .unwrap();
 
         let event_a_5 = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Name(MVRegister::Write("RotorUnit".to_string())),
+                child: Class::Name(RegisterUpdate::Write("RotorUnit".to_string())),
             })
             .unwrap();
 
@@ -1051,35 +1060,35 @@ mod tests {
 
         // B updates the feature visibility and type
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "maxRpm".to_string(),
-                    Feature::Visibility(TORegister::Write(Visibility::Protected)),
+                    Feature::Visibility(RegisterUpdate::Write(Visibility::Protected)),
                 )),
             })
             .unwrap();
         let event_b_2 = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "maxRpm".to_string(),
-                    Feature::Typ(MVRegister::Write(PrimitiveType::Number)),
+                    Feature::Typ(RegisterUpdate::Write(PrimitiveType::Number)),
                 )),
             })
             .unwrap();
         let event_b_3 = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Name(MVRegister::Write("RotorSystem".to_string())),
+                child: Class::Name(RegisterUpdate::Write("RotorSystem".to_string())),
             })
             .unwrap();
         let event_b_4 = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "rotor",
-                child: Class::Features(UWMap::Update(
+                child: Class::Features(MapUpdate::Update(
                     "diameter".to_string(),
-                    Feature::Visibility(TORegister::Write(Visibility::Private)),
+                    Feature::Visibility(RegisterUpdate::Write(Visibility::Private)),
                 )),
             })
             .unwrap();
@@ -1112,11 +1121,11 @@ mod tests {
 
         // A updates the return type to Boolean
         let event_a = replica_a
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "wt",
-                child: Class::Operations(UWMap::Update(
+                child: Class::Operations(MapUpdate::Update(
                     "start".to_string(),
-                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                    Operation::ReturnType(RegisterUpdate::Write(TypeRef::Primitive(
                         PrimitiveType::Void,
                     ))),
                 )),
@@ -1130,11 +1139,11 @@ mod tests {
 
         // B updates the return type to Number
         let event_b = replica_b
-            .send(UWGraph::UpdateVertex {
+            .send(LabelledMultidigraphUpdate::UpdateVertex {
                 id: "wt",
-                child: Class::Operations(UWMap::Update(
+                child: Class::Operations(MapUpdate::Update(
                     "start".to_string(),
-                    Operation::ReturnType(MVRegister::Write(TypeRef::Primitive(
+                    Operation::ReturnType(RegisterUpdate::Write(TypeRef::Primitive(
                         PrimitiveType::Void,
                     ))),
                 )),
@@ -1165,35 +1174,37 @@ mod tests {
 
         // A updates the relation
         let event_a = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Typ(TORegister::Write(RelationType::Aggregates)),
+                child: Relation::Typ(RegisterUpdate::Write(RelationType::Aggregates)),
             })
             .unwrap();
         let event_a_2 = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::ZeroOrMany))),
+                child: Relation::Ends(Ends::Source(RegisterUpdate::Write(
+                    Multiplicity::ZeroOrMany,
+                ))),
             })
             .unwrap();
         let event_a_3 = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::OneOrMany))),
+                child: Relation::Ends(Ends::Target(RegisterUpdate::Write(Multiplicity::OneOrMany))),
             })
             .unwrap();
         let event_a_4 = replica_a
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Label(MVRegister::Write("employs".to_string())),
+                child: Relation::Label(RegisterUpdate::Write("employs".to_string())),
             })
             .unwrap();
 
@@ -1204,35 +1215,37 @@ mod tests {
 
         // B updates the relation
         let event_b = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Typ(TORegister::Write(RelationType::Associates)),
+                child: Relation::Typ(RegisterUpdate::Write(RelationType::Associates)),
             })
             .unwrap();
         let event_b_2 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Ends(Ends::Source(TORegister::Write(Multiplicity::OneToMany(2)))),
+                child: Relation::Ends(Ends::Source(RegisterUpdate::Write(
+                    Multiplicity::OneToMany(2),
+                ))),
             })
             .unwrap();
         let event_b_3 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Ends(Ends::Target(TORegister::Write(Multiplicity::One))),
+                child: Relation::Ends(Ends::Target(RegisterUpdate::Write(Multiplicity::One))),
             })
             .unwrap();
         let event_b_4 = replica_b
-            .send(UWGraph::UpdateArc {
+            .send(LabelledMultidigraphUpdate::UpdateArc {
                 source: "manufacturer",
                 target: "energy_grid",
                 id: "rel",
-                child: Relation::Label(MVRegister::Write("operates".to_string())),
+                child: Relation::Label(RegisterUpdate::Write("operates".to_string())),
             })
             .unwrap();
 

@@ -13,6 +13,9 @@
 #[path = "nw15_common/zenoh_rig.rs"]
 mod zenoh_rig;
 
+#[path = "ec03c/side.rs"]
+mod side;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,8 +24,8 @@ use std::time::{Duration, Instant};
 use moirai_crdt::set::aw_set::AWSet;
 use moirai_network::generic::Node;
 use moirai_network::HashMap;
-use moirai_protocol::log_id::LogId;
 use moirai_protocol::state::po_log::VecLog;
+use side::LogId;
 use zenoh::sample::{Sample, SampleKind};
 use zenoh::Wait;
 

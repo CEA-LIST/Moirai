@@ -34,7 +34,8 @@
 
 use std::collections::BTreeSet;
 
-use moirai_crdt::utils::membership::triplet_log;
+#[path = "../ec03/side.rs"]
+mod side;
 use moirai_interp::eval::read_identified;
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::testing::{class_slot, feature_slot, install, table};
@@ -45,6 +46,7 @@ use moirai_protocol::crdt::query::Read;
 use moirai_protocol::replica::{IsReplica, Replica};
 use moirai_semantics::{ClassSlot, FeatureSlot, MetamodelSemantics};
 use serde_json::{Value, json};
+use side::triplet_log;
 
 /// The reserved key an element's store identity is served under.
 pub const ID: &str = "__id";

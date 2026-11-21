@@ -3,20 +3,22 @@
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_macros::typed_graph;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FooBarEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BarBazEdge;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FooBazEdge;
 
 typed_graph! {
@@ -49,6 +51,8 @@ typed_graph! {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "fuzz")]
+    use moirai_fuzz::generator::op_generator::OpGenerator;
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
     use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableCore};
@@ -75,7 +79,53 @@ mod tests {
     }
 
     use super::*;
-    use crate::{graph::typed_graph::MyTypedGraph, utils::membership::twins};
+    use crate::{graph::typed_graph::MyTypedGraph, utils::bootstrap::twins};
+
+    #[test]
+    fn update_type_is_shared_across_policies() {
+        use moirai_protocol::crdt::policy::FairPolicy;
+
+        assert_eq!(size_of::<MyTypedGraph<LwwPolicy>>(), 0);
+        assert_eq!(size_of::<MyTypedGraph<FairPolicy>>(), 0);
+
+        let update = MyTypedGraphUpdate::AddVertex {
+            id: MyVertex::Foo(foo(1)),
+        };
+        let (mut lww, _) = twins::<MyTypedGraph<LwwPolicy>>();
+        let (mut fair, _) = twins::<MyTypedGraph<FairPolicy>>();
+        lww.send(update.clone()).unwrap();
+        fair.send(update).unwrap();
+
+        assert_eq!(lww.query(&Read::new()).node_count(), 1);
+        assert_eq!(fair.query(&Read::new()).node_count(), 1);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn updates_round_trip_without_a_policy_parameter() {
+        let arc = MyArcs::FooToBar(Arc {
+            source: foo(1),
+            target: bar(1),
+            kind: FooBarEdge,
+        });
+        for update in [
+            MyTypedGraphUpdate::AddVertex {
+                id: MyVertex::Foo(foo(1)),
+            },
+            MyTypedGraphUpdate::RemoveVertex {
+                id: MyVertex::Bar(bar(1)),
+            },
+            MyTypedGraphUpdate::DeleteSubtree {
+                prefix: ObjectPath::new("typed_graph"),
+            },
+            MyTypedGraphUpdate::AddArc(arc.clone()),
+            MyTypedGraphUpdate::RemoveArc(arc),
+        ] {
+            let encoded = serde_json::to_string(&update).unwrap();
+            let decoded: MyTypedGraphUpdate = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded, update);
+        }
+    }
 
     fn assert_convergence<R: IsReplica<VecLog<MyTypedGraph<LwwPolicy>>>>(
         replica_a: &R,
@@ -101,13 +151,13 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let a1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(a1);
         let b1 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
@@ -115,14 +165,14 @@ mod tests {
 
         // Create concurrently two arcs
         let a2 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(1),
                 target: bar(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let b2 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToFoo(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToFoo(Arc {
                 source: foo(1),
                 target: foo(1),
                 kind: FooBarEdge,
@@ -139,7 +189,7 @@ mod tests {
         assert_convergence(&replica_a, &replica_b);
 
         let a3 = replica_a
-            .send(MyTypedGraph::RemoveArc(MyArcs::FooToFoo(Arc {
+            .send(MyTypedGraphUpdate::RemoveArc(MyArcs::FooToFoo(Arc {
                 source: foo(1),
                 target: foo(1),
                 kind: FooBarEdge,
@@ -159,19 +209,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(1)),
             })
             .unwrap();
         replica_a.receive(e2);
         let e3 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
@@ -179,7 +229,7 @@ mod tests {
             .unwrap();
         replica_b.receive(e3);
         let e4 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
@@ -187,7 +237,7 @@ mod tests {
             .unwrap();
         replica_a.receive(e4);
         let e5 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
@@ -205,19 +255,19 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(1)),
             })
             .unwrap();
         replica_a.receive(e2);
         let e3 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
@@ -226,7 +276,7 @@ mod tests {
         replica_b.receive(e3);
         assert!(
             replica_a
-                .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
+                .send(MyTypedGraphUpdate::RemoveArc(MyArcs::FooToBaz(Arc {
                     source: foo(1),
                     target: baz(1),
                     kind: FooBazEdge,
@@ -234,13 +284,13 @@ mod tests {
                 .is_err()
         );
         let e4 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(2)),
             })
             .unwrap();
         replica_a.receive(e4);
         let e5 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
                 kind: FooBazEdge,
@@ -248,13 +298,13 @@ mod tests {
             .unwrap();
         replica_b.receive(e5);
         let e6 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(3)),
             })
             .unwrap();
         replica_a.receive(e6);
         let e7 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(3),
                 kind: FooBazEdge,
@@ -264,14 +314,14 @@ mod tests {
 
         // concurrent remove of an arc (independently valid, but both of them violate the min constraint of FooToBaz)
         let event_a = replica_a
-            .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::RemoveArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
             })))
             .unwrap();
         let event_b = replica_b
-            .send(MyTypedGraph::RemoveArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::RemoveArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
                 kind: FooBazEdge,
@@ -293,7 +343,7 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let init = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
@@ -303,12 +353,12 @@ mod tests {
         assert_eq!(replica_b.query(&Read::new()).node_count(), 1);
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         let e2 = replica_b
-            .send(MyTypedGraph::RemoveVertex {
+            .send(MyTypedGraphUpdate::RemoveVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
@@ -325,35 +375,35 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
 
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(2)),
             })
             .unwrap();
         replica_a.receive(e3);
 
         let e4 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Baz(baz(3)),
             })
             .unwrap();
         replica_a.receive(e4);
 
         let e5 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(1),
                 kind: FooBazEdge,
@@ -362,7 +412,7 @@ mod tests {
         replica_b.receive(e5);
 
         let e6 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(2),
                 kind: FooBazEdge,
@@ -371,7 +421,7 @@ mod tests {
         replica_a.receive(e6);
 
         let e7 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBaz(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBaz(Arc {
                 source: foo(1),
                 target: baz(3),
                 kind: FooBazEdge,
@@ -389,21 +439,21 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
 
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(1),
                 target: bar(1),
                 kind: FooBarEdge,
@@ -421,12 +471,12 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let event_a = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         let event_b = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
@@ -442,20 +492,20 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let e3 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(1),
                 target: bar(1),
                 kind: FooBarEdge,
@@ -464,7 +514,7 @@ mod tests {
         replica_b.receive(e3);
 
         let e4 = replica_b
-            .send(MyTypedGraph::RemoveVertex {
+            .send(MyTypedGraphUpdate::RemoveVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
@@ -480,27 +530,27 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(1)),
             })
             .unwrap();
         replica_b.receive(e1);
         let e2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
         replica_a.receive(e2);
 
         let event_a = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(1),
                 target: bar(1),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let event_b = replica_b
-            .send(MyTypedGraph::RemoveVertex {
+            .send(MyTypedGraphUpdate::RemoveVertex {
                 id: MyVertex::Bar(bar(1)),
             })
             .unwrap();
@@ -517,7 +567,7 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_b_1 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(13)),
             })
             .unwrap();
@@ -525,13 +575,13 @@ mod tests {
         replica_a.receive(e_b_1);
 
         let e_b_2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(19)),
             })
             .unwrap();
 
         let e_a_1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(7)),
             })
             .unwrap();
@@ -540,7 +590,7 @@ mod tests {
         replica_b.receive(e_a_1);
 
         let e_a_2 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(13),
                 target: bar(7),
                 kind: FooBarEdge,
@@ -548,7 +598,7 @@ mod tests {
             .unwrap();
 
         let e_b_3 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(13),
                 target: bar(7),
                 kind: FooBarEdge,
@@ -556,7 +606,7 @@ mod tests {
             .unwrap();
 
         let e_b_4 = replica_b
-            .send(MyTypedGraph::RemoveArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::RemoveArc(MyArcs::FooToBar(Arc {
                 source: foo(13),
                 target: bar(7),
                 kind: FooBarEdge,
@@ -585,7 +635,7 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_b_1 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(15)),
             })
             .unwrap();
@@ -593,13 +643,13 @@ mod tests {
         replica_a.receive(e_b_1);
 
         let e_b_2 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(4)),
             })
             .unwrap();
 
         let e_b_3 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(15),
                 target: bar(4),
                 kind: FooBarEdge,
@@ -607,13 +657,13 @@ mod tests {
             .unwrap();
 
         let e_a_1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(17)),
             })
             .unwrap();
 
         let e_a_2 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(15),
                 target: bar(17),
                 kind: FooBarEdge,
@@ -643,18 +693,18 @@ mod tests {
         let (mut replica_a, mut replica_b) = twins::<MyTypedGraph<LwwPolicy>>();
 
         let e_a_1 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Foo(foo(17)),
             })
             .unwrap();
         replica_b.receive(e_a_1);
         let e_a_2 = replica_a
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(3)),
             })
             .unwrap();
         let e_a_3 = replica_a
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(17),
                 target: bar(3),
                 kind: FooBarEdge,
@@ -662,19 +712,19 @@ mod tests {
             .unwrap();
 
         let b_e_1 = replica_b
-            .send(MyTypedGraph::AddVertex {
+            .send(MyTypedGraphUpdate::AddVertex {
                 id: MyVertex::Bar(bar(11)),
             })
             .unwrap();
         let b_e_2 = replica_b
-            .send(MyTypedGraph::AddArc(MyArcs::FooToBar(Arc {
+            .send(MyTypedGraphUpdate::AddArc(MyArcs::FooToBar(Arc {
                 source: foo(17),
                 target: bar(11),
                 kind: FooBarEdge,
             })))
             .unwrap();
         let b_e_3 = replica_b
-            .send(MyTypedGraph::RemoveVertex {
+            .send(MyTypedGraphUpdate::RemoveVertex {
                 id: MyVertex::Bar(bar(11)),
             })
             .unwrap();
@@ -697,8 +747,9 @@ mod tests {
     }
 
     #[cfg(feature = "fuzz")]
-    impl<P> moirai_fuzz::op_generator::OpGenerator for MyTypedGraph<P>
+    impl<P, U> OpGenerator<U> for MyTypedGraph<P>
     where
+        U: IsUnstableCore<MyTypedGraphUpdate>,
         P: Policy,
     {
         type Config = ();
@@ -706,9 +757,9 @@ mod tests {
         fn generate(
             rng: &mut impl rand::Rng,
             _config: &Self::Config,
-            stable: &Self::StableState,
-            unstable: &impl IsUnstableCore<Self>,
-        ) -> Self {
+            stable: &Self::Stable,
+            unstable: &U,
+        ) -> Self::Update {
             use moirai_protocol::crdt::{eval::Eval, query::Read};
             use rand::{
                 distr::{Distribution, weighted::WeightedIndex},
@@ -722,7 +773,7 @@ mod tests {
                 RemoveArc,
             }
 
-            let graph = Self::execute_query(&Read::new(), stable, unstable);
+            let graph = Self::execute_query(stable, unstable, &Read::new());
             let constraints = compute_arc_constraints(&graph);
             let existing_vertices: Vec<_> = graph.node_weights().cloned().collect();
 
@@ -756,21 +807,21 @@ mod tests {
             };
 
             match choice {
-                Choice::AddVertex => MyTypedGraph::AddVertex {
-                    id: <MyVertex as moirai_fuzz::value_generator::ValueGenerator>::generate(
+                Choice::AddVertex => MyTypedGraphUpdate::AddVertex {
+                    id: <MyVertex as moirai_fuzz::generator::value_generator::ValueGenerator>::generate(
                         rng,
                         &(),
                     ),
                 },
                 Choice::RemoveVertex => {
                     let vertex = existing_vertices.choose(rng).unwrap().clone();
-                    MyTypedGraph::RemoveVertex { id: vertex }
+                    MyTypedGraphUpdate::RemoveVertex { id: vertex }
                 }
                 Choice::AddArc => {
-                    MyTypedGraph::AddArc(constraints.addable.choose(rng).unwrap().clone())
+                    MyTypedGraphUpdate::AddArc(constraints.addable.choose(rng).unwrap().clone())
                 }
                 Choice::RemoveArc => {
-                    MyTypedGraph::RemoveArc(constraints.removable.choose(rng).unwrap().clone())
+                    MyTypedGraphUpdate::RemoveArc(constraints.removable.choose(rng).unwrap().clone())
                 }
             }
         }
@@ -779,7 +830,7 @@ mod tests {
     // TODO: implement ValueGenerator for each vertex type, not just the wrapper enum
 
     #[cfg(feature = "fuzz")]
-    impl moirai_fuzz::value_generator::ValueGenerator for MyVertex {
+    impl moirai_fuzz::generator::value_generator::ValueGenerator for MyVertex {
         type Config = ();
 
         fn generate(rng: &mut impl Rng, _config: &Self::Config) -> Self {
@@ -793,9 +844,9 @@ mod tests {
             let choices = [Choice::Foo, Choice::Bar, Choice::Baz];
             let choice = choices.choose(rng).unwrap();
             match choice {
-                Choice::Foo => MyVertex::Foo(foo(rng.random_range(0..20))),
-                Choice::Bar => MyVertex::Bar(bar(rng.random_range(0..20))),
-                Choice::Baz => MyVertex::Baz(baz(rng.random_range(0..20))),
+                Choice::Foo => Self::Foo(foo(rng.random_range(0..20))),
+                Choice::Bar => Self::Bar(bar(rng.random_range(0..20))),
+                Choice::Baz => Self::Baz(baz(rng.random_range(0..20))),
             }
         }
     }
@@ -805,26 +856,25 @@ mod tests {
     #[ignore]
     fn fuzz_typed_graph() {
         use moirai_fuzz::{
-            config::{FuzzerConfig, Predicate, RunConfig},
+            config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
         use moirai_protocol::state::po_log::VecLog;
 
-        let run = RunConfig::new(0.6, 8, 100, None, None, false, false);
-        let runs = vec![run.clone(); 1_000];
+        let run = RunConfig::new(ChurnConfig::new(0.6, 0.4), 8, 100, None, None);
+        let runs = vec![run; 1_000];
 
         let config =
             FuzzerConfig::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>::new(
                 "typed_graph",
                 runs,
-                true,
                 Predicate::new(Read::new(), |a, b| {
                     let node = a.node_count() == b.node_count();
                     let edge = a.edge_count() == b.edge_count();
 
                     fn is_valid(graph: &Graph<MyVertex, MyEdge>) -> bool {
-                        let is_valid = validate_schema(&graph);
-                        let is_valid = match is_valid {
+                        let is_valid = validate_schema(graph);
+                        match is_valid {
                             Ok(_) => true,
                             Err(violations) => {
                                 if violations
@@ -833,17 +883,15 @@ mod tests {
                                 {
                                     true
                                 } else {
-                                    // println!("Schema violations: {:?}", violations);
+                                    println!("Schema violations: {:?}", violations);
                                     false
                                 }
                             }
-                        };
-                        is_valid
+                        }
                     }
 
                     node && edge && is_valid(a) && is_valid(b)
                 }),
-                false,
             );
 
         fuzzer::<VecLog<MyTypedGraph<LwwPolicy>>, Read<Graph<MyVertex, MyEdge>>>(config);

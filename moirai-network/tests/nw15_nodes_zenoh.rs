@@ -17,13 +17,16 @@ mod nodes;
 #[path = "nw15_common/zenoh_rig.rs"]
 mod zenoh_rig;
 
+#[path = "ec03c/side.rs"]
+mod side;
+
 use std::collections::BTreeMap;
 
 use moirai_network::any_transport::AnyTransport;
 use moirai_network::transport::PeerId;
 use moirai_network::zenoh_transport::ZenohTransport;
-use moirai_protocol::log_id::LogId;
 use nodes::{add, assert_state, await_state, await_status, set, start_node, union, Net, Op};
+use side::LogId;
 
 struct ZenohNet {
     session: String,

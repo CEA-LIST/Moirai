@@ -1,0 +1,15 @@
+nw11s build exit 0
+nw11s exit 0
+nw11s nw11_http_origin_policy_l2 :: nw11_s_the_stack_sends_json_and_can_set_the_list ok
+nw11s test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out
+nw16b == phase 1 exit 0
+nw16b == phase 2 exit 0
+nw16b build exit 0
+nw16b container.sh sha256 98ac9651e23eda59
+nw16b exit 0
+nw16b interfaces in phase 1: lo
+nw16b nw16b_isolated_l3 :: l2_with_ports_file_the_same_node_stops_non_zero ran
+nw16b nw16b_isolated_l3 :: l2_without_ports_file_a_node_whose_session_lists_no_locator_runs ran
+nw16b nw16b_isolated_l3 :: r6_a_peer_on_ledgera_scouting_meets_neither_the_router_nor_any_node ran
+nw16b test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out
+nw16b test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out

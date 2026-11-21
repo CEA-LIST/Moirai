@@ -1,3 +1,11 @@
+// EC.M2 row N8: our `moirai-crdt/tests/st02_held/composition.rs` from
+// `akira/moirai-modelstore` at `748a185`, translated to Léo's API on the
+// merged line (lane HEAD `b1e254c`). Same compositions, schedules and
+// expected documents; only names change: resettable `Counter::Inc` ->
+// `CounterUpdate::Inc` on his `counter::Counter`, `option::Optional` -> his
+// `option::update::OptionUpdate` (imported as `Optional`),
+// `utils::membership::triplet_log` -> `utils::bootstrap::triplet_log`.
+
 //! ST.02, claim B (`cea-cdrt-knowledge/spec/items/ST.02.md`): the logs an
 //! optional containment is generated as, composed by hand the way Arachne
 //! composes them, with a chosen wrapper between each `OptionLog` and its
@@ -133,9 +141,9 @@ macro_rules! composition {
         pub mod $m {
             #![allow(dead_code)]
             use super::*;
-            use moirai_crdt::counter::resettable_counter::Counter;
-            use moirai_crdt::option::{OptionLog, Optional};
-            use moirai_crdt::utils::membership::triplet_log;
+            use moirai_crdt::counter::{Counter, update::CounterUpdate};
+            use moirai_crdt::option::{OptionLog, update::OptionUpdate as Optional};
+            use moirai_crdt::utils::bootstrap::triplet_log;
             use moirai_macros::{record, union};
             use moirai_protocol::broadcast::tcsb::Tcsb;
             use moirai_protocol::crdt::query::Read;
@@ -148,21 +156,29 @@ macro_rules! composition {
             record!(B { shape_super: ShapeLog => ShapeValue });
             union!(ShapeKind = A(A, ALog => AValue) | B(B, BLog => BValue));
             record!(Cell { n: VecLog<Counter<i32>> => i32 });
+            // EC.M2 N8 translation: on his API the explicit-value form of
+            // `record!` derives `Eq` on the record's value, and `union!`'s
+            // value is not `Eq`, so `Bx` and `Holder`, which hold a union,
+            // do not compile in that form (E0277, kept in the logs). They use
+            // his generic form instead, with the same logs and the value
+            // types spelled out once below (`BxV`, `HolderV`).
             record!(Bx {
-                k: VecLog<Counter<i32>> => i32,
-                cell: OptionLog<$W<CellLog>> => Option<$V<CellValue>>,
-                slot: OptionLog<$W<ShapeKindLog>> => Option<$V<ShapeKindValue>>,
+                k: VecLog<Counter<i32>>,
+                cell: OptionLog<$W<CellLog>>,
+                slot: OptionLog<$W<ShapeKindLog>>,
             });
+            pub type BxV = BxValue<i32, Option<$V<CellValue>>, Option<$V<ShapeKindValue>>>;
             record!(Holder {
-                tick: VecLog<Counter<i32>> => i32,
-                slot: OptionLog<$W<ShapeKindLog>> => Option<$V<ShapeKindValue>>,
-                inner: OptionLog<$W<BxLog>> => Option<$V<BxValue>>,
+                tick: VecLog<Counter<i32>>,
+                slot: OptionLog<$W<ShapeKindLog>>,
+                inner: OptionLog<$W<BxLog>>,
             });
+            pub type HolderV = HolderValue<i32, Option<$V<ShapeKindValue>>, Option<$V<BxV>>>;
 
             pub type Rep = Replica<HolderLog, Tcsb<Holder>>;
 
             fn member(class: char, by: i32) -> ShapeKind {
-                let shape = Shape::N(Counter::Inc(by));
+                let shape = Shape::N(CounterUpdate::Inc(by));
                 if class == 'A' {
                     ShapeKind::A(A::ShapeSuper(shape))
                 } else {
@@ -191,13 +207,13 @@ macro_rules! composition {
                         in_box(Bx::Slot(Optional::Set($wrap(member(aim, 10))))),
                     ],
                     Place::ClaimA => [
-                        in_box(Bx::Cell(Optional::Set($wrap(Cell::N(Counter::Inc(1)))))),
-                        in_box(Bx::K(Counter::Inc(2))),
+                        in_box(Bx::Cell(Optional::Set($wrap(Cell::N(CounterUpdate::Inc(1)))))),
+                        in_box(Bx::K(CounterUpdate::Inc(2))),
                         Holder::Inner(Optional::Unset),
                         if aim == 'k' {
-                            in_box(Bx::K(Counter::Inc(10)))
+                            in_box(Bx::K(CounterUpdate::Inc(10)))
                         } else {
-                            in_box(Bx::Cell(Optional::Set($wrap(Cell::N(Counter::Inc(10))))))
+                            in_box(Bx::Cell(Optional::Set($wrap(Cell::N(CounterUpdate::Inc(10))))))
                         },
                     ],
                 }
@@ -228,7 +244,7 @@ macro_rules! composition {
             /// `eClass` and `k`, its `cell` and `slot` absent when unset; a
             /// conflict as `{"__conflict": [...]}` ordered by class.
             pub fn read(replica: &Rep) -> Value {
-                let value: HolderValue = replica.query(&Read::<HolderValue>::new());
+                let value: HolderV = replica.query(&Read::<HolderV>::new());
                 let mut out = Map::new();
                 out.insert("tick".into(), json!(value.tick));
                 if let Some(slot) = value.slot.as_ref().and_then(|s| kind($peel(s))) {
@@ -302,7 +318,7 @@ macro_rules! composition {
                     let replica = &mut reps[seat];
                     on(threads, move || replica.receive(event));
                 };
-                let t = send(&mut reps, 0, Holder::Tick(Counter::Inc(1)));
+                let t = send(&mut reps, 0, Holder::Tick(CounterUpdate::Inc(1)));
                 deliver(&mut reps, 1, t.clone());
                 deliver(&mut reps, 2, t);
                 let [x, y, removal, write] = ops(place, aim);

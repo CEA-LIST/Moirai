@@ -66,11 +66,11 @@ pub(crate) fn is_foreign(target: &str) -> bool {
     let Some((coordinate, identity)) = target.split_once('#') else {
         return false;
     };
-    if moirai_protocol::log_id::LogId::parse(coordinate).is_ok() {
+    if log_id(coordinate) {
         let Some((replica, creation)) = identity.split_once('@') else {
             return false;
         };
-        if moirai_protocol::replica::validate_replica_id(replica).is_err() {
+        if !replica_id(replica) {
             return false;
         }
         let Some((event, step)) = creation.split_once('.') else {
@@ -139,6 +139,28 @@ fn qualified_name(target: &str) -> bool {
             _ => return false,
         }
     }
+}
+
+/// `748a185`'s log id grammar (`LogId::parse`): 32 lowercase hex
+/// characters, then optionally `_` and one to 32 ASCII letters and digits.
+fn log_id(text: &str) -> bool {
+    let Some((hex, name)) = text.split_at_checked(32) else {
+        return false;
+    };
+    hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && (name.is_empty()
+            || name.strip_prefix('_').is_some_and(|name| {
+                (1..=32).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric())
+            }))
+}
+
+/// `748a185`'s replica id grammar (`validate_replica_id`): nonempty ASCII
+/// letters, digits, `.`, `_` or `-`.
+fn replica_id(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 fn decimal(text: &str) -> bool {

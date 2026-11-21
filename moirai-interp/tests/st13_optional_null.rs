@@ -23,6 +23,10 @@
 //! text only at `details` and literal names only in the read of `levels` and
 //! `tones`; part (2) contradicts both, and the spec says how (section 1).
 //!
+//! ST.17 (`cea-cdrt-knowledge/spec/items/ST.17.md`, section 6) adapted the
+//! import of `CommandGenerator` to `moirai-fuzz` at `e935355`, where it moved
+//! to `generator::command_generator`; nothing else changed.
+//!
 //! ```bash
 //! nice -n 10 cargo test -j 2 --offline -p moirai-interp --features fuzz --test st13_optional_null
 //! ```
@@ -35,7 +39,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use moirai_fuzz::op_generator::CommandGenerator;
+use moirai_fuzz::generator::command_generator::CommandGenerator;
 use moirai_interp::leaf::{LeafOp, Scalar};
 use moirai_interp::testing::{
     BT_DESCRIPTOR, JSON_DESCRIPTOR, attribute, bench_descriptor, class, class_slot, descriptor,

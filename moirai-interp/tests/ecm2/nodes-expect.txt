@@ -1,0 +1,43 @@
+# EC.M2b: expected verdict lines of nodes.sh, provenance in spec/items/EC.M2b.md section 2.
+# c2c, c2c2 and c3a exit 1 through C1 alone (manifest checks of their own items, superseded);
+# their test targets are judged by the C2 and C3 lines.
+e2e e2e_interp (zenoh): 7 passed; test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+e2e e2e_interp (tcp): 7 passed; test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+e2e exit 0
+c2c C1 [[test]] entries: FAIL: ['si12_copy_migration', 'si12_copy_migration_l3', 'si12_fixtures', 'si12_scale_l3', 'si13_concurrent_migrations', 'si13_copy_in_progress', 'si13_migration_l3', 'si13_scale_l3', 'si14_fixtures', 'si14_rebase', 'si14_rebase_l3', 'si16_rebased_joiner', 'si16_rebased_joiner_l3']
+c2c C1 default features: ok: ['serde', 'test_utils']
+c2c C2 default features build: exit 0
+c2c C3 build: exit 0
+c2c C3 names: 48 equal to names.txt
+c2c FAIL
+c2c exit 1
+c2c2 C1 [[test]] entries: FAIL: ['si12_copy_migration', 'si12_copy_migration_l3', 'si12_fixtures', 'si12_scale_l3', 'si13_concurrent_migrations', 'si13_copy_in_progress', 'si13_migration_l3', 'si13_scale_l3', 'si14_fixtures', 'si14_rebase', 'si14_rebase_l3', 'si16_rebased_joiner', 'si16_rebased_joiner_l3']
+c2c2 C1 dev-dependencies: ok: ['rand_chacha', 'reqwest', 'zenoh'], zenoh {'version': '=1.10.1', 'default-features': False, 'features': ['transport_tcp', 'unstable']}
+c2c2 C1 default features: ok: ['serde', 'test_utils']
+c2c2 C2 default features build: exit 0
+c2c2 C3 build: exit 0
+c2c2 C3 names: 53 equal to names.txt
+c2c2 C3 list: 64 names, names.txt plus skip.txt
+c2c2 FAIL
+c2c2 exit 1
+c3a C1 workspace: FAIL: members ['moirai-bootnode', 'moirai-crdt', 'moirai-dashboard', 'moirai-fuzz', 'moirai-interp', 'moirai-macros', 'moirai-network', 'moirai-protocol', 'moirai-relay', 'moirai-router', 'moirai-semantics']
+c3a C1 Cargo.lock: FAIL: side packages ['moirai-bootnode', 'moirai-dashboard', 'moirai-relay', 'moirai-router'], others CHANGED
+c3a C1 moirai-interp manifest: ok: [[test]] ['si12_copy_migration', 'si12_copy_migration_l3', 'si12_fixtures', 'si12_scale_l3', 'si13_concurrent_migrations', 'si13_copy_in_progress', 'si13_migration_l3', 'si13_scale_l3', 'si14_fixtures', 'si14_rebase', 'si14_rebase_l3', 'si16_rebased_joiner', 'si16_rebased_joiner_l3'], dev ['rand_chacha', 'reqwest', 'zenoh']
+c3a C1 side crates: ok: 16 files equal to 748a185's
+c3a C2 default features build: exit 0
+c3a C3 build: exit 0
+c3a C3 names: 65 equal to names.txt
+c3a C3 list: 81 names, names.txt plus skip.txt
+c3a FAIL
+c3a exit 1
+c3b1 C1 test files: ok: 3 equal to 748a185's
+c3b1 C3 build: exit 0
+c3b1 C3 names: 6 equal to names.txt
+c3b1 C3 list: 56 names, names.txt plus skip.txt
+c3b1 PASS
+c3b1 exit 0
+diff reference (zenoh): 138004 lines, 18616 answers 200, S3 S4 S5 ok
+diff PASS (zenoh): 138004 lines equal
+diff reference (tcp): 30166 lines, 4054 answers 200, S3 S4 S5 ok
+diff PASS (tcp): 30166 lines equal
+diff exit 0

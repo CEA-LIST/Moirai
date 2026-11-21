@@ -29,6 +29,16 @@
 //! hold; an operation at least its boxes and its text. A sampled fuzz run
 //! completes.
 //!
+//! ST.17 (`cea-cdrt-knowledge/spec/items/ST.17.md`, section 6) adapted the
+//! file to `moirai-fuzz` at `e935355`: `CommandGenerator` moved to
+//! `generator::command_generator`; a churn rate `c` is now
+//! `ChurnConfig::new(c, 1 - c)`; the old `false, false` flags of
+//! `RunConfig::new` (no execution graph, stabilization on) and `true, false`
+//! of `FuzzerConfig::new` (final merge on, nothing saved) are the new
+//! defaults; and D3's memory sampling, which `e935355` removed, is its two
+//! size metrics, with what the run must show for them (D3's comment). No
+//! other assertion, count or seed changed.
+//!
 //! ```bash
 //! nice -n 10 cargo test -j 2 -p moirai-interp --features fuzz --test st12_fuzz_followups
 //! ```
@@ -38,15 +48,17 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     mem::size_of,
+    num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, LazyLock},
 };
 
 use deepsize::DeepSizeOf;
 use moirai_fuzz::{
-    config::{FuzzerConfig, Predicate, RunConfig},
-    fuzzer::fuzzer,
-    op_generator::CommandGenerator,
+    config::{ChurnConfig, FuzzerConfig, MetricsSampling, Predicate, RunConfig},
+    fuzzer::{ExecutionReport, fuzzer},
+    generator::command_generator::CommandGenerator,
+    observers::footprint::LogFootprint,
 };
 use moirai_interp::fuzz::set_descriptor;
 use moirai_interp::leaf::{LeafOp, Scalar};
@@ -477,14 +489,12 @@ fn st12_k2_one_replica_sending_what_it_generates_on_json_is_never_refused() {
 fn st12_k3_the_fuzzer_over_json_converges() {
     set_descriptor(JSON_DESCRIPTOR);
     let runs: Vec<RunConfig> = (0..4)
-        .map(|run| RunConfig::new(0.4, 3, 300, None, Some(seed(run)), false, false))
+        .map(|run| RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 300, None, Some(seed(run))))
         .collect();
     let config = FuzzerConfig::<ModelLog, Read<Value>>::new(
         "interp-json",
         runs,
-        true,
         Predicate::new(Read::new(), |left, right| left == right),
-        false,
     );
     fuzzer::<ModelLog, Read<Value>>(config);
 }
@@ -764,14 +774,12 @@ fn st12_o1_the_optional_register_arm_writes_clears_and_names_its_own_literals() 
 fn st12_o2_the_fuzzer_over_optional_registers_converges() {
     set_descriptor(&optreg_descriptor().to_string());
     let runs: Vec<RunConfig> = (0..3)
-        .map(|run| RunConfig::new(0.4, 3, 300, None, Some(seed(run)), false, false))
+        .map(|run| RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 300, None, Some(seed(run))))
         .collect();
     let config = FuzzerConfig::<ModelLog, Read<Value>>::new(
         "interp-optreg",
         runs,
-        true,
         Predicate::new(Read::new(), |left, right| left == right),
-        false,
     );
     fuzzer::<ModelLog, Read<Value>>(config);
 }
@@ -1129,20 +1137,100 @@ fn st12_d2_an_operations_deep_size_counts_its_boxes_and_text() {
     );
 }
 
+/// What a sampled run must show (ST.17 spec, section 5): at every replica of
+/// every run, samples taken on both of `moirai-fuzz`'s size paths, and a
+/// final replica size and a final log footprint that each count at least the
+/// descriptor the log holds verbatim (D1), so a path that sampled nothing,
+/// or a footprint that leaves the log out, fails.
+fn assert_sampled(label: &str, report: &ExecutionReport, descriptor: usize) {
+    let mut wrong = Vec::new();
+    for run in &report.runs {
+        let replicas = &run.results.measurements;
+        if replicas.len() != usize::from(run.results.config.num_replicas) {
+            wrong.push(format!(
+                "run {}: {} replicas measured, of {}",
+                run.run_number,
+                replicas.len(),
+                run.results.config.num_replicas
+            ));
+        }
+        for (index, stats) in replicas.iter().enumerate() {
+            let at = format!("run {}, replica {index}", run.run_number);
+            let samples = (stats.replica_size_sample_count, stats.log_size_sample_count);
+            if !matches!(samples, (Some(r), Some(l)) if r > 0 && l > 0) {
+                wrong.push(format!(
+                    "{at}: {samples:?} samples (replica size, log footprint), at least one of \
+                     each expected"
+                ));
+            }
+            let finals = (
+                stats.final_replica_size,
+                stats
+                    .final_log_size
+                    .as_ref()
+                    .map(|node| node.inclusive_bytes),
+            );
+            if !matches!(finals, (Some(r), Some(l)) if r >= descriptor && l >= descriptor) {
+                wrong.push(format!(
+                    "{at}: final sizes {finals:?} bytes (replica, log footprint), where the log \
+                     holds a descriptor of {descriptor}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{label}: the run did not sample what its logs hold:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// The interface the sampled run reads (ST.17 spec, section 5): a
+/// `ModelLog`'s footprint is its `DeepSizeOf` walk, so its inclusive bytes
+/// are the log's deep size.
+fn assert_footprint_is_the_deep_size(label: &str, log: &ModelLog) {
+    let footprint = LogFootprint::footprint(log).inclusive_bytes;
+    let deep = DeepSizeOf::deep_size_of(log);
+    assert_eq!(
+        footprint, deep,
+        "{label}: the log's footprint counts {footprint} bytes, where its deep size is {deep}"
+    );
+}
+
 /// D3: a fuzz run that samples memory runs to its end over the interpreted
 /// log, the only path on which `moirai-fuzz` reads these impls.
+///
+/// Since ST.17 (`moirai-fuzz` at `e935355`, which removed
+/// `with_memory_sampling`) the run samples every 25 calls at every replica on
+/// both of `moirai-fuzz`'s size paths: the replica size, a `DeepSizeOf` walk
+/// of the replica's id, broadcast layer and log, which is what the old sample
+/// walked; and the log size, the log's `LogFootprint`. The run must show
+/// that it sampled ([`assert_sampled`]), and a behaviour-tree log's footprint
+/// must be its deep size ([`assert_footprint_is_the_deep_size`]).
 #[test]
 fn st12_d3_a_fuzz_run_that_samples_memory_completes() {
     set_descriptor(BT_DESCRIPTOR);
+    let every_25 = MetricsSampling::every_call(NonZeroUsize::new(25).expect("not zero"));
     let runs = vec![
-        RunConfig::new(0.4, 3, 200, None, Some(seed(7)), false, false).with_memory_sampling(25),
+        RunConfig::new(ChurnConfig::new(0.4, 0.6), 3, 200, None, Some(seed(7)))
+            .with_replica_size(every_25.clone())
+            .with_log_size(every_25),
     ];
     let config = FuzzerConfig::<ModelLog, Read<Value>>::new(
         "interp-bt-memory",
         runs,
-        true,
         Predicate::new(Read::new(), |left, right| left == right),
-        false,
     );
-    fuzzer::<ModelLog, Read<Value>>(config);
+    let report = fuzzer::<ModelLog, Read<Value>>(config);
+    assert_sampled("D3", &report, BT_DESCRIPTOR.len());
+
+    let bt: Value = serde_json::from_str(BT_DESCRIPTOR).expect("the fixture is JSON");
+    let (mut a, _b) = opened("st12", &bt);
+    let mut rng = ChaCha8Rng::from_seed(seed(7));
+    for step in 0..50 {
+        let op = generated(a.state(), &mut rng).unwrap_or_else(|why| panic!("D3, {step}: {why}"));
+        a.send(op)
+            .unwrap_or_else(|why| panic!("D3, {step}: refused: {why}"));
+    }
+    assert_footprint_is_the_deep_size("D3, a behaviour tree after 50 operations", a.state());
 }

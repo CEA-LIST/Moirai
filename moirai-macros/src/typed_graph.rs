@@ -1,6 +1,10 @@
-/// Generates a complete typed graph CRDT from a schema definition.
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
+//! Generates typed graph datatypes and their schema-specific update aliases.
+
+pub mod update;
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 #[cfg(feature = "test_utils")]
 use deepsize::{Context, DeepSizeOf};
@@ -13,18 +17,6 @@ pub struct Arc<S, T, E> {
     pub source: S,
     pub target: T,
     pub kind: E,
-}
-
-//* VERTEX *//
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Vertex<T>
-where
-    T: Debug + Clone + PartialEq + Eq + Hash,
-{
-    AddVertex { id: T },
-    RemoveVertex { id: T },
 }
 
 #[macro_export]
@@ -41,6 +33,7 @@ macro_rules! typed_graph {
     // from the actual type path (used in trait impls and generic parameters).
     (@generate
         graph: $graph:ident,
+        update: $update:ident,
         vertex: $vertex:ident,
         edge: $edge:ident,
         arcs_type: $arcs:ident,
@@ -113,6 +106,7 @@ macro_rules! typed_graph {
         }
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         enum TypedGraphEdgeType {
             $( $edge_ty ),*
         }
@@ -146,7 +140,10 @@ macro_rules! typed_graph {
 
         // Enum of all arcs
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(
+            feature = "serde",
+            derive(serde::Serialize, serde::Deserialize)
+        )]
         pub enum $arcs {
             $( $conn($crate::typed_graph::Arc<$src_ty, $tgt_ty, $ety>) ),*
         }
@@ -190,21 +187,12 @@ macro_rules! typed_graph {
             }
         }
 
-        //* TYPE GRAPH *//
+        /// Typed graph semantics selected by the conflict policy `P`.
+        #[derive(Debug, Clone)]
+        pub struct $graph<P>(::std::marker::PhantomData<P>);
 
-        // Main graph operation enum
-        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-        pub enum $graph<P> {
-            AddVertex { id: $vertex },
-            RemoveVertex { id: $vertex },
-            DeleteSubtree { prefix: $crate::moirai_protocol::state::object_path::ObjectPath },
-            AddArc($arcs),
-            RemoveArc($arcs),
-            #[doc(hidden)]
-            #[cfg_attr(feature = "serde", serde(skip))]
-            __Marker(::std::convert::Infallible, ::std::marker::PhantomData<P>),
-        }
+        /// Updates shared by every conflict policy for this graph schema.
+        pub type $update = $crate::typed_graph::update::TypedGraphUpdate<$vertex, $arcs>;
 
         //* HELPER FUNCTIONS */
 
@@ -294,7 +282,7 @@ macro_rules! typed_graph {
             ::std::primitive::usize,
         )> {
             let mut constraints = ::std::vec::Vec::new();
-            let mut seen_edge_types: $crate::HashSet<TypedGraphEdgeType> =
+            let mut seen_edge_types: $crate::FxHashSet<TypedGraphEdgeType> =
                 ::std::default::Default::default();
             $(
                 if let $vertex::$src(_) = vertex {
@@ -324,7 +312,7 @@ macro_rules! typed_graph {
             let mut addable = ::std::vec::Vec::new();
             let mut removable = ::std::vec::Vec::new();
 
-            let existing_edges: $crate::HashSet<($vertex, $vertex, $edge)> = graph
+            let existing_edges: $crate::FxHashSet<($vertex, $vertex, $edge)> = graph
                 .edge_indices()
                 .filter_map(|ei| {
                     let (si, ti) = graph.edge_endpoints(ei)?;
@@ -339,7 +327,7 @@ macro_rules! typed_graph {
             for source_idx in graph.node_indices() {
                 let source = &graph[source_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<
+                let mut outgoing_by_type: $crate::FxHashMap<
                     TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
@@ -458,7 +446,7 @@ macro_rules! typed_graph {
             for node_idx in graph.node_indices() {
                 let source = &graph[node_idx];
 
-                let mut outgoing_by_type: $crate::HashMap<
+                let mut outgoing_by_type: $crate::FxHashMap<
                     TypedGraphEdgeType,
                     ::std::primitive::usize,
                 > = ::std::default::Default::default();
@@ -527,117 +515,36 @@ macro_rules! typed_graph {
             }
         }
 
-        // Implement the ReplicatedDataType trait for the graph operation enum, defining the CRDT behavior and how to execute queries to get the current graph state
-        impl<P> $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType for $graph<P>
+        // Preconditions use the same query semantics as reads.
+        impl<U, P> $crate::moirai_protocol::crdt::replicated_data_type::Precondition<U> for $graph<P>
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
-        {
-            type StableState = ::std::vec::Vec<Self>;
-            type Rejection = $crate::typed_graph::TypedGraphRejection;
-
-            const DISABLE_R_WHEN_R: ::std::primitive::bool = false;
-            const DISABLE_R_WHEN_NOT_R: ::std::primitive::bool = false;
-            // TODO: find a way to enable stabilize for this CRDT
-            const DISABLE_STABILIZE: ::std::primitive::bool = true;
-
-            fn redundant_itself<'a>(
-                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-                _stable: &Self::StableState,
-                _unstable: impl ::std::iter::Iterator<
-                    Item = &'a $crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-                >,
-            ) -> ::std::primitive::bool
-            where
-                Self: 'a,
-            {
-                match new_tagged_op.op() {
-                    $graph::AddVertex { .. } | $graph::AddArc(_) => false,
-                    $graph::RemoveVertex { .. }
-                    | $graph::DeleteSubtree { .. }
-                    | $graph::RemoveArc(_) => true,
-                    $graph::__Marker(_, _) => ::std::unreachable!(),
-                }
-            }
-
-            fn redundant_by_when_redundant(
-                old_op: &Self,
-                _old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
-                is_conc: ::std::primitive::bool,
-                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-            ) -> ::std::primitive::bool {
-                !is_conc
-                    && match (old_op, new_tagged_op.op()) {
-                        ($graph::AddArc(arc), $graph::RemoveVertex { id: v }) => {
-                            arc.source() == *v || arc.target() == *v
-                        }
-                        ($graph::AddVertex { id }, $graph::DeleteSubtree { prefix }) => {
-                            prefix.is_prefix_of(id.vertex_path())
-                        }
-                        ($graph::AddArc(arc), $graph::DeleteSubtree { prefix }) => {
-                            let source = arc.source();
-                            let target = arc.target();
-                            prefix.is_prefix_of(source.vertex_path())
-                                || prefix.is_prefix_of(target.vertex_path())
-                        }
-                        ($graph::AddArc(arc1), $graph::AddArc(arc2))
-                        | ($graph::AddArc(arc1), $graph::RemoveArc(arc2)) => {
-                            arc1.source() == arc2.source()
-                                && arc1.target() == arc2.target()
-                                && arc1.kind() == arc2.kind()
-                        }
-                        ($graph::AddVertex { id: v1 }, $graph::AddVertex { id: v2 })
-                        | ($graph::AddVertex { id: v1 }, $graph::RemoveVertex { id: v2 }) => {
-                            v1 == v2
-                        }
-                        _ => false,
-                    }
-            }
-
-            fn redundant_by_when_not_redundant(
-                old_op: &Self,
-                old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
-                is_conc: ::std::primitive::bool,
-                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self>,
-            ) -> ::std::primitive::bool {
-                <Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::redundant_by_when_redundant(
-                    old_op,
-                    old_tag,
-                    is_conc,
-                    new_tagged_op,
-                )
-            }
-
-        }
-
-        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::UsesUnstableService<U> for $graph<P>
-        where
-            P: $crate::moirai_protocol::crdt::policy::Policy,
-            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<Self>,
+            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
         {
             fn is_enabled(
-                op: &Self,
-                stable: &Self::StableState,
+                stable: &Self::Stable,
                 unstable: &U,
+                op: &Self::Update,
             ) -> ::std::result::Result<(), Self::Rejection> {
                 use $crate::moirai_protocol::crdt::eval::Eval;
                 use $crate::moirai_protocol::crdt::query::Read;
 
-                let graph = Self::execute_query(&Read::new(), stable, unstable);
+                let graph = Self::execute_query(stable, unstable, &Read::new());
                 match op {
-                    $graph::AddVertex { .. } => ::std::result::Result::Ok(()),
-                    $graph::RemoveVertex { id } => graph
+                    $update::AddVertex { .. } => ::std::result::Result::Ok(()),
+                    $update::RemoveVertex { id } => graph
                         .node_weights()
                         .any(|node| node == id)
                         .then_some(())
                         .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex),
-                    $graph::DeleteSubtree { prefix } => {
+                    $update::DeleteSubtree { prefix } => {
                         graph
                             .node_weights()
                             .any(|node| prefix.is_prefix_of(node.vertex_path()))
                             .then_some(())
                             .ok_or($crate::typed_graph::TypedGraphRejection::MissingVertex)
                     },
-                    $graph::RemoveArc(arc) => {
+                    $update::RemoveArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
                         let kind = arc.kind();
@@ -675,7 +582,7 @@ macro_rules! typed_graph {
                             .then_some(())
                             .ok_or($crate::typed_graph::TypedGraphRejection::MinCardinality)
                     }
-                    $graph::AddArc(arc) => {
+                    $update::AddArc(arc) => {
                         let source = arc.source();
                         let target = arc.target();
                         let edge_type = arc.edge_type();
@@ -701,29 +608,134 @@ macro_rules! typed_graph {
                             .then_some(())
                             .ok_or($crate::typed_graph::TypedGraphRejection::MaxCardinality)
                     }
-                    $graph::__Marker(_, _) => ::std::unreachable!(),
                 }
             }
         }
 
+        impl<P> $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType for $graph<P>
+        where
+            P: $crate::moirai_protocol::crdt::policy::Policy,
+        {
+            type Update = $update;
+            type Stable = ::std::vec::Vec<Self::Update>;
+            type Rejection = $crate::typed_graph::TypedGraphRejection;
+        }
+
+        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalReset<U> for $graph<P>
+        where
+            P: $crate::moirai_protocol::crdt::policy::Policy,
+        {}
+
+        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalStabilize<U> for $graph<P>
+        where
+            P: $crate::moirai_protocol::crdt::policy::Policy,
+        {
+            // TODO: find a way to enable stabilize for this CRDT
+            const DISABLE_STABILIZE: ::std::primitive::bool = true;
+        }
+
+        impl<P, U> $crate::moirai_protocol::crdt::replicated_data_type::CausalCompaction<U> for $graph<P>
+        where
+            P: $crate::moirai_protocol::crdt::policy::Policy,
+            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
+        {
+            fn compact_stable(
+                stable: &mut Self::Stable,
+                rdnt: $crate::moirai_protocol::crdt::redundancy::RedundancyRelation<Self::Update>,
+                new: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
+            ) {
+                stable.retain(|old| !rdnt(old, None, false, new));
+            }
+
+            const DISABLE_R_WHEN_R: ::std::primitive::bool = false;
+            const DISABLE_R_WHEN_NOT_R: ::std::primitive::bool = false;
+
+            fn redundant_itself<'a>(
+                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
+                _stable: &Self::Stable,
+                _unstable: impl ::std::iter::Iterator<
+                    Item = &'a $crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
+                >,
+            ) -> ::std::primitive::bool
+            where
+                Self: 'a,
+            {
+                match new_tagged_op.op() {
+                    $update::AddVertex { .. } | $update::AddArc(_) => false,
+                    $update::RemoveVertex { .. }
+                    | $update::DeleteSubtree { .. }
+                    | $update::RemoveArc(_) => true,
+                }
+            }
+
+            fn redundant_by_when_redundant(
+                old_op: &Self::Update,
+                _old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
+                is_conc: ::std::primitive::bool,
+                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
+            ) -> ::std::primitive::bool {
+                !is_conc
+                    && match (old_op, new_tagged_op.op()) {
+                        ($update::AddArc(arc), $update::RemoveVertex { id: v }) => {
+                            arc.source() == *v || arc.target() == *v
+                        }
+                        ($update::AddVertex { id }, $update::DeleteSubtree { prefix }) => {
+                            prefix.is_prefix_of(id.vertex_path())
+                        }
+                        ($update::AddArc(arc), $update::DeleteSubtree { prefix }) => {
+                            let source = arc.source();
+                            let target = arc.target();
+                            prefix.is_prefix_of(source.vertex_path())
+                                || prefix.is_prefix_of(target.vertex_path())
+                        }
+                        ($update::AddArc(arc1), $update::AddArc(arc2))
+                        | ($update::AddArc(arc1), $update::RemoveArc(arc2)) => {
+                            arc1.source() == arc2.source()
+                                && arc1.target() == arc2.target()
+                                && arc1.kind() == arc2.kind()
+                        }
+                        ($update::AddVertex { id: v1 }, $update::AddVertex { id: v2 })
+                        | ($update::AddVertex { id: v1 }, $update::RemoveVertex { id: v2 }) => {
+                            v1 == v2
+                        }
+                        _ => false,
+                    }
+            }
+
+            fn redundant_by_when_not_redundant(
+                old_op: &Self::Update,
+                old_tag: ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
+                is_conc: ::std::primitive::bool,
+                new_tagged_op: &$crate::moirai_protocol::event::tagged_op::TaggedOp<Self::Update>,
+            ) -> ::std::primitive::bool {
+                <Self as $crate::moirai_protocol::crdt::replicated_data_type::CausalCompaction<U>>::redundant_by_when_redundant(
+                    old_op,
+                    old_tag,
+                    is_conc,
+                    new_tagged_op,
+                )
+            }
+        }
+
         impl<P, U> $crate::moirai_protocol::crdt::eval::Eval<
+            ::std::vec::Vec<$update>,
+            U,
             $crate::moirai_protocol::crdt::query::Read<
                 ::petgraph::graph::DiGraph<$vertex, $edge>
-            >,
-            U
+            >
         > for $graph<P>
         where
             P: $crate::moirai_protocol::crdt::policy::Policy,
-            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<Self> ,
+            U: $crate::moirai_protocol::state::unstable_state::IsUnstableCore<$update>,
         {
             fn execute_query(
-                _q: &$crate::moirai_protocol::crdt::query::Read<::petgraph::graph::DiGraph<$vertex, $edge>>,
-                stable: &<Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::StableState,
+                stable: &<Self as $crate::moirai_protocol::crdt::replicated_data_type::ReplicatedDataType>::Stable,
                 unstable: &U,
+                _q: &$crate::moirai_protocol::crdt::query::Read<::petgraph::graph::DiGraph<$vertex, $edge>>,
             ) -> ::petgraph::graph::DiGraph<$vertex, $edge>
             {
                 let tagged_ops: ::std::vec::Vec<(
-                    &Self,
+                    &$update,
                     ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
                 )> = stable
                     .iter()
@@ -734,13 +746,13 @@ macro_rules! typed_graph {
                     .collect();
 
                 let mut graph = ::petgraph::graph::DiGraph::new();
-                let mut node_index: $crate::HashMap<$vertex, _> =
+                let mut node_index: $crate::FxHashMap<$vertex, _> =
                     ::std::default::Default::default();
 
                 // First add all vertices
                 // TODO: if the backend log is ordered, we could add vertices and arcs in one pass
                 for (op, _) in &tagged_ops {
-                    if let $graph::AddVertex { id } = op
+                    if let $update::AddVertex { id } = op
                         && !node_index.contains_key(id)
                     {
                         let idx = graph.add_node(::std::clone::Clone::clone(id));
@@ -750,13 +762,13 @@ macro_rules! typed_graph {
 
                 // Collect deduplicated arc candidates
                 // TODO: if the backend log is ordered, we could add arcs in one pass and skip this deduplication step
-                let mut deduped_arcs: $crate::HashMap<
+                let mut deduped_arcs: $crate::FxHashMap<
                     ($vertex, $vertex, $edge),
                     ::std::option::Option<&$crate::moirai_protocol::event::tag::Tag>,
                 > = ::std::default::Default::default();
 
                 for (op, tag) in &tagged_ops {
-                    if let $graph::AddArc(arcs) = op {
+                    if let $update::AddArc(arcs) = op {
                         let v1 = arcs.source();
                         let v2 = arcs.target();
                         let e = arcs.kind();
@@ -802,7 +814,7 @@ macro_rules! typed_graph {
                 // MAX enforcement per (source, edge_type) group
                 // We assume that their can exist at most one arc of a given type between a given source and target,
                 // so we only need to enforce MAX constraints per (source, edge_type) group
-                let mut groups: $crate::HashMap<
+                let mut groups: $crate::FxHashMap<
                     ($vertex, TypedGraphEdgeType),
                     ::std::vec::Vec<::std::primitive::usize>,
                 > = ::std::default::Default::default();
@@ -859,24 +871,6 @@ macro_rules! typed_graph {
         //* DEEP SIZE */
 
         #[cfg(feature = "test_utils")]
-        impl<P> ::deepsize::DeepSizeOf for $graph<P> {
-            fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
-                match self {
-                    Self::AddVertex { id } | Self::RemoveVertex { id } => {
-                        ::deepsize::DeepSizeOf::deep_size_of_children(id, context)
-                    }
-                    Self::DeleteSubtree { prefix } => {
-                        ::deepsize::DeepSizeOf::deep_size_of_children(prefix, context)
-                    },
-                    Self::AddArc(arc) | Self::RemoveArc(arc) => {
-                        ::deepsize::DeepSizeOf::deep_size_of_children(arc, context)
-                    }
-                    Self::__Marker(never, _) => match *never {},
-                }
-            }
-        }
-
-        #[cfg(feature = "test_utils")]
         impl ::deepsize::DeepSizeOf for $arcs {
             fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> ::std::primitive::usize {
                 match self {
@@ -906,19 +900,22 @@ macro_rules! typed_graph {
             $( $conn:ident : $src:ident -> $tgt:ident ( $ety:ident ) ),* $(,)?
         } $(,)?
     ) => {
-        $crate::typed_graph!(@generate
-            graph: $graph,
-            vertex: $vertex,
-            edge: $edge,
-            arcs_type: $arcs,
-            vertices { $( $v ),* },
-            edge_types {
-                $( $edge_ty [ $edge_min, $edge_max ] ),*
-            },
-            connections {
-                $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) ),*
-            }
-        );
+        $crate::paste::paste! {
+            $crate::typed_graph!(@generate
+                graph: $graph,
+                update: [<$graph Update>],
+                vertex: $vertex,
+                edge: $edge,
+                arcs_type: $arcs,
+                vertices { $( $v ),* },
+                edge_types {
+                    $( $edge_ty [ $edge_min, $edge_max ] ),*
+                },
+                connections {
+                    $( $conn : $src [$src] -> $tgt [$tgt] ( $ety ) ),*
+                }
+            );
+        }
     };
 }
 
@@ -972,17 +969,5 @@ where
         // Edge kinds are schema marker values. Only the endpoint identifiers can
         // carry heap-backed state, such as interned object paths.
         self.source.deep_size_of_children(context) + self.target.deep_size_of_children(context)
-    }
-}
-
-#[cfg(feature = "test_utils")]
-impl<T> DeepSizeOf for Vertex<T>
-where
-    T: Debug + Clone + PartialEq + Eq + Hash + ::deepsize::DeepSizeOf,
-{
-    fn deep_size_of_children(&self, context: &mut ::deepsize::Context) -> usize {
-        match self {
-            Self::AddVertex { id } | Self::RemoveVertex { id } => id.deep_size_of_children(context),
-        }
     }
 }

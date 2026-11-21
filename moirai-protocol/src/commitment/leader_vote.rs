@@ -1,129 +1,106 @@
 use std::{convert::Infallible, range::Range};
 
 use crate::{
+    clock::causal_frontier::CausalFrontier,
     crdt::{
         eval::Eval,
         query::QueryOperation,
-        redundancy::RedundancyRelation,
-        replicated_data_type::{ReplicatedDataType, UsesUnstableService},
+        replicated_data_type::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Sequential,
+        },
     },
-    event::{id::EventId, tagged_op::TaggedOp},
-    replica::{ReplicaId, ReplicaIdOwned, ReplicaIdx},
-    state::{
-        stable_state::IsStableState,
-        unstable_state::{IsUnstableCausal, IsUnstableCore, IsUnstablePrune},
-    },
+    event::id::EventId,
+    replica::{ReplicaId, ReplicaIdx},
+    state::unstable_state::{IsUnstableCausal, IsUnstableCore},
 };
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
-pub enum LeaderVote {
-    Vote(ReplicaIdOwned),
+pub enum LeaderVoteUpdate {
+    Vote(ReplicaId),
 }
 
-impl ReplicatedDataType for LeaderVote {
-    type StableState = ();
-    type Rejection = Infallible;
-
-    const DISABLE_R_WHEN_R: bool = false;
-    const DISABLE_R_WHEN_NOT_R: bool = false;
-    const DISABLE_STABILIZE: bool = false;
-
-    fn redundant_itself<'a>(
-        _new_tagged_op: &TaggedOp<Self>,
-        _stable: &Self::StableState,
-        _unstable: impl Iterator<Item = &'a TaggedOp<Self>>,
-    ) -> bool
-    where
-        Self: 'a,
-    {
-        false
-    }
-
-    fn redundant_by_when_redundant(
-        _old_op: &Self,
-        _old_tag: Option<&crate::event::tag::Tag>,
-        _is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        false
-    }
-
-    fn redundant_by_when_not_redundant(
-        _old_op: &Self,
-        _old_tag: Option<&crate::event::tag::Tag>,
-        _is_conc: bool,
-        _new_tagged_op: &TaggedOp<Self>,
-    ) -> bool {
-        false
-    }
-
-    fn stabilize(
-        _tagged_op: &TaggedOp<Self>,
-        _stable: &mut Self::StableState,
-        _unstable: &mut impl IsUnstablePrune<Self>,
-    ) {
-    }
-
-    fn eval<Q, U>(q: &Q, stable: &Self::StableState, unstable: &U) -> Q::Response
-    where
-        Q: QueryOperation,
-        Self: Eval<Q, U>,
-    {
-        Self::execute_query(q, stable, unstable)
-    }
-}
-
-impl IsStableState<LeaderVote> for () {
-    fn is_default(&self) -> bool {
-        true
-    }
-
-    fn apply(&mut self, _value: LeaderVote) {}
-
-    fn clear(&mut self) {}
-
-    fn prune_redundant_ops(
-        &mut self,
-        _rdnt: RedundancyRelation<LeaderVote>,
-        _tagged_op: &TaggedOp<LeaderVote>,
-    ) {
-    }
-}
-
-impl LeaderVote {
+impl LeaderVoteUpdate {
     pub fn id(&self) -> &ReplicaId {
         match self {
-            LeaderVote::Vote(replica_id) => replica_id,
+            LeaderVoteUpdate::Vote(replica_id) => replica_id,
         }
     }
 }
 
-impl<U> UsesUnstableService<U> for LeaderVote where U: IsUnstableCore<Self> {}
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+pub struct LeaderVote;
 
-fn supports<U>(log: &U, event_id: &EventId, supporter: ReplicaIdx) -> bool
-where
-    U: IsUnstableCausal<LeaderVote>,
-{
-    let previous = log.previous(event_id, supporter);
-    let next = log.next(event_id, supporter);
+impl LeaderVote {
+    fn supports<U>(log: &U, event_id: &EventId, supporter: ReplicaIdx) -> bool
+    where
+        U: IsUnstableCausal<<Self as ReplicatedDataType>::Update>
+            + IsUnstableCore<<Self as ReplicatedDataType>::Update>,
+    {
+        let previous = log.previous(event_id, supporter);
+        let next = log.next(event_id, supporter);
 
-    let (Some(first), Some(last)) = (previous, next) else {
-        return false;
-    };
+        let (Some(first), Some(last)) = (previous, next) else {
+            return false;
+        };
 
-    let first = first.id().seq() - 1;
-    let last = last.id().seq() - 1;
+        let first = first.id().seq() - 1;
+        let last = last.id().seq() - 1;
 
-    log.replica_events(
-        supporter,
-        Range {
-            start: first,
-            end: last + 1,
-        },
-    )
-    .all(|tagged_op| tagged_op.op().id() == event_id.origin_id())
+        log.replica_events(
+            supporter,
+            Range {
+                start: first,
+                end: last + 1,
+            },
+        )
+        .all(|tagged_op| tagged_op.op().id() == event_id.origin_id())
+    }
 }
+
+impl Sequential for () {
+    fn is_default(&self) -> bool {
+        true
+    }
+    type Update = LeaderVoteUpdate;
+
+    fn apply(&mut self, _: &Self::Update) {}
+}
+
+impl ReplicatedDataType for LeaderVote {
+    type Update = LeaderVoteUpdate;
+    type Stable = ();
+    type Rejection = Infallible;
+}
+
+impl<U> Precondition<U> for LeaderVote {
+    fn is_enabled(
+        _stable: &<LeaderVote as ReplicatedDataType>::Stable,
+        _unstable: &U,
+        _update: &Self::Update,
+    ) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
+impl<U> CausalCompaction<U> for LeaderVote
+where
+    U: IsUnstableCore<Self::Update>,
+{
+    const DISABLE_R_WHEN_R: bool = true;
+    const DISABLE_R_WHEN_NOT_R: bool = true;
+}
+
+impl<U> CausalStabilize<U> for LeaderVote
+where
+    U: IsUnstableCausal<Self::Update>,
+{
+    const DISABLE_STABILIZE: bool = false;
+}
+
+impl<U> CausalReset<U> for LeaderVote where U: IsUnstableCausal<Self::Update> {}
 
 /// A newly decided positive `(candidate, supporter)` relationship.
 #[derive(Debug, Clone)]
@@ -133,37 +110,71 @@ pub struct SupportDelta {
 }
 
 /// Computes only the positive support relationships decided by one delivered observer event.
+///
+/// # Complexity
+///
+/// Expected time is `O(N + E * H)`, where:
+/// - `N` is the number of replicas,
+/// - `E` is the number of newly observed candidates,
+/// - `H` is the number of stored events from the observer's replica.
 #[derive(Debug, Clone)]
 pub struct NewSupports {
     observer: EventId,
+    last_committed: Option<CausalFrontier>,
 }
 
 impl NewSupports {
-    pub fn new(observer: EventId) -> Self {
-        Self { observer }
+    pub fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
+        Self {
+            observer,
+            last_committed,
+        }
     }
 }
 
 impl QueryOperation for NewSupports {
     type Response = Vec<SupportDelta>;
+
+    #[cfg(feature = "test_utils")]
+    fn name() -> &'static str {
+        "NewSupports"
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn args(&self) -> Vec<String> {
+        vec![format!("observer={:?}", self.observer)]
+    }
 }
 
-impl<U> Eval<NewSupports, U> for LeaderVote
+impl<U> Eval<(), U, NewSupports> for LeaderVote
 where
-    U: IsUnstableCausal<Self>,
+    U: IsUnstableCausal<<Self as ReplicatedDataType>::Update>
+        + IsUnstableCore<<Self as ReplicatedDataType>::Update>,
 {
     /// Compute `supports(v, r)` for every `v` newly observed by delivered event from replica `r`.
     fn execute_query(
-        q: &NewSupports,
-        _stable: &Self::StableState,
+        _stable: &(),
         unstable: &U,
+        q: &NewSupports,
     ) -> <NewSupports as QueryOperation>::Response {
         let supporter = q.observer.idx();
 
         unstable
             .newly_observed_by(&q.observer)
             .into_iter()
-            .filter(|candidate| supports(unstable, candidate.id(), supporter))
+            .filter(|candidate| {
+                if let Some(last_committed) = &q.last_committed {
+                    if last_committed.contains(candidate.id()) {
+                        return false;
+                    }
+                    if let Some(version) = unstable.version(candidate.id())
+                        && !version.includes_frontier(last_committed)
+                    {
+                        return false;
+                    }
+                }
+                LeaderVote::supports(unstable, candidate.id(), supporter)
+            })
             .map(|candidate| SupportDelta {
                 candidate: candidate.id().clone(),
                 supporter,

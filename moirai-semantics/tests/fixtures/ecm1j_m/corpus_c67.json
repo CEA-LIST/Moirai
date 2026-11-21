@@ -1,0 +1,474 @@
+{
+  "classes": {
+    "Robot::OrderRobot": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": true,
+          "merge": {
+            "kind": "identityReference",
+            "many": true,
+            "target": "controlflow::Expr"
+          },
+          "name": "EReference0",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::Expr"
+        }
+      ],
+      "superTypes": []
+    },
+    "Robot::bip": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::display": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::hasTurned": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::move": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::obstacle": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::stopEngine": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::turn": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "Robot::turnAngle": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "Robot::OrderRobot"
+      ]
+    },
+    "controlflow::Expr": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::tantqueue"
+          },
+          "name": "EReference0",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::tantqueue"
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": true,
+          "merge": {
+            "kind": "identityReference",
+            "many": true,
+            "target": "Robot::OrderRobot"
+          },
+          "name": "fonction",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "Robot::OrderRobot"
+        }
+      ],
+      "superTypes": []
+    },
+    "controlflow::ExprBool": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::tantqueue"
+          },
+          "name": "EReference2",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::tantqueue"
+        }
+      ],
+      "superTypes": [
+        "controlflow::Expr"
+      ]
+    },
+    "controlflow::Program": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": true,
+          "merge": {
+            "kind": "identityReference",
+            "many": true,
+            "target": "controlflow::Expr"
+          },
+          "name": "EReferenc0",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::Expr"
+        }
+      ],
+      "superTypes": []
+    },
+    "controlflow::and": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "controlflow::opBinaire"
+      ]
+    },
+    "controlflow::not": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "controlflow::opUnaire"
+      ]
+    },
+    "controlflow::opBinaire": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::opBinaire"
+          },
+          "name": "EReference0",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::opBinaire"
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::ExprBool"
+          },
+          "name": "LeftSon",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": true,
+          "target": "controlflow::ExprBool"
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::ExprBool"
+          },
+          "name": "RightSon",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": true,
+          "target": "controlflow::ExprBool"
+        }
+      ],
+      "superTypes": [
+        "controlflow::operator"
+      ]
+    },
+    "controlflow::opUnaire": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": [
+        "controlflow::ExprBool",
+        "controlflow::operator"
+      ]
+    },
+    "controlflow::operator": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [],
+      "superTypes": []
+    },
+    "controlflow::si": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::ExprBool"
+          },
+          "name": "cdt",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::ExprBool"
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": true,
+          "merge": {
+            "kind": "identityReference",
+            "many": true,
+            "target": "controlflow::Expr"
+          },
+          "name": "instrSi",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::Expr"
+        }
+      ],
+      "superTypes": [
+        "controlflow::Expr"
+      ]
+    },
+    "controlflow::tantqueue": {
+      "abstract": false,
+      "attributes": [],
+      "containments": [],
+      "references": [
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::Expr"
+          },
+          "name": "instrTTque",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::Expr"
+        },
+        {
+          "annotation": null,
+          "facets": {
+            "ordered": null,
+            "unique": null
+          },
+          "many": false,
+          "merge": {
+            "kind": "identityReference",
+            "many": false,
+            "target": "controlflow::ExprBool"
+          },
+          "name": "Cdt",
+          "provenance": {
+            "leaf": "notApplicable",
+            "ordered": "notApplicable",
+            "presence": "notApplicable",
+            "unique": "notApplicable"
+          },
+          "required": false,
+          "target": "controlflow::ExprBool"
+        }
+      ],
+      "superTypes": [
+        "controlflow::Expr"
+      ]
+    }
+  },
+  "enums": {},
+  "formatVersion": 2,
+  "nsURI": "Lego-lg",
+  "package": "Legolang",
+  "packages": {
+    "Robot": {
+      "nsPrefix": "lego_rb",
+      "nsURI": "Lego-lg.legorb"
+    },
+    "controlflow": {
+      "nsPrefix": "legoCf",
+      "nsURI": "Lego-lg.lego_controlflow"
+    }
+  },
+  "rootClasses": [
+    "Robot::OrderRobot",
+    "Robot::bip",
+    "Robot::display",
+    "Robot::hasTurned",
+    "Robot::move",
+    "Robot::obstacle",
+    "Robot::stopEngine",
+    "Robot::turn",
+    "Robot::turnAngle",
+    "controlflow::Expr",
+    "controlflow::ExprBool",
+    "controlflow::Program",
+    "controlflow::and",
+    "controlflow::not",
+    "controlflow::opBinaire",
+    "controlflow::opUnaire",
+    "controlflow::operator",
+    "controlflow::si",
+    "controlflow::tantqueue"
+  ]
+}

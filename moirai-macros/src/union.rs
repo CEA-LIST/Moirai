@@ -37,7 +37,6 @@ macro_rules! union {
 
             /// Set of Union CRDT child logs, one for each variant
             #[derive(Clone, Debug)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Child>] {
                 $(
                     $variant($log),
@@ -95,7 +94,6 @@ macro_rules! union {
 
             /// Internal Union log state
             #[derive(Clone, Debug, Default)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Container>] {
                 #[default]
@@ -112,7 +110,6 @@ macro_rules! union {
             /// counts for reads nor for enabling operations, but its log is kept, so that a
             /// concurrent update delivered later applies to the history the reset saw.
             #[derive(Clone, Debug, Default)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub struct [<$union Log>] {
                 /// Present children
@@ -166,12 +163,12 @@ macro_rules! union {
 
                 fn stabilize_child(
                     child: &mut [<$union Child>],
-                    version: &$crate::moirai_protocol::clock::version_vector::Version,
+                    frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier,
                 ) {
                     match child {
                         $(
                             [<$union Child>]::$variant(log) => {
-                                <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(log, version);
+                                <$log as $crate::moirai_protocol::state::log::IsLog>::stabilize(log, frontier);
                             }
                         )*
                     }
@@ -330,18 +327,18 @@ macro_rules! union {
 
             impl $crate::moirai_protocol::state::log::IsLog for [<$union Log>] {
                 type Command = [<$union>];
-                type Op = [<$union>];
+                type Update = [<$union>];
                 type Rejection = [<$union Rejection>];
 
                 fn new() -> Self {
                     <Self as ::std::default::Default>::default()
                 }
 
-                fn prepare(&self, cmd: Self::Command) -> Self::Op {
+                fn prepare(&self, cmd: Self::Command) -> Self::Update {
                     cmd
                 }
 
-                fn is_enabled(&self, op: &Self::Op) -> ::std::result::Result<(), Self::Rejection> {
+                fn is_enabled(&self, op: &Self::Update) -> ::std::result::Result<(), Self::Rejection> {
                     match &self.child {
                         [<$union Container>]::Unset => match op {
                             $union::Choose(_) => ::std::result::Result::Err([<$union Rejection>]::MissingVariant),
@@ -361,7 +358,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -392,7 +389,7 @@ macro_rules! union {
                                         $union::$variant(o),
                                         [<$union Child>]::$variant(log),
                                     ) => {
-                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op =
+                                        let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update =
                                             <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(
                                                 ::std::clone::Clone::clone(o),
                                             );
@@ -419,7 +416,7 @@ macro_rules! union {
 
                 fn effect(
                     &mut self,
-                    event: $crate::moirai_protocol::event::Event<Self::Op>,
+                    event: $crate::moirai_protocol::event::Event<Self::Update>,
                     ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>)
                 {
                     match ::std::clone::Clone::clone(event.op()) {
@@ -427,7 +424,7 @@ macro_rules! union {
                             $union::$variant(o) => {
                                 self.record_routed([<$union Variant>]::$variant, event.id());
                                 ctx.with_variant(::std::stringify!([<$variant:lower>]), |ctx| {
-                                    let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Op = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
+                                    let child_op: <$log as $crate::moirai_protocol::state::log::IsLog>::Update = <$ty as $crate::moirai_protocol::utils::boxer::Boxer<_>>::boxer(o);
                                     let child_event = $crate::moirai_protocol::event::Event::unfold(event, child_op);
                                     if let ::std::option::Option::Some([<$union Child>]::$variant(log)) = self.present_mut([<$union Variant>]::$variant) {
                                         <$log as $crate::moirai_protocol::state::log::IsLog>::effect(log, child_event, ctx);
@@ -450,31 +447,21 @@ macro_rules! union {
                     }
                 }
 
-                // A union is a node in the type tree, not a leaf: it holds no
-                // operations of its own, so the only thing it can do with a
-                // stable version is hand it to whichever child currently holds
-                // the value. Stopping here severs the *only* path an operation
-                // has out of a PO-Log's unstable half, and a union at the root
-                // of a model — which is what Arachne generates for JSON —
-                // stops it for the whole model. Same traversal as
-                // `redundant_by_parent` below, for the same reason.
-                fn stabilize(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version) {
+                fn stabilize(&mut self, frontier: &$crate::moirai_protocol::clock::causal_frontier::CausalFrontier) {
                     match &mut self.child {
                         [<$union Container>]::Unset => {}
-                        [<$union Container>]::Value(union_child) => Self::stabilize_child(union_child, version),
+                        [<$union Container>]::Value(union_child) => Self::stabilize_child(union_child, frontier),
                         [<$union Container>]::Conflicts(union_childs) => {
                             for union_child in union_childs {
-                                Self::stabilize_child(union_child, version);
+                                Self::stabilize_child(union_child, frontier);
                             }
                         }
                     }
                     for union_child in &mut self.removed {
-                        Self::stabilize_child(union_child, version);
+                        Self::stabilize_child(union_child, frontier);
                     }
                 }
 
-                // Under an optional the union also drops the members the
-                // removal emptied: `OptionalContent::redundant_by_optional`.
                 fn redundant_by_parent(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
                     self.reset_children(version, conservative, ::std::option::Option::None);
                 }
@@ -492,34 +479,16 @@ macro_rules! union {
                 }
             }
 
+            /// Held by an optional, the union also drops each member the
+            /// removal emptied, keeping those a concurrent write reached. A
+            /// keyed collection keeps its emptied members, so this is not part
+            /// of `redundant_by_parent`.
             impl $crate::union::held_by_optional::OptionalContent for [<$union Log>] {
                 fn redundant_by_optional(&mut self, version: &$crate::moirai_protocol::clock::version_vector::Version, conservative: ::std::primitive::bool) {
-                    self.reset_children(version, conservative, ::std::option::Option::None);
-                    self.drop_emptied_children();
-                }
-            }
-
-            impl [<$union Log>] {
-                /// Drop every present child a removal left at its default,
-                /// keeping those a concurrent write kept.
-                ///
-                /// Only under an optional ([`OptionalContent`](moirai_macros::union::held_by_optional::OptionalContent)):
-                /// an emptied child leaves an optional, and so, one at a
-                /// time, does an emptied member of a conflict, whichever of
-                /// the removal and a concurrent write to the other member a
-                /// replica delivers first. A keyed collection keeps the
-                /// emptied members a concurrent write reached, so this is not
-                /// part of the union's own reset. A dropped child keeps no
-                /// log, so its record of uncovered events goes with it.
-                fn drop_emptied_children(&mut self) {
+                    <Self as $crate::moirai_protocol::state::log::IsLog>::redundant_by_parent(self, version, conservative);
                     self.child = match ::std::mem::take(&mut self.child) {
-                        [<$union Container>]::Unset => [<$union Container>]::Unset,
-                        [<$union Container>]::Value(child) => {
-                            if Self::child_is_default(&child) {
-                                [<$union Container>]::Unset
-                            } else {
-                                [<$union Container>]::Value(child)
-                            }
+                        [<$union Container>]::Value(child) if !Self::child_is_default(&child) => {
+                            [<$union Container>]::Value(child)
                         }
                         [<$union Container>]::Conflicts(children) => {
                             let mut kept: ::std::vec::Vec<[<$union Child>]> = children
@@ -532,7 +501,9 @@ macro_rules! union {
                                 _ => [<$union Container>]::Conflicts(kept),
                             }
                         }
+                        _ => [<$union Container>]::Unset,
                     };
+                    // A dropped child keeps no log, so its record of uncovered events goes with it.
                     let present: ::std::vec::Vec<[<$union Variant>]> = match &self.child {
                         [<$union Container>]::Unset => ::std::vec::Vec::new(),
                         [<$union Container>]::Value(child) => ::std::vec![child.variant()],
@@ -684,51 +655,21 @@ macro_rules! union {
     };
 }
 
-/// What an optional asks of the log it holds.
-///
-/// An optional drops a child a removal emptied, whether the removal is its
-/// own unset or one above it, and whether that child is an object (a
-/// `record!` or a `union!`) or a leaf value: emptied means its log holds
-/// nothing, so a text, whose reset records the deletion, stays. A union
-/// under an optional also drops, one at a time, each member a removal
-/// emptied (the value ST.01 fixes: an optional holding the conflict
-/// `[A, B]`, unset while a write reaches `B`, serves `B` alone on every
-/// replica), where a keyed collection keeps, of a removed key, the members
-/// a write the removal had not seen reached (a member every write of which
-/// the removal saw is absent there too, its log kept).
-/// `IsLog::redundant_by_parent` does not say who is asking, so `OptionLog`
-/// hands its removals down through this trait instead, and what the content
-/// does with them is decided by its type: nothing outside the logs carries
-/// it, and nothing is stored in either log, so the state they serialize is
-/// unchanged.
-///
-/// The trait's one method has no default body, so every impl states what
-/// its log does with a removal an optional hands down, and an impl that
-/// does not state it does not compile. `record!` hands the removal to its
-/// fields as from any other parent; `union!` hands it to its members as
-/// from any other parent and then drops each member it emptied; `Box` and
-/// `BoxedLog` forward it to what they hold; `POLog`, `GraphLog` and
-/// `OptionLog` take it as from any other parent. `OptionLog` holds only a
-/// log that implements the trait, so a wrapper between an optional and its
-/// content must state in its impl what it does with the removal, whether
-/// it forwards it or not: it cannot lose the rule silently by taking a
-/// default.
+/// What an optional's content does with a removal the optional hands down,
+/// its own unset or a removal above it: the optional then drops the content
+/// if it is left at its default. The trait has no default body, so a content
+/// log (a user wrapper included) states what it does with the removal or is
+/// refused as an optional's content at compile time.
 pub mod held_by_optional {
     use moirai_protocol::{
         clock::version_vector::Version,
         crdt::replicated_data_type::ReplicatedDataType,
-        state::{
-            graph_log::GraphLog,
-            log::{BoxedLog, IsLog},
-            po_log::POLog,
-        },
+        state::{log::IsLog, po_log::POLog},
     };
 
     /// The content of an optional: see [the module](self).
     pub trait OptionalContent: IsLog {
-        /// A removal handed down by the optional that holds this log, its
-        /// own unset or one above it. There is no default: every impl states
-        /// what its log does with it.
+        /// A removal handed down by the optional that holds this log.
         fn redundant_by_optional(&mut self, version: &Version, conservative: bool);
     }
 
@@ -738,30 +679,12 @@ pub mod held_by_optional {
         }
     }
 
-    impl<L: OptionalContent> OptionalContent for BoxedLog<L> {
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            self.inner_mut()
-                .redundant_by_optional(version, conservative);
-        }
-    }
-
-    impl<O, U> OptionalContent for POLog<O, U>
+    /// As from any other parent.
+    impl<R, U> OptionalContent for POLog<R, U>
     where
-        O: ReplicatedDataType,
-        POLog<O, U>: IsLog,
+        R: ReplicatedDataType,
+        POLog<R, U>: IsLog,
     {
-        /// As from any other parent.
-        fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
-            IsLog::redundant_by_parent(self, version, conservative);
-        }
-    }
-
-    impl<O> OptionalContent for GraphLog<O>
-    where
-        O: ReplicatedDataType,
-        GraphLog<O>: IsLog,
-    {
-        /// As from any other parent.
         fn redundant_by_optional(&mut self, version: &Version, conservative: bool) {
             IsLog::redundant_by_parent(self, version, conservative);
         }
