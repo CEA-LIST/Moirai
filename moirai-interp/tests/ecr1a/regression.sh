@@ -4,7 +4,8 @@
 #   R1 EC.M2's in-process check, moirai-interp/tests/ecm2/check.sh (S1..S7, B1..B3, L1, L2);
 #   R2 EC.03c2c's node-cluster check, moirai-interp/tests/ec03c2c/check.sh (21 targets, release node);
 #   R3 the targets of moirai-interp --features network whose build reads a regenerated fixture and
-#      that R1 and R2 do not run (the list below, from the targets' dep-info at 684f817).
+#      that R1 and R2 do not run (the list below, from the targets' dep-info at 684f817, and the five
+#      nw targets that read json.metamodel.json through moirai_interp::testing::JSON_DESCRIPTOR).
 # Writes <out>/names.txt: `<step> <target> :: <test> <outcome>` and `<step> exit <code>` lines, sorted.
 # Given a baseline <out>, compares: exit 1 when a baseline line is missing or changed, or a new
 # line names a target other than ecr1a_describe_fixtures.
@@ -24,7 +25,9 @@ LOCK=/volatile/home/vp242103/.cache/cea-crdt-scratch/cargo.lock
 NODES_LOCK=/volatile/home/vp242103/.cache/cea-crdt-scratch/nodes.lock
 R3="ec03b_host md03_common md03_replica_ids md03_semantics md03a_common md03a_semantics
 si05_references_by_identity si05_round3_be10455 si07_h1_harness_read si07_i1_intake si07_p1_dead_source
-si08_r2_nested_targets si08_target_side si13_migration_l3"
+si08_r2_nested_targets si08_target_side si13_migration_l3
+nw03_joiner_writes_l3 nw04_joiner_with_history_l3 nw07_named_model_ids_l3 nw11_http_origin_policy_l2
+nw27_model_replication"
 
 names_of() { # step log: check.sh's parser, `<step> <target> :: <name> <outcome>`
     awk -v s="$1" '/^ *Running .*\(.*\/deps\/[^)]*\)$/{b=$NF; sub(/^\(.*\/deps\//,"",b); sub(/\)$/,"",b); sub(/-[0-9a-f]+$/,"",b); t=b}

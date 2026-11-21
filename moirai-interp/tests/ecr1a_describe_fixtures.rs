@@ -1,8 +1,8 @@
 //! EC.R1a (`cea-cdrt-knowledge/spec/items/EC.R1a.md`): every descriptor fixture in this repository
 //! is the bytes `arachne describe` writes for its source `.ecore` ([`REGENERATED`]), or is listed in
-//! [`KEPT`] with the reason it is not; and each regenerated one reads, through `from_descriptor`
-//! (the reader `moirai-interp` installs a log with), to the table its 684f817 bytes read to, the
-//! digest aside.
+//! [`KEPT`], unchanged since 684f817, with the reason it is not; and each regenerated one reads,
+//! through `from_descriptor` (the reader `moirai-interp` installs a log with), to the table its
+//! 684f817 bytes read to, the digest aside.
 //!
 //! `describe_writes_every_fixture` runs the binary `ARACHNE_BIN` names (Arachne
 //! `akira/interpreter-modelstore` 8cf29f5 or later). Without it the test writes `ECR1A-SKIP` and
@@ -149,33 +149,41 @@ const REGENERATED: [(&str, &str, &str); 24] = [
 
 /// Descriptor fixtures not regenerated: each is an older describe's output, and the source's
 /// descriptor today reads to another table, so regenerating it would change what its tests read.
-const KEPT: [(&str, &str); 7] = [
+/// `(fixture, its digest at 684f817, the reason)`.
+const KEPT: [(&str, &str, &str); 7] = [
     (
         "moirai-interp/tests/fixtures/bt.metamodel.json",
+        "b899ec335e7dc46303d5a7871a1370a12db8858718bea57dc6f58f01c474feb5",
         "behavior_tree.ecore before SI.05: DataFlowPort.entry is a plain reference, an identityReference today",
     ),
     (
         "moirai-interp/tests/fixtures/notation.metamodel.json",
+        "9d551713bd2d1b1cfd8c38e591ed33a454706305278f0d1c1dc7d3589167506c",
         "the notation descriptor Arachne shipped at dc16103 (9d551713), ED.16a's old descriptor",
     ),
     (
         "moirai-interp/tests/fixtures/si05/si05board.today.metamodel.json",
+        "53a9cd162cbde85cf6eb695b9e722baf9fb140504f03b2f2e2fbb0b285e93deb",
         "si05board.ecore before SI.05, plain references: the side SI.05's tests compare against",
     ),
     (
         "moirai-interp/tests/fixtures/si10/legacy/umlclass.a44920ad.metamodel.json",
+        "a44920adc661d308b7bbb9a8e4ccf1549a093546a241c0e33b28596de8000f3b",
         "SI.10's legacy register L2: the umlclass descriptor ED.10 was written for, before SI.05",
     ),
     (
         "moirai-interp/tests/fixtures/sysml.ar02.metamodel.json",
+        "ebd580696f97d9339c148f5b29db5d0ff7b0928d78fb05efc7c206811405e627",
         "SysML at AR.02, before SI.05: 34 plain references, identityReference today",
     ),
     (
         "moirai-interp/tests/fixtures/uml.ar02.metamodel.json",
+        "21c50dea71938b861233b72116f5ead094fe1bbb3d67bf623864f52c3ead1c3f",
         "SimpleUML at AR.02, before SI.05: 4 plain references, identityReference today",
     ),
     (
         "moirai-interp/tests/fixtures/uml.metamodel.json",
+        "12d1a371fd995bce2c44e696e3714d59dae58fe04ff6450382a1e02b0a8a27dd",
         "SimpleUML before AR.02 and SI.05: no eOpposite, plain references",
     ),
 ];
@@ -232,6 +240,17 @@ fn every_descriptor_fixture_is_listed_once() {
         found, set,
         "ECR1A: the descriptor fixtures are not the ones listed"
     );
+}
+
+#[test]
+fn kept_fixtures_are_their_684f817_descriptors() {
+    for (fixture, before, _) in KEPT {
+        assert_eq!(
+            metamodel_digest(&read(fixture)),
+            before,
+            "ECR1A: {fixture} is kept, yet it is not its 684f817 descriptor"
+        );
+    }
 }
 
 #[test]
