@@ -161,6 +161,8 @@ fn sha(bytes: &[u8]) -> String {
 
 /// Every descriptor fixture of the workspace at b27a4cf, read now, equals its read at b27a4cf:
 /// the table's serde JSON, or the refusal's `Debug`, by SHA-256, beside the input's SHA-256.
+/// EC.R1a regenerated 24 of them with `arachne describe` (0424f27): their rows are their read
+/// there, which `moirai-interp/tests/ecr1a_describe_fixtures.rs` ties to 684f817's, digest aside.
 #[test]
 fn ecm1l_a_5_every_descriptor_fixture_reads_as_at_b27a4cf() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
