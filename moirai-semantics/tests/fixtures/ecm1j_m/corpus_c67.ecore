@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="Legolang" nsURI="Lego-lg" nsPrefix="Lego">
+  <eSubpackages name="Robot" nsURI="Lego-lg.legorb" nsPrefix="lego_rb">
+    <eClassifiers xsi:type="ecore:EClass" name="OrderRobot">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="EReference0" upperBound="-1"
+          eType="#//controlflow/Expr"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="move" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="bip" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="turn" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="stopEngine" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="display" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="turnAngle" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="obstacle" eSuperTypes="#//Robot/OrderRobot"/>
+    <eClassifiers xsi:type="ecore:EClass" name="hasTurned" eSuperTypes="#//Robot/OrderRobot"/>
+  </eSubpackages>
+  <eSubpackages name="controlflow" nsURI="Lego-lg.lego_controlflow" nsPrefix="legoCf">
+    <eClassifiers xsi:type="ecore:EClass" name="tantqueue" eSuperTypes="#//controlflow/Expr">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="instrTTque" eType="#//controlflow/Expr"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="Cdt" eType="#//controlflow/ExprBool"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="si" eSuperTypes="#//controlflow/Expr">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="cdt" eType="#//controlflow/ExprBool"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="instrSi" upperBound="-1"
+          eType="#//controlflow/Expr"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Expr">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="EReference0" eType="#//controlflow/tantqueue"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="fonction" upperBound="-1"
+          eType="#//Robot/OrderRobot"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="operator"/>
+    <eClassifiers xsi:type="ecore:EClass" name="opUnaire" eSuperTypes="#//controlflow/operator #//controlflow/ExprBool"/>
+    <eClassifiers xsi:type="ecore:EClass" name="opBinaire" eSuperTypes="#//controlflow/operator">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="EReference0" eType="#//controlflow/opBinaire"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="LeftSon" lowerBound="1"
+          eType="#//controlflow/ExprBool"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="RightSon" lowerBound="1"
+          eType="#//controlflow/ExprBool"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="not" eSuperTypes="#//controlflow/opUnaire"/>
+    <eClassifiers xsi:type="ecore:EClass" name="and" eSuperTypes="#//controlflow/opBinaire"/>
+    <eClassifiers xsi:type="ecore:EClass" name="ExprBool" eSuperTypes="#//controlflow/Expr">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="EReference2" eType="#//controlflow/tantqueue"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Program">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="EReferenc0" upperBound="-1"
+          eType="#//controlflow/Expr"/>
+    </eClassifiers>
+  </eSubpackages>
+</ecore:EPackage>

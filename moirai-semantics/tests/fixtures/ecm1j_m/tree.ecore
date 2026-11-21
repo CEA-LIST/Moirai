@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="shop" nsURI="urn:shop" nsPrefix="shop">
+  <eClassifiers xsi:type="ecore:EClass" name="Named" abstract="true">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Shop" eSuperTypes="#//Named">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="items" upperBound="-1" eType="#//catalog/Item" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="specials" upperBound="-1" eType="#//Special" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="notes" upperBound="-1" eType="#//Note" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="tags" upperBound="-1" eType="#//catalog/detail/Tag" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Note">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="text" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Special" eSuperTypes="#//catalog/Item"/>
+  <eClassifiers xsi:type="ecore:EClass" name="Stock">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="count" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+  </eClassifiers>
+  <eSubpackages name="catalog" nsURI="urn:shop/catalog" nsPrefix="cat">
+    <eClassifiers xsi:type="ecore:EClass" name="Item" eSuperTypes="#//Named">
+      <eStructuralFeatures xsi:type="ecore:EAttribute" name="color" eType="#//catalog/Color"/>
+      <eStructuralFeatures xsi:type="ecore:EAttribute" name="price" eType="#//catalog/Money"/>
+      <eStructuralFeatures xsi:type="ecore:EReference" name="tags" upperBound="-1" eType="#//catalog/detail/Tag" eOpposite="#//catalog/detail/Tag/owner"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EEnum" name="Color">
+      <eLiterals name="RED"/>
+      <eLiterals name="GREEN" value="1"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EDataType" name="Money" instanceClassName="java.lang.Long"/>
+    <eClassifiers xsi:type="ecore:EClass" name="Inventory">
+      <eStructuralFeatures xsi:type="ecore:EReference" name="stock" upperBound="-1" eType="#//Stock" containment="true"/>
+    </eClassifiers>
+    <eSubpackages name="detail" nsURI="urn:shop/catalog/detail" nsPrefix="det">
+      <eClassifiers xsi:type="ecore:EClass" name="Tag">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="label" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="owner" eType="#//catalog/Item" eOpposite="#//catalog/Item/tags">
+          <eAnnotations source="subsets" references="#//catalog/Item/tags"/>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="notes" upperBound="-1" eType="#//catalog/detail/Note" containment="true"/>
+      </eClassifiers>
+      <eClassifiers xsi:type="ecore:EClass" name="Note">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="body" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+      </eClassifiers>
+      <eClassifiers xsi:type="ecore:EEnum" name="Size">
+        <eLiterals name="S"/>
+        <eLiterals name="M" value="1"/>
+      </eClassifiers>
+    </eSubpackages>
+  </eSubpackages>
+  <eSubpackages name="misc" nsURI="urn:shop/misc" nsPrefix="misc"/>
+</ecore:EPackage>
