@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ST.02's metamodel (cea-cdrt-knowledge/spec/items/ST.02.md): an optional
+  containment of a concrete class (Cell) that a removal above it reaches,
+  flat (Box.cell of the Box in Holder.inner) and one level deeper (Mid.cell
+  of the Mid in Box.mid), while a concurrent write to a sibling (Box.k,
+  Mid.k) keeps its owner alive. Every class is concrete and none has a
+  subclass, so the generated runtime composes each optional containment as
+  OptionLog over a record!. Box.note (an optional attribute) and Holder.bag
+  (a keyed collection of Box) serve the spec's two observations only.
+-->
+<ecore:EPackage xmi:version="2.0"
+    xmlns:xmi="http://www.omg.org/XMI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="st02" nsURI="http://www.example.org/st02" nsPrefix="st02">
+    <eClassifiers xsi:type="ecore:EClass" name="Holder">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="tick" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="inner" lowerBound="0" upperBound="1" eType="#//Box" containment="true"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="bag" lowerBound="0" upperBound="-1" eType="#//Entry" containment="true">
+            <eAnnotations source="urn:arachne:semantics">
+                <details key="datatype" value="uw-map"/>
+                <details key="key-feature" value="key"/>
+                <details key="value-feature" value="value"/>
+            </eAnnotations>
+        </eStructuralFeatures>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Box">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="k" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="note" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="cell" lowerBound="0" upperBound="1" eType="#//Cell" containment="true"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="mid" lowerBound="0" upperBound="1" eType="#//Mid" containment="true"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Mid">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="k" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="cell" lowerBound="0" upperBound="1" eType="#//Cell" containment="true"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Cell">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="n" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Entry">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="key" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="value" lowerBound="1" upperBound="1" eType="#//Box" containment="true"/>
+    </eClassifiers>
+</ecore:EPackage>

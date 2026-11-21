@@ -5,12 +5,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": "",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -28,16 +32,22 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -55,14 +65,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Node"
+          "target": "Node",
+          "unsettable": false,
+          "upperBound": -1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -80,14 +96,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Edge"
+          "target": "Edge",
+          "unsettable": false,
+          "upperBound": -1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -105,10 +127,16 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Diagram"
+          "target": "Diagram",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "View"
+      ],
       "superTypes": [
         "View"
       ]
@@ -117,13 +145,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -138,14 +171,20 @@
             "unique": "notApplicable"
           },
           "required": true,
-          "target": "Node"
+          "target": "Node",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -160,8 +199,13 @@
             "unique": "notApplicable"
           },
           "required": true,
-          "target": "Node"
+          "target": "Node",
+          "unsettable": false,
+          "upperBound": 1
         }
+      ],
+      "superTypeOrder": [
+        "View"
       ],
       "superTypes": [
         "View"
@@ -172,12 +216,16 @@
       "attributes": [
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "0",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -196,16 +244,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "0",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -224,16 +278,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "-1",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -252,16 +312,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "-1",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -280,16 +346,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "true",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "bool",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -308,11 +380,17 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "View"
+      ],
       "superTypes": [
         "View"
       ]
@@ -322,12 +400,16 @@
       "attributes": [
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": true,
           "kind": "string",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -346,16 +428,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": "",
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -374,16 +462,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": "lww-register",
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -402,16 +496,22 @@
             "presence": "declared",
             "unique": "notApplicable"
           },
-          "required": true
+          "required": true,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     }
   },
+  "enumLiterals": {},
   "enums": {},
   "formatVersion": 2,
+  "nsPrefix": "notation",
   "nsURI": "http://cea.fr/crdt/notation/0.1",
   "package": "notation",
   "rootClasses": [

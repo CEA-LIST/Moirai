@@ -5,12 +5,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -28,17 +32,24 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -53,16 +64,21 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "nestedPackage1::NestedClass1"
+          "target": "nestedPackage1::NestedClass1",
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "nestedPackage1::NestedClass1": {
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "noLiterals::NoLitClass": {
@@ -70,12 +86,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -93,17 +113,24 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -118,11 +145,40 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "nestedPackage1::NestedClass1"
+          "target": "nestedPackage1::NestedClass1",
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     }
+  },
+  "datatypes": {
+    "RootDataType": {
+      "instanceClassName": "java.lang.String",
+      "serializable": true
+    },
+    "noLiterals::NoLitDataType": {
+      "instanceClassName": "java.lang.String",
+      "serializable": true
+    }
+  },
+  "enumLiterals": {
+    "RootEnum": [
+      {
+        "literal": null,
+        "name": "literal",
+        "value": 10
+      }
+    ],
+    "noLiterals::NoLitEnum": [
+      {
+        "literal": null,
+        "name": "literal",
+        "value": 10
+      }
+    ]
   },
   "enums": {
     "RootEnum": [
@@ -133,6 +189,7 @@
     ]
   },
   "formatVersion": 2,
+  "nsPrefix": "root",
   "nsURI": "http://xtext.org/genmodeltest-v1.0",
   "package": "root",
   "packages": {

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A notation metamodel for the CRDT model store, shaped after the GMF Runtime
+  notation metamodel (org.eclipse.gmf.runtime.notation, nsURI
+  http://www.eclipse.org/gmf/runtime/1.0.3/notation) as Papyrus writes it into
+  a `.notation` resource beside the semantic model.
+
+  Kept from GMF: a Diagram that is a View; a View carrying `type` and a
+  pointer to the element it depicts; Node and Edge as the two kinds of view;
+  an Edge joining two views; x/y/width/height with GMF's own defaults.
+
+  Deviations, each argued in the vault note:
+  - `element` is the identifier STRING of the depicted element, not an
+    EReference to EObject. Measured: an EReference whose type is Ecore's
+    EObject derives to `{"kind":"unsupported","reason":"eObjectReference"}`.
+  - Location/Size/Bounds/LayoutConstraint are collapsed into four attributes
+    on Node. GMF's hierarchy is an abstract interface with four subclasses.
+  - No styles, no compartments, no bendpoints, no anchors, no nested children,
+    no measurementUnit, no eAnnotations.
+  - A Diagram holds further Diagrams in `diagrams`, each with its own Nodes,
+    so one view keeps several diagrams of one model. A view's diagrams are
+    its root followed by the root's `diagrams`, in order.
+  - `visible` on Node only, an LWW register: a hidden node keeps its place.
+  - Coordinates carry `urn:arachne:semantics datatype="lww-register"`, which
+    is what makes a concurrent drag settle on one answer.
+-->
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="notation" nsURI="http://cea.fr/crdt/notation/0.1"
+    nsPrefix="notation">
+  <eClassifiers xsi:type="ecore:EClass" name="View" abstract="true">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="id" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="type" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString" defaultValueLiteral="">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="element" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Diagram" eSuperTypes="#//View">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"
+        defaultValueLiteral=""/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="children" upperBound="-1"
+        eType="#//Node" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="edges" upperBound="-1"
+        eType="#//Edge" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="diagrams" upperBound="-1"
+        eType="#//Diagram" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Node" eSuperTypes="#//View">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="x" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"
+        defaultValueLiteral="0">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="y" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"
+        defaultValueLiteral="0">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="width" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"
+        defaultValueLiteral="-1">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="height" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"
+        defaultValueLiteral="-1">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="visible" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean"
+        defaultValueLiteral="true">
+      <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Edge" eSuperTypes="#//View">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="source" lowerBound="1" eType="#//Node"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="target" lowerBound="1" eType="#//Node"/>
+  </eClassifiers>
+</ecore:EPackage>

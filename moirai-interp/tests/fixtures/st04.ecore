@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ST.04's metamodel (cea-cdrt-knowledge/spec/items/ST.04.md): an optional
+  attribute (a leaf) of an object that a removal above reaches, flat
+  (Box.<leaf> of the Box in Holder.inner) and one level deeper (Mid.<leaf>
+  of the Mid in Box.mid), while a concurrent write to a sibling (Box.k,
+  Mid.k) keeps the object alive. Box and Mid each carry one optional
+  attribute per leaf the derivation can put under an optional: text
+  (EString), the resettable counter at its six widths (EByte, EShort, EInt,
+  ELong, EFloat, EDouble), the enable-wins and disable-wins flags (EBoolean,
+  and dw-flag), the multi-value register over EChar, the five registers
+  over EString (mv, lww, fair, po, to), and the five registers over the
+  enum Color. Every class is concrete and none has a subclass, so the
+  generated runtime composes each optional containment as OptionLog over a
+  record! and each optional attribute as OptionLog over the leaf's log.
+-->
+<ecore:EPackage xmi:version="2.0"
+    xmlns:xmi="http://www.omg.org/XMI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="st04" nsURI="http://www.example.org/st04" nsPrefix="st04">
+    <eClassifiers xsi:type="ecore:EClass" name="Holder">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="tick" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="inner" lowerBound="0" upperBound="1" eType="#//Box" containment="true"/>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Box">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="k" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EReference" name="mid" lowerBound="0" upperBound="1" eType="#//Mid" containment="true"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="text" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="byte" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EByte"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="short" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EShort"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="int" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="long" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//ELong"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="float" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="double" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="ew" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="dw" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="dw-flag"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="ch" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EChar"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="mv" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="mv-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="lww" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="fair" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="fair-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="po" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="po-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="to" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="to-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="emv" lowerBound="0" upperBound="1" eType="#//Color"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="elww" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="efair" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="fair-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="epo" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="po-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="eto" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="to-register"/></eAnnotations>
+        </eStructuralFeatures>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EClass" name="Mid">
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="k" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="text" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="byte" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EByte"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="short" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EShort"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="int" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="long" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//ELong"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="float" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="double" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="ew" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="dw" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="dw-flag"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="ch" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EChar"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="mv" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="mv-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="lww" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="fair" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="fair-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="po" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="po-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="to" lowerBound="0" upperBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="to-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="emv" lowerBound="0" upperBound="1" eType="#//Color"/>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="elww" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="lww-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="efair" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="fair-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="epo" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="po-register"/></eAnnotations>
+        </eStructuralFeatures>
+        <eStructuralFeatures xsi:type="ecore:EAttribute" name="eto" lowerBound="0" upperBound="1" eType="#//Color">
+            <eAnnotations source="urn:arachne:semantics"><details key="datatype" value="to-register"/></eAnnotations>
+        </eStructuralFeatures>
+    </eClassifiers>
+    <eClassifiers xsi:type="ecore:EEnum" name="Color">
+        <eLiterals name="red"/>
+        <eLiterals name="green" value="1"/>
+        <eLiterals name="blue" value="2"/>
+    </eClassifiers>
+</ecore:EPackage>

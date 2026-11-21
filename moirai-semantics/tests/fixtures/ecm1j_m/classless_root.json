@@ -6,10 +6,14 @@
       "containments": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -27,10 +31,14 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "model::Part"
+          "target": "model::Part",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "model::Part": {
@@ -38,6 +46,9 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "enum": "Mode",
           "facets": {
             "ordered": null,
@@ -45,6 +56,7 @@
           },
           "isId": false,
           "kind": "enum",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -64,13 +76,31 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     }
+  },
+  "enumLiterals": {
+    "Mode": [
+      {
+        "literal": null,
+        "name": "ON",
+        "value": null
+      },
+      {
+        "literal": null,
+        "name": "OFF",
+        "value": 1
+      }
+    ]
   },
   "enums": {
     "Mode": [
@@ -79,6 +109,7 @@
     ]
   },
   "formatVersion": 2,
+  "nsPrefix": "lib",
   "nsURI": "urn:lib",
   "package": "lib",
   "packages": {
