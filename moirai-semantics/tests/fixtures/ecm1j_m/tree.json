@@ -5,12 +5,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -28,11 +32,15 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "Note": {
@@ -40,12 +48,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -63,11 +75,15 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "Shop": {
@@ -76,10 +92,14 @@
       "containments": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -97,14 +117,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "catalog::Item"
+          "target": "catalog::Item",
+          "unsettable": false,
+          "upperBound": -1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -122,14 +148,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Special"
+          "target": "Special",
+          "unsettable": false,
+          "upperBound": -1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -147,14 +179,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Note"
+          "target": "Note",
+          "unsettable": false,
+          "upperBound": -1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -172,10 +210,16 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "catalog::detail::Tag"
+          "target": "catalog::detail::Tag",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Named"
+      ],
       "superTypes": [
         "Named"
       ]
@@ -184,7 +228,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "catalog::Item"
+      ],
       "superTypes": [
         "catalog::Item"
       ]
@@ -194,12 +242,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -219,11 +271,15 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "catalog::Inventory": {
@@ -232,10 +288,14 @@
       "containments": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -253,10 +313,14 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Stock"
+          "target": "Stock",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "catalog::Item": {
@@ -264,6 +328,9 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "enum": "catalog::Color",
           "facets": {
             "ordered": null,
@@ -271,6 +338,7 @@
           },
           "isId": false,
           "kind": "enum",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -290,16 +358,22 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "int",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -319,18 +393,25 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "eOpposite": "owner",
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "reference",
@@ -345,8 +426,13 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "catalog::detail::Tag"
+          "target": "catalog::detail::Tag",
+          "unsettable": false,
+          "upperBound": -1
         }
+      ],
+      "superTypeOrder": [
+        "Named"
       ],
       "superTypes": [
         "Named"
@@ -357,12 +443,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -380,11 +470,15 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "catalog::detail::Tag": {
@@ -392,12 +486,16 @@
       "attributes": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
           "isId": false,
           "kind": "string",
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "attribute",
@@ -415,16 +513,22 @@
             "presence": "ecoreDefault",
             "unique": "notApplicable"
           },
-          "required": false
+          "required": false,
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
       "containments": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "containment",
@@ -442,17 +546,24 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "catalog::detail::Note"
+          "target": "catalog::detail::Note",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "eOpposite": "tags",
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "reference",
@@ -473,11 +584,46 @@
               "feature": "tags"
             }
           ],
-          "target": "catalog::Item"
+          "target": "catalog::Item",
+          "unsettable": false,
+          "upperBound": 1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     }
+  },
+  "datatypes": {
+    "catalog::Money": {
+      "instanceClassName": "java.lang.Long",
+      "serializable": true
+    }
+  },
+  "enumLiterals": {
+    "catalog::Color": [
+      {
+        "literal": null,
+        "name": "RED",
+        "value": null
+      },
+      {
+        "literal": null,
+        "name": "GREEN",
+        "value": 1
+      }
+    ],
+    "catalog::detail::Size": [
+      {
+        "literal": null,
+        "name": "S",
+        "value": null
+      },
+      {
+        "literal": null,
+        "name": "M",
+        "value": 1
+      }
+    ]
   },
   "enums": {
     "catalog::Color": [
@@ -490,6 +636,7 @@
     ]
   },
   "formatVersion": 2,
+  "nsPrefix": "shop",
   "nsURI": "urn:shop",
   "package": "shop",
   "packages": {

@@ -4,13 +4,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "identityReference",
@@ -25,16 +30,23 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::Expr"
+          "target": "controlflow::Expr",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "Robot::bip": {
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -43,7 +55,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -52,7 +68,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -61,7 +81,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -70,7 +94,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -79,7 +107,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -88,7 +120,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -97,7 +133,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "Robot::OrderRobot"
+      ],
       "superTypes": [
         "Robot::OrderRobot"
       ]
@@ -106,13 +146,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -127,14 +172,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::tantqueue"
+          "target": "controlflow::tantqueue",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "identityReference",
@@ -149,22 +200,30 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "Robot::OrderRobot"
+          "target": "Robot::OrderRobot",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "controlflow::ExprBool": {
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -179,8 +238,13 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::tantqueue"
+          "target": "controlflow::tantqueue",
+          "unsettable": false,
+          "upperBound": 1
         }
+      ],
+      "superTypeOrder": [
+        "controlflow::Expr"
       ],
       "superTypes": [
         "controlflow::Expr"
@@ -190,13 +254,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "identityReference",
@@ -211,16 +280,23 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::Expr"
+          "target": "controlflow::Expr",
+          "unsettable": false,
+          "upperBound": -1
         }
       ],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "controlflow::and": {
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "controlflow::opBinaire"
+      ],
       "superTypes": [
         "controlflow::opBinaire"
       ]
@@ -229,7 +305,11 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "controlflow::opUnaire"
+      ],
       "superTypes": [
         "controlflow::opUnaire"
       ]
@@ -238,13 +318,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -259,14 +344,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::opBinaire"
+          "target": "controlflow::opBinaire",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -281,14 +372,20 @@
             "unique": "notApplicable"
           },
           "required": true,
-          "target": "controlflow::ExprBool"
+          "target": "controlflow::ExprBool",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 1,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -303,8 +400,13 @@
             "unique": "notApplicable"
           },
           "required": true,
-          "target": "controlflow::ExprBool"
+          "target": "controlflow::ExprBool",
+          "unsettable": false,
+          "upperBound": 1
         }
+      ],
+      "superTypeOrder": [
+        "controlflow::operator"
       ],
       "superTypes": [
         "controlflow::operator"
@@ -314,7 +416,12 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [
+        "controlflow::operator",
+        "controlflow::ExprBool"
+      ],
       "superTypes": [
         "controlflow::ExprBool",
         "controlflow::operator"
@@ -324,20 +431,27 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [],
+      "superTypeOrder": [],
       "superTypes": []
     },
     "controlflow::si": {
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -352,14 +466,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::ExprBool"
+          "target": "controlflow::ExprBool",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": true,
           "merge": {
             "kind": "identityReference",
@@ -374,8 +494,13 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::Expr"
+          "target": "controlflow::Expr",
+          "unsettable": false,
+          "upperBound": -1
         }
+      ],
+      "superTypeOrder": [
+        "controlflow::Expr"
       ],
       "superTypes": [
         "controlflow::Expr"
@@ -385,13 +510,18 @@
       "abstract": false,
       "attributes": [],
       "containments": [],
+      "interface": false,
       "references": [
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -406,14 +536,20 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::Expr"
+          "target": "controlflow::Expr",
+          "unsettable": false,
+          "upperBound": 1
         },
         {
           "annotation": null,
+          "changeable": true,
+          "default": null,
+          "eKeys": [],
           "facets": {
             "ordered": null,
             "unique": null
           },
+          "lowerBound": 0,
           "many": false,
           "merge": {
             "kind": "identityReference",
@@ -428,16 +564,23 @@
             "unique": "notApplicable"
           },
           "required": false,
-          "target": "controlflow::ExprBool"
+          "target": "controlflow::ExprBool",
+          "unsettable": false,
+          "upperBound": 1
         }
+      ],
+      "superTypeOrder": [
+        "controlflow::Expr"
       ],
       "superTypes": [
         "controlflow::Expr"
       ]
     }
   },
+  "enumLiterals": {},
   "enums": {},
   "formatVersion": 2,
+  "nsPrefix": "Lego",
   "nsURI": "Lego-lg",
   "package": "Legolang",
   "packages": {

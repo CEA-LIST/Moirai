@@ -41,19 +41,19 @@ fn plain(replica: &Rep) -> Value {
 const DIGESTS: [(&str, &str); 4] = [
     (
         "D1",
-        "5d34af887ace294f008c96403a4e6dd442f374d4e23639ec1620c04a4cf301f3",
+        "48384ea3e496c5ce1e9039d0cd0424bb4b297c4121454af0fc648b48b4b696a9",
     ),
     (
         "D2",
-        "f02b1b1fc95a3b9139298ec70618786f4e5373e296c6ea6a8d6f1a44285afb4c",
+        "54fcfb95d06987bcde4902151abe5b92025d231315f997725b0d5b88044a1004",
     ),
     (
         "D2_RENAME",
-        "2f84c0d089ff1b6454b5ece0fb1def4516eb8630a561f50c1bb7b05f5983c1e5",
+        "7a0f92dcd101d11abe677451082dda3be7e37b28e6ae0fffed9227edb947ad82",
     ),
     (
         "D2_REMOVE",
-        "ea1b9b94692c960367c8696820745793dc349598402954a9b57b17f141951341",
+        "ef675f1018b67fb9504b39c00e4e95e5bde7cc39bf677a88b15e8de15b1b38f2",
     ),
 ];
 
