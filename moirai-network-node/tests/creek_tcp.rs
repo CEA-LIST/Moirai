@@ -10,7 +10,7 @@ use moirai_protocol::{
         examples::commit_set::{CommitSet, SetUpdate},
         wire_id::StableReplicaId,
     },
-    crdt::query::Read,
+    crdt::{query::Read, replicated_data_type::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };
@@ -79,6 +79,12 @@ impl Cluster {
                     query: |replica| {
                         let values: HashSet<String, _> = replica.query(&Read::new());
                         let mut values: Vec<_> = values.into_iter().collect(); values.sort(); json!(values)
+                    },
+                    query_stable: |replica| {
+                        let values: HashSet<String, _> = SequentialEval::eval(replica.state().child().stable(), &Read::new());
+                        let mut values: Vec<_> = values.into_iter().collect();
+                        values.sort_unstable();
+                        json!(values)
                     },
                     committed: |replica, id| replica.state().committed_frontier().is_some_and(|cut| cut.contains(id)),
                     no_op: || SetUpdate::NoOp,

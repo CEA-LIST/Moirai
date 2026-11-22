@@ -56,22 +56,23 @@ maps, operation-history endpoints, or pause/resume controls.
 | `config` | JSON configuration and static numeric membership |
 | `external-commit/creek` | Worker-owned ID-only Paxos, metadata/decision handoff, and commitment hook |
 
-HTTP workers wait for replies independently, so a strong update waiting for
-commitment does not block local reads or weak updates. The client request queue
-is bounded at 256. HTTP optimistic/read workers and consistent
-workers have independent limits (`http_optimistic_limit` and
-`http_consistent_limit`, both defaulting to 64). Pending commitment waits are
-bounded by `http_consistent_limit` too. Health probes are handled separately so waiting updates
-cannot consume their capacity. An overloaded or stopped API returns a failure status.
+HTTP workers wait for replies independently. Updates and reads that wait for
+commitment share the consistent worker limit (`http_consistent_limit`). Weak
+updates and local reads share the optimistic worker limit
+(`http_optimistic_limit`). Both limits default to 64. The client request queue
+is bounded at 256, and the node also caps pending commitment waits at
+`http_consistent_limit`. Health probes have separate capacity. An overloaded
+or stopped API returns a failure status.
 Health requests also pass through the owner loop, making Kubernetes probes
 check that the replica loop is responding.
 
 ### Custom applications and external commitment protocols
 
-Supply a core log and an `Application<L>` with three callbacks:
+Supply a core log and an `Application<L>` with four callbacks:
 
 - `query`: convert a local query result to JSON;
-- `committed`: test whether an update ID belongs to the protocol's committed
+- `query_stable`: read the current stable state and convert the result to JSON;
+- `committed`: test whether an event ID belongs to the protocol's committed
   frontier;
 - `no_op`: construct an always-enabled command that leaves application state
   unchanged while advancing protocol metadata.
@@ -204,10 +205,12 @@ fields are ignored. `commit_set` always uses the core `EventOracle`.
 | --- | --- |
 | `GET /api/health` | Responding replica loop, numeric ID and display name |
 | `GET /api/state` | Local query result under `state`, plus identity fields |
+| `GET /api/state?wait_for_commit=true` | Broadcast a no-op, wait for it to commit, then query only the stable state |
 | `POST /api/op` | Weak update: respond after local application |
 | `POST /api/op?wait_for_commit=true` | Strong acknowledgment: wait for the application's commitment predicate |
 
-`?wait_for_commit=false` is also accepted. For example:
+`GET /api/state` and `POST /api/op` also accept `?wait_for_commit=false` to
+select their default behavior.
 
 ```sh
 curl --fail http://localhost:8081/api/op \
@@ -215,6 +218,7 @@ curl --fail http://localhost:8081/api/op \
 curl --fail 'http://localhost:8081/api/op?wait_for_commit=true' \
   -H 'Content-Type: application/json' -d '{"Remove":"apple"}'
 curl --fail http://localhost:8081/api/state
+curl --fail 'http://localhost:8081/api/state?wait_for_commit=true'
 ```
 
 A successful update returns `{"success":true,"applied":true,"message":"ok"}`.
@@ -222,7 +226,13 @@ Malformed JSON returns 400, oversized HTTP bodies 413, rejected commands 422,
 and API overload/unavailability 503. A commitment timeout returns **HTTP 504**
 with `success:false, applied:true`; it does not roll back the update. The default
 25-second timeout fits within the launcher's 30-second client deadline.
-Local reads include tentative updates and provide no linearizable read barrier.
+
+Local reads can include tentative updates. A read with `wait_for_commit=true`
+broadcasts one no-op through the update path and uses the same
+`request_timeout_ms` and commitment predicate as a strong update. Once the
+node observes the no-op in the committed frontier, it queries the current
+stable state. Both read modes return the same JSON structure. A read that times
+out returns HTTP 504 with an `error` field. The no-op can still commit later.
 Other routes return 404.
 
 ## Wire format and transport behavior

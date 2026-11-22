@@ -1,10 +1,10 @@
-use moirai_network_node::{Application, Config, CoreReplica};
+use moirai_network_node::{Application, Config};
 use moirai_protocol::{
     commitment::{
         commit_log::CommitmentLog, examples::commit_set::CommitSet,
         protocol::AtomicBroadcastProtocol,
     },
-    crdt::query::Read,
+    crdt::{query::Read, replicated_data_type::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };
@@ -21,11 +21,14 @@ pub fn config() -> io::Result<Config> {
 
 pub fn application<A: AtomicBroadcastProtocol<Child>>() -> Application<CommitmentLog<Child, A>> {
     Application {
-        query: |replica: &CoreReplica<CommitmentLog<Child, A>>| {
+        query: |replica| {
             let values: HashSet<String, _> = replica.query(&Read::new());
-            let mut values: Vec<_> = values.into_iter().collect();
-            values.sort_unstable();
-            serde_json::json!({"values":values})
+            set_response(values)
+        },
+        query_stable: |replica| {
+            let values: HashSet<String, _> =
+                SequentialEval::eval(replica.state().child().stable(), &Read::new());
+            set_response(values)
         },
         committed: |replica, id| {
             replica
@@ -35,4 +38,10 @@ pub fn application<A: AtomicBroadcastProtocol<Child>>() -> Application<Commitmen
         },
         no_op: || moirai_protocol::commitment::examples::commit_set::SetUpdate::NoOp,
     }
+}
+
+fn set_response(values: impl IntoIterator<Item = String>) -> serde_json::Value {
+    let mut values: Vec<_> = values.into_iter().collect();
+    values.sort_unstable();
+    serde_json::json!({"values":values})
 }

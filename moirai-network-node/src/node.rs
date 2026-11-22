@@ -31,6 +31,8 @@ pub type CoreReplica<L> = Replica<L, Tcsb<<L as IsLog>::Update>>;
 /// The commitment predicate must use the protocol's frontier, not local delivery.
 pub struct Application<L: IsLog> {
     pub query: fn(&CoreReplica<L>) -> Value,
+    /// Query the current stable state without folding in tentative updates.
+    pub query_stable: fn(&CoreReplica<L>) -> Value,
     pub committed: fn(&CoreReplica<L>, &EventId) -> bool,
     pub no_op: fn() -> L::Command,
 }
@@ -74,6 +76,10 @@ enum ClientRequest<C> {
     Query {
         health: bool,
         reply: Sender<Value>,
+    },
+    CommitQuery {
+        deadline: Instant,
+        reply: Sender<io::Result<Value>>,
     },
 }
 
@@ -133,6 +139,17 @@ impl<C> NodeHandle<C> {
     pub fn state(&self) -> io::Result<Receiver<Value>> {
         self.query(false)
     }
+
+    /// Broadcast a no-op, then read the stable state when it commits.
+    pub fn state_wait_for_commit(&self) -> io::Result<Receiver<io::Result<Value>>> {
+        let (reply, response) = mpsc::channel();
+        self.enqueue(ClientRequest::CommitQuery {
+            deadline: Instant::now() + self.timeout,
+            reply,
+        })?;
+        Ok(response)
+    }
+
     pub fn health(&self) -> io::Result<Receiver<Value>> {
         self.query(true)
     }
@@ -147,7 +164,43 @@ impl<C> NodeHandle<C> {
 struct Pending {
     event: EventId,
     deadline: Instant,
-    reply: Sender<UpdateResult>,
+    reply: CommitReply,
+}
+
+enum CommitReply {
+    Update {
+        wait: bool,
+        reply: Sender<UpdateResult>,
+    },
+    Query(Sender<io::Result<Value>>),
+}
+
+impl CommitReply {
+    fn success(&self, stable_state: impl FnOnce() -> Value) {
+        match self {
+            Self::Update { reply, .. } => {
+                let _ = reply.send(UpdateResult::success());
+            }
+            Self::Query(reply) => {
+                let _ = reply.send(Ok(stable_state()));
+            }
+        }
+    }
+
+    fn failure(&self, applied: bool, kind: io::ErrorKind, message: impl Into<String>) {
+        match self {
+            Self::Update { reply, .. } => {
+                let _ = reply.send(UpdateResult::failure(applied, message));
+            }
+            Self::Query(reply) => {
+                let _ = reply.send(Err(io::Error::new(kind, message.into())));
+            }
+        }
+    }
+}
+
+fn state_response(config: &Config, state: Value) -> Value {
+    json!({"replica_id":config.replica_id, "replica_name":config.replica_name, "state":state})
 }
 
 pub struct Node<L: IsLog, T = TcpTransport> {
@@ -280,6 +333,37 @@ where
         Ok(message.event().id().clone())
     }
 
+    fn submit(&mut self, command: L::Command, deadline: Instant, reply: CommitReply) {
+        let weak = matches!(reply, CommitReply::Update { wait: false, .. });
+        if Instant::now() >= deadline {
+            reply.failure(
+                false,
+                io::ErrorKind::TimedOut,
+                "request expired before application",
+            );
+        } else if !weak && self.pending.len() >= self.config.http_consistent_limit.get() {
+            reply.failure(
+                false,
+                io::ErrorKind::WouldBlock,
+                "too many pending commitment requests",
+            );
+        } else {
+            match (self.apply(command), reply) {
+                (Ok(_), CommitReply::Update { wait: false, reply }) => {
+                    let _ = reply.send(UpdateResult::success());
+                }
+                (Ok(event), reply) => self.pending.push(Pending {
+                    event,
+                    deadline,
+                    reply,
+                }),
+                (Err((applied, error)), reply) => {
+                    reply.failure(applied, io::ErrorKind::InvalidInput, error.to_string());
+                }
+            }
+        }
+    }
+
     /// Execute one bounded iteration. Useful when embedding in another event loop.
     pub fn tick(&mut self) -> io::Result<()> {
         for packet in self.transport.poll()? {
@@ -309,9 +393,16 @@ where
                     let body = if health {
                         json!({"status":"ok", "replica_id":self.config.replica_id, "replica_name":self.config.replica_name})
                     } else {
-                        json!({"replica_id":self.config.replica_id, "replica_name":self.config.replica_name, "state":(self.application.query)(&self.replica)})
+                        state_response(&self.config, (self.application.query)(&self.replica))
                     };
                     let _ = reply.send(body);
+                }
+                ClientRequest::CommitQuery { deadline, reply } => {
+                    self.submit(
+                        (self.application.no_op)(),
+                        deadline,
+                        CommitReply::Query(reply),
+                    );
                 }
                 ClientRequest::Update {
                     command,
@@ -324,33 +415,7 @@ where
                         .config
                         .noop_interval_ms
                         .map(|ms| now + Duration::from_millis(ms.get()));
-                    if now >= deadline {
-                        let _ = reply.send(UpdateResult::failure(
-                            false,
-                            "request expired before application",
-                        ));
-                    } else if wait && self.pending.len() >= self.config.http_consistent_limit.get()
-                    {
-                        let _ = reply.send(UpdateResult::failure(
-                            false,
-                            "too many pending commitment requests",
-                        ));
-                    } else {
-                        match self.apply(command) {
-                            Ok(event) if wait => self.pending.push(Pending {
-                                event,
-                                deadline,
-                                reply,
-                            }),
-                            Ok(_) => {
-                                let _ = reply.send(UpdateResult::success());
-                            }
-                            Err((applied, error)) => {
-                                let _ =
-                                    reply.send(UpdateResult::failure(applied, error.to_string()));
-                            }
-                        }
-                    }
+                    self.submit(command, deadline, CommitReply::Update { wait, reply });
                 }
             }
         }
@@ -376,14 +441,21 @@ where
         }
         let committed = self.application.committed;
         self.pending.retain(|pending| {
-            let result = if committed(&self.replica, &pending.event) {
-                UpdateResult::success()
+            if committed(&self.replica, &pending.event) {
+                pending.reply.success(|| {
+                    state_response(&self.config, (self.application.query_stable)(&self.replica))
+                });
             } else if now >= pending.deadline {
-                UpdateResult::failure(true, "commitment timeout; update remains applied")
+                let message = match pending.reply {
+                    CommitReply::Update { .. } => "commitment timeout; update remains applied",
+                    CommitReply::Query(_) => "commitment timeout; query barrier remains applied",
+                };
+                pending
+                    .reply
+                    .failure(true, io::ErrorKind::TimedOut, message);
             } else {
                 return true;
-            };
-            let _ = pending.reply.send(result);
+            }
             false
         });
         if self.config.memory_usage_enabled && now >= self.next_memory {
@@ -437,18 +509,23 @@ where
 impl<L: IsLog, T> Node<L, T> {
     fn finish_pending(&mut self) {
         for pending in self.pending.drain(..) {
-            let _ = pending.reply.send(UpdateResult::failure(
+            pending.reply.failure(
                 true,
+                io::ErrorKind::BrokenPipe,
                 "node stopped before commitment",
-            ));
+            );
         }
         while let Ok(request) = self.requests.try_recv() {
-            if let ClientRequest::Update { reply, .. } = request {
-                let _ = reply.send(UpdateResult::failure(
-                    false,
-                    "node stopped before application",
-                ));
-            }
+            let reply = match request {
+                ClientRequest::Update { wait, reply, .. } => CommitReply::Update { wait, reply },
+                ClientRequest::CommitQuery { reply, .. } => CommitReply::Query(reply),
+                ClientRequest::Query { .. } => continue,
+            };
+            reply.failure(
+                false,
+                io::ErrorKind::BrokenPipe,
+                "node stopped before application",
+            );
         }
     }
 }

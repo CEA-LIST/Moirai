@@ -12,7 +12,7 @@ use moirai_protocol::{
         protocol::AtomicBroadcastProtocol,
         wire_id::StableReplicaId,
     },
-    crdt::query::Read,
+    crdt::{query::Read, replicated_data_type::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };
@@ -63,6 +63,13 @@ fn application<A: AtomicBroadcastProtocol<Child>>() -> Application<CommitmentLog
             let values: HashSet<String, _> = replica.query(&Read::new());
             let mut values: Vec<_> = values.into_iter().collect();
             values.sort();
+            json!(values)
+        },
+        query_stable: |replica| {
+            let values: HashSet<String, _> =
+                SequentialEval::eval(replica.state().child().stable(), &Read::new());
+            let mut values: Vec<_> = values.into_iter().collect();
+            values.sort_unstable();
             json!(values)
         },
         committed: |replica, id| {
@@ -166,6 +173,46 @@ fn lamport_strong_update_waits_then_idle_noops_advance_commitment() {
     for node in [&a, &b, &c] {
         assert_eq!((application().query)(node.replica()), json!(["x"]));
     }
+}
+
+#[test]
+fn query_waits_for_its_noop_and_reads_only_stable_state() {
+    let bus = Bus::default();
+    let mut a = plain(1, &[1, 2], None, &bus);
+    let mut b = plain(2, &[1, 2], None, &bus);
+    a.broadcast(SetUpdate::Add("committed".into())).unwrap();
+    let handle = a.handle();
+    let response = handle.state_wait_for_commit().unwrap();
+    a.tick().unwrap();
+    assert_eq!(a.replica().delivered_count(), 2);
+    assert!(matches!(
+        response.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+
+    a.broadcast(SetUpdate::Add("tentative".into())).unwrap();
+    // B has not yet received A's events. Its first no-op advances the stable
+    // timestamp to 1, committing the first add while the query is still waiting.
+    b.broadcast(SetUpdate::NoOp).unwrap();
+    a.tick().unwrap();
+    assert!(matches!(
+        response.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+
+    // B's second no-op commits A's query no-op at timestamp 2. The second add
+    // has timestamp 3 and is still tentative when the read runs.
+    b.broadcast(SetUpdate::NoOp).unwrap();
+    let optimistic = handle.state().unwrap();
+    a.tick().unwrap();
+    assert_eq!(
+        response.try_recv().unwrap().unwrap()["state"],
+        json!(["committed"])
+    );
+    assert_eq!(
+        optimistic.try_recv().unwrap()["state"],
+        json!(["committed", "tentative"])
+    );
 }
 
 #[test]

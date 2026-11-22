@@ -5,7 +5,7 @@ use moirai_protocol::{
         commit_protocols::lamport::lamport_commit::LamportCommit,
         examples::commit_set::{CommitSet, SetUpdate},
     },
-    crdt::query::Read,
+    crdt::{query::Read, replicated_data_type::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };
@@ -58,6 +58,13 @@ fn start_node_with_limits(
                 values.sort();
                 json!(values)
             },
+            query_stable: |replica| {
+                let values: HashSet<String, _> =
+                    SequentialEval::eval(replica.state().child().stable(), &Read::new());
+                let mut values: Vec<_> = values.into_iter().collect();
+                values.sort_unstable();
+                json!(values)
+            },
             committed: |replica, id| {
                 replica
                     .state()
@@ -103,6 +110,18 @@ fn minimal_http_api_keeps_weak_updates_and_reads_available_during_commitment_wai
     let (status, state) = request(port, "GET", "/api/state", "");
     assert_eq!(status, 200);
     assert_eq!(state["state"], json!(["strong", "weak"]));
+    assert_eq!(
+        request(port, "GET", "/api/state?wait_for_commit=false", ""),
+        (200, state)
+    );
+    let (status, result) = request(port, "GET", "/api/state?wait_for_commit=true", "");
+    assert_eq!(status, 504);
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("commitment timeout")
+    );
     assert_eq!(request(port, "POST", "/api/op", "invalid").0, 400);
     for path in ["/api/operations", "/api/peers", "/api/pause-all"] {
         assert_eq!(request(port, "GET", path, "").0, 404);
@@ -140,9 +159,14 @@ fn saturated_consistent_limit_preserves_optimistic_reads_and_health_capacity() {
         }
         assert!(Instant::now() < deadline, "HTTP workers never saturated");
     }
-    let (status, result) = request(port, "POST", "/api/op?wait_for_commit=true", "\"NoOp\"");
-    assert_eq!(status, 503);
-    assert_eq!(result["request_class"], "consistent");
+    for (method, path, body) in [
+        ("POST", "/api/op?wait_for_commit=true", "\"NoOp\""),
+        ("GET", "/api/state?wait_for_commit=true", ""),
+    ] {
+        let (status, result) = request(port, method, path, body);
+        assert_eq!(status, 503);
+        assert_eq!(result["request_class"], "consistent");
+    }
     assert_eq!(request(port, "POST", "/api/op", r#"{"Add":"weak"}"#).0, 200);
     // Wait for the completed optimistic worker to release its single slot.
     let deadline = Instant::now() + Duration::from_secs(1);

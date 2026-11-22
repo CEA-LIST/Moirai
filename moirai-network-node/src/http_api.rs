@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc::Receiver,
+        mpsc::{Receiver, RecvTimeoutError},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -53,14 +53,17 @@ pub(crate) fn start<C: DeserializeOwned + Send + 'static>(
                 Ok(None) => continue,
                 Err(_) => break,
             };
-            // Kubernetes probes must remain available when all update workers
+            // Kubernetes probes must remain available when all consistent workers
             // are waiting for commitment. This round trip still checks the loop.
             if request.method() == &Method::Get && request.url() == "/api/health" {
                 query_response(request, handle.health(), Duration::from_secs(1));
                 continue;
             }
-            let consistent = request.method() == &Method::Post
-                && request.url() == "/api/op?wait_for_commit=true";
+            let consistent = matches!(
+                (request.method(), request.url()),
+                (&Method::Post, "/api/op?wait_for_commit=true")
+                    | (&Method::Get, "/api/state?wait_for_commit=true")
+            );
             let (active, limit) = if consistent {
                 (&consistent_active, consistent_limit)
             } else {
@@ -106,11 +109,44 @@ fn query_response(request: Request, response: io::Result<Receiver<Value>>, timeo
     }
 }
 
+fn committed_query_response<C>(request: Request, handle: &NodeHandle<C>) {
+    let response = match handle.state_wait_for_commit() {
+        Ok(response) => response,
+        Err(_) => {
+            respond(request, 503, json!({"error":"replica unavailable or busy"}));
+            return;
+        }
+    };
+    let timeout = handle
+        .request_timeout()
+        .saturating_add(Duration::from_secs(1));
+    match response.recv_timeout(timeout) {
+        Ok(Ok(body)) => respond(request, 200, body),
+        Ok(Err(error)) => {
+            let status = match error.kind() {
+                io::ErrorKind::TimedOut => 504,
+                io::ErrorKind::WouldBlock | io::ErrorKind::BrokenPipe => 503,
+                _ => 422,
+            };
+            respond(request, status, json!({"error":error.to_string()}));
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            respond(request, 504, json!({"error":"query response timeout"}));
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            respond(request, 503, json!({"error":"replica unavailable"}));
+        }
+    }
+}
+
 fn serve<C: DeserializeOwned>(mut request: Request, handle: NodeHandle<C>) {
     let path = request.url().to_owned();
     match (request.method(), path.as_str()) {
-        (&Method::Get, "/api/state") => {
+        (&Method::Get, "/api/state" | "/api/state?wait_for_commit=false") => {
             query_response(request, handle.state(), Duration::from_secs(5));
+        }
+        (&Method::Get, "/api/state?wait_for_commit=true") => {
+            committed_query_response(request, &handle);
         }
         (
             &Method::Post,

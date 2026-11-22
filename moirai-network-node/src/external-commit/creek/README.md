@@ -187,8 +187,10 @@ A uses causal port 19001, Creek port 19002, and HTTP port 8081. B uses causal
 port 19003, Creek port 19004, and HTTP port 8082. Each process takes just its
 ordinary node config. With two members, both must remain available for a
 majority; use three or more members to test commitment after one crash.
-`wait_for_commit=true` waits on the Creek committed cut. Client acknowledgment
-mode does not select which operations enter consensus.
+`POST /api/op?wait_for_commit=true` acknowledges the update once it reaches the
+Creek committed cut. `GET /api/state?wait_for_commit=true` submits a no-op and
+reads only the stable state once that no-op reaches the cut. Client
+acknowledgment mode does not select which operations enter consensus.
 
 ## Guarantees and limits
 

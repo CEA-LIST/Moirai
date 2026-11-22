@@ -774,6 +774,7 @@ fn consensus_tcp_receives_while_the_causal_tcp_channels_are_not_polled() {
     drop(reservations);
     let app = || Application::<Log> {
         query: |_| serde_json::Value::Null,
+        query_stable: |_| serde_json::Value::Null,
         committed: |replica, id| {
             replica
                 .state()
