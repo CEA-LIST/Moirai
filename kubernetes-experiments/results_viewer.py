@@ -9,7 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from results import build_figures, load_results
+from results import IMAGE_PALETTE, build_figures, load_results
 
 DEFAULT_RESULTS = Path(__file__).resolve().parent / "results"
 
@@ -43,8 +43,13 @@ def select(name, title, options, selected):
 
 
 def input_number(name, title, value, minimum=0):
-    return (f'<label>{escape(title)}<input type="number" name="{name}" min="{minimum}" '
+    return (f'<label>{escape(title)}<input type="number" name="{escape(name, quote=True)}" min="{minimum}" '
             f'step="any" value="{escape(value, quote=True)}"></label>')
+
+
+def text_input(name, title, value, kind="text"):
+    return (f'<label>{escape(title)}<input type="{kind}" name="{escape(name, quote=True)}" '
+            f'value="{escape(str(value), quote=True)}"></label>')
 
 
 def render_page(directory, query=None, *, static=False):
@@ -85,11 +90,21 @@ def render_page(directory, query=None, *, static=False):
         controls += input_number("max_latency", "Max latency (s), blank = no limit", value("max_latency"))
         controls += ('<label class="check"><input type="checkbox" name="include_failed" value="1"'
                      + (' checked' if value("include_failed") == "1" else '') + '>Include failed requests</label>')
-        controls += '<button type="submit">Update plots / reload results</button>'
-        form = f'<form method="get">{controls}</form>' if not static else ""
+        images = sorted({e.label for e in experiments})
+        image_colors, image_labels, ranks = {}, {}, {}
+        for i, image in enumerate(images):
+            image_colors[image] = value("color:" + image, IMAGE_PALETTE[i % len(IMAGE_PALETTE)])
+            image_labels[image] = value("label:" + image, image)
+            ranks[image] = int(value("order:" + image, str(i + 1)))
+            controls += text_input("color:" + image, image + " — color", image_colors[image], "color")
+            controls += text_input("label:" + image, image + " — label", image_labels[image])
+            controls += input_number("order:" + image, image + " — bar order (lower first)", str(ranks[image]), minimum=1)
         selected = [e for e in experiments if (run == "average" or e.run_id == run)
                     and (clients == "all" or str(e.config["n_clients"]) == clients)]
         options = dict(
+            image_colors=image_colors, image_labels=image_labels,
+            image_order=sorted(images, key=lambda image: (ranks[image], image)),
+            titles={key[6:]: values[-1] for key, values in query.items() if key.startswith("title:")},
             style=style, timeline_replicas=None if timeline == "all" else int(timeline),
             window=float(value("window", "2")), step=float(value("step", "0.25")),
             start=float(value("start", "0")), end=float(value("end")) if value("end") else None,
@@ -100,13 +115,15 @@ def render_page(directory, query=None, *, static=False):
             figures = build_figures(selected, **options)
             charts = []
             for index, (title, figure) in enumerate(figures):
+                controls += text_input("title:" + title, "Graph title: " + title, value("title:" + title, figure.axes[0].get_title().replace("\n", " — ")))
+                display_title = figure.axes[0].get_title()
                 buffer = BytesIO()
                 figure.savefig(buffer, format="png", dpi=120)
                 encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
                 figure.clear()
                 uri = f"data:image/png;base64,{encoded}"
                 charts.append(
-                    f'<article><h2>{escape(title)}</h2><img alt="{escape(title, quote=True)}" src="{uri}">'
+                    f'<article><h2>{escape(display_title)}</h2><img alt="{escape(display_title, quote=True)}" src="{uri}">'
                     f'<a download="experiment-plot-{index + 1}.png" href="{uri}">Download PNG</a></article>'
                 )
             plots = '<div class="grid">' + "".join(charts) + '</div>'
@@ -114,6 +131,8 @@ def render_page(directory, query=None, *, static=False):
                 plots = '<p class="notice">No experiments match this selection. Choose a folder/run with measurements.</p>'
         except ValueError as error:
             plots = f'<p class="notice error">{escape(str(error))}</p>'
+        controls += '<button type="submit">Update plots / reload results</button>'
+        form = f'<form method="get">{controls}</form>' if not static else ""
         included_ids = sorted({e.run_id for e in selected})
         description = (f"{len(selected)} experiments · {len(included_ids)} runs · "
                        + ("equal-weight average" if run == "average" else "single run"))
@@ -174,7 +193,7 @@ def make_handler(directory):
                 self.send_error(404)
                 return
             try:
-                body = render_page(directory, parse_qs(url.query)).encode("utf-8")
+                body = render_page(directory, parse_qs(url.query, keep_blank_values=True)).encode("utf-8")
             except (OSError, ValueError) as error:
                 self.send_error(400, str(error))
                 return

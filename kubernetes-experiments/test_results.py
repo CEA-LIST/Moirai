@@ -153,8 +153,8 @@ class ResultsTest(unittest.TestCase):
         a = load_experiment(self.write())
         b = load_experiment(self.write("run-b", config={"frequency": 20}))
         figures = build_figures([a, b], style="bar", window=1, step=1)
-        # Two summaries, plus three time plots per distinct workload.
-        self.assertEqual(len(figures), 8)
+        # Two summaries, plus five time plots per distinct workload.
+        self.assertEqual(len(figures), 12)
         self.assertEqual([title for title, _ in figures[:2]], ["Network usage", "CPU usage"])
         self.assertEqual(len(figures[0][1].axes[0].patches), 2)
         self.assertEqual(figures[0][1].axes[0].get_ylabel(), "Total TX + RX across replicas (MiB)")
@@ -168,6 +168,40 @@ class ResultsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_figures([a], step=1e-9)
 
+    def test_image_customization_and_split_throughput(self):
+        from matplotlib.colors import to_hex
+        a = load_experiment(self.write())
+        b = load_experiment(self.write("run-b", config={"replica_image": "creek:dev"}))
+        options = dict(image_colors={"commit:dev": "#123456", "creek:dev": "#abcdef"},
+                       image_labels={"commit:dev": "Commit", "creek:dev": "Creek"},
+                       image_order=["creek:dev", "commit:dev"], step=1)
+        figures = build_figures([a, b], style="bar", titles={"Network usage": "Traffic"}, **options)
+        ax = figures[0][1].axes[0]
+        self.assertEqual(ax.get_title(), "Traffic")
+        self.assertEqual([t.get_text() for t in ax.get_legend().get_texts()], ["Creek", "Commit"])
+        self.assertEqual([to_hex(p.get_facecolor()) for p in ax.patches], ["#abcdef", "#123456"])
+        for title, fig in figures[2:]:
+            lines = fig.axes[0].lines
+            for line in lines:
+                self.assertEqual(to_hex(line.get_color()), "#abcdef" if line.get_label().startswith("Creek") else "#123456")
+            if "total +" in title:
+                self.assertEqual(len(lines), 4)
+                excluded = "consistent" if "total + optimistic" in title else "optimistic"
+                self.assertTrue(all(excluded not in line.get_label() for line in lines))
+        timeline_title = figures[2][0]
+        customized = build_figures([a], titles={timeline_title: "Custom latency"}, step=1)
+        self.assertEqual(customized[2][1].axes[0].get_title(), "Custom latency")
+        html = render_page(self.root, {"label:commit:dev": ["<Commit>"],
+                                     "color:commit:dev": ["#123456"],
+                                     "order:commit:dev": ["2"],
+                                     "title:Network usage": ["Custom traffic"], "step": ["1"]})
+        self.assertIn('name="color:commit:dev"', html)
+        self.assertIn('value="&lt;Commit&gt;"', html)
+        self.assertIn('<h2>Custom traffic</h2>', html)
+        self.assertIn('name="title:Network usage"', html)
+        for _, fig in figures + customized:
+            fig.clear()
+
     def test_web_selection_and_embedded_export(self):
         self.write()
         self.write("run-b")
@@ -175,7 +209,7 @@ class ResultsTest(unittest.TestCase):
         self.assertIn("1 experiments · 1 runs · single run", html)
         self.assertIn("data:image/png;base64,", html)
         self.assertIn("Download PNG", html)
-        self.assertEqual(html.count('<img '), 5)
+        self.assertEqual(html.count('<img '), 7)
         self.assertNotIn('Peak operation-log memory', html)
         self.assertNotIn('<h2>Client latency</h2>', html)
         averaged = render_page(self.root, {"step": ["1"]}, static=True)

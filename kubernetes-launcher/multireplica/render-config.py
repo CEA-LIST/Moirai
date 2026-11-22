@@ -62,20 +62,21 @@ def main() -> None:
             )
         time.sleep(2)
 
-    config = {
+    # Forward runtime settings unchanged, including optional/null values. Only
+    # these two fields belong to the launcher rather than the node config.
+    config = dict(template)
+    del config["replica_id_base"]
+    del config["replica_name_prefix"]
+    # Keep the legacy alias usable without emitting both serde field names.
+    legacy_timeout = config.pop("heartbeat_interval_ms", None)
+    if "event_timeout_ms" not in config and legacy_timeout is not None:
+        config["event_timeout_ms"] = legacy_timeout
+    config.update({
         "replica_id": int(template["replica_id_base"]) + ordinal,
         "replica_name": f'{template["replica_name_prefix"]}{ordinal}',
         "listen_port": port,
-        "http_port": int(template["http_port"]),
         "peers": peers,
-        "pull_interval_ms": int(template["pull_interval_ms"]),
-        "pull_peer_count": int(template["pull_peer_count"]),
-        "event_timeout_ms": int(template.get("event_timeout_ms", template.get("heartbeat_interval_ms", 10000))),
-    }
-    for key in ("noop_interval_ms", "request_timeout_ms", "http_optimistic_limit", "http_consistent_limit", "memory_usage_enabled",
-                "memory_usage_interval_ms"):
-        if key in template:
-            config[key] = template[key]
+    })
     with open(output_path, "w", encoding="utf-8") as output:
         json.dump(config, output, indent=2)
         output.write("\n")

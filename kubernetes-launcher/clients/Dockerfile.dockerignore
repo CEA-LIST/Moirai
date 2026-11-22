@@ -1,0 +1,4 @@
+# Paths are relative to the kubernetes-launcher/clients build context.
+**
+!launcher_client.py
+!items.json

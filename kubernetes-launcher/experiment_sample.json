@@ -1,6 +1,6 @@
 {
-  "simulation_name": "commit-awset-4r-4c",
-  "n_replicas": 16,
+  "simulation_name": "commit-set-4r-4c",
+  "n_replicas": 4,
   "n_clients": 4,
   "n_operations": 100,
   "frequency": 10,

@@ -57,6 +57,13 @@ def execute_request(target_url, items, wait_commit, lock, latencies, failures):
                 "returncode": result.returncode,
                 "stderr": result.stderr.strip(),
             })
+        if len(latencies) == 1 or len(latencies) % 10 == 0:
+            mode = "committed" if wait_commit else "optimistic"
+            print(
+                f"{mode}: completed={len(latencies)} failed={len(failures)}"
+                f" last_error={result.stderr.strip() if result.returncode else 'none'}",
+                flush=True,
+            )
 
 
 def client_subroutine(client_id, target_url, items, n_operations, frequency, wait_commit,
@@ -65,6 +72,8 @@ def client_subroutine(client_id, target_url, items, n_operations, frequency, wai
     latencies = []
     failures = []
     threads = []
+    mode = "committed" if wait_commit else "optimistic"
+    print(f"Client {client_id}: starting {mode} load against {target_url}", flush=True)
 
     for _ in range(n_operations):
         if stop_signal is not None and stop_signal.is_set():

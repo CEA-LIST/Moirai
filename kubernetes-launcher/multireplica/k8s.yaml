@@ -12,6 +12,10 @@ spec:
       port: 19001
       targetPort: replica-tcp
       protocol: TCP
+    - name: creek-tcp
+      port: 19002
+      targetPort: creek-tcp
+      protocol: TCP
 ---
 apiVersion: v1
 kind: Service
@@ -90,6 +94,9 @@ spec:
           ports:
             - name: replica-tcp
               containerPort: 19001
+              protocol: TCP
+            - name: creek-tcp
+              containerPort: 19002
               protocol: TCP
             - name: http
               containerPort: 8081

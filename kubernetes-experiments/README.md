@@ -4,6 +4,32 @@ Use `generate_simulation_files.ipynb` to generate experiment configurations and
 `launch_experiment.ipynb` to run them. Build/load the referenced images first,
 following [the launcher instructions](../kubernetes-launcher/README.md).
 
+## Compare resources against configured throughput
+
+Use the separate viewer for a fixed, selectable replica count:
+
+```sh
+python3 kubernetes-experiments/throughput_viewer.py
+```
+
+Open **http://127.0.0.1:8001**. It accepts the same optional results-folder,
+`--port`, and `--export REPORT.html` arguments as the original viewer.
+It shows exactly two graphs: system-wide network traffic (total TX + RX in MiB)
+and mean CPU time per replica (seconds), containing all configured throughput
+levels for the selected folder, run selection, and replica count.
+
+Configured throughput is `frequency × n_clients × enabled request modes`,
+matching the experiment generator (which halves per-mode frequency when both
+modes are enabled). Each image gets one series. At each throughput, available
+resource measurements are averaged with equal weight across runs and configurations
+for that image. The measured-throughput calculation remains in the module for future use.
+
+Select a folder, run (or average), replica count, and line or bar style.
+Each image has color, label, and bar/legend ordering controls; each graph has
+an editable title. There are no time graphs or time-window controls.
+Bars are offset around configured throughput in image order; lines use exact
+configured throughput coordinates.
+
 ## Open the interactive viewer
 
 From the workspace root, install the plotting dependency if needed and start the
@@ -35,6 +61,12 @@ The controls let you:
   choose a replica count for time plots (or show all counts).
 - Set the trailing window, time step, elapsed start/end, and maximum latency.
 - Include failed requests if desired. They are excluded by default.
+- Choose a color and legend label for each detected replica image. Colors apply
+  consistently across all graphs, including the grouped bars.
+- Set each image's bar order (lower numbers appear first; ties use image names).
+- Edit each graph's title, including individual workload-specific time graphs.
+- Compare throughput over time with all modes, total + optimistic, or
+  total + consistent. The two split views use the same data and time settings.
 - Reload results after experiments finish, and download any graph as PNG.
 
 Changing controls and clicking **Update plots / reload results** rebuilds the

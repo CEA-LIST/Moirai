@@ -5,7 +5,7 @@ FROM docker.io/library/rust:bookworm AS build
 WORKDIR /workspace
 COPY . .
 
-ARG REPLICA_EXAMPLE=commit_set
+ARG REPLICA_EXAMPLE=creek_set
 RUN cargo build --release --locked --manifest-path moirai-network-node/Cargo.toml --target-dir target --example "${REPLICA_EXAMPLE}" \
     && install -D "target/release/examples/${REPLICA_EXAMPLE}" /out/moirai-replica
 
@@ -15,6 +15,6 @@ RUN groupadd --gid 10001 moirai \
        --no-create-home --shell /usr/sbin/nologin moirai
 COPY --from=build /out/moirai-replica /usr/local/bin/moirai-replica
 USER 10001:10001
-EXPOSE 19001/tcp 8081/tcp
+EXPOSE 19001/tcp 19002/tcp 8081/tcp
 ENTRYPOINT ["/usr/local/bin/moirai-replica"]
 CMD ["/etc/moirai/replica.json"]

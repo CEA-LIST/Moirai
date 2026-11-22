@@ -34,10 +34,17 @@ permission to use `kubectl exec` on replica pods. CPU sampling reads cgroup v2
 
 ## Build and load the images
 
+Each Dockerfile has a sibling `Dockerfile.dockerignore` that limits its build
+context. The replica context includes the Rust workspace files and crates,
+excluding nested `target`, `result`, `results`, and other generated directories.
+The client context includes only `launcher_client.py` and `items.json`.
+Docker applies these rules automatically with the build commands below.
+
 Build the replica image from the Moirai workspace root, then load it into kind.
-The Dockerfile defaults to `vanilla_set` (Lamport commitment). Set
+The Dockerfile defaults to `creek_set` (Paxos over a separate TCP channel).
+Set `--build-arg REPLICA_EXAMPLE=vanilla_set` for Lamport commitment, or
 `--build-arg REPLICA_EXAMPLE=commit_set` for majority commitment using the core
-`EventOracle`. Both examples use TCP and the current `moirai-protocol` API.
+`EventOracle`. All three examples use TCP and the current `moirai-protocol` API.
 The node crate builds with its own manifest and lockfile; it does not need to be
 added to the parent Rust workspace.
 
@@ -98,7 +105,9 @@ Each replica receives a unique numeric ID from its StatefulSet ordinal and a
 peer list containing the other replicas. The headless Service gives the pods
 stable DNS names. An init container waits for peer DNS records because the
 replica transport resolves peer addresses when it starts. Port 19001 is
-declared as TCP in the Service, StatefulSet, and replica image. The replica
+the causal replication channel; `creek_set` additionally uses TCP port 19002
+for its independent Paxos worker. Both ports are declared in the headless
+Service, StatefulSet, and replica image. The replica
 binary itself must also use TCP; Kubernetes port declarations do not change
 the transport used by the application.
 
@@ -167,6 +176,42 @@ To allow longer client workloads, increase `job_timeout_seconds` in
 `launch.sh`.
 
 ## Results
+
+### Diagnosing stalled client loads
+
+Watch client progress and replica errors while the experiment runs:
+
+```sh
+kubectl logs -f -l app=moirai-client --all-containers=true --prefix --max-log-requests=20
+kubectl logs -l app=moirai-multi-replica -c replica --prefix --tail=100
+kubectl get pods -l app=moirai-multi-replica
+```
+
+Clients log startup and the first and every tenth completed request, including
+failure counts and the latest curl error. Final measurement records are still
+emitted only when each request stream finishes. HTTP 504 indicates a request
+timeout; HTTP 503 can indicate concurrency limits or an unavailable replica.
+A successful `/api/health` checks the node loop, but does not prove that Creek
+has a quorum or that commitment is advancing.
+
+For `creek_set`, ensure pod-to-pod traffic is allowed on both 19001 and 19002;
+any cluster NetworkPolicy must allow both. Peer names resolve directly to pod
+addresses, so declaring a container port alone does not control connectivity.
+The current template uses a 1000 ms event timeout, 300 ms idle no-ops, and
+500 ms pulls from one peer at a time. Delayed events under load can therefore
+cause leader churn. If observed, increase `event_timeout_ms` in
+`multireplica/replica-template.json` to leave more margin (for example 10000).
+
+The manifests use `imagePullPolicy: IfNotPresent`. After rebuilding images,
+load the exact experiment image tags into kind, or use fresh versioned tags,
+so the run uses the intended binary and updated client logging. For example:
+
+```sh
+docker build -f kubernetes-launcher/Dockerfile --build-arg REPLICA_EXAMPLE=creek_set -t moirai-replica-creek:dev .
+kind load docker-image moirai-replica-creek:dev
+docker build -f kubernetes-launcher/clients/Dockerfile -t moirai-client:dev kubernetes-launcher/clients
+kind load docker-image moirai-client:dev
+```
 
 The launcher writes one JSON Lines file at
 `<output_path>/<simulation_name>-measurements.jsonl`. Client lines contain a

@@ -10,6 +10,9 @@ import runpy
 from statistics import fmean
 
 from matplotlib.figure import Figure
+from matplotlib.colors import TABLEAU_COLORS, is_color_like
+
+IMAGE_PALETTE = tuple(TABLEAU_COLORS.values())
 
 VALIDATE_CONFIG = runpy.run_path(str(
     Path(__file__).resolve().parent.parent / "kubernetes-launcher/render-experiment.py"
@@ -262,7 +265,8 @@ def average_series(experiments, times, **options):
 
 def build_figures(experiments, *, style="curve", timeline_replicas=None,
                   window=2.0, step=0.25, start=0.0, end=None,
-                  max_latency=None, include_failed=False):
+                  max_latency=None, include_failed=False, image_colors=None, image_labels=None,
+                  image_order=None, titles=None):
     """Return [(title, matplotlib Figure)], for one bundle and selected run(s).
 
     Different workloads at the same replica count are kept in separate series.
@@ -281,6 +285,17 @@ def build_figures(experiments, *, style="curve", timeline_replicas=None,
         raise ValueError("Select one bundle folder before plotting")
     if not experiments:
         return []
+    image_labels = image_labels or {}
+    titles = titles or {}
+    images = sorted({e.label for e in experiments})
+    colors = {image: IMAGE_PALETTE[i % len(IMAGE_PALETTE)] for i, image in enumerate(images)}
+    colors.update(image_colors or {})
+    if any(not is_color_like(color) for color in colors.values()):
+        raise ValueError("Invalid image color")
+    order = {image: i for i, image in enumerate(image_order or images)}
+    def image_key(image):
+        return (order.get(image, len(order)), image)
+
     # The main comparison is image vs replica count. Split conflicting workloads
     # at the same x into separate series instead of averaging incompatible runs.
     by_point = defaultdict(set)
@@ -288,6 +303,7 @@ def build_figures(experiments, *, style="curve", timeline_replicas=None,
         by_point[e.label, e.config["n_replicas"]].add(e.identity)
     ambiguous = any(len(identities) > 1 for identities in by_point.values())
     groups = defaultdict(list)
+    group_images = {}
     for e in experiments:
         label = e.label
         if ambiguous:
@@ -295,20 +311,21 @@ def build_figures(experiments, *, style="curve", timeline_replicas=None,
             label += f" | {c['n_clients']}c {c['frequency']}Hz {c['n_operations']}ops"
             label += f" | {'fault@' + str(c['failure_time']) if c['with_fault'] else 'no fault'}"
             label += f" | {'+'.join(m for m in MODES if c[f'use_{m}_requests'])} | {c['client_image']}"
+        group_images[label] = e.label
         groups[label, e.config["n_replicas"]].append(e)
     metric_groups = {key: [summary_metrics(e, include_failed=include_failed, max_latency=max_latency)
                            for e in runs] for key, runs in groups.items()}
-    labels = sorted({label for label, _ in groups})
+    labels = sorted({label for label, _ in groups}, key=lambda label: (image_key(group_images[label]), label))
     counts = sorted({count for _, count in groups})
     figures = []
     summary_specs = (
         ("Network usage", "Total TX + RX across replicas (MiB)", [("network_mib", "")]),
         ("CPU usage", "Mean CPU time per replica (s)", [("cpu_seconds", "")]),
     )
-    def figure(title, xlabel, ylabel):
+    def figure(title, xlabel, ylabel, default_title=None):
         fig = Figure(figsize=(9, 4.5), layout="constrained")
         ax = fig.subplots()
-        ax.set(title=title, xlabel=xlabel, ylabel=ylabel)
+        ax.set(title=titles.get(title, default_title if default_title is not None else title), xlabel=xlabel, ylabel=ylabel)
         ax.grid(True, axis="y", alpha=0.25)
         return fig, ax
 
@@ -324,13 +341,14 @@ def build_figures(experiments, *, style="curve", timeline_replicas=None,
                 if not any(math.isfinite(y) for y in ys):
                     continue
                 plotted = True
-                caption = f"{label}: {mode}" if mode else label
+                display_label = image_labels.get(group_images[label], group_images[label]) + label[len(group_images[label]):]
+                caption = f"{display_label}: {mode}" if mode else display_label
                 if style == "curve":
-                    ax.plot(xs, ys, marker="o", color=f"C{i % 10}",
+                    ax.plot(xs, ys, marker="o", color=colors[group_images[label]],
                             linestyle="--" if mode == "consistent" else "-", label=caption)
                 else:
                     positions = [counts.index(x) + (i * len(specs) + j - (nseries - 1) / 2) * width for x in xs]
-                    ax.bar(positions, ys, width=width, color=f"C{i % 10}",
+                    ax.bar(positions, ys, width=width, color=colors[group_images[label]],
                            hatch="//" if mode == "consistent" else None, label=caption)
         ax.set_xticks(counts if style == "curve" else range(len(counts)), labels=counts)
         if plotted:
@@ -365,16 +383,19 @@ def build_figures(experiments, *, style="curve", timeline_replicas=None,
         for title, ylabel, specs in (
             ("Latency over time", "Mean request latency (ms)", [(f"{m}_latency_ms", m, s) for m, s in zip(MODES, ("-", "--"))]),
             ("Throughput over time", "Completed requests / second", [("total_throughput", "total", "-"), ("optimistic_throughput", "optimistic", "--"), ("consistent_throughput", "consistent", ":")]),
+            ("Throughput over time (total + optimistic)", "Completed requests / second", [("total_throughput", "total", "-"), ("optimistic_throughput", "optimistic", "--")]),
+            ("Throughput over time (total + consistent)", "Completed requests / second", [("total_throughput", "total", "-"), ("consistent_throughput", "consistent", ":")]),
             ("Operation-log memory over time", "Mean log memory per replica (MiB)", [("memory_mib", "", "-")]),
         ):
-            fig, ax = figure(f"{title}\n{caption}", "Seconds since first send", ylabel)
+            graph_key = f"{title} — {caption}"
+            fig, ax = figure(graph_key, "Seconds since first send", ylabel, f"{title}\n{caption}")
             plotted = False
-            for i, (label, curve) in enumerate(sorted(curves.items())):
+            for i, (label, curve) in enumerate(sorted(curves.items(), key=lambda item: image_key(item[0]))):
                 for metric, mode, linestyle in specs:
                     values = curve[metric]
                     if any(math.isfinite(y) for y in values):
-                        ax.plot(times, values, color=f"C{i % 10}", linestyle=linestyle,
-                                label=f"{label}: {mode}" if mode else label)
+                        ax.plot(times, values, color=colors[label], linestyle=linestyle,
+                                label=f"{image_labels.get(label, label)}: {mode}" if mode else image_labels.get(label, label))
                         plotted = True
             if last > start:
                 ax.set_xlim(start, last)
