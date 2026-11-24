@@ -35,6 +35,56 @@ Moirai serves as a research platform for developing novel CRDTs tailored for col
 └── moirai-protocol/ # Implementation of the Pure Op framework's replication protocol.
 ```
 
+## Network stack (moirai-netstack)
+
+The `moirai-netstack*` crates are one network library for replicated logs. Nodes generated on Moirai's CRDT types and the interpreter both run on it, through one replica trait (`ReplicaPort`) and one wire format (wire v1). Governance and other application concerns stay outside the library: an application plugs them in through extensions on the node and through its own HTTP routes.
+
+- `moirai-netstack` is the core. It holds the `ReplicaPort`, `ReplicaFactory` and `Extension` traits, the `Opaque` and `Progress` types, `LogId`, `LogPayload`, `TransportMessage` and the wire v1 encoding and decoding. It depends on no Moirai crate; its dependencies are serde, serde_json, flate2, base64 and stacker. Frame decoding accepts nesting up to 1024 levels deep and runs on a stack that `stacker` grows for it, so `stacker` is a native build dependency (it builds a small C shim) and a build of any consuming workspace needs a C compiler.
+- `moirai-netstack-transport` provides the `CrdtTransport` trait and its implementations: direct TCP, a relay client, a composite that routes each peer to the provider that can reach it, and Zenoh behind the `zenoh` feature (on by default; `--no-default-features` builds a TCP-only library). It depends on `moirai-netstack`, and on the vendored Zenoh when the feature is on. A workspace that depends on it must repeat one patch line in its own `Cargo.toml` and copy `vendor/zenoh-1.10.1` beside it:
+
+  ```toml
+  [patch.crates-io]
+  zenoh = { path = "vendor/zenoh-1.10.1" }
+  ```
+
+  `moirai_netstack_transport::zenoh_patch::check()` returns an error naming this line when the build links stock Zenoh instead.
+- `moirai-netstack-node` provides `Node<F, T>`, generic over a `ReplicaFactory` and a `CrdtTransport`. A node hosts logs by id, filters frames for logs it does not host, applies operations and batches under the etag rule, catches a log up by delta, transfers state when the replica offers it, and refuses a returning member. It depends on `moirai-netstack` and `moirai-netstack-transport` (without default features; its own `zenoh` feature turns Zenoh on).
+- `moirai-netstack-http` provides the generic HTTP routes over a `Node`, served with tiny_http, and a `Routes` trait through which an application adds its own routes. It depends on `moirai-netstack`, `moirai-netstack-node` and `moirai-netstack-transport`.
+- `moirai-netstack-crdt` (in `adapters/crdt`) implements `ReplicaPort` over Moirai's own replica and CRDT types. It depends on `moirai-netstack`, `moirai-protocol` and `moirai-crdt`, and offers ready factories such as `awset::factory()`. Its tests also use the node, the transport and the testkit.
+- `moirai-netstack-testkit` provides a toy grow-only-set replica with no Moirai, and the two contract suites every adapter runs: `contract` at the port level and `contract_node` at the node level. It depends on `moirai-netstack`, `moirai-netstack-node` and `moirai-netstack-transport`.
+
+How they stack. Each line points down to a crate that the one above it depends on. The node is generic over the replica factory, so no adapter appears under it: the application chooses the adapter and hands its factory to the node. The interpreter adapter is planned and does not exist yet.
+
+```text
+                        application
+          (adds its own routes and extensions)
+                |                       |
+                v                       v
+       moirai-netstack-http     +----------------------+----------------------+---------------------+
+                |               | moirai-netstack-crdt | moirai-netstack-     | interpreter adapter |
+                v               |  (Moirai replicas)   |  testkit (toy)       |  (planned)          |
+       moirai-netstack-node     +----------------------+----------------------+---------------------+
+          |            |                |       |                |                      |
+          |            v                v       v                |                      |
+          |    moirai-netstack-   moirai-crdt  moirai-protocol   |                      |
+          |       transport                                      |                      |
+          |            |                                         |                      |
+          v            v                                         v                      v
+   ===========================================================================================
+   moirai-netstack  (core: ReplicaPort, ReplicaFactory, Extension, wire v1)
+```
+
+Arrows and lines read as "depends on". The testkit also depends on the node and the transport, and the crdt adapter uses them in its tests; those lines are left out to keep the drawing readable.
+
+Running the tests, one crate at a time:
+
+- `cargo test -p moirai-netstack`
+- `cargo test -p moirai-netstack-transport` (the Zenoh tests need the default feature; `cargo test -p moirai-netstack-transport --no-default-features` runs the TCP-only tests)
+- `cargo test -p moirai-netstack-node`
+- `cargo test -p moirai-netstack-http`
+- `cargo test -p moirai-netstack-crdt`
+- `cargo test -p moirai-netstack-testkit`
+
 ## Publications
 
 Moirai has been used in the following research:
