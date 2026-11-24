@@ -8,7 +8,7 @@
 use std::rc::Rc;
 
 use moirai_netstack::{Extension, LogId, Opaque, Progress, ReplicaFactory, ReplicaPort};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A grow-only list of strings; an op that is not a string is refused.
 struct Toy {
@@ -100,7 +100,10 @@ fn the_port_defaults_follow_the_design() {
     // applied prefix, the refusal and the events of the applied ops.
     let (applied, refusal, events) =
         toy.submit_batch(vec![json!("a"), json!("b"), json!(3), json!("c")]);
-    assert_eq!(applied, 2, "the applied prefix is the two ops before the refusal");
+    assert_eq!(
+        applied, 2,
+        "the applied prefix is the two ops before the refusal"
+    );
     assert_eq!(refusal.as_deref(), Some("a toy op is a string"));
     assert_eq!(
         events,
@@ -109,7 +112,11 @@ fn the_port_defaults_follow_the_design() {
             json!({ "from": "alice", "item": "b" })
         ]
     );
-    assert_eq!(toy.read_state(), json!(["a", "b"]), "nothing after the refusal is applied");
+    assert_eq!(
+        toy.read_state(),
+        json!(["a", "b"]),
+        "nothing after the refusal is applied"
+    );
     assert_eq!(toy.progress().delivered, 2);
 
     // read_identified defaults to read_state; a replica that does not offer a
@@ -120,7 +127,7 @@ fn the_port_defaults_follow_the_design() {
 
 #[test]
 fn an_extension_that_writes_no_method_admits_local_ops() {
-    let log: LogId = serde_json::from_value(json!("a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2"))
-        .expect("a wire log id");
+    let log: LogId =
+        serde_json::from_value(json!("a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2")).expect("a wire log id");
     assert_eq!(Plain.admit_local(&log, &json!("a")), Ok(()));
 }
