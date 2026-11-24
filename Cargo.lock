@@ -612,6 +612,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-netstack-testkit"
+version = "0.8.3"
+dependencies = [
+ "moirai-netstack",
+ "serde_json",
+]
+
+[[package]]
 name = "moirai-protocol"
 version = "0.8.3"
 dependencies = [
