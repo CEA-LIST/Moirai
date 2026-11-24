@@ -1,0 +1,16 @@
+[package]
+name = "moirai-netstack"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Network core for replicated logs: replica and extension traits, wire v1 frames"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+# preserve_order: opaque payloads re-encode with their keys in wire order.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+# The state transfer's log field is zlib-deflated and base64-encoded, as 601c887.
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+base64 = "0.22"
