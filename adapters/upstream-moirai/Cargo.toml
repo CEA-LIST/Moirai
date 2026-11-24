@@ -1,0 +1,19 @@
+[package]
+name = "moirai-netstack-upstream"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "moirai-netstack's replica port over upstream Moirai replicas"
+
+[dependencies]
+moirai-netstack = { path = "../../moirai-netstack" }
+moirai-protocol = { path = "../../moirai-protocol" }
+# serde: ops are the serde JSON of the CRDT's updates; no fuzz machinery.
+moirai-crdt = { path = "../../moirai-crdt", default-features = false, features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+moirai-netstack-testkit = { path = "../../moirai-netstack-testkit" }

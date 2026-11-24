@@ -1302,6 +1302,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-netstack-upstream"
+version = "0.8.3"
+dependencies = [
+ "moirai-crdt",
+ "moirai-netstack",
+ "moirai-netstack-testkit",
+ "moirai-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "moirai-protocol"
 version = "0.8.3"
 dependencies = [
