@@ -26,6 +26,10 @@ and copy the `vendor/zenoh-1.10.1` tree beside it. The build records which
 source tree it linked, and `moirai_netstack_transport::zenoh_patch::check()`
 returns an error naming this line when the workspace links stock zenoh instead;
 call it at start-up and print the error rather than running on the wrong copy.
+The answer is read from the `Cargo.lock` of the directory cargo is started in,
+so build from the consuming workspace: `cargo --manifest-path` run from another
+directory reads that directory's lock instead, and any path-patched zenoh counts
+as the vendored copy.
 
 The frame decode below the transports keeps 601c887's 1024-deep rule, and it
 runs on a stack `stacker` grows for it, as 601c887's did; `stacker` is a

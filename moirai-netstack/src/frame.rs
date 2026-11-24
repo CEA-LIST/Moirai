@@ -199,7 +199,9 @@ pub fn decode_frame(input: &[u8]) -> Result<TransportMessage, serde_json::Error>
 }
 
 /// [`decode_frame`] for a value that wraps a frame, such as the relay's
-/// envelope: the depth rule counts the envelope's own braces too.
+/// envelope: the depth rule counts the envelope's own braces too. Hidden: it is
+/// there for the relay transport's envelope, not as a general JSON decoder.
+#[doc(hidden)]
 pub fn decode_json<T: DeserializeOwned>(input: &[u8]) -> Result<T, serde_json::Error> {
     json::decode(input)
 }

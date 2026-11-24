@@ -22,12 +22,6 @@ serde_json = "1.0.133"
 # authentication, none of which Moirai uses; TCP is the one link.
 zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"], optional = true }
 
-[build-dependencies]
-# The same zenoh, as a build dependency only so that the build script's own hash
-# follows the zenoh source: two consumers that share a target directory, one on
-# stock zenoh and one on the patched copy, then never share `build.rs`'s answer.
-zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"], optional = true }
-
 [features]
 # `zenoh` on by default; `--no-default-features` builds a TCP-only library.
 default = ["zenoh"]
