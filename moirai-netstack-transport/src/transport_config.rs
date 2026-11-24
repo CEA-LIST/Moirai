@@ -1,0 +1,393 @@
+//! Which transport a node runs on, and how its Zenoh session is configured.
+//!
+//! Read from the variables a node already takes, plus `MOIRAI_TRANSPORT` and
+//! a few `ZENOH_*` ones (NW.14 note, vault `spec/Zenoh transport, peer-to-peer
+//! and router.md`, sections 4 and 6):
+//!
+//! | Variable | Meaning |
+//! |---|---|
+//! | `MOIRAI_TRANSPORT` | `tcp` or `zenoh`; unset is [`DEFAULT_TRANSPORT`] |
+//! | `SESSION_ID` | the `<session>` key chunk under Zenoh; default `default` |
+//! | `ZENOH_ROUTER` | peer mode, introduced by this router: gossip on, one hop |
+//! | `ZENOH_MODE` | `client`, everything through `ZENOH_ROUTER`; refused without it |
+//! | `ZENOH_REGION` | the Zenoh region the node claims beside `ZENOH_ROUTER` in peer mode |
+//! | `ZENOH_SCOUTING` | `multicast` to opt in, on Moirai's own port |
+//! | `ZENOH_CONFIG` | a Zenoh configuration file, used as is |
+//! | `BOOTNODE_URL` | refused under Zenoh, which finds its peers without one |
+//!
+//! `ZENOH_REGION` (NW.16e, the NW.16c note's Layout R) is the node's
+//! `region_name`: a router given `ROUTER_REGIONS` introduces the peers of one
+//! region to each other and forwards between regions. It needs `ZENOH_ROUTER`
+//! in peer mode and is refused beside `PEERS` (a peer of another region
+//! dialled directly would receive every frame twice), beside
+//! `ZENOH_MODE=client`, beside `ZENOH_CONFIG`, set but empty (unlike the
+//! other variables, an empty value is not read as unset) and over
+//! [`MAX_REGION_NAME_BYTES`] bytes.
+//!
+//! Everything is read through a lookup function, so a caller (a test) can
+//! pass variables without touching the process environment; a node reads the
+//! environment through [`TransportConfig::from_env`].
+
+use std::fmt;
+
+/// The transports a node can run on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportKind {
+    /// [`crate::composite::CompositeTransport`]: a TCP stream per peer, relay
+    /// fallback.
+    Tcp,
+    /// `crate::zenoh_transport::ZenohTransport`: Zenoh sessions, one per
+    /// node, and a second when it dials the peers named after its port was
+    /// reported (NW.30).
+    Zenoh,
+}
+
+/// The transport a node runs on when `MOIRAI_TRANSPORT` is unset: Zenoh on
+/// this branch since NW.19 (note section 8). A build without this crate's
+/// `zenoh` feature refuses it at start, naming `MOIRAI_TRANSPORT=tcp`.
+pub const DEFAULT_TRANSPORT: TransportKind = TransportKind::Zenoh;
+
+/// The multicast group and port a node scouts on with
+/// `ZENOH_SCOUTING=multicast`. Zenoh's group, not Zenoh's port: 7446 is the
+/// one Ledgera's stock configuration scouts on, and a Moirai node must never
+/// answer a Ledgera scout (note 6.1).
+pub const MOIRAI_SCOUTING_ADDRESS: &str = "224.0.0.224:7450";
+
+/// How long, in microseconds, a blocking put may wait for a free batch
+/// before Zenoh drops it and closes the link
+/// (`transport/link/tx/queue/congestion_control/block/wait_before_close`).
+///
+/// Every put of `crate::zenoh_transport::ZenohTransport` blocks, and Zenoh
+/// gives a message one deadline from its first wait, never moved, so this
+/// bounds the time to queue a whole state transfer. The largest one
+/// `model_node` sends at this cut was measured at 1,217,035 bytes (vault
+/// `spec/items/NW.16a.md`, section 7a); 30 s carries it on a link of about
+/// 0.32 Mbit/s, where Zenoh's default of 5 s needs about 1.95 Mbit/s.
+pub const WAIT_BEFORE_CLOSE_US: u64 = 30_000_000;
+
+/// The most bytes a Zenoh region name may hold (`ZENOH_REGION`).
+pub const MAX_REGION_NAME_BYTES: usize = 32;
+
+/// A variable that was refused, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransportConfigError(String);
+
+impl fmt::Display for TransportConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransportConfigError {}
+
+fn refuse<T>(why: impl Into<String>) -> Result<T, TransportConfigError> {
+    Err(TransportConfigError(why.into()))
+}
+
+/// What the variables say about the transport.
+#[derive(Debug, Clone)]
+pub struct TransportConfig {
+    kind: TransportKind,
+    by_default: bool,
+    session_id: String,
+    router: Option<String>,
+    client: bool,
+    multicast: bool,
+    config_file: Option<String>,
+    region: Option<String>,
+}
+
+impl TransportConfig {
+    /// Read every variable through `lookup`, never the process environment.
+    /// An empty value reads as unset, as a compose file's `VAR=` does.
+    pub fn from_lookup(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, TransportConfigError> {
+        let var = |name: &str| lookup(name).filter(|v| !v.is_empty());
+        let kind = match var("MOIRAI_TRANSPORT").as_deref() {
+            None => DEFAULT_TRANSPORT,
+            Some("tcp") => TransportKind::Tcp,
+            Some("zenoh") => TransportKind::Zenoh,
+            Some(other) => {
+                return refuse(format!(
+                    "MOIRAI_TRANSPORT=`{other}` is neither `tcp` nor `zenoh`"
+                ));
+            }
+        };
+        let by_default = var("MOIRAI_TRANSPORT").is_none();
+        let mut config = Self {
+            kind,
+            by_default,
+            session_id: var("SESSION_ID").unwrap_or_else(|| "default".to_string()),
+            router: None,
+            client: false,
+            multicast: false,
+            config_file: None,
+            region: None,
+        };
+        if kind == TransportKind::Tcp {
+            // The Zenoh variables mean nothing to a TCP node.
+            return Ok(config);
+        }
+
+        if var("BOOTNODE_URL").is_some() {
+            if by_default {
+                return refuse(
+                    "BOOTNODE_URL is set, but MOIRAI_TRANSPORT is unset, so the node runs Zenoh, \
+                     the default, which finds its peers without a bootnode; run with \
+                     MOIRAI_TRANSPORT=tcp to register with the bootnode, or unset BOOTNODE_URL",
+                );
+            }
+            return refuse(
+                "BOOTNODE_URL is set, but a node under Zenoh finds its peers without a \
+                 bootnode; unset it, or run with MOIRAI_TRANSPORT=tcp",
+            );
+        }
+        config.router = var("ZENOH_ROUTER");
+        config.client = match var("ZENOH_MODE").as_deref() {
+            None | Some("peer") => false,
+            Some("client") if config.router.is_some() => true,
+            Some("client") => {
+                return refuse(
+                    "ZENOH_MODE=client sends everything through ZENOH_ROUTER, which is unset",
+                );
+            }
+            Some(other) => {
+                return refuse(format!(
+                    "ZENOH_MODE=`{other}` is neither `peer` nor `client`"
+                ));
+            }
+        };
+        config.multicast = match var("ZENOH_SCOUTING").as_deref() {
+            None => false,
+            Some("multicast") => true,
+            Some(other) => {
+                return refuse(format!(
+                    "ZENOH_SCOUTING=`{other}`: `multicast` is the only scouting a node opts into"
+                ));
+            }
+        };
+        config.config_file = var("ZENOH_CONFIG");
+        if config.config_file.is_some() {
+            for name in ["ZENOH_ROUTER", "ZENOH_MODE", "ZENOH_SCOUTING"] {
+                if var(name).is_some() {
+                    return refuse(format!(
+                        "ZENOH_CONFIG is used as is, so {name}, which would change it, is refused \
+                         beside it"
+                    ));
+                }
+            }
+        }
+        config.region = region(&lookup, &config)?;
+        Ok(config)
+    }
+
+    /// [`from_lookup`] over the process environment.
+    ///
+    /// [`from_lookup`]: TransportConfig::from_lookup
+    pub fn from_env() -> Result<Self, TransportConfigError> {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    pub fn kind(&self) -> TransportKind {
+        self.kind
+    }
+
+    /// Whether the kind is [`DEFAULT_TRANSPORT`] because `MOIRAI_TRANSPORT`
+    /// is unset or empty, rather than named.
+    pub fn is_default(&self) -> bool {
+        self.by_default
+    }
+
+    /// The `<session>` chunk of every key under Zenoh: `SESSION_ID`, default
+    /// `default`.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// The Zenoh configuration of a node listening on `listen_port` whose
+    /// `PEERS` are `peer_addresses` (`id → host:port`).
+    ///
+    /// - `ZENOH_CONFIG`: the file, as is; neither the port nor the peers are
+    ///   added.
+    /// - `ZENOH_MODE=client`: client mode, connecting to `ZENOH_ROUTER` only,
+    ///   listening on nothing, and retrying the router until it answers.
+    /// - Otherwise peer mode, listening on `tcp/0.0.0.0:<listen_port>` and
+    ///   connecting to `ZENOH_ROUTER`, if any, and every peer. Gossip is on,
+    ///   one hop, only with a router, so the router can introduce the peers.
+    ///
+    /// Multicast scouting is off unless `ZENOH_SCOUTING=multicast`, which
+    /// puts it on [`MOIRAI_SCOUTING_ADDRESS`]. A blocking put waits at most
+    /// [`WAIT_BEFORE_CLOSE_US`] for a free batch.
+    #[cfg(feature = "zenoh")]
+    pub fn zenoh_config(
+        &self,
+        listen_port: u16,
+        peer_addresses: &crate::HashMap<crate::transport::PeerId, String>,
+    ) -> Result<zenoh::Config, TransportConfigError> {
+        self.config(Some(listen_port), peer_addresses, false)
+    }
+
+    /// [`zenoh_config`] for a session that listens on nothing and dials the
+    /// `PEERS` given: the second session of a node that kept the kernel's port
+    /// (see `AnyTransport::dial_peers`), which carries its frames because
+    /// Zenoh 1.10.1 dials no peer after a session opens.
+    ///
+    /// [`zenoh_config`]: TransportConfig::zenoh_config
+    #[cfg(feature = "zenoh")]
+    pub fn zenoh_config_dialing(
+        &self,
+        peer_addresses: &crate::HashMap<crate::transport::PeerId, String>,
+    ) -> Result<zenoh::Config, TransportConfigError> {
+        self.config(None, peer_addresses, true)
+    }
+
+    /// Whether `ZENOH_MODE=client`: the node listens on no replication port.
+    pub fn is_client(&self) -> bool {
+        self.client
+    }
+
+    /// Whether `ZENOH_CONFIG` was given: the file is used as is, so the
+    /// second session a port-0 node would dial its peers with cannot be
+    /// configured without copying the file's listen endpoints.
+    pub fn uses_config_file(&self) -> bool {
+        self.config_file.is_some()
+    }
+
+    #[cfg(feature = "zenoh")]
+    fn config(
+        &self,
+        listen_port: Option<u16>,
+        peer_addresses: &crate::HashMap<crate::transport::PeerId, String>,
+        dialing: bool,
+    ) -> Result<zenoh::Config, TransportConfigError> {
+        if let Some(path) = &self.config_file {
+            return zenoh::Config::from_file(path).or_else(|e| {
+                refuse(format!(
+                    "ZENOH_CONFIG `{path}` is not a Zenoh configuration: {e}"
+                ))
+            });
+        }
+
+        if self.region.is_some() && !peer_addresses.is_empty() {
+            return refuse(
+                "ZENOH_REGION is refused beside PEERS: the router introduces the peers of a \
+                 region, and a peer of another region dialled directly would receive every frame \
+                 twice; unset PEERS, or ZENOH_REGION",
+            );
+        }
+
+        // The dialer only dials the peers named after the first session opened;
+        // the first session already carries the router and scouting.
+        let mut connect: Vec<String> = if dialing {
+            Vec::new()
+        } else {
+            self.router.iter().cloned().collect()
+        };
+        let listen: Vec<String>;
+        let mode;
+        if self.client {
+            mode = "client";
+            listen = Vec::new();
+        } else {
+            mode = "peer";
+            listen = listen_port
+                .map(|port| vec![format!("tcp/0.0.0.0:{port}")])
+                .unwrap_or_default();
+            let mut peers: Vec<String> = peer_addresses
+                .values()
+                .map(|addr| format!("tcp/{addr}"))
+                .collect();
+            peers.sort();
+            connect.extend(peers);
+        }
+
+        let mut config = zenoh::Config::default();
+        let mut set = |key: &str, value: String| {
+            config.insert_json5(key, &value).or_else(|e| {
+                refuse(format!(
+                    "the Zenoh configuration refused {key} = {value}: {e}"
+                ))
+            })
+        };
+        set("mode", json(&mode))?;
+        set("listen/endpoints", json(&listen))?;
+        set("connect/endpoints", json(&connect))?;
+        set(
+            "scouting/multicast/enabled",
+            json(&(self.multicast && !dialing)),
+        )?;
+        if self.multicast && !dialing {
+            set("scouting/multicast/address", json(&MOIRAI_SCOUTING_ADDRESS))?;
+        }
+        let gossip = self.router.is_some() && !dialing;
+        set("scouting/gossip/enabled", json(&gossip))?;
+        if gossip {
+            set("scouting/gossip/multihop", json(&false))?;
+        }
+        if let Some(name) = &self.region {
+            set("region_name", json(name))?;
+        }
+        if self.client {
+            // Zenoh's client defaults (`timeout_ms` 0, `exit_on_failure`
+            // true) try the router once and fail the open, so a client
+            // started before its router would exit. A peer's defaults wait
+            // for it: -1 and false. The open then returns once the router
+            // answers.
+            set("connect/timeout_ms", json(&-1))?;
+            set("connect/exit_on_failure", json(&false))?;
+        }
+        set(
+            "transport/link/tx/queue/congestion_control/block/wait_before_close",
+            json(&WAIT_BEFORE_CLOSE_US),
+        )?;
+        Ok(config)
+    }
+}
+
+/// `ZENOH_REGION`, read as given (an empty value is refused, not unset), and
+/// refused where a region does not apply: beside `ZENOH_CONFIG`, beside
+/// `ZENOH_MODE=client`, without `ZENOH_ROUTER`. `PEERS` is checked by
+/// `zenoh_config`, which is given the peers the node dials.
+fn region(
+    lookup: impl Fn(&str) -> Option<String>,
+    config: &TransportConfig,
+) -> Result<Option<String>, TransportConfigError> {
+    let Some(name) = lookup("ZENOH_REGION") else {
+        return Ok(None);
+    };
+    if config.config_file.is_some() {
+        return refuse(
+            "ZENOH_CONFIG is used as is, so ZENOH_REGION, which would change it, is refused \
+             beside it",
+        );
+    }
+    if config.client {
+        return refuse(
+            "ZENOH_REGION is refused beside ZENOH_MODE=client: a client belongs to no region, \
+             and the router carries it whatever it claims",
+        );
+    }
+    if config.router.is_none() {
+        return refuse(
+            "ZENOH_REGION is refused without ZENOH_ROUTER: a region is the router's to \
+             introduce and forward between",
+        );
+    }
+    if name.is_empty() {
+        return refuse("ZENOH_REGION is set but empty; give a region name, or unset it");
+    }
+    if name.len() > MAX_REGION_NAME_BYTES {
+        return refuse(format!(
+            "ZENOH_REGION=`{name}` is {} bytes, over Zenoh's {MAX_REGION_NAME_BYTES}",
+            name.len()
+        ));
+    }
+    Ok(Some(name))
+}
+
+/// A configuration value as the JSON `insert_json5` takes.
+#[cfg(feature = "zenoh")]
+fn json<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string(value).expect("a string, a list of strings or a bool serializes")
+}

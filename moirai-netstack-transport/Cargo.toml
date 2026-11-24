@@ -1,0 +1,28 @@
+[package]
+name = "moirai-netstack-transport"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Transports for moirai-netstack: direct TCP, relay, composite and Zenoh"
+
+[lib]
+name = "moirai_netstack_transport"
+path = "src/lib.rs"
+
+[dependencies]
+moirai-netstack = { path = "../moirai-netstack" }
+rustc-hash = "2.1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.133"
+# Pinned exactly, because `unstable` is on: it is there for one call,
+# `session.info().locators()`, the port Zenoh holds after a bind to 0. Default
+# features off: they bring QUIC, UDP, WebSocket, TLS and public-key
+# authentication, none of which Moirai uses; TCP is the one link.
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "unstable"], optional = true }
+
+[features]
+# `zenoh` on by default; `--no-default-features` builds a TCP-only library.
+default = ["zenoh"]
+zenoh = ["dep:zenoh"]

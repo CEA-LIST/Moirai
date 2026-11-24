@@ -6,11 +6,11 @@
 
 use std::fmt;
 
-use serde::de::{Error as _, MapAccess, Visitor};
+use serde::de::{DeserializeOwned, Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use crate::{LogId, LogPayload, Opaque};
+use crate::{LogId, LogPayload, Opaque, json};
 
 /// One frame. A frame of a type wire v1 does not name is `Unknown`, kept
 /// whole; a frame of a named type that does not decode is an error.
@@ -188,4 +188,20 @@ fn replica_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::E
             "Invalid replica id {id:?}: expected nonempty ASCII letters, digits, '.', '_' or '-'"
         )))
     }
+}
+
+/// Decode one frame under 601c887's 1024-deep rule, on a grown stack, and
+/// refuse trailing content. The transports use this instead of
+/// `serde_json::from_slice`, whose 128-deep recursion limit refuses frames
+/// 601c887 delivered.
+pub fn decode_frame(input: &[u8]) -> Result<TransportMessage, serde_json::Error> {
+    json::decode(input)
+}
+
+/// [`decode_frame`] for a value that wraps a frame, such as the relay's
+/// envelope: the depth rule counts the envelope's own braces too. Hidden: it is
+/// there for the relay transport's envelope, not as a general JSON decoder.
+#[doc(hidden)]
+pub fn decode_json<T: DeserializeOwned>(input: &[u8]) -> Result<T, serde_json::Error> {
+    json::decode(input)
 }

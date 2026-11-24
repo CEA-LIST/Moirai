@@ -1,0 +1,228 @@
+//! Transport abstraction for Moirai CRDT.
+//!
+//! This module provides a transport-independent interface for sending and receiving
+//! CRDT events between replicas. Different implementations can use TCP, WebRTC,
+//! WebSocket, or any other communication channel.
+//!
+//! The frame carried is [`moirai_netstack::TransportMessage`] itself, so the
+//! trait has no operation type and stays object safe.
+
+use std::io::{self, Write};
+use std::net::TcpStream;
+
+use serde::Serialize;
+
+pub use moirai_netstack::TransportMessage;
+
+/// Peer identifier type
+pub type PeerId = String;
+
+/// Error type for transport operations
+#[derive(Debug)]
+pub enum TransportError {
+    Io(io::Error),
+    Serialization(String),
+    PeerNotFound(PeerId),
+    ConnectionClosed(PeerId),
+    WouldBlock,
+    Other(String),
+}
+
+impl From<io::Error> for TransportError {
+    fn from(e: io::Error) -> Self {
+        if e.kind() == io::ErrorKind::WouldBlock {
+            TransportError::WouldBlock
+        } else {
+            TransportError::Io(e)
+        }
+    }
+}
+
+impl From<serde_json::Error> for TransportError {
+    fn from(e: serde_json::Error) -> Self {
+        TransportError::Serialization(e.to_string())
+    }
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransportError::Io(e) => write!(f, "IO error: {}", e),
+            TransportError::Serialization(s) => write!(f, "Serialization error: {}", s),
+            TransportError::PeerNotFound(p) => write!(f, "Peer not found: {}", p),
+            TransportError::ConnectionClosed(p) => write!(f, "Connection closed: {}", p),
+            TransportError::WouldBlock => write!(f, "Would block"),
+            TransportError::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {}
+
+/// Result type for transport operations
+pub type TransportResult<T> = Result<T, TransportError>;
+
+/// Write one newline-delimited JSON frame.
+///
+/// The framing every transport in this crate uses, in one place. It is
+/// deliberately generic over the value rather than fixed to
+/// [`TransportMessage`]: the relay transport writes the same framing around an
+/// *envelope* that carries a `TransportMessage` as one of its fields, so both
+/// share the codec and neither owns it.
+pub(crate) fn write_frame<T: Serialize>(stream: &mut TcpStream, value: &T) -> TransportResult<()> {
+    let json = serde_json::to_string(value)?;
+    writeln!(stream, "{}", json)?;
+    stream.flush()?;
+    Ok(())
+}
+
+/// Resolve `host:port` to the addresses to try, in order.
+///
+/// [`TcpStream::connect`] does this itself, and every transport here has stopped
+/// using it: a dial with no timeout is what a black-holed address turns into a
+/// stalled event loop, so the resolution has to be separate from the connect.
+///
+/// The DNS lookup itself is still unbounded. Nothing in `std` bounds it, and a
+/// hanging resolver is a different failure from an unreachable peer — worth
+/// naming rather than pretending the timeout below covers it.
+pub(crate) fn resolve(addr: &str) -> TransportResult<Vec<std::net::SocketAddr>> {
+    use std::net::ToSocketAddrs;
+    let resolved: Vec<_> = addr.to_socket_addrs()?.collect();
+    if resolved.is_empty() {
+        return Err(TransportError::Other(format!(
+            "`{addr}` resolved to no address"
+        )));
+    }
+    Ok(resolved)
+}
+
+/// Dial `addr`, giving up after `timeout`.
+///
+/// Every address the name resolves to is tried in turn, which is what
+/// [`TcpStream::connect`] does — the timeout applies per address, so a dual-stack
+/// name whose first family is unreachable still reaches the second.
+pub(crate) fn dial(addr: &str, timeout: std::time::Duration) -> TransportResult<TcpStream> {
+    let mut last = None;
+    for target in resolve(addr)? {
+        match TcpStream::connect_timeout(&target, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last
+        .map(TransportError::from)
+        .unwrap_or_else(|| TransportError::Other(format!("could not dial `{addr}`"))))
+}
+
+/// Connection status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerStatus {
+    Connected,
+    Paused,
+    Disconnected,
+    Connecting,
+}
+
+/// Information about a peer
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub id: PeerId,
+    pub address: String,
+    pub status: PeerStatus,
+    pub buffered_messages: usize,
+}
+
+/// Transport-agnostic interface for CRDT replication.
+pub trait CrdtTransport {
+    /// Get this replica's ID
+    fn local_id(&self) -> &PeerId;
+
+    /// Send a message to a specific peer
+    fn send(&mut self, peer: &PeerId, msg: TransportMessage) -> TransportResult<()>;
+
+    /// Broadcast a message to all connected (non-paused) peers
+    fn broadcast(&mut self, msg: TransportMessage) -> TransportResult<()>;
+
+    /// Try to receive a message (non-blocking)
+    fn try_recv(&mut self) -> TransportResult<Option<(PeerId, TransportMessage)>>;
+
+    /// Get list of all peers
+    fn peers(&self) -> Vec<PeerInfo>;
+
+    /// Check if a specific peer is connected
+    fn is_connected(&self, peer: &PeerId) -> bool;
+
+    /// Pause communication with a peer (for simulation)
+    fn pause_peer(&mut self, peer: &PeerId) -> TransportResult<()>;
+
+    /// Resume communication
+    /// Buffered messages will be delivered
+    fn resume_peer(&mut self, peer: &PeerId) -> TransportResult<()>;
+
+    /// Pause all peers
+    fn pause_all(&mut self) -> TransportResult<()>;
+
+    /// Resume all peers
+    fn resume_all(&mut self) -> TransportResult<()>;
+
+    /// Get number of buffered messages for a peer
+    fn buffered_count(&self, peer: &PeerId) -> usize;
+
+    /// Accept new incoming connections (if applicable)
+    fn accept_connections(&mut self) -> TransportResult<Vec<PeerId>>;
+
+    /// Learn how to reach `peer`, so the next [`connect_to_peers`] can dial it.
+    ///
+    /// Returns `true` when this is new information — a peer that was unknown,
+    /// or one whose address changed — so a caller can tell a discovery round
+    /// that changed the roster from one that did not.
+    ///
+    /// The default is a no-op returning `false`, for transports that find
+    /// their peers themselves and have no address book to update.
+    ///
+    /// [`connect_to_peers`]: CrdtTransport::connect_to_peers
+    fn add_peer(&mut self, _peer: PeerId, _addr: String) -> bool {
+        false
+    }
+
+    /// Connect to configured/known peers.
+    ///
+    /// Necessary for transports that require explicit connections (e.g. TCP)
+    /// The default implementation is a no-op, for transports that discover peers automatically (e.g. gossip).
+    fn connect_to_peers(&mut self) -> TransportResult<Vec<PeerId>> {
+        Ok(vec![])
+    }
+
+    /// How each known peer is currently reached, as a short label.
+    ///
+    /// Empty by default, and that is the honest answer for a transport with one
+    /// way of reaching a peer: there is no route to report because there is no
+    /// choice. A composite over several providers overrides it, and that is what
+    /// `/api/metrics` surfaces so an operator can see that one edge is direct
+    /// and another relayed instead of inferring it from throughput.
+    fn routes(&self) -> Vec<(PeerId, &'static str)> {
+        Vec::new()
+    }
+
+    /// Learn where a relay is, so peers that cannot be dialled directly can
+    /// still be reached.
+    ///
+    /// The endpoint is advertised by the bootnode rather than configured on the
+    /// replica, so it arrives at run time with a roster and can change; hence a
+    /// method rather than a constructor argument.
+    ///
+    /// Default is a no-op, exactly like [`add_peer`]: a transport with no
+    /// notion of a relay ignores it, which is what keeps the whole relay path
+    /// additive.
+    ///
+    /// [`add_peer`]: CrdtTransport::add_peer
+    fn set_relay(&mut self, _session: &str, _addr: &str) {}
+
+    /// Get all messages buffered while a peer was paused.
+    ///
+    /// Called after [`resume_peer`] to deliver messages that arrived during the
+    /// partition. The default implementation returns an empty vec.
+    fn drain_buffer(&mut self, _peer: &PeerId) -> Vec<TransportMessage> {
+        vec![]
+    }
+}
