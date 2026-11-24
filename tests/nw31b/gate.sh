@@ -54,13 +54,19 @@ if rest_old != rest_new: why.append("a key besides members, exclude and the zeno
 print(("FAIL root_manifest_member_and_patch_only: " + "; ".join(why)) if why else "PASS root_manifest_member_and_patch_only")
 ol, nl = old("Cargo.lock"), new("Cargo.lock")
 now = {(p["name"], p["version"]): p for p in nl["package"]}
+def edges(lock):  # each dependency as (name, version): Cargo writes "name version" only once a name has two versions
+    vers = {p["name"]: p["version"] for p in lock["package"]}
+    res = lambda d: tuple(d.split(" ")[:2]) if " " in d else (d, vers[d])
+    return {(p["name"], p["version"]): {res(d) for d in p.get("dependencies", [])} for p in lock["package"]}
+oe, ne = edges(ol), edges(nl)
 lost = []
 for p in ol["package"]:
     q = now.get((p["name"], p["version"]))
     if q is None: lost.append(f"{p['name']} {p['version']} gone"); continue
     rest = lambda e: {k: v for k, v in e.items() if k != "dependencies"}
-    if p["name"].startswith("moirai") and p["name"] != "moirai-netstack" and p != q: lost.append(f"{p['name']} changed")
-    elif rest(p) != rest(q) or not set(p.get("dependencies", [])) <= set(q.get("dependencies", [])): lost.append(f"{p['name']} {p['version']} changed")
+    key = (p["name"], p["version"])
+    if p["name"].startswith("moirai") and p["name"] != "moirai-netstack" and (rest(p) != rest(q) or oe[key] != ne[key]): lost.append(f"{p['name']} changed")
+    elif rest(p) != rest(q) or not oe[key] <= ne[key]: lost.append(f"{p['name']} {p['version']} changed")
 ok2 = not lost and ol.get("version") == nl.get("version")
 print(("PASS" if ok2 else "FAIL") + " lock_keeps_every_b57ffb2_entry" + ("" if ok2 else f": {lost}"))
 sys.exit(0 if not why and ok2 else 1)
