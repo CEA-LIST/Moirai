@@ -651,34 +651,3 @@ fn fuzz_list_without_commitment() {
 
     fuzzer::<GraphLog<List<char>>, Read<String>>(config);
 }
-
-#[cfg(feature = "fuzz")]
-#[test]
-#[ignore]
-fn fuzz_list_commitment() {
-    use std::num::NonZeroUsize;
-
-    use moirai_fuzz::{
-        config::{ChurnConfig, FuzzerConfig, MetricsSampling, Predicate, RunConfig},
-        fuzzer::fuzzer,
-    };
-    use moirai_protocol::commitment::commit_log::CommitmentLog;
-
-    type Log = CommitmentLog<GraphLog<List<char>>>;
-
-    let run = RunConfig::new(ChurnConfig::new(0.5, 0.5), 4, 2_000, None, None)
-        .with_effect_time(MetricsSampling::every_replica(
-            NonZeroUsize::new(1).unwrap(),
-        ))
-        .without_log_stabilization();
-    let runs = vec![run; 1];
-
-    let config = FuzzerConfig::<Log, Read<String>>::new(
-        "list_commitment",
-        runs,
-        Predicate::new(Read::new(), |a, b| a == b),
-    )
-    .with_omega_oracle();
-
-    fuzzer::<Log, Read<String>>(config);
-}
