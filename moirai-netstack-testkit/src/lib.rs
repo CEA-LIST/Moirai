@@ -53,7 +53,7 @@ impl ToyReplica {
         self.elements.insert(element.to_string());
     }
 
-    fn apply_event(&mut self, event: &Value) -> Result<(), String> {
+    fn event_fields<'a>(&self, event: &'a Value) -> Result<(&'a str, &'a str), String> {
         let field = |name: &str| event.get(name).and_then(Value::as_str);
         let (log, origin, element) = match (field("log"), field("origin"), field("op")) {
             (Some(log), Some(origin), Some(element)) => (log, origin, element),
@@ -62,6 +62,11 @@ impl ToyReplica {
         if log != self.log {
             return Err(format!("event of log {log} refused on log {}", self.log));
         }
+        Ok((origin, element))
+    }
+
+    fn apply_event(&mut self, event: &Value) -> Result<(), String> {
+        let (origin, element) = self.event_fields(event)?;
         self.deliver(origin, element);
         Ok(())
     }
@@ -84,6 +89,11 @@ impl ReplicaPort for ToyReplica {
     fn apply_remote(&mut self, _from: &str, ops: Opaque) -> Result<(), String> {
         match &ops {
             Value::Array(events) => {
+                // All or nothing: a batch whose second event is refused leaves
+                // the replica exactly as it was.
+                for event in events {
+                    self.event_fields(event)?;
+                }
                 for event in events {
                     self.apply_event(event)?;
                 }
