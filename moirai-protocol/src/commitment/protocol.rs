@@ -11,7 +11,7 @@ where
     L: IsLog,
 {
     /// Replicated operation, including protocol metadata.
-    type Update: std::fmt::Debug + Clone;
+    type Update: Clone;
 
     /// Annotate an operation prepared by the child log.
     fn ab_prepare(&self, op: L::Update) -> Self::Update;

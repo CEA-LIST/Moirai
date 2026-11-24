@@ -16,7 +16,7 @@ use moirai_protocol::{
         tools::builders::commit_replicas,
         commit_set::{CommitSet, SetUpdate},
     },
-    crdt::query::Contains,
+    data_type::query::Contains,
     replica::IsReplica,
     state::po_log::VecLog,
 };

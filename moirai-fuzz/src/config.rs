@@ -16,7 +16,8 @@
 use std::num::NonZeroUsize;
 
 use moirai_protocol::{
-    commitment::{commit_protocols::omega::use_omega::UseOmega}, crdt::query::QueryOperation, replica::ReplicaId, state::log::IsLog,
+    commitment::commit_protocols::omega::use_omega::UseOmega, data_type::query::QueryOperation,
+    replica::ReplicaId, state::log::IsLog,
 };
 use serde::{Deserialize, Serialize};
 

@@ -8,7 +8,7 @@ use moirai_protocol::{
         },
         protocol::AtomicBroadcastProtocol,
     },
-    crdt::{query::Read, replicated_data_type::SequentialEval},
+    data_type::{query::Read, sequential::SequentialEval},
     replica::IsReplica,
 };
 use std::{collections::HashSet, io};

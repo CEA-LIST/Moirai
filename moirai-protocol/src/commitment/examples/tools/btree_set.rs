@@ -1,7 +1,14 @@
 use std::{cmp::Ordering, collections::BTreeSet, fmt::Debug, range::Range};
 
 use crate::{
-    clock::version_vector::{Seq, Version}, crdt::replicated_data_type::ReplicatedDataType, event::{Event, id::EventId, tagged_op::TaggedOp}, replica::ReplicaIdx, state::{po_log::POLog, unstable_state::{IsUnstableCore, IsUnstableDelivery, IsUnstablePrune}},
+    clock::version_vector::{Seq, Version},
+    data_type::replicated::ReplicatedDataType,
+    event::{Event, id::EventId, tagged_op::TaggedOp},
+    replica::ReplicaIdx,
+    state::{
+        po_log::POLog,
+        unstable_state::{IsUnstableCore, IsUnstableDelivery, IsUnstablePrune},
+    },
 };
 
 pub type BTreeLog<R> = POLog<R, BTreeSet<TaggedOp<<R as ReplicatedDataType>::Update>>>;

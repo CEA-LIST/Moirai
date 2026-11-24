@@ -1,16 +1,16 @@
+use crate::state::log::EvalNested;
 use std::convert::Infallible;
 
 use crate::{
     broadcast::internalizer::Interner,
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{commit_log::CommitmentLog, wire_id::StableReplicaId},
-    crdt::{
-        eval::EvalNested,
+    data_type::{
         query::QueryOperation,
-        replicated_data_type::{
+        replicated::{
             CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential, SequentialEval,
         },
+        sequential::{SequentialDataType, SequentialEval},
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     replica::{ReplicaId, ReplicaIdx},
@@ -22,13 +22,12 @@ use crate::commitment::{
         omega_commit::OmegaCommit, oracle::Omega, support_op::SupportOp,
         versioned_vote::VersionedVote, vote_log::VoteLog,
     },
-    examples::{tools::builders::CommitReplica, commit_set::Sorted},
+    examples::{commit_set::Sorted, tools::builders::CommitReplica},
 };
 use crate::{
-    crdt::{
-        eval::Eval,
-        policy::LwwPolicy,
-        replicated_data_type::{Reconciliation, Stabilization},
+    data_type::{
+        policy::LwwPolicy, reconciliation::Reconciliation, replicated::Eval,
+        replicated::Stabilization,
     },
     state::po_log::VecLog,
 };
@@ -172,7 +171,13 @@ fn predecessor_is_deliberately_selected_before_the_outgoing_vote() {
         previous.as_ref().map(|p| (p.id(), p.seq())),
         Some((ReplicaIdx(0), 2))
     );
-    let b2 = VersionedVote::new(ReplicaIdx(1), version(&r, 1, &[4, 2, 1]), partial, previous, 1);
+    let b2 = VersionedVote::new(
+        ReplicaIdx(1),
+        version(&r, 1, &[4, 2, 1]),
+        partial,
+        previous,
+        1,
+    );
     log.insert(b2.clone());
     log.insert(vote(&r, 0, &[5, 2, 1], 1, false));
     log.insert(vote(&r, 2, &[4, 2, 2], 1, false));
@@ -210,7 +215,11 @@ fn ordering_and_equality_use_stable_event_identity() {
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 struct Sequence(Vec<u64>);
-impl Sequential for Sequence {
+impl SequentialDataType for Sequence {
+    type Rejection = Infallible;
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
     type Update = u64;
     fn apply(&mut self, op: &u64) {
         self.0.push(*op);
@@ -261,7 +270,7 @@ impl CausalStabilize<Unstable> for Object {
         }
     }
 }
-impl Eval<Sequence, Unstable, ReadSequence> for Object {
+impl Eval<Unstable, ReadSequence> for Object {
     fn execute_query(stable: &Sequence, unstable: &Unstable, _: &ReadSequence) -> Vec<u64> {
         let mut result = stable.clone();
         for event in Sorted::<LwwPolicy>::linearize(unstable) {

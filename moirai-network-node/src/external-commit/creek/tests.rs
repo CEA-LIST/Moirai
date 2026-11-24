@@ -8,7 +8,7 @@ use moirai_protocol::{
         commit_protocols::omega::oracle::Omega,
         examples::commit_set::{CommitSet, SetUpdate},
     },
-    crdt::query::Contains,
+    data_type::query::Contains,
     replica::{IsReplica, Replica},
     state::po_log::VecLog,
 };

@@ -4,7 +4,7 @@ use moirai_protocol::{
         commit_log::CommitmentLog, examples::commit_set::CommitSet,
         protocol::AtomicBroadcastProtocol,
     },
-    crdt::{query::Read, replicated_data_type::SequentialEval},
+    data_type::{query::Read, sequential::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };

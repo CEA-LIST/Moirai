@@ -222,6 +222,7 @@ impl<L> Node<L, TcpTransport>
 where
     L: IsLog + DeepSizeOf,
     L::Update: Serialize + DeserializeOwned,
+    L::Rejection: std::fmt::Display,
 {
     pub fn new(config: Config, state: L, application: Application<L>) -> io::Result<Self> {
         config.validate()?;
@@ -238,6 +239,7 @@ impl<L, T> Node<L, T>
 where
     L: IsLog + DeepSizeOf,
     L::Update: Serialize + DeserializeOwned,
+    L::Rejection: std::fmt::Display,
     T: Transport,
 {
     pub fn with_transport(

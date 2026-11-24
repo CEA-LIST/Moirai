@@ -97,7 +97,7 @@ pub struct Replica<L, T> {
 impl<L, T> IsReplica<L> for Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     type Command = L::Command;
     type Payload = L::Update;
@@ -157,7 +157,7 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     fn deliver(&mut self, event: Event<L::Update>) {
         // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)

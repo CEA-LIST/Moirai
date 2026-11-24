@@ -327,6 +327,7 @@ pub fn drive<L, O, T>(node: &mut Node<CommitmentLog<L, Creek<O>>, T>) -> io::Res
 where
     L: IsLog + DeepSizeOf,
     L::Update: Serialize + DeserializeOwned,
+    L::Rejection: std::fmt::Display,
     O: IsOmega + DeepSizeOf,
     T: Transport,
 {

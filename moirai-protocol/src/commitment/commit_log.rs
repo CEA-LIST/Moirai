@@ -1,7 +1,10 @@
+use crate::state::log::EvalNested;
 use crate::{
-    clock::{causal_frontier::CausalFrontier, version_vector::Version}, commitment::{protocol::AtomicBroadcastProtocol}, crdt::{eval::EvalNested, query::QueryOperation}, event::Event, state::{
-        effect_context::EffectContext, log::IsLog,
-    },
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
+    commitment::protocol::AtomicBroadcastProtocol,
+    data_type::query::QueryOperation,
+    event::Event,
+    state::{effect_context::EffectContext, log::IsLog},
 };
 
 /// Special log that wraps a child log and provides a commitment protocol on top of it.
@@ -10,7 +13,7 @@ use crate::{
 pub struct CommitmentLog<L, A>
 where
     L: IsLog,
-    A: AtomicBroadcastProtocol<L>
+    A: AtomicBroadcastProtocol<L>,
 {
     /// Child log. It can contain any CRDT log, including composite ones.
     child: L,
@@ -21,13 +24,17 @@ where
 impl<L, A> IsLog for CommitmentLog<L, A>
 where
     L: IsLog,
-    A: AtomicBroadcastProtocol<L>
+    A: AtomicBroadcastProtocol<L>,
 {
     type Command = L::Command;
     /// The CommitmentLog is not a pure CRDT log.
     /// The child CRDT update is prepared to be annotated with a leader vote.
     type Update = A::Update;
     type Rejection = L::Rejection;
+
+    fn visit_initial_objects(ctx: &mut EffectContext<'_>) {
+        L::visit_initial_objects(ctx);
+    }
 
     /// A user command is prepared by the child log, and then annotated with the current leader vote from the oracle.
     fn prepare(&self, command: Self::Command) -> Self::Update {
@@ -71,9 +78,12 @@ where
     /// causal log is idle. Uses the same path as ordinary event delivery.
     pub fn commit_ready(&mut self) {
         // Check new event candidates for commitment
-        let ready: Vec<_> = self.ab_protocol
+        let ready: Vec<_> = self
+            .ab_protocol
             .ab_ready_to_commit()
-            .into_iter().cloned().collect();
+            .into_iter()
+            .cloned()
+            .collect();
 
         // Iterate through each candidate to commit
         for version in ready {
@@ -85,10 +95,7 @@ where
     }
 
     pub fn new(child: L, ab_protocol: A) -> Self {
-        Self {
-            child,
-            ab_protocol
-        }
+        Self { child, ab_protocol }
     }
 
     pub const fn child(&self) -> &L {
@@ -138,7 +145,7 @@ where
 impl<L, A> Default for CommitmentLog<L, A>
 where
     L: IsLog,
-    A: AtomicBroadcastProtocol<L>
+    A: AtomicBroadcastProtocol<L>,
 {
     fn default() -> Self {
         Self {

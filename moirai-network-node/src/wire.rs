@@ -314,7 +314,7 @@ mod tests {
             examples::commit_set::{CommitSet, SetUpdate},
             wire_id::{StableEventId, StableReplicaId},
         },
-        crdt::query::Contains,
+        data_type::query::Contains,
         replica::{IsReplica, Replica},
         state::po_log::VecLog,
     };

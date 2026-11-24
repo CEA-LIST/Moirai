@@ -12,7 +12,7 @@ use moirai_protocol::{
         protocol::AtomicBroadcastProtocol,
         wire_id::StableReplicaId,
     },
-    crdt::{query::Read, replicated_data_type::SequentialEval},
+    data_type::{query::Read, sequential::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };

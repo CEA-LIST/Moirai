@@ -1,3 +1,4 @@
+use crate::state::log::EvalNested;
 use std::collections::BTreeSet;
 
 use crate::{
@@ -14,14 +15,12 @@ use crate::{
         },
         wire_id::StableReplicaId,
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     replica::{IsReplica, Replica, ReplicaId},
     state::log::IsLog,
 };
 
-use crate::commitment::commit_protocols::lamport::{
-    lamport_commit::LamportCommit,
-};
+use crate::commitment::commit_protocols::lamport::lamport_commit::LamportCommit;
 
 /// A Lamport stability commitment log over a child log.
 pub type LamportCommitLog<L> = CommitmentLog<L, LamportCommit>;

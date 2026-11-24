@@ -10,7 +10,7 @@ use moirai_protocol::{
         examples::commit_set::{CommitSet, SetUpdate},
         wire_id::StableReplicaId,
     },
-    crdt::{query::Read, replicated_data_type::SequentialEval},
+    data_type::{query::Read, sequential::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };

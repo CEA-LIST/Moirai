@@ -5,7 +5,7 @@ use moirai_protocol::{
         commit_protocols::lamport::lamport_commit::LamportCommit,
         examples::commit_set::{CommitSet, SetUpdate},
     },
-    crdt::{query::Read, replicated_data_type::SequentialEval},
+    data_type::{query::Read, sequential::SequentialEval},
     replica::IsReplica,
     state::po_log::VecLog,
 };

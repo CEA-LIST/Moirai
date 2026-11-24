@@ -2,14 +2,16 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
 use crate::{
     clock::causal_frontier::CausalFrontier,
-    crdt::{
-        eval::Eval,
+    data_type::{
         policy::{LwwPolicy, Policy},
         query::{Contains, QueryOperation, Read},
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled,
-            Reconciliation, ReplicatedDataType, Sequential, SequentialEval, Stabilization, Stable,
+        reconciliation::{Reconciled, Reconciliation},
+        replicated::Eval,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            Stabilization, Stable,
         },
+        sequential::{SequentialDataType, SequentialEval},
     },
     event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableCore,
@@ -111,12 +113,12 @@ where
 
 impl<V: Debug + Clone + Eq + Hash, U> CausalReset<U> for CommitSet<V> {}
 
-impl<V, U, Q> Eval<SequentialSet<V>, U, Q> for CommitSet<V>
+impl<V, U, Q> Eval<U, Q> for CommitSet<V>
 where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
     Q: QueryOperation,
-    SequentialSet<V>: SequentialEval<Q, Update = SetUpdate<V>>,
+    SequentialSet<V>: SequentialDataType<Update = SetUpdate<V>> + SequentialEval<Q>,
 {
     fn execute_query(stable: &SequentialSet<V>, unstable: &U, query: &Q) -> Q::Response {
         let state = Reconciled::<SequentialSet<V>, Sorted<LwwPolicy>>::fold(stable, unstable);
@@ -134,8 +136,13 @@ impl<V> Default for SequentialSet<V> {
     }
 }
 
-impl<V: Debug + Clone + Eq + Hash> Sequential for SequentialSet<V> {
+impl<V: Debug + Clone + Eq + Hash> SequentialDataType for SequentialSet<V> {
     type Update = SetUpdate<V>;
+    type Rejection = Infallible;
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
 
     fn apply(&mut self, update: &Self::Update) {
         match update {
@@ -146,7 +153,7 @@ impl<V: Debug + Clone + Eq + Hash> Sequential for SequentialSet<V> {
                 self.0.remove(value);
             }
             SetUpdate::Clear => self.0.clear(),
-            SetUpdate::NoOp => {},
+            SetUpdate::NoOp => {}
         }
     }
 
@@ -180,7 +187,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        crdt::query::{Contains, Read},
+        data_type::query::{Contains, Read},
         replica::IsReplica,
         state::po_log::VecLog,
     };
@@ -229,7 +236,9 @@ mod tests {
     #[cfg(feature = "test_utils")]
     #[test]
     fn commit_set_converges_after_repeated_commitment() {
-        use crate::{crdt::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore};
+        use crate::{
+            data_type::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore,
+        };
 
         let [a, b] = commit_replicas::<VecLog<CommitSet<u8>>>(2)
             .try_into()
@@ -326,7 +335,9 @@ mod tests {
     #[cfg(feature = "test_utils")]
     #[test]
     fn commit_set_converges_after_repeated_lamport_commitment() {
-        use crate::{crdt::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore};
+        use crate::{
+            data_type::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore,
+        };
 
         let [a, b] = lamport_commit_replicas::<VecLog<CommitSet<u8>>>(2)
             .try_into()
@@ -440,8 +451,10 @@ mod tests {
         let ids: Vec<_> = members.iter().map(|(_, id)| id.clone()).collect();
         (0..n)
             .map(|i| {
-                let oracle =
-                    EventOracle::with_timeout(StableReplicaId(0), std::time::Duration::from_secs(60));
+                let oracle = EventOracle::with_timeout(
+                    StableReplicaId(0),
+                    std::time::Duration::from_secs(60),
+                );
                 let protocol =
                     OmegaCommit::from_parts(oracle, members.clone(), StableReplicaId(i as u16));
                 Replica::bootstrap_with_state(
@@ -493,7 +506,9 @@ mod tests {
     #[cfg(feature = "test_utils")]
     #[test]
     fn commit_set_event_oracle_makes_commitment_progress() {
-        use crate::{crdt::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore};
+        use crate::{
+            data_type::query::Read, replica::IsReplica, state::unstable_state::IsUnstableCore,
+        };
 
         let [a, b] = event_commit_replicas::<VecLog<CommitSet<u8>>>(2)
             .try_into()

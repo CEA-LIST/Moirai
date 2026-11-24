@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -17,7 +17,9 @@ use std::{any::type_name, fmt::Display};
 
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    commitment::{commit_log::CommitmentLog, protocol::AtomicBroadcastProtocol}, crdt::replicated_data_type::ReplicatedDataType, state::{cache::CachedLog, log::IsLog, po_log::POLog},
+    commitment::{commit_log::CommitmentLog, protocol::AtomicBroadcastProtocol},
+    data_type::replicated::ReplicatedDataType,
+    state::{cache::CachedLog, log::IsLog, po_log::POLog},
 };
 use serde::{Deserialize, Serialize};
 
