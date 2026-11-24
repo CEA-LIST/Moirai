@@ -59,7 +59,10 @@ pub struct HttpApi {
 impl HttpApi {
     /// Serve on `listener` from its own thread. `timeout` is how long a
     /// request waits for the event loop to take it before its caller is told
-    /// the answer is a 504.
+    /// the answer is a 504. `default_log` must be the node's default log:
+    /// `/api/health` and `/api/log-id` name it, while `/api/state`, `/api/op`
+    /// and `/api/ops` act on [`Node::log_id`]. A listener that fails to serve
+    /// is only printed, since this signature cannot return it.
     pub fn start(
         listener: TcpListener,
         replica_id: &str,
@@ -238,6 +241,9 @@ impl Inner {
                 }),
             ),
             Route::LogId => json_answer(200, &json!({ "log_id": self.default_log.as_str() })),
+            // An unrouted path still goes to the event loop, the only place an
+            // application's routes are asked: with `()` routes a stray path is
+            // a 404 while the loop is current and a 504 while it is late.
             Route::Unknown => {
                 let body = match read_body(request) {
                     Ok(body) => body,
@@ -251,7 +257,7 @@ impl Inner {
                     Expiry::Read,
                 )
             }
-            Route::Op => match read_json::<Value>(request, "op") {
+            Route::Op => match read_op(request) {
                 Ok(op) => self.dispatch(
                     Work::Op(op),
                     String::new(),
@@ -261,7 +267,7 @@ impl Inner {
                 ),
                 Err(answer) => answer,
             },
-            Route::Ops => match read_json::<BatchBody>(request, "batch") {
+            Route::Ops => match read_batch(request) {
                 Ok(BatchBody { ops, base }) => {
                     let of = ops.len();
                     self.dispatch(
@@ -345,7 +351,7 @@ impl Inner {
                     String::new(),
                     Expiry::Read,
                 ),
-                ModelLeaf::Op => match read_json::<Value>(request, "op") {
+                ModelLeaf::Op => match read_op(request) {
                     Ok(op) => self.dispatch(
                         Work::ModelOp { id, op },
                         String::new(),
@@ -355,7 +361,7 @@ impl Inner {
                     ),
                     Err(answer) => answer,
                 },
-                ModelLeaf::Ops => match read_json::<BatchBody>(request, "batch") {
+                ModelLeaf::Ops => match read_batch(request) {
                     Ok(BatchBody { ops, base }) => {
                         let of = ops.len();
                         self.dispatch(
@@ -617,10 +623,69 @@ fn read_body(request: &mut Request) -> Result<String, Answer> {
 }
 
 /// A JSON body decoded under the shared depth rule, which accepts a body
-/// nested past serde's default limit, with trailing content refused.
+/// nested past serde's default limit, with trailing content refused. Uses the
+/// netstack's `decode_json` although it is doc-hidden and built for the relay:
+/// it is the only public door to that shared rule.
 fn read_json<T: DeserializeOwned>(request: &mut Request, what: &str) -> Result<T, Answer> {
     let body = read_body(request)?;
     decode_json(body.as_bytes()).map_err(|e| error(400, format!("Invalid {what} JSON: {e}")))
+}
+
+/// 601c887's per-operation cap, below the shared 1024: the transport frame and
+/// the state transfer wrap an operation, so a deeper one would be applied here
+/// and undecodable at peers and joiners.
+const MAX_OPERATION_DEPTH: usize = 768;
+
+/// The request body decoded as one operation, refused when it nests past
+/// [`MAX_OPERATION_DEPTH`].
+fn read_op(request: &mut Request) -> Result<Value, Answer> {
+    let op = read_json::<Value>(request, "op")?;
+    check_operation_depth(&op, "op")?;
+    Ok(op)
+}
+
+/// The request body decoded as a batch, refused when any operation in it nests
+/// past [`MAX_OPERATION_DEPTH`], before any of the batch reaches the loop.
+fn read_batch(request: &mut Request) -> Result<BatchBody, Answer> {
+    let body = read_json::<BatchBody>(request, "batch")?;
+    for op in &body.ops {
+        check_operation_depth(op, "batch")?;
+    }
+    Ok(body)
+}
+
+/// Refuse an operation nested past [`MAX_OPERATION_DEPTH`], which 601c887 did
+/// on the raw text; the decoded value's containers nest the same way.
+fn check_operation_depth(op: &Value, what: &str) -> Result<(), Answer> {
+    let depth = depth(op);
+    if depth > MAX_OPERATION_DEPTH {
+        return Err(error(
+            400,
+            format!("Invalid {what} JSON: JSON depth {depth} exceeds limit {MAX_OPERATION_DEPTH}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The deepest container nesting in `value`, counted without recursion.
+fn depth(value: &Value) -> usize {
+    let mut maximum = 0;
+    let mut pending = vec![(value, 0)];
+    while let Some((node, parent)) = pending.pop() {
+        let depth = parent + 1;
+        match node {
+            Value::Array(children) => {
+                maximum = maximum.max(depth);
+                pending.extend(children.iter().map(|child| (child, depth)));
+            }
+            Value::Object(children) => {
+                maximum = maximum.max(depth);
+                pending.extend(children.values().map(|child| (child, depth)));
+            }
+            _ => (),
+        }
+    }
+    maximum
 }
 
 /// One reply, before the transport's headers are added.
