@@ -4,8 +4,11 @@
 //! 601c887 node writes. Key order inside opaque payloads is kept by
 //! serde_json's `preserve_order`.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-use serde_json::Value;
+use std::fmt;
+
+use serde::de::{Error as _, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
 use crate::{LogId, LogPayload, Opaque};
 
@@ -88,7 +91,7 @@ impl Serialize for TransportMessage {
 
 impl<'de> Deserialize<'de> for TransportMessage {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let frame = Value::deserialize(deserializer)?;
+        let frame = Value::Object(deserializer.deserialize_map(FrameObject)?);
         let Some(tag) = frame.get("type").and_then(Value::as_str) else {
             return Err(D::Error::custom(
                 "a frame is an object with a string type tag",
@@ -99,6 +102,30 @@ impl<'de> Deserialize<'de> for TransportMessage {
         } else {
             Ok(Self::Unknown(frame))
         }
+    }
+}
+
+/// A frame's top-level object, refusing a repeated key as 601c887's derive
+/// does, where building a `Value` would keep only the last one.
+struct FrameObject;
+
+impl<'de> Visitor<'de> for FrameObject {
+    type Value = Map<String, Value>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a frame object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut frame = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if frame.contains_key(&key) {
+                return Err(A::Error::custom(format!("duplicate field `{key}`")));
+            }
+            let value = map.next_value()?;
+            frame.insert(key, value);
+        }
+        Ok(frame)
     }
 }
 

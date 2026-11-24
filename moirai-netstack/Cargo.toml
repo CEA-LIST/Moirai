@@ -10,7 +10,10 @@ description = "Network core for replicated logs: replica and extension traits, w
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order: opaque payloads re-encode with their keys in wire order.
-serde_json = { version = "1.0", features = ["preserve_order"] }
+# unbounded_depth: a state transfer's log may nest past serde_json's 128, as 601c887 allowed.
+serde_json = { version = "1.0", features = ["preserve_order", "unbounded_depth"] }
 # The state transfer's log field is zlib-deflated and base64-encoded, as 601c887.
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 base64 = "0.22"
+# Stack room for the 1024-deep log decode, as 601c887's json_decode.
+stacker = "0.1.25"
