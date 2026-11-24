@@ -14,8 +14,7 @@ use crate::{LogId, LogPayload, Opaque};
 
 /// One frame. A frame of a type wire v1 does not name is `Unknown`, kept
 /// whole; a frame of a named type that does not decode is an error.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", remote = "Self")]
+#[derive(Debug, Clone)]
 pub enum TransportMessage {
     Event {
         event: Opaque,
@@ -28,7 +27,6 @@ pub enum TransportMessage {
     },
     /// "I have nothing; send me everything", for the log `log_id`.
     StateRequest {
-        #[serde(deserialize_with = "replica_id")]
         id: String,
         log_id: LogId,
     },
@@ -38,6 +36,55 @@ pub enum TransportMessage {
         log_id: LogId,
     },
     /// The donor declined; `log_id` is the log the donor hosts.
+    StateUnavailable {
+        reason: String,
+        log_id: LogId,
+    },
+    Hello {
+        id: String,
+        metadata: Option<String>,
+    },
+    Ack {
+        from: String,
+    },
+    Goodbye {
+        id: String,
+    },
+    /// The `index`th of `count` pieces of one message's JSON text.
+    Chunk {
+        id: u64,
+        index: u32,
+        count: u32,
+        data: String,
+    },
+    /// A frame of any other type, passed on as it came.
+    Unknown(Value),
+}
+
+/// The derive's home: a private mirror, so the generated codec is not a public
+/// `TransportMessage::serialize`/`deserialize` that would bypass `Unknown`.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", remote = "TransportMessage")]
+enum Wire {
+    Event {
+        event: Opaque,
+    },
+    Batch {
+        batch: Opaque,
+    },
+    SyncRequest {
+        since: Opaque,
+    },
+    StateRequest {
+        #[serde(deserialize_with = "replica_id")]
+        id: String,
+        log_id: LogId,
+    },
+    StateResponse {
+        snapshot: Opaque,
+        log: LogPayload,
+        log_id: LogId,
+    },
     StateUnavailable {
         reason: String,
         log_id: LogId,
@@ -55,14 +102,12 @@ pub enum TransportMessage {
         #[serde(deserialize_with = "replica_id")]
         id: String,
     },
-    /// The `index`th of `count` pieces of one message's JSON text.
     Chunk {
         id: u64,
         index: u32,
         count: u32,
         data: String,
     },
-    /// A frame of any other type, passed on as it came.
     #[serde(skip)]
     Unknown(Value),
 }
@@ -84,7 +129,7 @@ impl Serialize for TransportMessage {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Unknown(frame) => frame.serialize(serializer),
-            named => Self::serialize(named, serializer),
+            named => Wire::serialize(named, serializer),
         }
     }
 }
@@ -98,7 +143,7 @@ impl<'de> Deserialize<'de> for TransportMessage {
             ));
         };
         if NAMED.contains(&tag) {
-            Self::deserialize(frame).map_err(D::Error::custom)
+            Wire::deserialize(frame).map_err(D::Error::custom)
         } else {
             Ok(Self::Unknown(frame))
         }

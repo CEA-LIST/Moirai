@@ -28,7 +28,7 @@
 //! characters of its random bytes, or the named `<h>_<name>`, where `name` is
 //! one to thirty-two ASCII letters and digits. The name is there for people
 //! reading an id, and it is part of the identity all the same: the whole
-//! string is the id, so `<h>`, `<h>_simpleuml` and `<h>_SimpleUML` are three
+//! string is the id, so `<h>`, `<h>_orders` and `<h>_Orders` are three
 //! logs.
 
 use core::fmt;
