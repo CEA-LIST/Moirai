@@ -16,4 +16,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [dev-dependencies]
+moirai-netstack-node = { path = "../../moirai-netstack-node" }
 moirai-netstack-testkit = { path = "../../moirai-netstack-testkit" }
+moirai-netstack-transport = { path = "../../moirai-netstack-transport", default-features = false }

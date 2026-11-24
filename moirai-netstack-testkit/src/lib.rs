@@ -7,6 +7,7 @@ use moirai_netstack::{Opaque, Progress, ReplicaFactory, ReplicaPort};
 use serde_json::{Value, json};
 
 pub mod contract;
+pub mod contract_node;
 
 /// Opens toy replicas.
 #[derive(Default)]

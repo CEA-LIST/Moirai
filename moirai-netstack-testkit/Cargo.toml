@@ -9,4 +9,6 @@ description = "A toy grow-only-set replica and the port-level contract suite for
 
 [dependencies]
 moirai-netstack = { path = "../moirai-netstack" }
+moirai-netstack-node = { path = "../moirai-netstack-node" }
+moirai-netstack-transport = { path = "../moirai-netstack-transport", default-features = false }
 serde_json = "1.0"

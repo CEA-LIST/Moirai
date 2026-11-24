@@ -1298,6 +1298,8 @@ name = "moirai-netstack-testkit"
 version = "0.8.3"
 dependencies = [
  "moirai-netstack",
+ "moirai-netstack-node",
+ "moirai-netstack-transport",
  "serde_json",
 ]
 
@@ -1318,7 +1320,9 @@ version = "0.8.3"
 dependencies = [
  "moirai-crdt",
  "moirai-netstack",
+ "moirai-netstack-node",
  "moirai-netstack-testkit",
+ "moirai-netstack-transport",
  "moirai-protocol",
  "serde",
  "serde_json",
