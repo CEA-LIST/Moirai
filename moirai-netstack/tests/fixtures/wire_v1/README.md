@@ -1,0 +1,5 @@
+# Wire v1 fixtures (NW.31a)
+
+`frames.jsonl`, `refused.jsonl` and `deflated_log.json` were captured from moirai-model-plane at 601c887 (branch akira/moirai-modelstore), read only. A test appended to the test module of `moirai-network/src/generic.rs` in a `git archive 601c887` copy drove in-process nodes over that module's recording transport (`EWFlagSetLog<String>`, replicas alice to gina) and wrote, for each frame, `serde_json::to_string` of its `TransportMessage`, the text `write_frame` puts on the wire. Hello, Ack, Goodbye and Chunk were built as the transports build them. The same test checked that 601c887 decodes every line on its transports' path (`json_decode::decode`) and re-encodes it to the same bytes, and that it refuses every line of `refused.jsonl`. Command: `NW31A_OUT=<dir> cargo test -p moirai-network --no-default-features --lib nw31a_capture -- --nocapture`. The capture test's source is in the NW.31a spec.
+
+`unknown.jsonl` is written by hand: frames of a type wire v1 does not name, which 601c887 refuses and wire v1 passes through whole.

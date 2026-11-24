@@ -1,0 +1,8 @@
+{"type":"Hello","id":"","metadata":null}
+{"type":"Hello","id":"ali ce","metadata":"9001"}
+{"type":"Ack","from":"bob/1"}
+{"type":"Goodbye","id":"é"}
+{"type":"StateRequest","id":"","log_id":"a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2"}
+{"type":"StateRequest","id":"carol","log_id":"A1B2A1B2A1B2A1B2A1B2A1B2A1B2A1B2"}
+{"type":"StateUnavailable","reason":"none","log_id":"a1b2"}
+{"type":"StateUnavailable","reason":"none","log_id":"a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2_bad-name"}

@@ -1,0 +1,2 @@
+{"type":"Note","from":"alice","body":{"z":[1,2.5,"é \"q\""],"a":null,"m":{"y":true,"b":false}}}
+{"seq":3,"type":"Ping"}
