@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# NW.31d gate: the upstream Moirai adapter (adapters/upstream-moirai, package
-# moirai-netstack-upstream) on akira/moirai-network at 9eed5b8. Checks, each
+# NW.31d gate: the upstream Moirai adapter (adapters/crdt, package
+# moirai-netstack-crdt) on akira/moirai-network at 9eed5b8. Checks, each
 # printed PASS or FAIL: every path of 9eed5b8 but the root manifest and lock is
 # unchanged (upstream's four crates, moirai-netstack, the testkit with its
 # contract, the transport crate, earlier oracles); the root manifest only gains
@@ -14,8 +14,8 @@ export LC_ALL=C
 export CARGO_NET_OFFLINE=${CARGO_NET_OFFLINE:-true}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BASE=9eed5b8
-CRATE=moirai-netstack-upstream
-CRATE_DIR=adapters/upstream-moirai
+CRATE=moirai-netstack-crdt
+CRATE_DIR=adapters/crdt
 LOCK=${NW31D_CARGO_LOCK:-$HOME/.cache/cea-crdt-scratch/cargo.lock}
 ORACLE_TESTS=(
   upstream_passes_exchange_converges

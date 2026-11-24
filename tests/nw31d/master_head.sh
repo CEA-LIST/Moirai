@@ -38,7 +38,7 @@ else
   echo "MASTER_HEAD is the pin $PIN: cases run in this tree"
   locked=(--locked)
 fi
-out=$(cd "$dir" && CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cea-crdt-scratch/NW.31d/target} cargo_ test -p moirai-netstack-upstream "${locked[@]}" -j 2 --test nw31d_upstream upstream_passes_ 2>&1)
+out=$(cd "$dir" && CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cea-crdt-scratch/NW.31d/target} cargo_ test -p moirai-netstack-crdt "${locked[@]}" -j 2 --test nw31d_upstream upstream_passes_ 2>&1)
 for c in "${CASES[@]}"; do
   if echo "$out" | grep -q "^test upstream_passes_$c \.\.\. ok$"; then echo "PASS $c"; else echo "FAIL $c"; fi
 done

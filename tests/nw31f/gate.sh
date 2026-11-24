@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BASE=d1e1c22
 LOCK=${NW31F_CARGO_LOCK:-$HOME/.cache/cea-crdt-scratch/cargo.lock}
 NODES=${NW31F_NODES_LOCK:-$HOME/.cache/cea-crdt-scratch/nodes.lock}
-ORACLE=(tests/nw31f moirai-netstack-node/tests/nw31f_node.rs moirai-netstack-testkit/tests/nw31f_contract_node.rs adapters/upstream-moirai/tests/nw31f_upstream_node.rs)
+ORACLE=(tests/nw31f moirai-netstack-node/tests/nw31f_node.rs moirai-netstack-testkit/tests/nw31f_contract_node.rs adapters/crdt/tests/nw31f_upstream_node.rs)
 NODE_TESTS=(
   a_state_request_for_a_foreign_log_is_refused_naming_both_ids
   mp1_dispatch_hands_a_frame_to_the_log_whose_id_matches
@@ -91,9 +91,9 @@ git cat-file -e "$BASE^{commit}" || { echo "FAIL: $BASE is not in this repositor
 # manifest and Cargo.lock; new files only there, in the node's sources, and as
 # this item's oracle files.
 changed=$( { git diff --name-only --diff-filter=MDRTC "$BASE"; git status --porcelain --untracked-files=no | cut -c4-; } | sort -u \
-  | grep -Ev '^(moirai-netstack-node/src/|moirai-netstack-node/Cargo\.toml$|moirai-netstack-testkit/src/|moirai-netstack-testkit/Cargo\.toml$|adapters/upstream-moirai/Cargo\.toml$|Cargo\.lock$)' )
+  | grep -Ev '^(moirai-netstack-node/src/|moirai-netstack-node/Cargo\.toml$|moirai-netstack-testkit/src/|moirai-netstack-testkit/Cargo\.toml$|adapters/crdt/Cargo\.toml$|Cargo\.lock$)' )
 added=$( { git diff --name-only --diff-filter=A "$BASE"; git status --porcelain --untracked-files=all | grep '^??' | cut -c4-; } | sort -u \
-  | grep -Ev '^(moirai-netstack-node/src/|moirai-netstack-testkit/src/|tests/nw31f/|moirai-netstack-node/tests/nw31f_node\.rs$|moirai-netstack-testkit/tests/nw31f_contract_node\.rs$|adapters/upstream-moirai/tests/nw31f_upstream_node\.rs$)' )
+  | grep -Ev '^(moirai-netstack-node/src/|moirai-netstack-testkit/src/|tests/nw31f/|moirai-netstack-node/tests/nw31f_node\.rs$|moirai-netstack-testkit/tests/nw31f_contract_node\.rs$|adapters/crdt/tests/nw31f_upstream_node\.rs$)' )
 report change_set_in_scope "$([ -z "$changed$added" ]; echo $?)" "$(echo $changed $added)"
 
 # 2. This item's oracle files: unchanged since the commit that added the gate.
@@ -114,7 +114,7 @@ def new(path):
     with open(path, "rb") as f: return tomllib.load(f)
 why = []
 if old("Cargo.toml") != new("Cargo.toml"): why.append("the root Cargo.toml changed")
-for path in ("moirai-netstack-testkit/Cargo.toml", "adapters/upstream-moirai/Cargo.toml"):
+for path in ("moirai-netstack-testkit/Cargo.toml", "adapters/crdt/Cargo.toml"):
     o, n = old(path), new(path)
     for table in ("dependencies", "dev-dependencies"):
         ot, nt = o.pop(table, {}), n.pop(table, {})
@@ -137,12 +137,12 @@ PY
 [ $? = 0 ] || fail=1
 
 # 4. No zenoh in the build of the node, the testkit or the adapter (normal and dev).
-tree=$(cargo_ tree --locked -e normal,dev -p moirai-netstack-node -p moirai-netstack-testkit -p moirai-netstack-upstream --prefix none 2>&1); code=$?
+tree=$(cargo_ tree --locked -e normal,dev -p moirai-netstack-node -p moirai-netstack-testkit -p moirai-netstack-crdt --prefix none 2>&1); code=$?
 zen=$(echo "$tree" | grep -E '^zenoh' | sort -u | head -n 3)
 report no_zenoh_in_the_build "$([ $code = 0 ] && [ -z "$zen" ]; echo $?)" "exit $code $zen"
 
 # 5. Nothing ignored in the three packages.
-ignored=$(grep -rln '#\[ignore' moirai-netstack-node moirai-netstack-testkit adapters/upstream-moirai 2>/dev/null)
+ignored=$(grep -rln '#\[ignore' moirai-netstack-node moirai-netstack-testkit adapters/crdt 2>/dev/null)
 report nothing_ignored "$([ -z "$ignored" ]; echo $?)" "$ignored"
 
 # 6 to 8. The three packages' tests, sockets on 127.0.0.1 under nodes.lock.
@@ -156,7 +156,7 @@ run() {
 }
 run node_tests moirai-netstack-node "${NODE_TESTS[@]}"
 run testkit_tests moirai-netstack-testkit "${TESTKIT_TESTS[@]}"
-run upstream_tests moirai-netstack-upstream "${UPSTREAM_TESTS[@]}"
+run upstream_tests moirai-netstack-crdt "${UPSTREAM_TESTS[@]}"
 
 # 9. Regression: moirai-netstack's own tests (6 passed, 0 failed at d1e1c22).
 out=$(cargo_ test -p moirai-netstack --locked -j 2 --no-fail-fast 2>&1); code=$?

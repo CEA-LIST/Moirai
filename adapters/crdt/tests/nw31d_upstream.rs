@@ -12,7 +12,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use moirai_netstack::{Opaque, Progress, ReplicaFactory, ReplicaPort};
 use moirai_netstack_testkit::contract::{self, Inputs};
-use moirai_netstack_upstream::awset;
+use moirai_netstack_crdt::awset;
 use serde_json::{Value, json};
 
 fn add(s: &str) -> Value {

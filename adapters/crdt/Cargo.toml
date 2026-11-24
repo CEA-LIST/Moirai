@@ -1,11 +1,11 @@
 [package]
-name = "moirai-netstack-upstream"
+name = "moirai-netstack-crdt"
 edition = "2024"
 version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "moirai-netstack's replica port over upstream Moirai replicas"
+description = "moirai-netstack's replica port over Moirai's own replicas"
 
 [dependencies]
 moirai-netstack = { path = "../../moirai-netstack" }

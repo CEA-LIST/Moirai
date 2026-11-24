@@ -1,5 +1,5 @@
 //! NW.31f oracle: the node-level contract cases on upstream Moirai 7fe5ea2
-//! replicas through moirai-netstack-upstream (vault spec/items/NW.31f.md, NW.31
+//! replicas through moirai-netstack-crdt (vault spec/items/NW.31f.md, NW.31
 //! design row S5b). Upstream replicas offer no state transfer, so the two
 //! transfer cases must report it not offered and catch up by delta. One more
 //! test drives three nodes with concurrent adds and removes and a two-sided
@@ -17,7 +17,7 @@ use moirai_netstack_testkit::contract_node::{self, Transfer};
 use moirai_netstack_transport::HashMap;
 use moirai_netstack_transport::direct_transport::DirectTransport;
 use moirai_netstack_transport::transport::{CrdtTransport, PeerId};
-use moirai_netstack_upstream::{Factory, awset};
+use moirai_netstack_crdt::{Factory, awset};
 use serde_json::{Value, json};
 
 fn add(s: &str) -> Value {

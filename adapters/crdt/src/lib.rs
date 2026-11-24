@@ -1,4 +1,4 @@
-//! moirai-netstack's replica port over upstream Moirai replicas (NW.31
+//! moirai-netstack's replica port over Moirai's own replicas (NW.31
 //! design, step S4). Payloads are JSON carrying the log, the sender's replica
 //! id list and events indexed through it, so the receiver translates indices
 //! the way upstream's own messages do.

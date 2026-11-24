@@ -1301,6 +1301,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-netstack-crdt"
+version = "0.8.3"
+dependencies = [
+ "moirai-crdt",
+ "moirai-netstack",
+ "moirai-netstack-node",
+ "moirai-netstack-testkit",
+ "moirai-netstack-transport",
+ "moirai-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "moirai-netstack-http"
 version = "0.8.3"
 dependencies = [
@@ -1343,20 +1357,6 @@ dependencies = [
  "serde",
  "serde_json",
  "zenoh",
-]
-
-[[package]]
-name = "moirai-netstack-upstream"
-version = "0.8.3"
-dependencies = [
- "moirai-crdt",
- "moirai-netstack",
- "moirai-netstack-node",
- "moirai-netstack-testkit",
- "moirai-netstack-transport",
- "moirai-protocol",
- "serde",
- "serde_json",
 ]
 
 [[package]]
