@@ -14,15 +14,31 @@ python3 kubernetes-experiments/throughput_viewer.py
 
 Open **http://127.0.0.1:8001**. It accepts the same optional results-folder,
 `--port`, and `--export REPORT.html` arguments as the original viewer.
-It shows exactly two graphs: system-wide network traffic (total TX + RX in MiB)
-and mean CPU time per replica (seconds), containing all configured throughput
-levels for the selected folder, run selection, and replica count.
+It shows three graphs: system-wide network traffic (total TX + RX in MiB),
+mean CPU time per replica (seconds), and achieved throughput versus latency.
+All graphs use only the selected folder, run selection, and replica count.
 
 Configured throughput is `frequency × n_clients × enabled request modes`,
 matching the experiment generator (which halves per-mode frequency when both
 modes are enabled). Each image gets one series. At each throughput, available
 resource measurements are averaged with equal weight across runs and configurations
-for that image. The measured-throughput calculation remains in the module for future use.
+for that image.
+
+The latency graph uses achieved total throughput on the x-axis and mean
+successful-request latency (ms) on the y-axis, with solid optimistic and dashed
+consistent curves per image. Achieved throughput is successful requests across
+all clients and both modes divided by elapsed seconds from the earliest request
+start to the latest request finish. Failed attempts extend that interval but
+do not count as successes. Missing enabled modes, no attempts, or a zero-duration
+interval yield an unknown rate. Partial client records can undercount the rate;
+check the data notes. Optimistic successes do not imply commitment.
+
+For each image and configured load, throughput and per-mode mean latency are
+averaged with equal weight over the same experiments with both measurements
+available. Both mode curves use total achieved throughput, without dividing by
+replica count. Points connect in increasing configured-load order and may turn
+back when achieved throughput drops under overload. This graph always uses
+curves, even when the resource graphs use bars.
 
 Select a folder, run (or average), replica count, and line or bar style.
 Each image has color, label, and bar/legend ordering controls; each graph has

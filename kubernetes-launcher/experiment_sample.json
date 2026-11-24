@@ -2,7 +2,7 @@
   "simulation_name": "commit-set-4r-4c",
   "n_replicas": 4,
   "n_clients": 4,
-  "n_operations": 100,
+  "n_operations": 50,
   "frequency": 10,
   "with_fault": false,
   "failure_time": 3,

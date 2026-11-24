@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed-replica network and CPU comparisons against configured throughput."""
+"""Fixed-replica resource comparisons and achieved throughput versus latency."""
 
 import argparse
 import base64
@@ -42,7 +42,7 @@ def configured_throughput(experiment):
 
 def build_figures(experiments, *, replicas, style="curve", image_colors=None,
                   image_labels=None, image_order=None, titles=None):
-    """One graph per resource, with one series per image over configured load."""
+    """Resource graphs and latency curves for only the selected replica count."""
     if style not in ("curve", "bar"):
         raise ValueError("style must be curve or bar")
     if len({e.bundle for e in experiments}) > 1:
@@ -96,6 +96,36 @@ def build_figures(experiments, *, replicas, style="curve", image_colors=None,
         else:
             ax.text(0.5, 0.5, "No comparable measurements available", transform=ax.transAxes, ha="center")
         figures.append((title, fig))
+
+    title = "Achieved throughput vs latency"
+    fig = Figure(figsize=(9, 4.5), layout="constrained")
+    ax = fig.subplots()
+    ax.set(title=titles.get(title, f"{title}\n{replicas} replicas"),
+           xlabel="Achieved total throughput (successful requests / second)",
+           ylabel="Mean successful request latency (ms)")
+    for image in images:
+        for mode, linestyle in zip(MODES, ("-", "--")):
+            data = []
+            # Follow increasing offered load, even if achieved throughput falls
+            # at saturation. Average paired measurements from the same runs.
+            for load in sorted(x for label, x in points if label == image):
+                pairs = [(measured_throughput(e), summary_metrics(e)[f"{mode}_latency_ms"])
+                         for e in points[image, load] if e.config[f"use_{mode}_requests"]]
+                pairs = [(x, y) for x, y in pairs if math.isfinite(x) and math.isfinite(y)]
+                data.append((mean([x for x, _ in pairs]), mean([y for _, y in pairs])))
+            if not any(math.isfinite(x) and math.isfinite(y) for x, y in data):
+                continue
+            x, y = zip(*data)
+            ax.plot(x, y, marker="o", linestyle=linestyle, color=colors[image],
+                    label=f"{labels.get(image, image)}: {mode}")
+    ax.grid(True, alpha=0.25)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+    if ax.has_data():
+        ax.legend(fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "No comparable measurements available", transform=ax.transAxes, ha="center")
+    figures.append((title, fig))
     return figures
 
 
@@ -160,10 +190,21 @@ def render_page(directory, query=None, *, static=False):
             '<p>Network usage is cumulative TX + RX across measured comparable replicas, in MiB, including client traffic; '
             'inter-replica traffic counts at both endpoints. CPU is cumulative CPU time averaged across measured comparable replicas, '
             'in seconds. Partial resource totals cover only measured replicas.</p>'
-            '<p>All selected experiments at the fixed replica count appear in these two graphs. '
+            '<p>Only experiments at the selected replica count appear in the graphs. '
             'At each configured throughput, available resource measurements are averaged with equal weight '
             'across runs and configurations for each image. '
-            'Bars are offset around configured throughput in image order; lines use exact configured coordinates.</p></details>'
+            'Bars are offset around configured throughput in image order; lines use exact configured coordinates.</p>'
+            '<p>Achieved throughput is the total number of successful requests across clients and both modes, '
+            'divided by seconds from the earliest request start to the latest request finish. '
+            'Failed attempts extend this period but do not count as successes. Missing enabled modes, '
+            'no attempts, or a zero-duration period make throughput unknown; partially recorded clients '
+            'can undercount throughput (see data notes). This is system-wide throughput, not per replica, '
+            'and optimistic successes do not imply commitment.</p>'
+            '<p>The latency graph always uses curves: solid for optimistic and dashed for consistent requests. '
+            'Latency is the mean client-observed duration of successful requests in that mode, in milliseconds. '
+            'Each point averages throughput and latency with equal weight over the same available experiments '
+            'for one image and configured load. Both curves use total achieved throughput. '
+            'Points connect in increasing configured-load order, so curves may turn back at saturation.</p></details>'
             + (f'<details><summary>Data notes</summary><ul>{notes}</ul></details>' if notes else '') + '</body></html>')
 
 
