@@ -92,7 +92,7 @@ impl LogPayload {
                 if raw.len() as u64 > limit {
                     return None;
                 }
-                decode_json(&raw)
+                crate::json::decode(&raw)
                     .map_err(|e| eprintln!("Refusing an unreadable inflated log: {e}"))
                     .ok()
             }
@@ -100,62 +100,9 @@ impl LogPayload {
     }
 }
 
-// Depth rule ported from 601c887's `json_decode.rs`: a log may nest up to
-// 1024 deep, past serde_json's default 128, on a grown stack.
-
-const MAX_JSON_DEPTH: usize = 1024;
-
-/// Count containers without recursion or treating quoted brackets as structure.
-/// Syntax validation is left to serde, including mismatched delimiters.
-fn depth(input: &[u8]) -> usize {
-    let (mut current, mut maximum, mut quoted, mut escaped) = (0usize, 0, false, false);
-    for &byte in input {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                quoted = false;
-            }
-        } else {
-            match byte {
-                b'"' => quoted = true,
-                b'[' | b'{' => {
-                    current += 1;
-                    maximum = maximum.max(current);
-                }
-                b']' | b'}' => current = current.saturating_sub(1),
-                _ => (),
-            }
-        }
-    }
-    maximum
-}
-
-fn check_depth(depth: usize) -> Result<(), serde_json::Error> {
-    if depth > MAX_JSON_DEPTH {
-        Err(serde::de::Error::custom(format!(
-            "JSON depth {depth} exceeds limit {MAX_JSON_DEPTH}"
-        )))
-    } else {
-        Ok(())
-    }
-}
-
-fn decode_json(input: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
-    use serde::Deserialize as _;
-
-    check_depth(depth(input))?;
-    // A finite stack budget for serde's recursive visitors and their cleanup.
-    stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, || {
-        let mut deserializer = serde_json::Deserializer::from_slice(input);
-        deserializer.disable_recursion_limit();
-        let value = serde_json::Value::deserialize(&mut deserializer)?;
-        deserializer.end()?;
-        Ok(value)
-    })
-}
+// Depth rule ported from 601c887's `json_decode.rs`, now shared with the frame
+// decoder in `json.rs`: a log may nest up to 1024 deep, past serde_json's
+// default 128, on a grown stack.
 
 /// A plain log comes already parsed, so its depth is measured on the value.
 fn checked_value(value: serde_json::Value) -> Result<serde_json::Value, serde_json::Error> {
@@ -177,7 +124,7 @@ fn checked_value(value: serde_json::Value) -> Result<serde_json::Value, serde_js
             _ => (),
         }
     }
-    if let Err(error) = check_depth(maximum) {
+    if let Err(error) = crate::json::check_depth(maximum) {
         // Even destruction must not recurse through an arbitrarily deep input.
         let mut pending = vec![value];
         while let Some(node) = pending.pop() {
