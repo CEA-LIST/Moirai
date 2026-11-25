@@ -7,8 +7,9 @@
 # entry and gains only the start crate; the README changes only in its
 # "Network stack" section, which names the start crate; the router changes in
 # doc text only and no longer says the peers keep converging or that it
-# carries client-mode nodes; the start crate's dependencies; its 4 tests ok by
-# name (the router binary built, under nodes.lock); cargo fmt on the crate;
+# carries client-mode nodes; the start crate's dependencies; its 6 tests ok by
+# name (the router binary built, under nodes.lock); cargo fmt on the crate at
+# the default rules (no rustfmt configuration added or changed since aefd881);
 # and the regression, the router's 8 tests and the transport's
 # nw16b_zenoh_pin_l0. Exit 0 only when all pass, 2 on a set-up error.
 set -uo pipefail
@@ -29,6 +30,8 @@ START_TESTS=(
   nw31i_tcp_port_0_nodes_report_their_ports_read_a_late_peers_file_and_converge
   h_p_a_port_0_node_with_a_peers_file_holds_its_reported_port_and_meshes_zenoh
   nw31i_three_zenoh_nodes_told_only_the_router_converge
+  nw31i_start_error_node
+  nw31i_unsupported_variables_are_start_errors
 )
 ROUTER_TESTS=(
   the_router_opens_router_mode_on_the_port_it_is_given_with_multicast_scouting_off
@@ -54,10 +57,11 @@ changes() { { git diff --name-only "$BASE" -- "$@"; git status --porcelain --unt
 stray=$(changes . | grep -Ev "^($CRATE/|Cargo\.toml$|Cargo\.lock$|README\.md$|tests/nw31i/|$ROUTER/src/lib\.rs$|$ROUTER/Cargo\.toml$)")
 report change_set_in_scope "$([ -z "$stray" ]; echo $?)" "$(echo $stray)"
 
-# 2. This item's oracle files: unchanged since the commit that added the gate.
-first=$(git log --diff-filter=A --format=%H -- tests/nw31i/gate.sh | tail -n 1)
+# 2. This item's oracle files: unchanged since round 2's oracle commit, the
+# first commit after round 1's implementation 89a2b79 that changes this gate.
+first=$(git rev-list --reverse 89a2b79..HEAD -- tests/nw31i/gate.sh 2>/dev/null | head -n 1)
 if [ -z "$first" ]; then
-  report oracle_unchanged 1 "tests/nw31i/gate.sh is not committed"
+  report oracle_unchanged 1 "no commit after 89a2b79 changes tests/nw31i/gate.sh"
 else
   changed=$(git diff --name-only "$first" -- "${ORACLE[@]}"; git status --porcelain --untracked-files=all -- "${ORACLE[@]}")
   report oracle_unchanged "$([ -z "$changed" ]; echo $?)" "$(echo $changed)"
@@ -156,8 +160,11 @@ missing=$(names_ok "$out" "${START_TESTS[@]}")
 echo "$out" | grep -E 'NW31I [a-z-]+: [0-9]+ bind rounds' | sed 's/^/  /'
 report start_tests "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked|NW31I .*:|set-up:' | head -n 4)"
 
-# 9. Formatting of the start crate (its oracle tests included).
+# 9. Formatting of the start crate (its oracle tests included) at the default
+# rules: no rustfmt configuration added or changed anywhere since aefd881.
+cfg=$(changes . | grep -E '(^|/)\.?rustfmt\.toml$')
 out=$(cargo fmt --check -p "$CRATE" 2>&1); code=$?
+[ -n "$cfg" ] && { code=1; out="rustfmt configuration changed since $BASE: $(echo $cfg)"; }
 report fmt "$code" "$(echo "$out" | head -n 3)"
 
 # 10. Regression: the router's 8 tests (its doc text changes, its pin test reads

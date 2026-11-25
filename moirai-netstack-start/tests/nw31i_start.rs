@@ -50,6 +50,19 @@ fn nw31i_node() {
     std::process::exit(3);
 }
 
+/// The node this binary becomes when run again with NW31I_START_ERROR=1: it
+/// prints what run returned (its Debug form) and exits 4.
+#[test]
+#[allow(unreachable_code, unused_variables)]
+fn nw31i_start_error_node() {
+    if std::env::var_os("NW31I_START_ERROR").is_none() {
+        return;
+    }
+    let returned = moirai_netstack_start::run(ToyFactory, ());
+    eprintln!("NW31I start error: {returned:?}");
+    std::process::exit(4);
+}
+
 // ------------------------------------------------------------------ processes
 
 /// A child process, killed and reaped on every exit path.
@@ -593,4 +606,86 @@ fn nw31i_three_zenoh_nodes_told_only_the_router_converge() {
     }
     ok(T, "convergence", converge(&http, &["a1", "b1", "c1"]));
     ok(T, "router", router.alive());
+}
+
+/// Round 2, ruling R3: BOOTNODE_URL, ADVERTISE_ADDR, RECONCILE_SECS and
+/// DASHBOARD_URL, which this launcher does not support, make run return at
+/// start an error that names the variable set (and none of the other three),
+/// under TCP and under Zenoh, with no PORTS_FILE written. The node is given
+/// LISTEN_PORT and HTTP_PORT that this test holds, so a launcher that binds
+/// before it reads these variables fails on a port, not on the variable.
+#[test]
+fn nw31i_unsupported_variables_are_start_errors() {
+    const T: &str = "start-error";
+    const UNSUPPORTED: [(&str, &str); 4] = [
+        ("BOOTNODE_URL", "http://127.0.0.1:9"),
+        ("ADVERTISE_ADDR", "127.0.0.1:9"),
+        ("RECONCILE_SECS", "5"),
+        ("DASHBOARD_URL", "http://127.0.0.1:9"),
+    ];
+    let dir = scratch("start-error");
+    let exe = std::env::current_exe().unwrap_or_else(|e| panic!("set-up: {e}"));
+    let args = [
+        "nw31i_start_error_node",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1",
+    ];
+    for transport in ["tcp", "zenoh"] {
+        for (name, value) in UNSUPPORTED {
+            let case = format!("{name} under {transport}");
+            let bind =
+                || TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("set-up: {e}"));
+            let held = [bind(), bind()];
+            let port = |l: &TcpListener| l.local_addr().map(|a| a.port().to_string());
+            let port = |l| port(l).unwrap_or_else(|e| panic!("set-up: {e}"));
+            let peers = dir
+                .join(format!("{transport}-{name}.peers"))
+                .display()
+                .to_string();
+            let env = [
+                ("NW31I_START_ERROR", "1".to_string()),
+                ("REPLICA_ID", "e".to_string()),
+                ("MOIRAI_TRANSPORT", transport.to_string()),
+                ("LISTEN_PORT", port(&held[0])),
+                ("HTTP_PORT", port(&held[1])),
+                ("HTTP_BIND_ADDR", "127.0.0.1".to_string()),
+                ("LOG_ID", LOG_ID.to_string()),
+                ("PEERS_FILE", peers),
+                (name, value.to_string()),
+            ];
+            let mut p = spawn(&exe, &args, &dir, &format!("{transport}-{name}"), &env);
+            let status = until(Duration::from_secs(10), || {
+                p.child
+                    .try_wait()
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "running".to_string())
+            });
+            let status = ok(
+                T,
+                &case,
+                status.map_err(|_| format!("run did not return within 10 s:\n{}", p.tail())),
+            );
+            let log = fs::read_to_string(&p.log).unwrap_or_default();
+            let line = log
+                .lines()
+                .find(|l| l.starts_with("NW31I start error:"))
+                .unwrap_or("");
+            let others: Vec<&str> = UNSUPPORTED
+                .iter()
+                .map(|(n, _)| *n)
+                .filter(|n| *n != name && line.contains(n))
+                .collect();
+            assert!(
+                status.code() == Some(4) && line.contains(name) && others.is_empty(),
+                "NW31I {T} {case}: run did not return an error naming {name} alone \
+                 (exit {status}, names {others:?} too):\n{}",
+                p.tail()
+            );
+            assert!(
+                !p.ports.exists(),
+                "NW31I {T} {case}: PORTS_FILE was written before the error"
+            );
+        }
+    }
 }
