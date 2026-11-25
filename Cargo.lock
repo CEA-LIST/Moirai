@@ -1339,6 +1339,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "moirai-netstack-router"
+version = "0.1.0"
+dependencies = [
+ "zenoh",
+]
+
+[[package]]
 name = "moirai-netstack-testkit"
 version = "0.8.3"
 dependencies = [
