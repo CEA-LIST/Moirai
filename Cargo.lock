@@ -158,6 +158,9 @@ name = "bitrep"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b324609691c7673751b8d875a9aeec38d7052f2e69370f988c78ddb5d5c3cb"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "block-buffer"

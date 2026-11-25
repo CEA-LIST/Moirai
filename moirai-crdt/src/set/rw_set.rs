@@ -162,6 +162,14 @@ where
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "V: Serialize",
+        deserialize = "V: Deserialize<'de> + Eq + Hash"
+    ))
+)]
 pub struct MixedSet<V>(FxHashSet<V>, Vec<SetUpdate<V>>);
 
 // TODO: maybe two hashsets is better?
