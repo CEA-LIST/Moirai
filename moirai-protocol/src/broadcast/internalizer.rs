@@ -132,6 +132,81 @@ impl PartialEq for Resolver {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for Resolver {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&self.into_vec(), serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Resolver {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let members = <Vec<ReplicaId> as serde::Deserialize>::deserialize(deserializer)?;
+        SHARED.with_borrow_mut(|shared| match shared {
+            Some(Some(table)) if !members.is_empty() => {
+                if table.inner.iter().eq(members.iter()) {
+                    Ok(table.clone())
+                } else {
+                    Err(serde::de::Error::custom(
+                        "a snapshot with two member tables",
+                    ))
+                }
+            }
+            Some(slot) if !members.is_empty() => {
+                let table = Self::from_members(members).map_err(serde::de::Error::custom)?;
+                *slot = Some(table.clone());
+                Ok(table)
+            }
+            _ => Self::from_members(members).map_err(serde::de::Error::custom),
+        })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Resolver {
+    fn from_members(members: Vec<ReplicaId>) -> std::result::Result<Self, &'static str> {
+        let mut interner = Interner::new();
+        for member in members {
+            if !interner.intern(&member).1 {
+                return Err("duplicate replica in resolver");
+            }
+        }
+        Ok(interner.resolver().clone())
+    }
+}
+
+#[cfg(feature = "serde")]
+thread_local! {
+    /// While a snapshot deserializes: the one member table all its resolvers share.
+    static SHARED: std::cell::RefCell<Option<Option<Resolver>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f`, a snapshot's deserialization, with every non-empty resolver it
+/// reads sharing one table, and returns that table. An adopter interns
+/// itself into it, so every id, version and frontier inside the adopted log
+/// resolves through the adopter's own table without being rewritten.
+#[cfg(feature = "serde")]
+pub(crate) fn with_shared_resolver<T>(f: impl FnOnce() -> T) -> (T, Option<Resolver>) {
+    struct Scope;
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            SHARED.set(None);
+        }
+    }
+    SHARED.set(Some(None));
+    let scope = Scope;
+    let out = f();
+    let table = SHARED.with_borrow_mut(|shared| shared.take().flatten());
+    drop(scope);
+    (out, table)
+}
+
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct Translator {
     inner: Vec<Vec<ReplicaIdx>>,
@@ -174,6 +249,23 @@ impl Interner {
                 inner: Rc::new(ReplicaIds::new()),
             },
             translator: Translator { inner: Vec::new() },
+        }
+    }
+
+    /// An interner over an existing table, which interning then extends in place.
+    #[cfg(feature = "serde")]
+    pub(crate) fn from_resolver(resolver: Resolver) -> Self {
+        Self {
+            str_to_int: resolver
+                .inner
+                .iter()
+                .enumerate()
+                .map(|(idx, id)| (id.clone(), ReplicaIdx(idx)))
+                .collect(),
+            translator: Translator {
+                inner: vec![Vec::new(); resolver.len()],
+            },
+            int_to_str: resolver,
         }
     }
 
