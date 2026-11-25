@@ -7,6 +7,9 @@
 # snapshot_for a fourth awset node that starts after three nodes' events are
 # stable converges over the router and then exchanges new writes. Checks,
 # each printed PASS or FAIL. Exit 0 only when all pass, 2 on a set-up error.
+# Oracle fix (orchestrator, 2026-11-25): moirai-crdt/tests/nw31k_log_serde.rs bound
+# `let s = String::from;` outside a closure taking &str (E0521, hidden behind
+# the E0277 errors of the red proof); it is now a closure. No assertion changed.
 set -uo pipefail
 export LC_ALL=C
 export CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0
