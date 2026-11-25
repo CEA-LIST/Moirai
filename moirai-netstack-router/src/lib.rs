@@ -3,9 +3,9 @@
 //! A router introduces peer-mode nodes to each other: each node is told only
 //! the router (`ZENOH_ROUTER`), the router gossips every peer it holds to the
 //! others, one hop, and the peers then link and exchange data directly, so
-//! they keep converging if the router stops. Client-mode nodes
+//! they keep exchanging if the router stops. Client-mode nodes
 //! (`ZENOH_MODE=client`) link to the router alone, and their data goes
-//! through it.
+//! through it; that mode is untested here.
 //!
 //! The router never answers a multicast scout: by Zenoh's defaults a router
 //! scouts and answers on 224.0.0.224:7446, and a peer on a compiled

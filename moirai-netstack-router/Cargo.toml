@@ -5,7 +5,7 @@ edition = "2024"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The in-tree Zenoh router that introduces moirai-netstack nodes to each other and carries client-mode nodes"
+description = "The in-tree Zenoh router that introduces moirai-netstack nodes to each other; client-mode nodes are untested"
 
 [dependencies]
 # The same pin and features as `moirai-netstack-transport`'s, so router and
