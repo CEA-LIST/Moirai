@@ -7,6 +7,10 @@
 # snapshot_for a fourth awset node that starts after three nodes' events are
 # stable converges over the router and then exchanges new writes. Checks,
 # each printed PASS or FAIL. Exit 0 only when all pass, 2 on a set-up error.
+# Round 4 (vault spec, Round 4): transfer of composite logs in process
+# (moirai-crdt/tests/nw31k_composite_transfer.rs, on the lane and on 7fe5ea2
+# alone), the adapter's refusals (adapters/crdt/tests/nw31k_snapshot_refusals.rs)
+# and the README's generated-path lines; oracle_unchanged from round 2, 3 or 4.
 # Oracle fix (orchestrator, 2026-11-25): moirai-crdt/tests/nw31k_log_serde.rs bound
 # `let s = String::from;` outside a closure taking &str (E0521, hidden behind
 # the E0277 errors of the red proof); it is now a closure. No assertion changed.
@@ -22,9 +26,11 @@ LOCKS=${NW31K_LOCKS:-$HOME/.cache/cea-crdt-scratch}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cea-crdt-scratch/NW.31k/target}
 SCRATCH=${NW31K_SCRATCH:-$HOME/.cache/cea-crdt-scratch/NW.31k/gate}
 UPSTREAM=(moirai-protocol moirai-crdt moirai-macros moirai-fuzz)
-ORACLE=(tests/nw31k tests/nw31j/gate.sh moirai-protocol/tests/nw31k_state_transfer.rs moirai-crdt/tests/nw31k_log_serde.rs adapters/crdt/tests/nw31d_upstream.rs adapters/crdt/tests/nw31f_upstream_node.rs)
+ORACLE=(tests/nw31k tests/nw31j/gate.sh moirai-protocol/tests/nw31k_state_transfer.rs moirai-crdt/tests/nw31k_log_serde.rs moirai-crdt/tests/nw31k_composite_transfer.rs adapters/crdt/tests/nw31k_snapshot_refusals.rs adapters/crdt/tests/nw31d_upstream.rs adapters/crdt/tests/nw31f_upstream_node.rs)
 IN_PROCESS=(nw31k_late_joiner_adopts_a_snapshot_vec_log nw31k_late_joiner_adopts_a_snapshot_graph_log)
 LOG_SERDE=(nw31k_every_log_type_is_serde nw31k_a_record_of_a_nested_list_of_unions_and_references_round_trips nw31k_a_record_of_moirai_crdt_logs_round_trips)
+COMPOSITE=(nw31k_composite_record_of_nested_unions_and_references_converges_after_adoption nw31k_composite_json_log_converges_after_adoption)
+REFUSALS=(nw31k_apply_remote_refuses_a_snapshot_on_a_replica_with_history nw31k_apply_remote_refuses_an_inconsistent_snapshot_without_panicking)
 # Upstream's own tests at 7fe5ea2 (spec, baseline): passed counts summed over
 # the crate's test binaries and doc tests, nothing failing.
 declare -A UP_BASE=(
@@ -50,15 +56,15 @@ changes() { { git diff --name-only "$BASE" -- "$@"; git status --porcelain --unt
 
 # 1. The change set since 1b5b876 stays in the item's paths; moirai-fuzz and
 # every netstack crate but adapters/crdt are untouched.
-stray=$(changes . | grep -Ev '^(moirai-protocol/|moirai-crdt/src/|moirai-crdt/Cargo\.toml$|moirai-macros/|moirai-crdt/tests/nw31k_log_serde\.rs$|adapters/crdt/src/|adapters/crdt/tests/nw31d_upstream\.rs$|adapters/crdt/tests/nw31f_upstream_node\.rs$|tests/nw31k/|tests/nw31j/gate\.sh$|Cargo\.lock$|README\.md$)')
+stray=$(changes . | grep -Ev '^(moirai-protocol/|moirai-crdt/src/|moirai-crdt/Cargo\.toml$|moirai-macros/|moirai-crdt/tests/nw31k_log_serde\.rs$|moirai-crdt/tests/nw31k_composite_transfer\.rs$|adapters/crdt/tests/nw31k_snapshot_refusals\.rs$|adapters/crdt/src/|adapters/crdt/tests/nw31d_upstream\.rs$|adapters/crdt/tests/nw31f_upstream_node\.rs$|tests/nw31k/|tests/nw31j/gate\.sh$|Cargo\.lock$|README\.md$)')
 awset=$(changes adapters/crdt/src/awset.rs tests/nw31j/node.rs)
 report change_set_in_scope "$([ -z "$stray$awset" ]; echo $?)" "$(echo $stray $awset)"
 
-# 2. The oracle files: unchanged since the latest round 2 or 3 oracle commit of this gate
+# 2. The oracle files: unchanged since the latest round 2, 3 or 4 oracle commit of this gate
 # (round 3 made NW.31j's Arachne commit settable, so tests/nw31j/gate.sh is checked here).
-first=$(git log -n 1 --format=%H -E --grep='^NW\.31k oracle round [23]' -- tests/nw31k/gate.sh)
+first=$(git log -n 1 --format=%H -E --grep='^NW\.31k oracle round [234]' -- tests/nw31k/gate.sh)
 if [ -z "$first" ]; then
-  report oracle_unchanged 1 "no round 2 or 3 oracle commit of tests/nw31k/gate.sh"
+  report oracle_unchanged 1 "no round 2, 3 or 4 oracle commit of tests/nw31k/gate.sh"
 else
   changed=$(git diff --name-only "$first" -- "${ORACLE[@]}"; git status --porcelain --untracked-files=all -- "${ORACLE[@]}")
   report oracle_unchanged "$([ -z "$changed" ]; echo $?)" "$(echo $changed)"
@@ -92,14 +98,31 @@ out=$(cargo_ test -j 2 --locked -p moirai-crdt --no-default-features --features 
 missing=$(names_ok "$out" "${LOG_SERDE[@]}")
 report log_serde_round_trip "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
 
+# 5c. Round 4, in this workspace: composite logs adopted by a fresh replica
+# converge with the donors under concurrent writes in every delivery order.
+out=$(cargo_ test -j 2 --locked -p moirai-crdt --features serde,test_utils --test nw31k_composite_transfer 2>&1); code=$?
+missing=$(names_ok "$out" "${COMPOSITE[@]}")
+report composite_transfer "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
+
+# 5d. Round 4: moirai-netstack-crdt's apply_remote refuses a snapshot on a
+# replica with history and an inconsistent snapshot, without a panic.
+out=$(cargo_ test -j 2 --locked -p moirai-netstack-crdt --test nw31k_snapshot_refusals 2>&1); code=$?
+missing=$(names_ok "$out" "${REFUSALS[@]}")
+report snapshot_refusals "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
+
 # 6. Part (3): the diff since 7fe5ea2 restricted to upstream's crates, applied
 # to a git archive of 7fe5ea2 (no netstack crate there): upstream's own tests
 # of moirai-protocol and moirai-crdt with default features and with serde,
 # moirai-macros with default features and with serde, then parts (1) and (2)
 # by name, each by its own command.
 up="$SCRATCH/upstream-$UPSTREAM_BASE"
+# Round 4: the archive builds in its own target. Cargo hashes workspace members by
+# their path inside the workspace and git archive dates every file at its commit,
+# so in the lane's target the archive's crates could reuse the lane's artifacts.
+UP_TARGET="$SCRATCH/target-upstream"
 rm -rf "$up"; mkdir -p "$up" || exit 2
 git archive "$UPSTREAM_BASE" | tar -x -C "$up" || { echo "SETUP: git archive $UPSTREAM_BASE"; exit 2; }
+find "$up" -type f -exec touch {} + || exit 2
 git diff --binary "$UPSTREAM_BASE" HEAD -- "${UPSTREAM[@]}" > "$SCRATCH/upstream.patch" || exit 2
 if [ ! -s "$SCRATCH/upstream.patch" ]; then
   report upstream_diff_applies 1 "no change to upstream's crates since $UPSTREAM_BASE"
@@ -108,16 +131,19 @@ else
   report upstream_diff_applies "$code" "$out"
 fi
 for args in "-p moirai-protocol" "-p moirai-protocol --features serde" "-p moirai-crdt" "-p moirai-crdt --features serde" "-p moirai-macros" "-p moirai-macros --features serde"; do
-  out=$(cd "$up" && cargo_ test -j 2 --no-fail-fast $args 2>&1); code=$?
+  out=$(cd "$up" && CARGO_TARGET_DIR="$UP_TARGET" cargo_ test -j 2 --no-fail-fast $args 2>&1); code=$?
   n=$(passed_sum "$out")
   report "upstream_alone_tests[$args]" "$([ $code = 0 ] && ! failed_any "$out" && [ "$n" -ge "${UP_BASE[$args]}" ]; echo $?)" "exit $code, $n passed (7fe5ea2: ${UP_BASE[$args]}) $(echo "$out" | grep -E '^error|panicked|FAILED' | head -n 3)"
 done
-out=$(cd "$up" && cargo_ test -j 2 -p moirai-protocol --features serde,test_utils --test nw31k_state_transfer 2>&1); code=$?
+out=$(cd "$up" && CARGO_TARGET_DIR="$UP_TARGET" cargo_ test -j 2 -p moirai-protocol --features serde,test_utils --test nw31k_state_transfer 2>&1); code=$?
 missing=$(names_ok "$out" "${IN_PROCESS[@]}")
 report upstream_alone_in_process_transfer "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
-out=$(cd "$up" && cargo_ test -j 2 -p moirai-crdt --features serde --test nw31k_log_serde 2>&1); code=$?
+out=$(cd "$up" && CARGO_TARGET_DIR="$UP_TARGET" cargo_ test -j 2 -p moirai-crdt --features serde --test nw31k_log_serde 2>&1); code=$?
 missing=$(names_ok "$out" "${LOG_SERDE[@]}")
 report upstream_alone_log_serde "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
+out=$(cd "$up" && CARGO_TARGET_DIR="$UP_TARGET" cargo_ test -j 2 -p moirai-crdt --features serde,test_utils --test nw31k_composite_transfer 2>&1); code=$?
+missing=$(names_ok "$out" "${COMPOSITE[@]}")
+report upstream_alone_composite_transfer "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
 
 # 7. NW.31j's gate, its checks that still apply by name. It builds the router,
 # arachne-cli at NW.31ka's 693dcb2 (round 3: 3c8c2bf plus serde on generated logs),
@@ -197,6 +223,12 @@ if re.search(r"upstream has no state transfer|late joiner is not covered", secti
 added = "\n".join(l for l in ns.get(NET, []) if l not in os_.get(NET, []))
 for word in ["state transfer", "snapshot"]:
     if not re.search(word, added, re.I): why.append(f"the lines added to the Network stack section do not name {word}")
+# Round 4: the generated path names NW.31ka's Arachne 693dcb2 for factory::<Log, Value>(),
+# no longer 3c8c2bf, and says the generated-node late join is not yet run.
+lines = ns.get(NET, [])
+factory = [l for l in lines if "factory::<" in l]
+if not factory or any("693dcb2" not in l or "3c8c2bf" in l for l in factory): why.append("the factory::<Log, Value>() lines do not name Arachne 693dcb2 alone")
+if not any(re.search(r"late[- ]join", l, re.I) and re.search(r"generated", l, re.I) and re.search(r"\bnot yet\b", l, re.I) for l in lines): why.append("no line says the generated-node late join is not yet run")
 print(f"FAIL readme_network_section_states_state_transfer: {'; '.join(why)}" if why else "PASS readme_network_section_states_state_transfer")
 sys.exit(bool(why))
 PY
