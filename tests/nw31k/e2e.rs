@@ -1,11 +1,12 @@
-//! NW.31k end to end, part (3) (vault spec/items/NW.31k.md): the built
-//! moirai-netstack-router on 127.0.0.1 port 0 and nodes of the generated JSON
-//! crate (tests/nw31j/node.rs, built by tests/nw31j/gate.sh) in Zenoh peer
-//! mode, told only the router. Ground truth: the states written below by hand
-//! from the ops posted (a JSON object of counters), read over GET /api/state.
+//! NW.31k end to end, claim part 4 (vault spec/items/NW.31k.md, round 2): the
+//! built moirai-netstack-router on 127.0.0.1 port 0 and nodes of
+//! moirai-netstack-crdt's awset::factory() (tests/nw31k/node.rs) in Zenoh
+//! peer mode, told only the router. Ground truth: the states written below by
+//! hand from the ops posted (a sorted JSON array of strings), read over GET
+//! /api/state.
 //!
 //! Phases, each a panic prefix on failure: "NW31K mesh:", "NW31K rounds:"
-//! (a, b and c each write one key in each of three rounds and converge after
+//! (a, b and c each add one string in each of three rounds and converge after
 //! each round, so the first two rounds are stable at all three), "NW31K
 //! join:" (a fourth node d starts with no history, takes a state transfer,
 //! its log says so, and serves the third state), "NW31K after:" (d writes and
@@ -191,26 +192,19 @@ fn check<T>(phase: &str, result: Result<T, String>) -> T {
     result.unwrap_or_else(|why| panic!("NW31K {phase}: {why}"))
 }
 
-/// The generated crate's command adding `n` to the counter at `key` of the
-/// root JSON object (its serde form).
-fn inc(key: &str, n: f64) -> String {
-    json!({ "JsonKind": { "Object": { "Update": [key, { "Number": { "Inc": n } }] } } }).to_string()
+/// The state a node serves: the set as a sorted JSON array.
+fn set(items: &[&str]) -> Value {
+    let mut items: Vec<&str> = items.to_vec();
+    items.sort();
+    json!(items)
 }
 
-/// The state a node serves for a root object of counters.
-fn object(counters: &[(&str, f64)]) -> Value {
-    let entries: serde_json::Map<String, Value> = counters
-        .iter()
-        .map(|(k, n)| (k.to_string(), json!({ "Value": { "Number": n } })))
-        .collect();
-    json!({ "json": { "Value": { "Object": entries } } })
-}
-
-/// POST one op once; it must be answered 200 with success.
-fn post_op(phase: &str, port: u16, key: &str, n: f64) {
-    let answer = check(phase, http(port, "POST", "/api/op", Some(&inc(key, n))));
+/// POST one add once; it must be answered 200 with success.
+fn post_op(phase: &str, port: u16, item: &str) {
+    let op = json!({ "Add": item }).to_string();
+    let answer = check(phase, http(port, "POST", "/api/op", Some(&op)));
     if answer.0 != 200 || answer.1["success"] != json!(true) {
-        panic!("NW31K {phase}: POST /api/op {key} {n} on {port} answered {answer:?}");
+        panic!("NW31K {phase}: POST /api/op {op} on {port} answered {answer:?}");
     }
 }
 
@@ -308,15 +302,17 @@ fn main() {
     // follows the whole first round: the first round is stable everywhere,
     // folded and pruned from the outboxes; the third does the same for the
     // second.
-    for (round, n) in [1.0, 10.0, 100.0].into_iter().enumerate() {
-        post_op("rounds", a, "a", n);
-        post_op("rounds", b, "b", 2.0 * n);
-        post_op("rounds", c, "c", 3.0 * n);
-        let total = [1.0, 11.0, 111.0][round];
-        let want = object(&[("a", total), ("b", 2.0 * total), ("c", 3.0 * total)]);
-        converge("rounds", &nodes, &want);
+    let mut written: Vec<String> = Vec::new();
+    for round in 1..=3 {
+        for (id, port) in [("a", a), ("b", b), ("c", c)] {
+            let item = format!("{id}{round}");
+            post_op("rounds", port, &item);
+            written.push(item);
+        }
+        let items: Vec<&str> = written.iter().map(String::as_str).collect();
+        converge("rounds", &nodes, &set(&items));
     }
-    let third = object(&[("a", 111.0), ("b", 222.0), ("c", 333.0)]);
+    let third = set(&["a1", "a2", "a3", "b1", "b2", "b3", "c1", "c2", "c3"]);
 
     let mut d = start("d");
     let d_port = d.report().1;
@@ -334,9 +330,11 @@ fn main() {
     }
     converge("join", &all, &third);
 
-    post_op("after", d_port, "d", 1000.0);
-    post_op("after", b, "b", 2000.0);
-    let last = object(&[("a", 111.0), ("b", 2222.0), ("c", 333.0), ("d", 1000.0)]);
+    post_op("after", d_port, "d1");
+    post_op("after", b, "b4");
+    let last = set(&[
+        "a1", "a2", "a3", "b1", "b2", "b3", "b4", "c1", "c2", "c3", "d1",
+    ]);
     converge("after", &all, &last);
 
     for p in procs.iter_mut() {
