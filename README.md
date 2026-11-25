@@ -50,7 +50,7 @@ The `moirai-netstack*` crates are one network library for replicated logs. Nodes
   `moirai_netstack_transport::zenoh_patch::check()` returns an error naming this line when the build links stock Zenoh instead.
 - `moirai-netstack-node` provides `Node<F, T>`, generic over a `ReplicaFactory` and a `CrdtTransport`. A node hosts logs by id, filters frames for logs it does not host, applies operations and batches under the etag rule, catches a log up by delta, transfers state when the replica offers it, and refuses a returning member. It depends on `moirai-netstack` and `moirai-netstack-transport` (without default features; its own `zenoh` feature turns Zenoh on).
 - `moirai-netstack-http` provides the generic HTTP routes over a `Node`, served with tiny_http, and a `Routes` trait through which an application adds its own routes. It depends on `moirai-netstack`, `moirai-netstack-node` and `moirai-netstack-transport`.
-- `moirai-netstack-router` is the in-tree Zenoh router as a library and a binary. A peer-mode node is told only the router; the router gossips one hop, so the peers link to each other directly and keep converging if it stops, and it carries client-mode nodes' data through itself. It binds `LISTEN_PORT` (port 0 reports the port the kernel chose in `PORTS_FILE`), turns multicast scouting off explicitly, and with `ROUTER_REGIONS` opens one Zenoh subregion per name plus a catch-all. It depends on Zenoh alone, on the transport's pin and features, so it runs one Zenoh build with the nodes; it sits beside them as the rendezvous they dial.
+- `moirai-netstack-router` is the in-tree Zenoh router as a library and a binary. A peer-mode node is told only the router; the router gossips one hop, so the peers link to each other directly and keep exchanging after it stops. It binds `LISTEN_PORT` (port 0 reports the port the kernel chose in `PORTS_FILE`), turns multicast scouting off explicitly, and with `ROUTER_REGIONS` opens one Zenoh subregion per name plus a catch-all. It depends on Zenoh alone, on the transport's pin and features, so it runs one Zenoh build with the nodes; it sits beside them as the rendezvous they dial. Client-mode nodes through the router are not covered by this crate's tests.
 - `moirai-netstack-crdt` (in `adapters/crdt`) implements `ReplicaPort` over Moirai's own replica and CRDT types. It depends on `moirai-netstack`, `moirai-protocol` and `moirai-crdt`, and offers ready factories such as `awset::factory()`. Its tests also use the node, the transport and the testkit.
 - `moirai-netstack-testkit` provides a toy grow-only-set replica with no Moirai, and the two contract suites every adapter runs: `contract` at the port level and `contract_node` at the node level. It depends on `moirai-netstack`, `moirai-netstack-node` and `moirai-netstack-transport`.
 
@@ -73,9 +73,15 @@ How they stack. Each line points down to a crate that the one above it depends o
           v            v                                         v                      v
    ===========================================================================================
    moirai-netstack  (core: ReplicaPort, ReplicaFactory, Extension, wire v1)
+
+   +-------------------------+
+   | moirai-netstack-router  | . . . . . . . . . . . . . . . . . . nodes dial it at run time
+   | (Zenoh only, no moirai  | . . . . . . . . . . . . . . . . . . through Zenoh
+   |  crate)                 |
+   +-------------------------+
 ```
 
-Arrows and lines read as "depends on". The testkit also depends on the node and the transport, and the crdt adapter uses them in its tests; those lines are left out to keep the drawing readable.
+Arrows and lines read as "depends on". The router's dotted line is not a dependency: it is a run-time link, the transport dialling the router when a node is told only the router. The testkit also depends on the node and the transport, and the crdt adapter uses them in its tests; those lines are left out to keep the drawing readable.
 
 Running the tests, one crate at a time:
 
@@ -83,6 +89,7 @@ Running the tests, one crate at a time:
 - `cargo test -p moirai-netstack-transport` (the Zenoh tests need the default feature; `cargo test -p moirai-netstack-transport --no-default-features` runs the TCP-only tests)
 - `cargo test -p moirai-netstack-node`
 - `cargo test -p moirai-netstack-http`
+- `cargo test -p moirai-netstack-router`
 - `cargo test -p moirai-netstack-crdt`
 - `cargo test -p moirai-netstack-testkit`
 
