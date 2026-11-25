@@ -222,7 +222,7 @@ fn nw31k_a_record_of_a_nested_list_of_unions_and_references_round_trips() {
 
 #[test]
 fn nw31k_a_record_of_moirai_crdt_logs_round_trips() {
-    let s = String::from;
+    let s = |s: &str| s.to_string();
     let json_number = |key: &str, n: f64| {
         Bits::Json(Json::Object(MapUpdate::Update(
             s(key),
