@@ -18,7 +18,7 @@ use moirai_protocol::{
     },
     clock::version_vector::Version,
     event::{Event, id::EventId, lamport::Lamport},
-    replica::{IsReplica, Replica, ReplicaId, ReplicaIdx},
+    replica::{IsReplica, Replica, ReplicaId, ReplicaIdx, ReplicaSnapshot},
     state::log::IsLog,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -45,6 +45,12 @@ struct Events<U> {
     ids: Vec<String>,
     sender: usize,
     events: Vec<WireEvent<U>>,
+}
+
+/// A state transfer: the donor's log and causal bookkeeping.
+#[derive(Serialize, Deserialize)]
+struct Transfer<S> {
+    snapshot: S,
 }
 
 /// The requester's version and the events it holds pending.
@@ -84,7 +90,7 @@ pub struct Factory<L: IsLog> {
 
 impl<L> ReplicaFactory for Factory<L>
 where
-    L: IsLog,
+    L: IsLog + Serialize + DeserializeOwned,
     L::Command: DeserializeOwned,
     L::Update: Serialize + DeserializeOwned + Debug,
     L::Rejection: Debug,
@@ -187,7 +193,7 @@ where
 
 impl<L> ReplicaPort for UpstreamReplica<L>
 where
-    L: IsLog,
+    L: IsLog + Serialize + DeserializeOwned,
     L::Command: DeserializeOwned,
     L::Update: Serialize + DeserializeOwned + Debug,
     L::Rejection: Debug,
@@ -208,6 +214,20 @@ where
     }
 
     fn apply_remote(&mut self, from: &str, ops: Opaque) -> Result<(), String> {
+        if ops.get("snapshot").is_some() {
+            // Adopting replaces the log, so whatever this replica holds would be lost.
+            let progress = self.progress();
+            if progress.delivered > 0 || progress.pending > 0 {
+                return Err(format!(
+                    "a snapshot from {from} refused: this replica has history"
+                ));
+            }
+            let Transfer { snapshot } =
+                serde_json::from_value::<Transfer<ReplicaSnapshot<L, L::Update>>>(ops)
+                    .map_err(|e| format!("a malformed snapshot from {from}: {e}"))?;
+            self.replica.adopt(snapshot);
+            return Ok(());
+        }
         let payload: Events<L::Update> = serde_json::from_value(ops)
             .map_err(|e| format!("a malformed payload from {from}: {e}"))?;
         let sender = self.sender(&payload.log, &payload.ids, payload.sender)?;
@@ -317,13 +337,19 @@ where
     fn read_state(&self) -> Value {
         (self.read)(&self.replica)
     }
+
+    fn snapshot_for(&mut self, _requester: &str) -> Option<Result<Opaque, String>> {
+        Some(Ok(to_json(Transfer {
+            snapshot: self.replica.snapshot(),
+        })))
+    }
 }
 
 /// A factory for any Moirai log `L` whose state reads as `V`, as a generated
 /// crate's node hands them over: no hand-written query.
 pub fn factory<L, V>() -> Factory<L>
 where
-    L: IsLog + EvalNested<Read<V>>,
+    L: IsLog + EvalNested<Read<V>> + Serialize + DeserializeOwned,
     L::Update: Debug,
     V: Serialize,
 {
