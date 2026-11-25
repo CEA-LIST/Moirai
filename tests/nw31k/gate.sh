@@ -22,7 +22,7 @@ LOCKS=${NW31K_LOCKS:-$HOME/.cache/cea-crdt-scratch}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cea-crdt-scratch/NW.31k/target}
 SCRATCH=${NW31K_SCRATCH:-$HOME/.cache/cea-crdt-scratch/NW.31k/gate}
 UPSTREAM=(moirai-protocol moirai-crdt moirai-macros moirai-fuzz)
-ORACLE=(tests/nw31k moirai-protocol/tests/nw31k_state_transfer.rs moirai-crdt/tests/nw31k_log_serde.rs adapters/crdt/tests/nw31d_upstream.rs adapters/crdt/tests/nw31f_upstream_node.rs)
+ORACLE=(tests/nw31k tests/nw31j/gate.sh moirai-protocol/tests/nw31k_state_transfer.rs moirai-crdt/tests/nw31k_log_serde.rs adapters/crdt/tests/nw31d_upstream.rs adapters/crdt/tests/nw31f_upstream_node.rs)
 IN_PROCESS=(nw31k_late_joiner_adopts_a_snapshot_vec_log nw31k_late_joiner_adopts_a_snapshot_graph_log)
 LOG_SERDE=(nw31k_every_log_type_is_serde nw31k_a_record_of_a_nested_list_of_unions_and_references_round_trips nw31k_a_record_of_moirai_crdt_logs_round_trips)
 # Upstream's own tests at 7fe5ea2 (spec, baseline): passed counts summed over
@@ -36,7 +36,7 @@ declare -A UP_BASE=(
   ["-p moirai-macros --features serde"]=0
 )
 # NW.31j's checks that still apply (the others are superseded, spec section Superseded).
-NW31J_KEEP=(oracle_unchanged http_tests crdt_tests start_tests node_builds e2e_three_generated_nodes_router_pause_resume generated_crate_is_arachne_output fmt)
+NW31J_KEEP=(http_tests crdt_tests start_tests node_builds e2e_three_generated_nodes_router_pause_resume generated_crate_is_arachne_output fmt)
 cargo_() { flock "$LOCKS/cargo.lock" nice -n 10 cargo "$@"; }
 fail=0
 report() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1${3:+: $3}"; fail=1; fi; }
@@ -50,14 +50,15 @@ changes() { { git diff --name-only "$BASE" -- "$@"; git status --porcelain --unt
 
 # 1. The change set since 1b5b876 stays in the item's paths; moirai-fuzz and
 # every netstack crate but adapters/crdt are untouched.
-stray=$(changes . | grep -Ev '^(moirai-protocol/|moirai-crdt/src/|moirai-crdt/Cargo\.toml$|moirai-macros/|moirai-crdt/tests/nw31k_log_serde\.rs$|adapters/crdt/src/|adapters/crdt/tests/nw31d_upstream\.rs$|adapters/crdt/tests/nw31f_upstream_node\.rs$|tests/nw31k/|Cargo\.lock$|README\.md$)')
+stray=$(changes . | grep -Ev '^(moirai-protocol/|moirai-crdt/src/|moirai-crdt/Cargo\.toml$|moirai-macros/|moirai-crdt/tests/nw31k_log_serde\.rs$|adapters/crdt/src/|adapters/crdt/tests/nw31d_upstream\.rs$|adapters/crdt/tests/nw31f_upstream_node\.rs$|tests/nw31k/|tests/nw31j/gate\.sh$|Cargo\.lock$|README\.md$)')
 awset=$(changes adapters/crdt/src/awset.rs tests/nw31j/node.rs)
 report change_set_in_scope "$([ -z "$stray$awset" ]; echo $?)" "$(echo $stray $awset)"
 
-# 2. The oracle files: unchanged since the round 2 oracle commit of this gate.
-first=$(git log -n 1 --format=%H -E --grep='^NW\.31k oracle round 2' -- tests/nw31k/gate.sh)
+# 2. The oracle files: unchanged since the latest round 2 or 3 oracle commit of this gate
+# (round 3 made NW.31j's Arachne commit settable, so tests/nw31j/gate.sh is checked here).
+first=$(git log -n 1 --format=%H -E --grep='^NW\.31k oracle round [23]' -- tests/nw31k/gate.sh)
 if [ -z "$first" ]; then
-  report oracle_unchanged 1 "no round 2 oracle commit of tests/nw31k/gate.sh"
+  report oracle_unchanged 1 "no round 2 or 3 oracle commit of tests/nw31k/gate.sh"
 else
   changed=$(git diff --name-only "$first" -- "${ORACLE[@]}"; git status --porcelain --untracked-files=all -- "${ORACLE[@]}")
   report oracle_unchanged "$([ -z "$changed" ]; echo $?)" "$(echo $changed)"
@@ -119,10 +120,10 @@ missing=$(names_ok "$out" "${LOG_SERDE[@]}")
 report upstream_alone_log_serde "$([ $code = 0 ] && [ -z "$missing" ]; echo $?)" "exit $code, not ok:$missing $(echo "$out" | grep -E '^error|panicked' | head -n 3)"
 
 # 7. NW.31j's gate, its checks that still apply by name. It builds the router,
-# arachne-cli 3c8c2bf, the generated crate (this lane's upstream crates by
-# path, serde on) and the node from tests/nw31j/node.rs, unchanged.
+# arachne-cli at NW.31ka's 693dcb2 (round 3: 3c8c2bf plus serde on generated logs),
+# the generated crate (this lane's upstream crates by path, serde on) and the node from tests/nw31j/node.rs, unchanged.
 j="$SCRATCH/nw31j"
-out=$(NW31J_SCRATCH="$j" NW31J_LOCKS="$LOCKS" NW31J_ARACHNE_TARGET="$SCRATCH/../target-arachne" bash tests/nw31j/gate.sh 2>&1); code=$?
+out=$(NW31J_ARACHNE_COMMIT=693dcb2 NW31J_SCRATCH="$j" NW31J_LOCKS="$LOCKS" NW31J_ARACHNE_TARGET="$SCRATCH/../target-arachne" bash tests/nw31j/gate.sh 2>&1); code=$?
 echo "$out" | grep -E '^(PASS|FAIL|SETUP)' | sed 's/^/  nw31j: /'
 [ $code = 2 ] && { echo "SETUP: tests/nw31j/gate.sh set-up failed"; exit 2; }
 for check in "${NW31J_KEEP[@]}"; do

@@ -14,7 +14,9 @@ export CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0
 export CARGO_PROFILE_DEV_DEBUG=0
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BASE=fa082c4
-ARACHNE_COMMIT=3c8c2bf
+# NW.31k round 3 sets NW31J_ARACHNE_COMMIT to NW.31ka's 693dcb2 (3c8c2bf plus serde on the
+# generated log types), which state transfer's factory bound needs.
+ARACHNE_COMMIT=${NW31J_ARACHNE_COMMIT:-3c8c2bf}
 ARACHNE_REPO=${NW31J_ARACHNE_REPO:-$HOME/Documents/Projects/cea-crdt/repos/arachne}
 LOCKS=${NW31J_LOCKS:-$HOME/.cache/cea-crdt-scratch}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cea-crdt-scratch/NW.31j/target}
