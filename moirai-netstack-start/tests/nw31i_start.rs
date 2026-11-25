@@ -204,7 +204,11 @@ impl Proc {
                 ));
             }
             if Instant::now() > deadline {
-                return Err(format!("{} never wrote PORTS_FILE:\n{}", self.id, self.tail()));
+                return Err(format!(
+                    "{} never wrote PORTS_FILE:\n{}",
+                    self.id,
+                    self.tail()
+                ));
             }
             thread::sleep(Duration::from_millis(1));
         }
@@ -275,9 +279,13 @@ fn until<T>(limit: Duration, mut probe: impl FnMut() -> Result<T, String>) -> Re
 /// POST one toy element to a node's default log.
 fn post_op(port: u16, element: &str) -> Result<(), String> {
     let body = json!(element).to_string();
-    until(CONVERGE, || match http(port, "POST", "/api/op", Some(&body))? {
-        (200, answer) if answer["success"] == json!(true) => Ok(()),
-        other => Err(format!("POST /api/op {element:?} on {port} answered {other:?}")),
+    until(CONVERGE, || {
+        match http(port, "POST", "/api/op", Some(&body))? {
+            (200, answer) if answer["success"] == json!(true) => Ok(()),
+            other => Err(format!(
+                "POST /api/op {element:?} on {port} answered {other:?}"
+            )),
+        }
     })
 }
 
@@ -306,7 +314,9 @@ fn mesh(nodes: &[(&str, u16)]) -> Result<(), String> {
                     .and_then(|l| l.iter().find(|p| p["id"] == json!(other)))
                     .map(|p| p["status"].clone());
                 if status != Some(json!("Connected")) {
-                    return Err(format!("{id} reads {other} {status:?}: the mesh never formed"));
+                    return Err(format!(
+                        "{id} reads {other} {status:?}: the mesh never formed"
+                    ));
                 }
             }
         }
