@@ -6,6 +6,10 @@
 //!
 //! Release the replication port only where 601c887 did: under
 //! `ZENOH_MODE=client`, which listens on no port at all.
+//!
+//! [`run`] returns an error, before anything is bound or reported, when the
+//! environment asks for what this launcher does not support yet. Otherwise it
+//! serves the node until the process ends.
 
 use std::env;
 use std::ffi::OsString;
@@ -31,15 +35,58 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// `LISTEN_PORT` when it is unset, as 601c887 defaults it.
 const DEFAULT_LISTEN_PORT: u16 = 9001;
 
+/// The variables 601c887's launcher reads that this one does not support yet:
+/// set, each ends the start named, never dropped silently (NW.31i R3).
+const UNSUPPORTED_VARIABLES: [&str; 4] = [
+    "BOOTNODE_URL",
+    "ADVERTISE_ADDR",
+    "RECONCILE_SECS",
+    "DASHBOARD_URL",
+];
+
+/// A variable the launcher cannot honour, returned by [`run`] before it binds
+/// anything, or the process ends.
+fn unsupported_variable() -> Option<&'static str> {
+    UNSUPPORTED_VARIABLES
+        .into_iter()
+        .find(|name| env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// 601c887's `validate_replica_id` (moirai-protocol is not a dependency here).
+fn valid_replica_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// Start a node over `factory` from the environment and serve it until the
 /// process ends. The second argument is the HTTP crate's [`Routes`]: an
-/// application's own routes, or `()` for none.
-pub fn run<F, R>(factory: F, mut routes: R) -> !
+/// application's own routes, or `()` for none. A configuration this launcher
+/// cannot honour is returned as an error before any port is bound or reported.
+pub fn run<F, R>(factory: F, mut routes: R) -> Result<(), String>
 where
     F: ReplicaFactory,
     R: Routes<F, AnyTransport>,
 {
+    // The caller may drop the result, as a launcher binary does at top level,
+    // so a configuration error is written here as well as returned.
+    let fail = |why: String| -> Result<(), String> {
+        eprintln!("{why}");
+        Err(why)
+    };
+    if let Some(name) = unsupported_variable() {
+        return fail(format!(
+            "{name} is set, but this launcher does not support it yet"
+        ));
+    }
     let replica_id = env::var("REPLICA_ID").unwrap_or_else(|_| "replica-a".to_string());
+    if !valid_replica_id(&replica_id) {
+        return fail(format!(
+            "invalid replica id {replica_id:?}: expected nonempty ASCII letters, digits, '.', \
+             '_' or '-'"
+        ));
+    }
     let listen_port = match env::var("LISTEN_PORT") {
         Ok(raw) => raw.parse().unwrap_or_else(|err| {
             eprintln!("[{replica_id}] invalid LISTEN_PORT `{raw}`: {err}");
@@ -128,12 +175,14 @@ fn start_tcp<F: ReplicaFactory>(
     peers_file: Option<&Path>,
     log_id: LogId,
 ) -> (Node<F, AnyTransport>, Option<TcpListener>, Option<u16>) {
-    let listener =
-        TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), listen_port))
-            .unwrap_or_else(|err| {
-                eprintln!("[{replica_id}] cannot bind the replication port {listen_port}: {err}");
-                std::process::exit(1);
-            });
+    let listener = TcpListener::bind(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        listen_port,
+    ))
+    .unwrap_or_else(|err| {
+        eprintln!("[{replica_id}] cannot bind the replication port {listen_port}: {err}");
+        std::process::exit(1);
+    });
     let listen_port = bound_port(&listener);
     let (http_listener, http_port) = bind_http_early(replica_id, http_bind, http_port);
     report_ports(ports_file, replica_id, listen_port, http_port);
