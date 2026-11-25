@@ -67,8 +67,13 @@ fn ids(resolver: &Resolver) -> Vec<String> {
     resolver.into_vec().into_iter().map(|id| id.0).collect()
 }
 
-fn entries(version: &Version) -> Vec<usize> {
-    version.iter().map(|(_, seq)| seq).collect()
+/// `version`'s entries at the wire indices `at` (see `UpstreamReplica::wire`).
+fn entries(version: &Version, at: &[usize], len: usize) -> Vec<usize> {
+    let mut out = vec![0; len];
+    for (idx, seq) in version.iter() {
+        out[at[idx.0]] = seq;
+    }
+    out
 }
 
 fn version(origin: usize, entries: &[usize], resolver: &Resolver) -> Version {
@@ -103,8 +108,10 @@ where
         if !members.iter().any(|m| m == self_id) {
             members.insert(0, self_id.to_string());
         }
+        let replica: Upstream<L> = Replica::bootstrap(ReplicaId::from(self_id), &members);
         UpstreamReplica {
-            replica: Replica::bootstrap(ReplicaId::from(self_id), &members),
+            opened: ids(replica.since().resolver()),
+            replica,
             log: log.to_string(),
             members,
             read: self.read,
@@ -123,6 +130,8 @@ pub struct UpstreamReplica<L: IsLog> {
     /// keeps one translation per sender that only grows, and panics when an
     /// incoming list is shorter.
     peers: HashMap<String, Vec<String>>,
+    /// The replica's id list when it opened, which peers may have read already.
+    opened: Vec<String>,
 }
 
 impl<L> UpstreamReplica<L>
@@ -130,6 +139,24 @@ where
     L: IsLog,
     L::Update: Serialize,
 {
+    /// The ids this replica's payloads index through, and the wire index of
+    /// each index of `resolver` (its own table): the list it opened with, then
+    /// the rest of its table. Adopting a snapshot takes the donor's order, but
+    /// peers keep the list they first read from this replica, which only grows.
+    fn wire(&self, resolver: &Resolver) -> (Vec<String>, Vec<usize>) {
+        let mut wire = self.opened.clone();
+        let at = ids(resolver)
+            .into_iter()
+            .map(|id| {
+                wire.iter().position(|w| *w == id).unwrap_or_else(|| {
+                    wire.push(id);
+                    wire.len() - 1
+                })
+            })
+            .collect();
+        (wire, at)
+    }
+
     fn payload<'a>(
         &self,
         sender: ReplicaIdx,
@@ -139,19 +166,20 @@ where
     where
         L::Update: 'a,
     {
+        let (ids, at) = self.wire(resolver);
         to_json(Events {
             log: self.log.clone(),
-            ids: ids(resolver),
-            sender: sender.0,
+            sender: at[sender.0],
             events: events
                 .into_iter()
                 .map(|e| WireEvent {
-                    origin: e.id().idx().0,
+                    origin: at[e.id().idx().0],
                     seq: e.id().seq(),
-                    version: entries(e.version()),
+                    version: entries(e.version(), &at, ids.len()),
                     op: e.op(),
                 })
                 .collect(),
+            ids,
         })
     }
 
@@ -269,16 +297,17 @@ where
     fn frontier(&self) -> Opaque {
         let message = self.replica.since();
         let since = message.since();
+        let (ids, at) = self.wire(message.resolver());
         to_json(Frontier {
             log: self.log.clone(),
-            ids: ids(message.resolver()),
-            sender: since.version().origin_idx().0,
-            version: entries(since.version()),
+            sender: at[since.version().origin_idx().0],
+            version: entries(since.version(), &at, ids.len()),
             except: since
                 .except()
                 .iter()
-                .map(|e| (e.idx().0, e.seq()))
+                .map(|e| (at[e.idx().0], e.seq()))
                 .collect(),
+            ids,
         })
     }
 
