@@ -7,7 +7,8 @@
 //! plays it here by calling HttpApi::serve on a real node, so a test that needs
 //! the loop late simply calls it late. Two more tests: an application route
 //! added through the extension point, and the generic routes the 13 do not reach,
-//! with the routes left for later (S5b catch-up, a port call) answered 404.
+//! with the route left for later (a port call) answered 404 (NW.31j moved
+//! resume and resume-all out of that list).
 //!
 //! flock ~/.cache/cea-crdt-scratch/cargo.lock flock ~/.cache/cea-crdt-scratch/nodes.lock \
 //!   nice -n 10 cargo test -j 2 -p moirai-netstack-http --locked --test nw31g_http
@@ -857,9 +858,10 @@ fn an_application_route_is_served_through_the_extension_point() {
 // ------------------------------------------------------------------ the rest of the generic routes
 
 /// The generic routes the 13 do not reach, each answering as on 601c887; and the
-/// routes left for later answered as any unknown path, never stubbed: resume and
-/// resume-all (601c887 requests a sync on resume, S5b's catch-up) and operations
-/// (no ReplicaPort call reads the operation log).
+/// route left for later answered as any unknown path, never stubbed: operations
+/// (no ReplicaPort call reads the operation log). Resume and resume-all left
+/// this list in NW.31j (re-ruling of this clause), which tests them in
+/// tests/nw31j_resume.rs.
 #[test]
 fn the_other_generic_routes_answer_as_on_601c887_and_the_later_routes_are_not_served() {
     let (api, port) = api(WAIT);
@@ -943,11 +945,7 @@ fn the_other_generic_routes_answer_as_on_601c887_and_the_later_routes_are_not_se
     );
     assert_eq!(call("POST /api/model/zz/op", Some(r#""x""#)).0, 400);
 
-    for (head, body) in [
-        ("POST /api/resume/bob", None),
-        ("POST /api/resume-all", None),
-        ("GET /api/operations", None),
-    ] {
+    for (head, body) in [("GET /api/operations", None)] {
         assert_eq!(
             call(head, body),
             (404, not_found()),
