@@ -52,8 +52,25 @@ passes! {
     upstream_passes_refusal_with_cause: refusal_with_cause;
     upstream_passes_has_history: has_history;
     upstream_passes_batch_stops_at_first_refusal: batch_stops_at_first_refusal;
-    upstream_passes_port_defaults: port_defaults;
     upstream_passes_progress_counts: progress_counts;
+}
+
+/// NW.31k re-ruling of `upstream_passes_port_defaults` (vault
+/// spec/items/NW.31k.md): upstream replicas now offer a state transfer, so of
+/// the testkit's port_defaults case only read_identified's default still holds.
+#[test]
+fn upstream_reads_identified_as_state_and_offers_a_snapshot() {
+    let mut a = awset::factory().open("nw31d-log", "ann", &members());
+    a.submit(add("red")).expect("a valid op is accepted");
+    assert_eq!(
+        a.read_identified(),
+        a.read_state(),
+        "read_identified defaults to read_state"
+    );
+    assert!(
+        matches!(a.snapshot_for("bob"), Some(Ok(_))),
+        "the replica offers a snapshot"
+    );
 }
 
 // ---- (B) each case can fail on the adapter ----------------------------------

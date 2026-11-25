@@ -1,7 +1,8 @@
 //! NW.31f oracle: the node-level contract cases on upstream Moirai 7fe5ea2
 //! replicas through moirai-netstack-crdt (vault spec/items/NW.31f.md, NW.31
-//! design row S5b). Upstream replicas offer no state transfer, so the two
-//! transfer cases must report it not offered and catch up by delta. One more
+//! design row S5b). Since NW.31k upstream replicas offer a state transfer, so
+//! the two transfer cases must report it offered (re-ruled, vault
+//! spec/items/NW.31k.md; they asserted it not offered before). One more
 //! test drives three nodes with concurrent adds and removes and a two-sided
 //! pause to a hand-computed add-wins state.
 //!
@@ -48,10 +49,10 @@ fn upstream_passes_catch_up_after_pause() {
     contract_node::catch_up_after_pause(awset::factory, &inputs());
 }
 #[test]
-fn upstream_passes_late_joiner_with_transfer_not_offered() {
+fn upstream_passes_late_joiner_with_transfer_offered() {
     assert_eq!(
         contract_node::late_joiner(awset::factory, &inputs()),
-        Transfer::NotOffered
+        Transfer::Offered
     );
 }
 #[test]
@@ -59,10 +60,10 @@ fn upstream_passes_foreign_log_filtered() {
     contract_node::foreign_log_filtered(awset::factory, &inputs());
 }
 #[test]
-fn upstream_passes_returning_member_refused_with_transfer_not_offered() {
+fn upstream_passes_returning_member_refused_with_transfer_offered() {
     assert_eq!(
         contract_node::returning_member_refused(awset::factory, &inputs()),
-        Transfer::NotOffered
+        Transfer::Offered
     );
 }
 #[test]
