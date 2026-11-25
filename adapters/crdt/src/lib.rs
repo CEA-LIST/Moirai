@@ -6,6 +6,8 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use moirai_netstack::{Opaque, Progress, ReplicaFactory, ReplicaPort};
+use moirai_protocol::data_type::query::Read;
+use moirai_protocol::state::log::EvalNested;
 use moirai_protocol::{
     broadcast::{
         batch::Batch,
@@ -314,5 +316,21 @@ where
 
     fn read_state(&self) -> Value {
         (self.read)(&self.replica)
+    }
+}
+
+/// A factory for any Moirai log `L` whose state reads as `V`, as a generated
+/// crate's node hands them over: no hand-written query.
+pub fn factory<L, V>() -> Factory<L>
+where
+    L: IsLog + EvalNested<Read<V>>,
+    L::Update: Debug,
+    V: Serialize,
+{
+    Factory {
+        read: |replica| {
+            serde_json::to_value(replica.query(&Read::<V>::new()))
+                .expect("a query of the log's state serializes")
+        },
     }
 }

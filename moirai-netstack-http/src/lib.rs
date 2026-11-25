@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use moirai_netstack::{LogId, LogIdError, ReplicaFactory, ReplicaPort, decode_json};
 use moirai_netstack_node::{BatchOutcome, BatchResult, Node, OpResult};
-use moirai_netstack_transport::transport::CrdtTransport;
+use moirai_netstack_transport::transport::{CrdtTransport, PeerStatus};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -150,6 +150,8 @@ enum Work {
     Peers,
     Pause(String),
     PauseAll,
+    Resume(String),
+    ResumeAll,
     Leave,
     Op(Value),
     Ops {
@@ -329,6 +331,20 @@ impl Inner {
                 String::new(),
                 Expiry::Control,
             ),
+            Route::Resume(peer) => self.dispatch(
+                Work::Resume(peer),
+                String::new(),
+                String::new(),
+                String::new(),
+                Expiry::Control,
+            ),
+            Route::ResumeAll => self.dispatch(
+                Work::ResumeAll,
+                String::new(),
+                String::new(),
+                String::new(),
+                Expiry::Control,
+            ),
             Route::Model { id, leaf } => match leaf {
                 ModelLeaf::State => self.dispatch(
                     Work::ModelState(id),
@@ -457,6 +473,8 @@ where
             "All peers paused".to_string(),
             "Failed".to_string(),
         )),
+        Work::Resume(peer) => op_answer(&node.resume_peer(&peer)),
+        Work::ResumeAll => op_answer(&resume_all(node)),
         Work::Leave => op_answer(&OpResult {
             success: false,
             message: "discovery is not enabled; nothing to leave".to_string(),
@@ -516,6 +534,32 @@ fn peers<F: ReplicaFactory, T: CrdtTransport>(node: &Node<F, T>) -> Value {
     json!({ "peers": peers })
 }
 
+/// 601c887's resume-all: every peer paused before the call, resumed through
+/// the node, which hands its buffer over and asks it for a delta.
+fn resume_all<F: ReplicaFactory, T: CrdtTransport>(node: &mut Node<F, T>) -> OpResult {
+    let paused: Vec<String> = node
+        .transport()
+        .peers()
+        .into_iter()
+        .filter(|peer| peer.status == PeerStatus::Paused)
+        .map(|peer| peer.id)
+        .collect();
+    let delivered: usize = paused
+        .iter()
+        .map(|peer| node.transport().buffered_count(peer))
+        .sum();
+    for peer in &paused {
+        node.resume_peer(peer);
+    }
+    OpResult {
+        success: true,
+        message: format!(
+            "Resumed {} peers, delivered {delivered} buffered msgs",
+            paused.len()
+        ),
+    }
+}
+
 fn control(result: Result<(), impl Display>, success: String, failure: String) -> OpResult {
     match result {
         Ok(()) => OpResult {
@@ -550,6 +594,8 @@ enum Route {
     Peers,
     Pause(String),
     PauseAll,
+    Resume(String),
+    ResumeAll,
     Leave,
     Op,
     Ops,
@@ -563,6 +609,11 @@ fn route(method: &Method, path: &str) -> Result<Route, LogIdError> {
     {
         return Ok(Route::Pause(peer.to_string()));
     }
+    if *method == Method::Post
+        && let Some(peer) = path.strip_prefix("/api/resume/")
+    {
+        return Ok(Route::Resume(peer.to_string()));
+    }
     let Some(rest) = path.strip_prefix('/') else {
         return Ok(Route::Unknown);
     };
@@ -575,6 +626,7 @@ fn route(method: &Method, path: &str) -> Result<Route, LogIdError> {
         (&Method::Get, ["api", "models"]) => Route::Models,
         (&Method::Get, ["api", "peers"]) => Route::Peers,
         (&Method::Post, ["api", "pause-all"]) => Route::PauseAll,
+        (&Method::Post, ["api", "resume-all"]) => Route::ResumeAll,
         (&Method::Post, ["api", "leave"]) => Route::Leave,
         (&Method::Post, ["api", "op"]) => Route::Op,
         (&Method::Post, ["api", "ops"]) => Route::Ops,
