@@ -76,7 +76,8 @@ report ask_back_oracle_tests "$([ -z "$missing" ]; echo $?)" "not ok:$missing $(
 lost=$(comm -23 tests/nw31m/baseline-tests.txt <(echo "$oks"))
 report existing_tests_green_by_name "$([ $code = 0 ] && [ -z "$lost" ]; echo $?)" "exit $code; not ok: $(echo $lost | head -c 400)"
 
-# 6. NW.31k's gate, its checks but the change set, by name. It runs NW.31j's
+# 6. NW.31k's gate, its checks but the change set: each named one PASS, and
+# no FAIL line but its change set. It runs NW.31j's
 # gate, which builds arachne-cli at NW.31ka's 693dcb2, the generated json
 # crate, its node (tests/nw31j/node.rs) and the router into CARGO_TARGET_DIR.
 out=$(NW31K_SCRATCH="$SCRATCH/nw31k" NW31K_LOCKS="$LOCKS" bash tests/nw31k/gate.sh 2>&1); code=$?
@@ -86,7 +87,8 @@ if [ $code = 2 ]; then
   report nw31k_gate_kept_checks 1 "set-up failed: $(echo "$out" | grep -E '^SETUP' | head -n 2)"
 else
   bad=""; for check in "${NW31K_KEEP[@]}"; do echo "$out" | grep -qx "PASS $check" || bad+=" $check"; done
-  report nw31k_gate_kept_checks "$([ -z "$bad" ]; echo $?)" "not PASS:$bad"
+  other=$(echo "$out" | grep -E '^FAIL ' | grep -v '^FAIL change_set_in_scope' | cut -c1-120)
+  report nw31k_gate_kept_checks "$([ -z "$bad" ] && [ -z "$other" ]; echo $?)" "not PASS:$bad; other FAIL: $(echo $other)"
 fi
 
 # 7. End to end, under nodes.lock, 300 s at most: the router and NW.31j's
