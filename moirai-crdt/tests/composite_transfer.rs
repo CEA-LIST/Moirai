@@ -1,5 +1,4 @@
-//! NW.31k oracle, round 4, part (1b) (vault spec/items/NW.31k.md): state
-//! transfer of composite logs. Three replicas a, b, c write two rounds (the
+//! State transfer of composite logs. Three replicas a, b, c write two rounds (the
 //! first is then stable and pruned), b writes once more to a only and c once
 //! more to nobody, so a's snapshot holds stable and unstable events. A fresh
 //! replica d, bootstrapped with only its own id, adopts a's snapshot sent as
@@ -7,7 +6,7 @@
 //! delivered in each of the 24 orders, followed by two rounds in which all
 //! four write. All four must read one hand-computed value and agree on one
 //! hand-computed stable frontier. The logs are a record! of a nested list of
-//! union! slots plus a reference manager (the shape of nw31k_log_serde) and
+//! union! slots plus a reference manager (the shape of log_serde) and
 //! moirai-crdt's JsonLog; both hold an enable-wins flag that b enables and c
 //! disables concurrently, before the join. Run with
 //! `--features serde,test_utils`.
@@ -44,7 +43,7 @@ use rustc_hash::FxHashMap;
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct Points;
 
-// As in nw31k_log_serde: the reference manager as Arachne's codegen declares it.
+// As in log_serde: the reference manager as Arachne's codegen declares it.
 typed_graph! {
     types {
         graph = ReferenceManager,
@@ -321,7 +320,7 @@ macro_rules! via_json {
 }
 
 #[test]
-fn nw31k_composite_record_of_nested_unions_and_references_converges_after_adoption() {
+fn composite_record_of_nested_unions_and_references_converges_after_adoption() {
     let count = |n: i64| SlotValue::Value(Box::new(SlotChildValue::Count(n)));
     let on = SlotValue::Value(Box::new(SlotChildValue::On(true)));
     let node = |name: &str| format!("{:?}", Instance::Cell(cell(name)));
@@ -343,7 +342,7 @@ fn nw31k_composite_record_of_nested_unions_and_references_converges_after_adopti
 }
 
 #[test]
-fn nw31k_composite_json_log_converges_after_adoption() {
+fn composite_json_log_converges_after_adoption() {
     let v = |c: JsonChildValue| JsonValue::Value(Box::new(c));
     let want = v(JsonChildValue::Object(FxHashMap::from_iter([
         ("n".to_string(), v(JsonChildValue::Number(3.0))),

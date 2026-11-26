@@ -1,5 +1,4 @@
-//! NW.31k oracle, part (1) (vault spec/items/NW.31k.md): state transfer in
-//! upstream's protocol. Three replicas write in rounds until the first round
+//! State transfer in the protocol. Three replicas write in rounds until the first round
 //! is stable and pruned from every outbox; a fourth replica, bootstrapped
 //! with only its own id, adopts one replica's snapshot sent as JSON; then
 //! events from the three reach it and its own events reach them. Ground
@@ -136,5 +135,5 @@ macro_rules! late_joiner_adopts_a_snapshot {
     };
 }
 
-late_joiner_adopts_a_snapshot!(nw31k_late_joiner_adopts_a_snapshot_vec_log, VecLog<Sum>);
-late_joiner_adopts_a_snapshot!(nw31k_late_joiner_adopts_a_snapshot_graph_log, GraphLog<Sum>);
+late_joiner_adopts_a_snapshot!(late_joiner_adopts_a_snapshot_vec_log, VecLog<Sum>);
+late_joiner_adopts_a_snapshot!(late_joiner_adopts_a_snapshot_graph_log, GraphLog<Sum>);

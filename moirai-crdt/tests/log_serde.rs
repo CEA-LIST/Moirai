@@ -1,5 +1,4 @@
-//! NW.31k round 2 (vault spec/items/NW.31k.md, claim part 2): every log type
-//! moirai-macros emits (union! and record!, as a generated crate holds them)
+//! Every log type moirai-macros emits (union! and record!, as a generated crate holds them)
 //! and moirai-crdt's log types serialize and deserialize under the "serde"
 //! feature, and a log read back from its JSON reads what the log it came from
 //! reads. Ground truth: the value the original log reads, and the values
@@ -135,7 +134,7 @@ fn nodes_and_arcs(g: &DiGraph<Instance, Ref>) -> (Vec<Instance>, Vec<(Instance, 
 }
 
 #[test]
-fn nw31k_every_log_type_is_serde() {
+fn every_log_type_is_serde() {
     serde_both::<SlotLog>();
     serde_both::<SlotContainer>();
     serde_both::<SlotChild>();
@@ -154,7 +153,7 @@ fn nw31k_every_log_type_is_serde() {
 }
 
 #[test]
-fn nw31k_a_record_of_a_nested_list_of_unions_and_references_round_trips() {
+fn a_record_of_a_nested_list_of_unions_and_references_round_trips() {
     let (x, y, z) = (cell("x"), cell("y"), cell("z"));
     let arc = |s: &Cell, t: &Cell| {
         ReferenceManagerUpdate::AddArc(Refs::CellToCell(Arc {
@@ -221,7 +220,7 @@ fn nw31k_a_record_of_a_nested_list_of_unions_and_references_round_trips() {
 }
 
 #[test]
-fn nw31k_a_record_of_moirai_crdt_logs_round_trips() {
+fn a_record_of_moirai_crdt_logs_round_trips() {
     let s = |s: &str| s.to_string();
     let json_number = |key: &str, n: f64| {
         Bits::Json(Json::Object(MapUpdate::Update(
