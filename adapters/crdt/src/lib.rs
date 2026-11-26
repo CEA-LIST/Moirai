@@ -130,7 +130,8 @@ pub struct UpstreamReplica<L: IsLog> {
     /// keeps one translation per sender that only grows, and panics when an
     /// incoming list is shorter.
     peers: HashMap<String, Vec<String>>,
-    /// The replica's id list when it opened, which peers may have read already.
+    /// The id list this replica's payloads have used so far, which peers may
+    /// have read already: every later list extends it.
     opened: Vec<String>,
 }
 
@@ -253,6 +254,9 @@ where
             let Transfer { snapshot } =
                 serde_json::from_value::<Transfer<ReplicaSnapshot<L, L::Update>>>(ops)
                     .map_err(|e| format!("a malformed snapshot from {from}: {e}"))?;
+            // Peers may have cached the list this replica sent before adopting
+            // (its frontier, or a pull that grew its table); later lists extend it.
+            self.opened = self.wire(self.replica.since().resolver()).0;
             self.replica.adopt(snapshot);
             return Ok(());
         }
@@ -368,9 +372,12 @@ where
     }
 
     fn snapshot_for(&mut self, _requester: &str) -> Option<Result<Opaque, String>> {
-        Some(Ok(to_json(Transfer {
-            snapshot: self.replica.snapshot(),
-        })))
+        Some(
+            serde_json::to_value(Transfer {
+                snapshot: self.replica.snapshot(),
+            })
+            .map_err(|e| format!("the log does not serialize: {e}")),
+        )
     }
 }
 
