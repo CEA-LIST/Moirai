@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{cmp::Ordering, convert::Infallible, fmt::Debug, marker::PhantomData};
 
 #[cfg(feature = "fuzz")]
@@ -5,13 +20,12 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         policy::{FairPolicy, LwwPolicy, Policy},
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -106,7 +120,7 @@ where
 {
 }
 
-impl<V, P, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<Option<V>>> for Register<V, P>
+impl<V, P, U> Eval<U, Read<Option<V>>> for Register<V, P>
 where
     V: Debug + Clone,
     P: Policy,
@@ -164,7 +178,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::{
+        data_type::{
             policy::{FairPolicy, LwwPolicy},
             query::Read,
         },

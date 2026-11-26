@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 /// Defines a record CRDT whose fields are nested logs.
 ///
 /// The generic form lets callers choose the value projection for each field when querying the
@@ -111,22 +126,6 @@ macro_rules! record {
                         &self.$field
                     }
                 )*
-
-                #[doc(hidden)]
-                pub fn default_sink_expansion(
-                    &self,
-                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
-                ) {
-                    ctx.create_typed(::std::stringify!($name));
-                    $(
-                        ctx.with_field(::std::stringify!($field), |ctx| {
-                            <$T as $crate::moirai_protocol::state::log::DefaultSinkExpansion>::default_sink_expansion(
-                                &<$T as $crate::moirai_protocol::state::log::IsLog>::new(),
-                                ctx,
-                            );
-                        });
-                    )*
-                }
             }
 
             /// Implementation of the Log trait for the record.
@@ -136,6 +135,17 @@ macro_rules! record {
                 type Command = $name;
                 type Update = $name;
                 type Rejection = [<$name Rejection>];
+
+                fn visit_initial_objects(
+                    ctx: &mut $crate::moirai_protocol::state::effect_context::EffectContext<'_>,
+                ) {
+                    ctx.create_typed(::std::stringify!($name));
+                    $(
+                        ctx.with_field(::std::stringify!($field), |ctx| {
+                            <$T as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
+                        });
+                    )*
+                }
 
                 fn new() -> Self {
                     Self {
@@ -160,7 +170,7 @@ macro_rules! record {
                                 let is_default = <Self as $crate::moirai_protocol::state::log::IsLog>::is_default(self);
 
                                 if is_default {
-                                    Self::default_sink_expansion(self, ctx);
+                                    <Self as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
                                 } else {
                                     ctx.update_typed(::std::stringify!($name));
                                 }
@@ -181,7 +191,7 @@ macro_rules! record {
                             }
                         )*
                         $name::New => {
-                            Self::default_sink_expansion(self, ctx);
+                            <Self as $crate::moirai_protocol::state::log::IsLog>::visit_initial_objects(ctx);
                         }
                     }
                 }
@@ -276,20 +286,20 @@ macro_rules! record {
         $($field:ident : $T:ty => $V:ty),* $(,)?
     }) => {
         $crate::paste::paste! {
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<
-                $crate::moirai_protocol::crdt::query::Read<[<$name Value>]>
+            impl $crate::moirai_protocol::state::log::EvalNested<
+                $crate::moirai_protocol::data_type::query::Read<[<$name Value>]>
             > for [<$name Log>] {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$name Value>]>,
+                    _q: &$crate::moirai_protocol::data_type::query::Read<[<$name Value>]>,
                 ) -> [<$name Value>] {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
-                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            $field: <$T as $crate::moirai_protocol::state::log::EvalNested<
+                                $crate::moirai_protocol::data_type::query::Read<$V>
                             >>::execute_query(
                                 &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                                &$crate::moirai_protocol::data_type::query::Read::<$V>::new(),
                             ),
                         )*
                     }
@@ -302,31 +312,31 @@ macro_rules! record {
     }) => {
         $crate::paste::paste! {
             impl<$($value_param),*>
-                $crate::moirai_protocol::crdt::eval::EvalNested<
-                    $crate::moirai_protocol::crdt::query::Read<
+                $crate::moirai_protocol::state::log::EvalNested<
+                    $crate::moirai_protocol::data_type::query::Read<
                         [<$name Value>]<$($value_param),*>
                     >
                 > for [<$name Log>]
             where
                 $(
-                    $T: $crate::moirai_protocol::crdt::eval::EvalNested<
-                        $crate::moirai_protocol::crdt::query::Read<$V>
+                    $T: $crate::moirai_protocol::state::log::EvalNested<
+                        $crate::moirai_protocol::data_type::query::Read<$V>
                     >,
                 )*
             {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<
+                    _q: &$crate::moirai_protocol::data_type::query::Read<
                         [<$name Value>]<$($value_param),*>
                     >,
                 ) -> [<$name Value>]<$($value_param),*> {
                     [<$name Value>] {
                         $(
-                            $field: <$T as $crate::moirai_protocol::crdt::eval::EvalNested<
-                                $crate::moirai_protocol::crdt::query::Read<$V>
+                            $field: <$T as $crate::moirai_protocol::state::log::EvalNested<
+                                $crate::moirai_protocol::data_type::query::Read<$V>
                             >>::execute_query(
                                 &self.$field,
-                                &$crate::moirai_protocol::crdt::query::Read::<$V>::new(),
+                                &$crate::moirai_protocol::data_type::query::Read::<$V>::new(),
                             ),
                         )*
                     }

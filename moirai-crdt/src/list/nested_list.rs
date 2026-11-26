@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::fmt::{Debug, Display};
 
 #[cfg(feature = "fuzz")]
@@ -9,12 +24,14 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    data_type::query::{QueryOperation, Read},
     event::{Event, id::EventId},
-    state::{cache::CachedLog, effect_context::EffectContext, log::IsLog, po_log::GraphLog},
+    state::{
+        cache::CachedLog,
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+        po_log::GraphLog,
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -51,7 +68,7 @@ where
         Self::default()
     }
 
-    pub fn positions(&self) -> &GraphLog<SimpleList<EventId>> {
+    pub const fn positions(&self) -> &GraphLog<SimpleList<EventId>> {
         self.positions.inner()
     }
 
@@ -313,9 +330,9 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_macros::record;
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica, state::po_log::VecLog};
     #[cfg(feature = "test_utils")]
-    use moirai_protocol::{crdt::eval::EvalNested, state::po_log::GraphLog};
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
+    use moirai_protocol::{state::log::EvalNested, state::po_log::GraphLog};
 
     #[cfg(feature = "test_utils")]
     use crate::list::eg_walker::List;

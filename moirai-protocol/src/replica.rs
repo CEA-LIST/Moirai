@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::fmt::{Debug, Display};
 
 #[cfg(feature = "test_utils")]
@@ -11,9 +26,13 @@ use crate::{
         message::{BatchMessage, EventMessage, SinceMessage},
         tcsb::IsTcsb,
     },
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, sink::SinkCollector},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+        sink::SinkCollector,
+    },
 };
 
 /// Replica identifier
@@ -156,7 +175,7 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     pub fn bootstrap<M>(id: ReplicaId, members: &[M]) -> Self
     where
@@ -208,11 +227,11 @@ impl<L> Replica<L, Tcsb<L::Update>>
 where
     L: IsLog,
 {
-    pub fn new(id: ReplicaId, tcsb: Tcsb<L::Update>, state: L) -> Self {
+    pub const fn new(id: ReplicaId, tcsb: Tcsb<L::Update>, state: L) -> Self {
         Self { id, tcsb, state }
     }
 
-    pub fn tcsb(&self) -> &Tcsb<L::Update> {
+    pub const fn tcsb(&self) -> &Tcsb<L::Update> {
         &self.tcsb
     }
 
@@ -224,11 +243,11 @@ where
         self.state
     }
 
-    pub fn state(&self) -> &L {
+    pub const fn state(&self) -> &L {
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut L {
+    pub const fn state_mut(&mut self) -> &mut L {
         &mut self.state
     }
 }

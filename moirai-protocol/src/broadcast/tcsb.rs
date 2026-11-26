@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "test_utils")]
@@ -63,7 +78,7 @@ pub struct Tcsb<O> {
 
 impl<O> IsTcsb<O> for Tcsb<O>
 where
-    O: Clone + Debug,
+    O: Clone,
 {
     fn new(replica_idx: ReplicaIdx, interner: Interner) -> Self {
         let resolver = interner.resolver();
@@ -181,7 +196,7 @@ where
 
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Clone,
 {
     /// Record a received event in the inbox and outbox if it is valid.
     fn record(&mut self, event: Event<O>) {
@@ -375,13 +390,13 @@ where
 #[cfg(feature = "test_utils")]
 impl<O> Tcsb<O>
 where
-    O: Debug + Clone,
+    O: Clone,
 {
-    pub fn matrix_clock(&self) -> &MatrixClock {
+    pub const fn matrix_clock(&self) -> &MatrixClock {
         &self.matrix_clock
     }
 
-    pub fn last_stable_version(&self) -> &CausalFrontier {
+    pub const fn last_stable_version(&self) -> &CausalFrontier {
         &self.last_stable_version
     }
 
@@ -418,7 +433,7 @@ where
             .sum()
     }
 
-    pub fn interner(&self) -> &Interner {
+    pub const fn interner(&self) -> &Interner {
         &self.interner
     }
 }

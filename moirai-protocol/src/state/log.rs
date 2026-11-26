@@ -1,23 +1,41 @@
-use std::fmt::{Debug, Display};
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
 
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     event::Event,
     state::effect_context::EffectContext,
 };
 
 pub trait IsLog: Default {
     /// Client input command type
-    type Command: Debug + Clone;
+    type Command: Clone;
     /// Stored operation type
-    type Update: Debug + Clone;
+    type Update: Clone;
     /// Rejection type for operations that are not enabled in the current state
-    type Rejection: Debug + Display;
+    type Rejection;
 
     fn new() -> Self {
         Self::default()
     }
+
+    /// Report the types and paths of objects created when this log is created,
+    /// including children that exist from the start. Visit them in a fixed order
+    /// without constructing any logs. By default, report nothing.
+    fn visit_initial_objects(_ctx: &mut EffectContext<'_>) {}
 
     /// Prepare a client command as the operation stored and replicated by this log.
     fn prepare(&self, command: Self::Command) -> Self::Update;
@@ -52,13 +70,12 @@ pub trait IsLog: Default {
     fn is_default(&self) -> bool;
 }
 
-// TODO: this is potentially garbage
-#[doc(hidden)]
-pub trait DefaultSinkExpansion: IsLog {
-    fn default_sink_expansion(&self, _ctx: &mut EffectContext<'_>) {}
+pub trait EvalNested<Q>
+where
+    Q: QueryOperation,
+{
+    fn execute_query(&self, q: &Q) -> Q::Response;
 }
-
-impl<L: IsLog> DefaultSinkExpansion for L {}
 
 /// Explicit indirection for inline recursive logs.
 impl<L: IsLog> IsLog for Box<L> {
@@ -67,7 +84,11 @@ impl<L: IsLog> IsLog for Box<L> {
     type Rejection = Box<L::Rejection>;
 
     fn new() -> Self {
-        Box::new(L::new())
+        Self::new(L::new())
+    }
+
+    fn visit_initial_objects(ctx: &mut EffectContext<'_>) {
+        L::visit_initial_objects(ctx);
     }
 
     fn prepare(&self, command: Self::Command) -> Self::Update {

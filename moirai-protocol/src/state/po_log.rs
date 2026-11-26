@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::fmt::{self, Debug};
 
 #[cfg(feature = "test_utils")]
@@ -6,20 +21,19 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::{Eval, EvalNested},
+    data_type::{
         query::QueryOperation,
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Reset, Sequential, Stabilization, Stable,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType, Reset, Stabilization, Stable,
         },
+        sequential::SequentialDataType,
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     state::{
         effect_context::EffectContext,
         event_graph::EventGraph,
-        log::IsLog,
+        log::{EvalNested, IsLog},
         unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
@@ -191,7 +205,7 @@ impl<R, U> POLog<R, U>
 where
     R: ReplicatedDataType,
 {
-    pub fn from_parts(stable: Stable<R>, unstable: U) -> Self {
+    pub const fn from_parts(stable: Stable<R>, unstable: U) -> Self {
         Self { stable, unstable }
     }
 
@@ -202,11 +216,11 @@ where
         Self::from_parts(stable, U::default())
     }
 
-    pub fn stable(&self) -> &Stable<R> {
+    pub const fn stable(&self) -> &Stable<R> {
         &self.stable
     }
 
-    pub fn unstable(&self) -> &U {
+    pub const fn unstable(&self) -> &U {
         &self.unstable
     }
 }
@@ -240,7 +254,7 @@ where
 impl<Q, R, U> EvalNested<Q> for POLog<R, U>
 where
     Q: QueryOperation,
-    R: ReplicatedDataType + Eval<Stable<R>, U, Q>,
+    R: ReplicatedDataType + Eval<U, Q>,
 {
     fn execute_query(&self, q: &Q) -> Q::Response {
         R::execute_query(&self.stable, &self.unstable, q)

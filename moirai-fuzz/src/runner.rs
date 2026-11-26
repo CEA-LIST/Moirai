@@ -1,12 +1,27 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::fmt::Debug;
 
 use deepsize::DeepSizeOf;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use moirai_protocol::{
-    crdt::{eval::EvalNested, query::QueryOperation},
+    data_type::query::QueryOperation,
     replica::IsReplica,
-    state::log::IsLog,
+    state::log::{EvalNested, IsLog},
 };
 use rand::{RngExt, SeedableRng, seq::IteratorRandom};
 use rand_chacha::ChaCha8Rng;
@@ -51,7 +66,8 @@ where
     Q: QueryOperation,
     <Q as QueryOperation>::Response: Debug,
     L: IsLog + CommandGenerator + EvalNested<Q> + DeepSizeOf + LogFootprint,
-    L::Update: DeepSizeOf,
+    L::Update: DeepSizeOf + Debug,
+    L::Rejection: Debug,
 {
     // Capture or generate the seed
     let used_seed = config.seed.unwrap_or_else(|| {

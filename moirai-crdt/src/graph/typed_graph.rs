@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 #![allow(clippy::mutable_key_type)]
 
 #[cfg(feature = "test_utils")]
@@ -55,9 +70,9 @@ mod tests {
     use moirai_fuzz::generator::op_generator::OpGenerator;
     use moirai_macros::typed_graph::Arc;
     #[cfg(feature = "fuzz")]
-    use moirai_protocol::{crdt::policy::Policy, state::unstable_state::IsUnstableCore};
+    use moirai_protocol::{data_type::policy::Policy, state::unstable_state::IsUnstableCore};
     use moirai_protocol::{
-        crdt::{policy::LwwPolicy, query::Read},
+        data_type::{policy::LwwPolicy, query::Read, replicated::Eval},
         replica::IsReplica,
         state::{object_path::ObjectPath, po_log::VecLog},
     };
@@ -83,7 +98,7 @@ mod tests {
 
     #[test]
     fn update_type_is_shared_across_policies() {
-        use moirai_protocol::crdt::policy::FairPolicy;
+        use moirai_protocol::data_type::policy::FairPolicy;
 
         assert_eq!(size_of::<MyTypedGraph<LwwPolicy>>(), 0);
         assert_eq!(size_of::<MyTypedGraph<FairPolicy>>(), 0);
@@ -760,7 +775,7 @@ mod tests {
             stable: &Self::Stable,
             unstable: &U,
         ) -> Self::Update {
-            use moirai_protocol::crdt::{eval::Eval, query::Read};
+            use moirai_protocol::data_type::query::Read;
             use rand::{
                 distr::{Distribution, weighted::WeightedIndex},
                 seq::IndexedRandom,

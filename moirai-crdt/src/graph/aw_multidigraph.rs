@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
@@ -12,12 +27,11 @@ use moirai_fuzz::generator::op_generator::OpGenerator;
 #[cfg(feature = "fuzz")]
 use moirai_fuzz::generator::value_generator::ValueGenerator;
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -214,8 +228,7 @@ where
     }
 }
 
-impl<V, E, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<DiGraph<V, E>>>
-    for AWMultidigraph<V, E>
+impl<V, E, U> Eval<U, Read<DiGraph<V, E>>> for AWMultidigraph<V, E>
 where
     V: Debug + Clone + PartialEq + Eq + Hash,
     E: Debug + Clone + PartialEq + Eq + Hash,
@@ -340,7 +353,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
 
     use crate::{
         graph::{aw_multidigraph::AWMultidigraph, update::GraphUpdate},

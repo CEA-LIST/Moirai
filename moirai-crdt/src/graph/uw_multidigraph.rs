@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
@@ -12,12 +27,12 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    data_type::query::{QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 use petgraph::graph::DiGraph;
 #[cfg(feature = "fuzz")]
@@ -57,7 +72,9 @@ where
 impl<V, E, Vl, El> Display for LabelledGraphRejection<V, E, Vl, El>
 where
     Vl: IsLog,
+    Vl::Rejection: Display,
     El: IsLog,
+    El::Rejection: Display,
     V: Debug,
     E: Debug,
 {
@@ -174,14 +191,17 @@ where
     fn is_enabled(&self, op: &Self::Update) -> Result<(), LabelledGraphRejection<V, E, Vl, El>> {
         match op {
             LabelledMultidigraphUpdate::UpdateVertex { id, child } => {
-                if let Some(log) = self.vertices.get(id) {
-                    log.is_enabled(child)
-                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
-                } else {
-                    Vl::default()
-                        .is_enabled(child)
-                        .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
-                }
+                self.vertices.get(id).map_or_else(
+                    || {
+                        Vl::default()
+                            .is_enabled(child)
+                            .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
+                    },
+                    |log| {
+                        log.is_enabled(child)
+                            .map_err(|e| LabelledGraphRejection::VertexDisabled(e))
+                    },
+                )
             }
             LabelledMultidigraphUpdate::RemoveVertex { id: v } => {
                 if let Some(child) = self.vertices.get(v)
@@ -438,7 +458,7 @@ mod tests {
     #[cfg(feature = "fuzz")]
     use moirai_fuzz::config::Predicate;
     use moirai_protocol::{
-        crdt::{policy::LwwPolicy, query::Read},
+        data_type::{policy::LwwPolicy, query::Read},
         replica::IsReplica,
         state::po_log::VecLog,
     };

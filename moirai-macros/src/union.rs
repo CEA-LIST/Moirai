@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 #[macro_export]
 macro_rules! union {
     (
@@ -82,7 +97,7 @@ macro_rules! union {
             }
 
             /// Value returned by the union log, which may be a single value, a conflict of values, or unset.
-            #[derive(Clone, Debug, Default, PartialEq)]
+            #[derive(Clone, Debug, Default, PartialEq, Eq)]
             #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Value>] {
@@ -404,10 +419,10 @@ macro_rules! union {
                 }
             }
 
-            impl $crate::moirai_protocol::crdt::eval::EvalNested<$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>> for [<$union Log>] {
+            impl $crate::moirai_protocol::state::log::EvalNested<$crate::moirai_protocol::data_type::query::Read<[<$union Value>]>> for [<$union Log>] {
                 fn execute_query(
                     &self,
-                    _q: &$crate::moirai_protocol::crdt::query::Read<[<$union Value>]>,
+                    _q: &$crate::moirai_protocol::data_type::query::Read<[<$union Value>]>,
                 ) -> [<$union Value>] {
                     match &self.child {
                         [<$union Container>]::Unset => [<$union Value>]::Unset,
@@ -415,9 +430,9 @@ macro_rules! union {
                             match child.as_ref() {
                                 $(
                                     [<$union Child>]::$variant(log) => {
-                                        let value = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                        let value = $crate::moirai_protocol::state::log::EvalNested::execute_query(
                                             log,
-                                            &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
+                                            &$crate::moirai_protocol::data_type::query::Read::<$value>::new(),
                                         );
                                         [<$union Value>]::Value(::std::boxed::Box::new([<$union ChildValue>]::$variant(value)))
                                     }
@@ -430,9 +445,9 @@ macro_rules! union {
                                 let value = match child {
                                     $(
                                         [<$union Child>]::$variant(log) => {
-                                            let v = $crate::moirai_protocol::crdt::eval::EvalNested::execute_query(
+                                            let v = $crate::moirai_protocol::state::log::EvalNested::execute_query(
                                                 log,
-                                                &$crate::moirai_protocol::crdt::query::Read::<$value>::new(),
+                                                &$crate::moirai_protocol::data_type::query::Read::<$value>::new(),
                                             );
                                             [<$union ChildValue>]::$variant(v)
                                         }

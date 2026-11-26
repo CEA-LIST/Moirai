@@ -1,11 +1,11 @@
 [package]
 name = "moirai-crdt"
-version = "0.8.2"
 edition = "2024"
 authors = [
     "Léo Olivier <leo.olivier@cea.fr>",
     "MORCOS Kirollos <Kirollos.MORCOS@cea.fr>",
 ]
+version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -31,7 +31,7 @@ bitrep = "0.5.1"
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [features]
-default = ["fuzz", "serde"]
+default = ["fuzz"]
 fuzz = ["dep:moirai-fuzz", "dep:rand", "test_utils"]
 sink = ["moirai-protocol/sink", "moirai-macros/sink", "moirai-fuzz?/sink"]
 test_utils = [

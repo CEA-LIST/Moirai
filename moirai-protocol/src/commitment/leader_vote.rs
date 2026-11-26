@@ -1,14 +1,28 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{convert::Infallible, range::Range};
 
 use crate::{
     clock::causal_frontier::CausalFrontier,
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::QueryOperation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-            Sequential,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
         },
+        sequential::SequentialDataType,
     },
     event::id::EventId,
     replica::{ReplicaId, ReplicaIdx},
@@ -22,9 +36,9 @@ pub enum LeaderVoteUpdate {
 }
 
 impl LeaderVoteUpdate {
-    pub fn id(&self) -> &ReplicaId {
+    pub const fn id(&self) -> &ReplicaId {
         match self {
-            LeaderVoteUpdate::Vote(replica_id) => replica_id,
+            Self::Vote(replica_id) => replica_id,
         }
     }
 }
@@ -60,11 +74,17 @@ impl LeaderVote {
     }
 }
 
-impl Sequential for () {
+impl SequentialDataType for () {
+    type Rejection = Infallible;
+    type Update = LeaderVoteUpdate;
+
+    fn is_enabled(&self, _update: &Self::Update) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
+
     fn is_default(&self) -> bool {
         true
     }
-    type Update = LeaderVoteUpdate;
 
     fn apply(&mut self, _: &Self::Update) {}
 }
@@ -77,7 +97,7 @@ impl ReplicatedDataType for LeaderVote {
 
 impl<U> Precondition<U> for LeaderVote {
     fn is_enabled(
-        _stable: &<LeaderVote as ReplicatedDataType>::Stable,
+        _stable: &<Self as ReplicatedDataType>::Stable,
         _unstable: &U,
         _update: &Self::Update,
     ) -> Result<(), Infallible> {
@@ -124,7 +144,7 @@ pub struct NewSupports {
 }
 
 impl NewSupports {
-    pub fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
+    pub const fn new(observer: EventId, last_committed: Option<CausalFrontier>) -> Self {
         Self {
             observer,
             last_committed,
@@ -146,7 +166,7 @@ impl QueryOperation for NewSupports {
     }
 }
 
-impl<U> Eval<(), U, NewSupports> for LeaderVote
+impl<U> Eval<U, NewSupports> for LeaderVote
 where
     U: IsUnstableCausal<<Self as ReplicatedDataType>::Update>
         + IsUnstableCore<<Self as ReplicatedDataType>::Update>,
@@ -173,7 +193,7 @@ where
                         return false;
                     }
                 }
-                LeaderVote::supports(unstable, candidate.id(), supporter)
+                Self::supports(unstable, candidate.id(), supporter)
             })
             .map(|candidate| SupportDelta {
                 candidate: candidate.id().clone(),

@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{
     fmt::{Debug, Display, Formatter},
     hash::Hash,
@@ -12,12 +27,13 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{Contains, Get, QueryOperation, Read},
-    },
+    data_type::query::{Contains, Get, QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog, po_log::VecLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+        po_log::VecLog,
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::Rng;
@@ -300,7 +316,7 @@ where
 #[cfg(test)]
 mod tests {
     use moirai_protocol::{
-        crdt::query::{Get, Read},
+        data_type::query::{Get, Read},
         replica::IsReplica,
         state::po_log::{GraphLog, VecLog},
     };

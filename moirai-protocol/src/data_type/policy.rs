@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{borrow::Cow, cmp::Ordering, fmt::Debug};
 
 use crate::event::tag::Tag;
@@ -61,6 +76,7 @@ impl PartialOrd for LwwTag<'_> {
 }
 
 /// Fair (https://amturing.acm.org/p558-lamport.pdf)
+///
 /// Use a round-robin policy to break ties.
 /// For example, if C_i(a) = C_j(b) and j < i then we can let a -> b
 /// if j < C_i(a) mod N <= i, and b -> a otherwise; where N is the total number of processes.
@@ -138,7 +154,7 @@ mod tests {
 
     use crate::{
         broadcast::internalizer::Interner,
-        crdt::policy::FairTag,
+        data_type::policy::FairTag,
         event::{id::EventId, lamport::Lamport, tag::Tag},
         replica::{ReplicaId, ReplicaIdx},
     };

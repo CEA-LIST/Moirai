@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//  
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+// 
+//  SPDX-License-Identifier: Apache-2.0
+//  
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::{cmp::Ordering, convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
 #[cfg(feature = "test_utils")]
@@ -7,12 +22,11 @@ use moirai_fuzz::{
     generator::op_generator::OpGenerator, generator::value_generator::ValueGenerator,
 };
 use moirai_protocol::{
-    crdt::{
-        eval::Eval,
+    data_type::{
         query::{QueryOperation, Read},
-        redundancy::RedundancyRelation,
-        replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, RedundancyRelation,
+            ReplicatedDataType,
         },
     },
     event::{tag::Tag, tagged_op::TaggedOp},
@@ -92,7 +106,7 @@ impl<V, U> CausalReset<U> for PORegister<V> where
 {
 }
 
-impl<V, U> Eval<Vec<<Self as ReplicatedDataType>::Update>, U, Read<FxHashSet<V>>> for PORegister<V>
+impl<V, U> Eval<U, Read<FxHashSet<V>>> for PORegister<V>
 where
     V: Debug + PartialOrd + Clone + Eq + PartialEq + Hash,
     U: IsUnstableCore<<Self as ReplicatedDataType>::Update>,
@@ -153,7 +167,7 @@ where
 mod tests {
     use std::cmp::Ordering;
 
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica};
 
     use crate::{
         register::{po_register::PORegister, update::RegisterUpdate},

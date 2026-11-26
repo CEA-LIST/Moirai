@@ -11,12 +11,12 @@ use moirai_fuzz::{
 };
 use moirai_protocol::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    crdt::{
-        eval::EvalNested,
-        query::{QueryOperation, Read},
-    },
+    data_type::query::{QueryOperation, Read},
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 #[cfg(feature = "fuzz")]
 use rand::RngExt;
@@ -166,7 +166,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use moirai_protocol::{crdt::query::Read, replica::IsReplica, state::po_log::VecLog};
+    use moirai_protocol::{data_type::query::Read, replica::IsReplica, state::po_log::VecLog};
 
     use crate::{
         counter::{Counter, update::CounterUpdate},

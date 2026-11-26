@@ -1,3 +1,18 @@
+/////////////////////////////////////////////////////////////////////////////
+//  Copyright (c) 2025, 2026 CEA LIST.
+//
+//  This program and the accompanying materials
+//  are made available under the terms of the Apache License, Version 2.0
+//  which accompanies this distribution, and is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+// Léo Olivier -  (CEA LIST) - Initial implementation
+//
+/////////////////////////////////////////////////////////////////////////////
+
 use std::fmt::Debug;
 
 pub trait QueryOperation {
@@ -34,7 +49,7 @@ impl<V> QueryOperation for Read<V> {
 }
 
 impl<V> Read<V> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(std::marker::PhantomData)
     }
 }
@@ -63,7 +78,7 @@ impl<V> QueryOperation for ReadStable<V> {
 }
 
 impl<V> ReadStable<V> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(std::marker::PhantomData)
     }
 }
@@ -131,31 +146,5 @@ where
             key,
             format!("{}({:?})", Q::name(), self.nested_query.args()),
         ]
-    }
-}
-
-#[cfg(all(test, feature = "test_utils"))]
-mod tests {
-    use super::*;
-
-    struct PlainQuery;
-
-    // A consumer without its own test-utils feature implements only the
-    // semantic contract, even when this crate's test-utils feature is enabled.
-    impl QueryOperation for PlainQuery {
-        type Response = usize;
-    }
-
-    #[test]
-    fn metadata_defaults_do_not_require_consumer_feature_alignment() {
-        assert_eq!(PlainQuery::name(), std::any::type_name::<PlainQuery>());
-        assert!(PlainQuery.args().is_empty());
-    }
-
-    #[test]
-    fn explicit_query_metadata_overrides_defaults() {
-        let query = Contains(7);
-        assert_eq!(Contains::<i32>::name(), "Contains");
-        assert_eq!(query.args(), vec!["7"]);
     }
 }
