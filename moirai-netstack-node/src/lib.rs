@@ -81,6 +81,9 @@ struct Hosted<R> {
     /// The replica's reason for the last remote input it refused.
     last_refusal: Option<String>,
     transfer: TransferState,
+    /// Per peer and replica id: the highest sequence already asked back for, so
+    /// a lead that never arrives is not asked again.
+    asked_back: BTreeMap<PeerId, BTreeMap<String, u64>>,
 }
 
 impl<R: ReplicaPort> Hosted<R> {
@@ -90,6 +93,7 @@ impl<R: ReplicaPort> Hosted<R> {
             foreign_log_refusals: 0,
             last_refusal: None,
             transfer: TransferState::default(),
+            asked_back: BTreeMap::new(),
         }
     }
 
@@ -462,19 +466,50 @@ impl<F: ReplicaFactory, T: CrdtTransport> Node<F, T> {
         }
     }
 
-    /// Answer a delta request with a Batch carrying the replica's `ops_since`.
+    /// Answer a delta request with a Batch carrying the replica's `ops_since`,
+    /// then ask the sender back for a lead its frontier shows and this replica
+    /// lacks (388715b): the batch first so it catches up before the ask, once
+    /// per lead, and never for a log with no history.
     fn answer_sync(&mut self, from: &PeerId, log_id: &LogId, since: &Value) {
         let Some(log) = self.logs.get_mut(log_id) else {
             self.note_filtered(log_id);
             return;
         };
         let frontier = since.get("frontier").cloned().unwrap_or(Value::Null);
+        let ask_back = if log.has_no_history() {
+            false
+        } else {
+            match log.replica.undelivered(&frontier) {
+                Ok(leads) => {
+                    let asked = log.asked_back.entry(from.clone()).or_default();
+                    leads.into_iter().fold(false, |fresh, (id, seq)| {
+                        let last = asked.entry(id).or_default();
+                        if seq > *last {
+                            *last = seq;
+                            true
+                        } else {
+                            fresh
+                        }
+                    })
+                }
+                Err(reason) => {
+                    eprintln!(
+                        "[{}] log {log_id} cannot compare a frontier from {from}: {reason}",
+                        self.replica_id
+                    );
+                    false
+                }
+            }
+        };
         match log.replica.ops_since(frontier) {
             Ok(ops) => {
                 let batch = json!({ "log_id": log_id.as_str(), "events": [ops] });
                 self.send(from, TransportMessage::Batch { batch });
             }
             Err(reason) => refused(&self.replica_id, log_id, log, reason),
+        }
+        if ask_back {
+            self.request_delta(log_id, from);
         }
     }
 

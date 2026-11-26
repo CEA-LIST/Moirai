@@ -30,6 +30,13 @@ pub trait ReplicaPort {
     fn frontier(&self) -> Opaque;
     /// The answer to a `SyncRequest`.
     fn ops_since(&mut self, frontier: Opaque) -> Result<Opaque, String>;
+    /// The entries of `frontier` naming events this replica has not delivered,
+    /// the highest sequence per replica id: empty when it covers `frontier`. A
+    /// replica that cannot compare a frontier must say so, never answer that
+    /// nothing is missing.
+    fn undelivered(&self, _frontier: &Opaque) -> Result<Vec<(String, u64)>, String> {
+        Err("this replica does not compare a frontier with what it has delivered".to_string())
+    }
     fn progress(&self) -> Progress;
     fn members(&self) -> Vec<String>;
     /// A returning member is refused a snapshot.

@@ -1,7 +1,7 @@
 //! A toy replica for `moirai-netstack` and the port-level contract suite
 //! every adapter runs (NW.31c). The toy is a grow-only set with no Moirai.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use moirai_netstack::{Opaque, Progress, ReplicaFactory, ReplicaPort};
 use serde_json::{Value, json};
@@ -138,6 +138,36 @@ impl ReplicaPort for ToyReplica {
             .map(|(origin, element)| self.event(origin, element))
             .collect();
         Ok(Value::Array(events))
+    }
+
+    fn undelivered(&self, frontier: &Opaque) -> Result<Vec<(String, u64)>, String> {
+        let entries = frontier
+            .as_array()
+            .ok_or_else(|| format!("malformed frontier: {frontier}"))?;
+        // A lead's sequence is its position in the origin's stream, which the
+        // frontier lists in delivery order and so in a stable order.
+        let mut seen: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut missing = Vec::new();
+        for entry in entries {
+            let pair = entry
+                .as_array()
+                .ok_or_else(|| format!("malformed frontier: {frontier}"))?;
+            let (Some(origin), Some(element)) = (
+                pair.first().and_then(Value::as_str),
+                pair.get(1).and_then(Value::as_str),
+            ) else {
+                return Err(format!("malformed frontier: {frontier}"));
+            };
+            let seq = seen.entry(origin).or_default();
+            *seq += 1;
+            if !self
+                .delivered
+                .contains(&(origin.to_string(), element.to_string()))
+            {
+                missing.push((origin.to_string(), *seq));
+            }
+        }
+        Ok(missing)
     }
 
     fn progress(&self) -> Progress {

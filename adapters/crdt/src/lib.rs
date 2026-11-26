@@ -343,6 +343,28 @@ where
         ))
     }
 
+    fn undelivered(&self, frontier: &Opaque) -> Result<Vec<(String, u64)>, String> {
+        let frontier: Frontier = serde_json::from_value(frontier.clone())
+            .map_err(|e| format!("a malformed frontier: {e}"))?;
+        if frontier.version.len() > frontier.ids.len() {
+            return Err("a malformed frontier: its version is longer than its ids".to_string());
+        }
+        let message = self.replica.since();
+        let delivered = message.since().version();
+        let mut missing = Vec::new();
+        for (idx, id) in frontier.ids.iter().enumerate() {
+            let seq = frontier.version.get(idx).copied().unwrap_or(0);
+            let have = delivered
+                .resolver()
+                .get(&ReplicaId::from(id.as_str()))
+                .map_or(0, |idx| delivered.seq_by_idx(idx));
+            if seq > have {
+                missing.push((id.clone(), seq as u64));
+            }
+        }
+        Ok(missing)
+    }
+
     fn progress(&self) -> Progress {
         let message = self.replica.since();
         let since = message.since();
