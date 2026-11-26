@@ -41,10 +41,11 @@ changes() { { git diff --name-only "$BASE" -- "$@"; git status --porcelain --unt
 stray=$(changes . | grep -Ev '^(moirai-netstack/src/|moirai-netstack-node/src/|moirai-netstack-testkit/src/|adapters/crdt/src/|tests/nw31m/|moirai-netstack-node/tests/nw31m_ask_back\.rs$|adapters/crdt/tests/nw31m_upstream_ask_back\.rs$|Cargo\.lock$|README\.md$)')
 report change_set_in_scope "$([ -z "$stray" ]; echo $?)" "$(echo $stray)"
 
-# 2. The oracle files: unchanged since the commit that added this gate.
-first=$(git log --diff-filter=A --format=%H -- tests/nw31m/gate.sh | tail -n 1)
+# 2. The oracle files: unchanged since the latest oracle commit of this gate
+# (subject "NW.31m oracle"; the spec names it).
+first=$(git log -n 1 --format=%H -E --grep='^NW\.31m oracle' -- tests/nw31m/gate.sh)
 if [ -z "$first" ]; then
-  report oracle_unchanged 1 "tests/nw31m/gate.sh is not committed"
+  report oracle_unchanged 1 "no NW.31m oracle commit of tests/nw31m/gate.sh"
 else
   changed=$(git diff --name-only "$first" -- "${ORACLE[@]}"; git status --porcelain --untracked-files=all -- "${ORACLE[@]}")
   report oracle_unchanged "$([ -z "$changed" ]; echo $?)" "$(echo $changed)"
