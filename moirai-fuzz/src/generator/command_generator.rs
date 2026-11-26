@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -16,11 +16,15 @@
 use std::fmt::Debug;
 
 use moirai_protocol::{
-    commitment::commit_log::CommitmentLog, crdt::replicated_data_type::{
+    commitment::commit_log::CommitmentLog,
     data_type::replicated::{
         CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-    }, state::{
-        cache::{CachedLog, IncrementalCache}, log::IsLog, po_log::POLog, unstable_state::{IsUnstableCore, IsUnstablePrune},
+    },
+    state::{
+        cache::{CachedLog, IncrementalCache},
+        log::IsLog,
+        po_log::POLog,
+        unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
 use rand::Rng;
@@ -29,7 +33,7 @@ use crate::generator::op_generator::OpGenerator;
 
 /// Generates client commands from the current state of a log.
 pub trait CommandGenerator: IsLog {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command;
 }
 
 //* Default implementations of CommandGenerator for some common log types.
@@ -44,7 +48,7 @@ where
         + CausalReset<U>,
     U: IsUnstableCore<R::Update> + IsUnstablePrune<R::Update> + Default + Debug,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         R::generate(
             rng,
             &<R as OpGenerator<U>>::Config::default(),
@@ -59,7 +63,7 @@ where
     L: IsLog + CommandGenerator,
     V: IncrementalCache<L::Update> + Debug,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         self.inner().generate_command(rng)
     }
 }
@@ -68,13 +72,13 @@ impl<L> CommandGenerator for CommitmentLog<L>
 where
     L: IsLog + CommandGenerator,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         self.child().generate_command(rng)
     }
 }
 
 impl<L: CommandGenerator> CommandGenerator for Box<L> {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         (**self).generate_command(rng)
     }
 }

@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -18,11 +18,19 @@ use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    clock::causal_frontier::CausalFrontier, crdt::{
-        eval::Eval, policy::{LwwPolicy, Policy}, query::{Contains, QueryOperation, Read}, replicated_data_type::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, Reconciled, Reconciliation, ReplicatedDataType, Sequential, SequentialEval, Stabilization, Stable,
+    clock::causal_frontier::CausalFrontier,
+    data_type::{
+        policy::{LwwPolicy, Policy},
+        query::{Contains, QueryOperation, Read},
+        reconciliation::{Reconciled, Reconciliation},
+        replicated::{
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
+            Stabilization, Stable,
         },
-    }, event::{lamport::Lamport, tagged_op::TaggedOp}, state::unstable_state::IsUnstableCore,
+        sequential::{SequentialDataType, SequentialEval},
+    },
+    event::{lamport::Lamport, tagged_op::TaggedOp},
+    state::unstable_state::IsUnstableCore,
 };
 
 use crate::{FxHashSet, set::update::SetUpdate};
@@ -59,16 +67,17 @@ where
 pub struct ReconciledSet<V>(PhantomData<V>);
 
 impl<V: Debug + Clone + Eq + Hash> ReconciledSet<V> {
-
-    fn get_frontier_from_lamport(unstable: & impl IsUnstableCore<SetUpdate<V>>, watermark: Lamport) -> Option<CausalFrontier> {
-        let eligible_ids: Vec<_> = unstable.iter()
+    fn get_frontier_from_lamport(
+        unstable: &impl IsUnstableCore<SetUpdate<V>>,
+        watermark: Lamport,
+    ) -> Option<CausalFrontier> {
+        let eligible_ids: Vec<_> = unstable
+            .iter()
             .filter(|op| op.lamport().val() <= watermark.val())
             .map(|op| op.id().clone())
             .collect();
 
-        let Some(first_id) = eligible_ids.first() else {
-            return None
-        };
+        let first_id = eligible_ids.first()?;
 
         let mut frontier = CausalFrontier::new(first_id.resolver().clone());
 
@@ -84,7 +93,6 @@ impl<V: Debug + Clone + Eq + Hash> ReconciledSet<V> {
 
         Some(frontier)
     }
-
 }
 
 impl<V: Debug + Clone + Eq + Hash> ReplicatedDataType for ReconciledSet<V> {
@@ -109,24 +117,23 @@ where
 }
 
 impl<V: Debug + Clone + Eq + Hash, U> CausalStabilize<U> for ReconciledSet<V>
-where 
-    U: IsUnstableCore<SetUpdate<V>>
+where
+    U: IsUnstableCore<SetUpdate<V>>,
 {
-
     const DISABLE_STABILIZE: bool = false;
 
     fn causal_stabilize(
         frontier: &CausalFrontier,
         stable: &Stable<Self>,
         unstable: &U,
-    ) -> Stabilization<Stable<Self>>
-    {
+    ) -> Stabilization<Stable<Self>> {
         let lamport = frontier.sum();
 
-        let new_frontier = match ReconciledSet::get_frontier_from_lamport(unstable,Lamport::new(lamport)) {
-            Some(f) => f,
-            None => return Stabilization::None
-        };
+        let new_frontier =
+            match ReconciledSet::get_frontier_from_lamport(unstable, Lamport::new(lamport)) {
+                Some(f) => f,
+                None => return Stabilization::None,
+            };
 
         let mut new_stable = stable.clone();
 
@@ -136,7 +143,10 @@ where
             new_stable.apply(tagged_op.op());
         }
 
-        Stabilization::Critical { frontier: new_frontier, stable: new_stable }
+        Stabilization::Critical {
+            frontier: new_frontier,
+            stable: new_stable,
+        }
     }
 }
 
@@ -250,7 +260,7 @@ mod tests {
     use moirai_protocol::{
         data_type::query::{Contains, Read},
         replica::IsReplica,
-        state::po_log::GraphLog,
+        state::po_log::{GraphLog, VecLog},
     };
 
     use crate::{
@@ -296,14 +306,6 @@ mod tests {
 
     #[test]
     fn reconciled_set_converges_after_repeated_lamport_stabilization() {
-        use moirai_protocol::{
-            crdt::query::Read,
-            replica::IsReplica,
-            state::{
-                unstable_state::IsUnstableCore,
-            },
-        };
-
         use crate::{
             set::{reconciled_set::ReconciledSet, update::SetUpdate},
             utils::bootstrap::twins_log,
@@ -336,10 +338,8 @@ mod tests {
 
             assert_eq!(a.delivered_count(), b.delivered_count());
 
-            let stable_a =
-                a.delivered_count() - a.state().unstable().iter().count();
-            let stable_b =
-                b.delivered_count() - b.state().unstable().iter().count();
+            let stable_a = a.delivered_count() - a.state().unstable().iter().count();
+            let stable_b = b.delivered_count() - b.state().unstable().iter().count();
 
             if stable_a > last_stable_a {
                 stable_progress_rounds_a += 1;
