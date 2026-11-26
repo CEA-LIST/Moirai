@@ -97,6 +97,7 @@ macro_rules! record {
 
             /// Record log type, containing a log for each field.
             #[derive(Debug, Default, Clone)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub struct [<$name Log>] {
                 $(
                     $field: $T,

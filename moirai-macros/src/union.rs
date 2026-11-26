@@ -52,6 +52,7 @@ macro_rules! union {
 
             /// Set of Union CRDT child logs, one for each variant
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Child>] {
                 $(
                     $variant($log),
@@ -109,6 +110,7 @@ macro_rules! union {
 
             /// Internal Union log state
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub enum [<$union Container>] {
                 #[default]
@@ -119,6 +121,7 @@ macro_rules! union {
 
             /// Union log
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub struct [<$union Log>] {
                 pub child: [<$union Container>],
