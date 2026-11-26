@@ -44,6 +44,14 @@ type LabeledMultidigraph<V, E, Vl, El> = DiGraph<Content<V, Vl>, Content<(V, V, 
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "V: serde::Serialize, E: serde::Serialize, Vl: serde::Serialize, El: serde::Serialize",
+        deserialize = "V: serde::Deserialize<'de>, E: serde::Deserialize<'de>, Vl: serde::Deserialize<'de>, El: serde::Deserialize<'de>"
+    ))
+)]
 pub struct UWGraphLog<V, E, Vl, El>
 where
     V: Clone + Debug + Eq + PartialEq + Hash,
@@ -51,7 +59,9 @@ where
     Vl: IsLog,
     El: IsLog,
 {
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_entries"))]
     vertices: FxHashMap<V, Vl>,
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_entries"))]
     arcs: FxHashMap<(V, V, E), El>,
 }
 

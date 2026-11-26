@@ -44,11 +44,19 @@ use crate::{FxHashMap, map::update::MapUpdate};
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "K: Serialize, L: Serialize",
+        deserialize = "K: Deserialize<'de>, L: Deserialize<'de>"
+    ))
+)]
 pub struct UWMapLog<K, L>
 where
     K: Clone + Eq + Hash,
     L: IsLog,
 {
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_entries"))]
     children: FxHashMap<K, L>,
 }
 

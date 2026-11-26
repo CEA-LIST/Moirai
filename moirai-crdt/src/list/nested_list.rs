@@ -49,6 +49,7 @@ use crate::{
 /// Maintains both the logical ordering of children (via EgWalker) and the
 /// actual child CRDT instances.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
 pub struct NestedListLog<L>
 where
