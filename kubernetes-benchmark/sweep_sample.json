@@ -1,0 +1,10 @@
+{
+  "output_folder": "configs/scaling",
+  "replicas": [4, 8],
+  "total_rates": [400, 800, 1600],
+  "protocols": ["timestamp", "commit", "creek"],
+  "repetitions": 3,
+  "duration_s": 30,
+  "with_fault": false,
+  "failure_time_s": 10
+}

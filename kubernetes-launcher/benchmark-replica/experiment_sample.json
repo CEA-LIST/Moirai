@@ -1,0 +1,27 @@
+{
+  "simulation_name": "creek-4r-400ops",
+  "n_replicas": 4,
+  "protocol": "creek",
+  "replica_image": "moirai-replica-benchmark:dev",
+  "replica_settings": {
+    "pull_interval_ms": 500,
+    "pull_peer_count": 1,
+    "noop_interval_ms": 300,
+    "event_timeout_ms": 1000
+  },
+  "workload": {
+    "rate_per_replica": 100,
+    "duration_s": 30,
+    "query_percent": 20,
+    "add_percent": 50,
+    "key_space": 1024,
+    "queue_capacity": 4096,
+    "seed": 42
+  },
+  "sample_interval_ms": 1000,
+  "network_interface": "eth0",
+  "grace_s": 5,
+  "startup_timeout_s": 180,
+  "drain_timeout_s": 120,
+  "fault_after_s": null
+}
