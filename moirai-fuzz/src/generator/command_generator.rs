@@ -16,15 +16,11 @@
 use std::fmt::Debug;
 
 use moirai_protocol::{
-    commitment::commit_log::CommitmentLog,
+    commitment::commit_log::CommitmentLog, crdt::replicated_data_type::{
     data_type::replicated::{
         CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
-    },
-    state::{
-        cache::{CachedLog, IncrementalCache},
-        log::IsLog,
-        po_log::POLog,
-        unstable_state::{IsUnstableCore, IsUnstablePrune},
+    }, state::{
+        cache::{CachedLog, IncrementalCache}, log::IsLog, po_log::POLog, unstable_state::{IsUnstableCore, IsUnstablePrune},
     },
 };
 use rand::Rng;
