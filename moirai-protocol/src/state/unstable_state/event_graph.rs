@@ -43,6 +43,7 @@ use crate::{
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EventGraph<O> {
     /// Directed Acyclic Graph (DAG) of update events.
     /// - Vertices are update operations tagged with their event id.
@@ -50,13 +51,16 @@ pub struct EventGraph<O> {
     ///   Edges point from a child to its direct causal parents.
     graph: StableDiGraph<TaggedOp<O>, ()>,
     /// Bidirectional map from graph's node index to event id
+    #[cfg_attr(feature = "serde", serde(skip))]
     map: BiMap<NodeIndex, EventId>,
     /// Maximal events in the graph.
     /// Set of event ids that are heads of the graph (no children).
+    #[cfg_attr(feature = "serde", serde(skip))]
     heads: FxHashSet<EventId>,
     /// Latest critical frontier flushed into the stable state.
     roots: Option<CausalFrontier>,
     /// Contains EventIds retained for parent discovery, sorted by process and sequence number.
+    #[cfg_attr(feature = "serde", serde(skip))]
     cutter: Cutter,
     /// Lengths of critical prefixes in dense topological replay order.
     /// Each append pushes one cut and permanently pops the invalidated cuts.
@@ -386,11 +390,76 @@ impl<O> Default for EventGraph<O> {
 }
 
 impl<O> EventGraph<O> {
+    #[cfg(feature = "serde")]
+    fn rebuild_indices(&mut self) {
+        self.map = BiMap::new();
+        self.heads.clear();
+        self.cutter = Cutter::new();
+        for node in self.graph.node_indices() {
+            let id = self.graph[node].id().clone();
+            self.cutter.insert(&id, node);
+            self.map.insert(node, id.clone());
+            if self
+                .graph
+                .neighbors_directed(node, Direction::Incoming)
+                .next()
+                .is_none()
+            {
+                self.heads.insert(id);
+            }
+        }
+    }
+
     pub fn from_checkpoint(frontier: CausalFrontier) -> Self {
         Self {
             roots: Some(frontier),
             ..Self::default()
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, O: serde::Deserialize<'de>> serde::Deserialize<'de> for EventGraph<O> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Stored<O> {
+            graph: StableDiGraph<TaggedOp<O>, ()>,
+            roots: Option<CausalFrontier>,
+            critical_versions: Vec<usize>,
+        }
+        let stored = Stored::deserialize(deserializer)?;
+        if stored
+            .graph
+            .node_indices()
+            .enumerate()
+            .any(|(idx, node)| idx != node.index())
+            || stored.graph.node_indices().any(|node| {
+                stored
+                    .graph
+                    .neighbors_directed(node, Direction::Outgoing)
+                    .any(|parent| parent.index() >= node.index())
+            })
+            || stored
+                .critical_versions
+                .iter()
+                .any(|&cut| cut == 0 || cut > stored.graph.node_count())
+            || stored
+                .critical_versions
+                .windows(2)
+                .any(|cuts| cuts[0] >= cuts[1])
+        {
+            return Err(serde::de::Error::custom(
+                "invalid event graph replay order or critical prefix",
+            ));
+        }
+        let mut graph = Self {
+            graph: stored.graph,
+            roots: stored.roots,
+            critical_versions: stored.critical_versions,
+            ..Self::default()
+        };
+        graph.rebuild_indices();
+        Ok(graph)
     }
 }
 

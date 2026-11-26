@@ -23,6 +23,7 @@ use crate::event::{id::EventId, lamport::Lamport};
 /// A tag that contains an event ID and a Lamport timestamp
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Tag {
     id: EventId,
     lamport: Lamport,

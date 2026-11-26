@@ -34,6 +34,7 @@ pub type Seq = usize;
 
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VersionEntries(pub(super) Vec<Seq>);
 
 impl VersionEntries {
@@ -87,6 +88,7 @@ impl VersionEntries {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Version {
     pub(super) entries: VersionEntries,
     pub(super) origin_idx: ReplicaIdx,
