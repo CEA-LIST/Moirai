@@ -431,6 +431,12 @@ where
     /// adopted log stays valid. Only for a replica that has sent nothing: peers
     /// would otherwise hold its older member table.
     pub(crate) fn adopt(&mut self, snapshot: StateSnapshot<O>, table: Resolver, id: &ReplicaId) {
+        let own = self.matrix_clock.origin_version();
+        assert_eq!(
+            own.seq_by_idx(own.origin_idx()),
+            0,
+            "a replica that has sent events cannot adopt a snapshot: its history would be lost"
+        );
         let mut interner = Interner::from_resolver(table);
         let (idx, _) = interner.intern(id);
         let mut adopted = Self::new(idx, interner);

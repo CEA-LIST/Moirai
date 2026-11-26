@@ -231,7 +231,7 @@ where
 
     /// Replace this replica's log and causal bookkeeping with a donor's,
     /// keeping this replica's own id. Only for a replica that has sent
-    /// nothing yet.
+    /// nothing yet: panics otherwise, as its own events would be lost.
     pub fn adopt(&mut self, snapshot: ReplicaSnapshot<L, L::Update>) {
         self.tcsb.adopt(snapshot.tcsb, snapshot.table, &self.id);
         self.state = snapshot.state;
