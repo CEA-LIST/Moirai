@@ -1,5 +1,7 @@
 """Read replica logs and compute the statistics used by both viewers."""
 
+from bisect import bisect_right
+from math import isfinite, nan
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -49,12 +51,14 @@ class Run:
         return {replica: sample for replica, samples in self.samples.items()
                 for sample in samples if sample["drained"]}
 
-    def latencies_ms(self, include_uncommitted=False):
+    def latencies_ms(self, include_uncommitted=False, *, start=None, end=None):
         delays = [latency / 1_000_000 for samples in self.samples.values() for sample in samples
-                  for _, latency, _ in sample["commit_latency_samples"]]
+                  for stamp, latency, _ in sample["commit_latency_samples"]
+                  if (start is None or stamp > start * NS) and (end is None or stamp <= end * NS)]
         if include_uncommitted:
             for seal, updates in self.uncommitted.values():
-                delays.extend((seal - dequeue) / 1_000_000 for dequeue, _ in updates)
+                if (start is None or seal > start * NS) and (end is None or seal <= end * NS):
+                    delays.extend((seal - dequeue) / 1_000_000 for dequeue, _ in updates)
         return delays
 
 
@@ -127,12 +131,63 @@ def load_runs(root):
     return runs, notes
 
 
-def summary(run):
+def measurement_interval(run, start=None, end=None):
+    """Resolve bounds against the same surviving observer used by summaries.
+
+    An explicit interval must fit the observer's recorded horizon; missing
+    coverage is not extrapolated or silently shortened.
+    """
+    drains = run.drain_samples
+    replica = min(drains)
+    begin = 0.0 if start is None else start
+    finish = drains[replica]["elapsed_ns"] / NS if end is None else end
+    if (not isfinite(begin) or not isfinite(finish) or not 0 <= begin < finish
+            or finish > run.samples[replica][-1]["elapsed_ns"] / NS):
+        return None
+    return begin, finish
+
+
+def achieved_throughput(run, start=None, end=None):
+    drains = run.drain_samples
+    replica = min(drains)
+    if start is None and end is None:
+        row = drains[replica]
+        return row["committed_updates"] / (row["elapsed_ns"] / NS)
+    interval = measurement_interval(run, start, end)
+    if interval is None:
+        return nan
+    rows = run.samples[replica]
+    times = [row["elapsed_ns"] / NS for row in rows]
+    counts = [row["committed_updates"] for row in rows]
+    if times[0] > 0:
+        times.insert(0, 0.0)
+        counts.insert(0, 0)
+
+    def counter(t):
+        index = bisect_right(times, t) - 1
+        if times[index] == t:
+            return counts[index]
+        fraction = (t - times[index]) / (times[index + 1] - times[index])
+        return counts[index] + fraction * (counts[index + 1] - counts[index])
+
+    begin, finish = interval
+    return (counter(finish) - counter(begin)) / (finish - begin)
+
+
+def achieved_latencies_ms(run, include_uncommitted=False, start=None, end=None):
+    if start is None and end is None:
+        return run.latencies_ms(include_uncommitted)
+    interval = measurement_interval(run, start, end)
+    if interval is None:
+        return []
+    return run.latencies_ms(include_uncommitted, start=interval[0], end=interval[1])
+
+
+def summary(run, start=None, end=None):
     drains = run.drain_samples
     # Each observer counts every origin. One surviving observer yields a unique
     # cluster throughput without multiplying by the degree of replication.
-    reference = drains[min(drains)]
-    throughput = reference["committed_updates"] / (reference["elapsed_ns"] / NS)
+    throughput = achieved_throughput(run, start, end)
     return {
         "network": mean((row["resources"]["rx_bytes"] + row["resources"]["tx_bytes"]) / MIB
                         for row in drains.values()),

@@ -87,6 +87,24 @@ the current controls in the export.
   a deliberate crash can contribute origin latency until that replica's last
   sample. The inventory shows local-commit coverage for sealed replicas and
   dropped generator slots for drained replicas.
+- **Steady-period comparisons**: in the throughput viewer, set **Achieved metrics
+  start (s)** and **Achieved metrics end (s)** to recompute both throughput/latency
+  comparison graphs and the inventory's achieved rate over a selected interval.
+  Times are seconds since each replica's workload start. Throughput is the
+  reference observer's cumulative commit-count increase divided by interval
+  duration; counts are linearly interpolated at interval boundaries. Latencies
+  are selected by commitment timestamp in `(start, end]`, retaining each
+  operation's full dequeue-to-commit delay. Percentiles keep equal run weighting;
+  the mean graph pools all selected committed-operation latencies.
+  A blank start means zero; a blank end means the reference observer's drain
+  time. Leaving **both** fields blank preserves the default drain-throughput
+  and seal-latency calculation described above. Explicit bounds may include the
+  grace period when recorded. Runs that cannot cover the requested interval
+  are omitted from achieved-metric graphs and marked unavailable in the table.
+  Pending-operation lower bounds contribute only if their seal time lies inside
+  the interval and the include-pending option is enabled; the mean graph always
+  excludes pending operations. JSON graph downloads record the requested bounds.
+  These fields are independent of the timeline bounds and resource summaries.
 - **Timelines** align to each replica's start. Latency is p95 over
   observations in the trailing window, grouped by commit time. Throughput
   and CPU usage use deltas of cumulative counters divided by elapsed wall

@@ -8,7 +8,7 @@ from statistics import mean
 
 from matplotlib.figure import Figure
 
-from benchmark_results import MIB, NS, percentiles, summary
+from benchmark_results import MIB, NS, achieved_latencies_ms, percentiles, summary
 
 
 TITLES = {
@@ -46,6 +46,8 @@ class PlotOptions:
     step: float = 0.5
     start: float = 0.0
     end: float | None = None
+    measurement_start: float | None = None
+    measurement_end: float | None = None
     include_uncommitted: bool = False
     titles: dict = field(default_factory=dict)
     colors: dict = field(default_factory=dict)
@@ -66,6 +68,14 @@ def chart(options, key, xlabel, ylabel):
     axis.set(title=options.titles.get(key, TITLES[key]), xlabel=xlabel, ylabel=ylabel)
     axis.grid(alpha=0.2)
     figure.benchmark_data = {"schema_version": 1, "graph": key, "series": [], "annotations": []}
+    if key in ("sweep", "sweep_mean"):
+        figure.benchmark_data["measurement_interval"] = {
+            "start_s": options.measurement_start, "end_s": options.measurement_end,
+            "latency_selection": "commit time in (start, end]",
+            "throughput_method": "interpolated cumulative counter delta / interval seconds",
+            "enabled": options.measurement_start is not None or options.measurement_end is not None,
+            "blank_end": "reference replica drain time",
+        }
     return figure, axis
 
 
@@ -97,7 +107,7 @@ def comparison_plots(runs, basis, sweep, options):
     for run in runs:
         x = run.load(basis) if sweep else run.replicas
         grouped[run.implementation][x].append(run)
-        summaries[run.name] = summary(run)
+        summaries[run.name] = summary(run, options.measurement_start, options.measurement_end)
     axis_values = sorted({x for points in grouped.values() for x in points})
     positions = {value: index for index, value in enumerate(axis_values)}
     width = 0.8 / len(grouped)
@@ -128,7 +138,9 @@ def comparison_plots(runs, basis, sweep, options):
             rate_cuts = {}
             for x in xs:
                 available = [(summaries[run.name]["throughput"], cuts) for run in points[x]
-                             if (cuts := percentiles(run.latencies_ms(options.include_uncommitted)))]
+                             if isfinite(summaries[run.name]["throughput"])
+                             and (cuts := percentiles(achieved_latencies_ms(
+                                 run, options.include_uncommitted, options.measurement_start, options.measurement_end)))]
                 if available:
                     rate_cuts[x] = available
             for p, linestyle in ((50, "-"), (95, "--"), (99, ":")):
@@ -170,9 +182,10 @@ def mean_commit_latency_plot(runs, basis, options):
         for load, matching in sorted(grouped[protocol].items()):
             rates, delays = [], []
             for run in matching:
-                samples = run.latencies_ms(include_uncommitted=False)
-                if samples:
-                    rates.append(summary(run)["throughput"])
+                samples = achieved_latencies_ms(run, False, options.measurement_start, options.measurement_end)
+                rate = summary(run, options.measurement_start, options.measurement_end)["throughput"]
+                if samples and isfinite(rate):
+                    rates.append(rate)
                     delays.extend(samples)
             if delays:
                 points.append((mean(rates), mean(delays)))

@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from benchmark_plots import PlotOptions, TITLES, comparison_plots, timelines
-from benchmark_results import load_runs, summary
+from benchmark_results import load_runs, measurement_interval, summary
 
 
 def select(name, label, choices, current):
@@ -134,6 +134,32 @@ def page(root, query, sweep, interactive=True):
             end=number(get("end", ""), None),
             include_uncommitted=get("include_uncommitted", "") == "yes",
         )
+        if sweep:
+            raw_start, raw_end = get("measurement_start", "").strip(), get("measurement_end", "").strip()
+            try:
+                options.measurement_start = float(raw_start) if raw_start else None
+                options.measurement_end = float(raw_end) if raw_end else None
+                if any(value is not None and (not isfinite(value) or value < 0)
+                       for value in (options.measurement_start, options.measurement_end)):
+                    raise ValueError
+            except ValueError:
+                # Invalid input must not silently restore full-run statistics.
+                options.measurement_start = options.measurement_end = 0.0
+                notes.append("Achieved-metric bounds must be finite nonnegative seconds; no achieved points are shown.")
+            controls.extend((
+                input_control("measurement_start", "Achieved metrics start (s), blank = 0", raw_start,
+                              "number", 'min="0" step="any"'),
+                input_control("measurement_end", "Achieved metrics end (s), blank = drain", raw_end,
+                              "number", 'min="0" step="any"'),
+            ))
+            if raw_start or raw_end:
+                notes.append("Achieved throughput and both latency comparison graphs use the selected interval. "
+                             "Throughput uses interpolated commit-counter deltas; latencies are selected by commit time in (start, end]. "
+                             "A blank end uses each run's reference-replica drain time. Timelines retain their own controls.")
+                for run in matching:
+                    if measurement_interval(run, options.measurement_start, options.measurement_end) is None:
+                        notes.append(f"{run.name}: no achieved metrics for this interval; require start < end "
+                                     "and coverage through end in the reference replica's log.")
         if options.end is not None and options.end <= options.start:
             options.end = None
             notes.append("The timeline end must be after its start.")
@@ -204,10 +230,12 @@ def page(root, query, sweep, interactive=True):
             eligible = sum(row["processed_updates"] for row in last_samples)
             measured = sum(row["committed_local_updates"] for row in last_samples)
             dropped = sum(done["queue_full"] + done["missed_slots"] for done in run.workload_done.values())
+            achieved = summary(run, options.measurement_start, options.measurement_end)["throughput"]
+            achieved_text = f"{achieved:.2f}" if isfinite(achieved) else "Unavailable"
             inventory.append(
                 f"<tr><td>{escape(run.name)}</td><td>{escape(run.config['protocol'])}</td>"
                 f"<td>{run.replicas}</td><td>{run.load(basis)}</td>"
-                f"<td>{summary(run)['throughput']:.2f}</td><td>{measured}/{eligible}</td><td>{dropped}</td></tr>"
+                f"<td>{achieved_text}</td><td>{measured}/{eligible}</td><td>{dropped}</td></tr>"
             )
         timeline_name = escape(individual.name) if individual else f"Protocol averages across {len(compatible)} runs"
         detail = (f"<p>{escape(describe_conditions(preset))} · {escape(label)} {fixed}</p>"

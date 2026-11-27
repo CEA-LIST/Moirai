@@ -213,17 +213,17 @@ def main():
                     except (RuntimeError, OSError, subprocess.SubprocessError) as failure:
                         warnings.append(str(failure))
             finally:
-                if error is None:
-                    try:
-                        with timed(timings, "namespace_delete_request"):
-                            kube("delete", "namespace", namespace, "--wait=false", timeout=15)
-                    except (RuntimeError, OSError, subprocess.SubprocessError) as failure:
-                        warnings.append(f"cleanup of {namespace}: {failure}")
-                else:
-                    warnings.append(
-                        f"Retained namespace {namespace} for log recovery. "
-                        f"After recovery, delete it with: kubectl delete namespace {namespace}"
-                    )
+                try:
+                    with timed(timings, "namespace_delete_request"):
+                        kube(
+                            "delete", "namespace", namespace,
+                            "--ignore-not-found=true",
+                            "--wait=true",
+                            "--timeout=120s",
+                            timeout=130,
+                        )
+                except (RuntimeError, OSError, subprocess.SubprocessError) as failure:
+                    warnings.append(f"cleanup of {namespace}: {failure}")
         write_json(output / "run.json", {
             "benchmark_version": 3,
             "namespace": namespace,
