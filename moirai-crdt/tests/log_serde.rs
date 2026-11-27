@@ -136,7 +136,7 @@ fn nodes_and_arcs(g: &DiGraph<Instance, Ref>) -> (Vec<Instance>, Vec<(Instance, 
 #[test]
 fn every_log_type_is_serde() {
     serde_both::<SlotLog>();
-    serde_both::<SlotContainer>();
+    serde_both::<SlotBranch>();
     serde_both::<SlotChild>();
     serde_both::<LinkedLog>();
     serde_both::<BitsLog>();
