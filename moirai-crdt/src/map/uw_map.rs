@@ -825,8 +825,7 @@ mod tests {
             "uw_map_rw_set",
             runs,
             Predicate::new(Read::new(), |a, b| a == b),
-        )
-        .save(moirai_fuzz::config::SaveMode::Summary);
+        );
 
         fuzzer::<UWMapNested, Value>(config);
     }

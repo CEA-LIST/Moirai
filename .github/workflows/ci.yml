@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   format:
-    name: Format Moirai
+    name: Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,7 +25,7 @@ jobs:
           --config imports_granularity=Crate,group_imports=StdExternalCrate
 
   features:
-    name: Features Moirai
+    name: Cargo Features
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,12 +44,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - check: Tests Moirai
-            args: ''
-          - check: Tests Serde Moirai
-            args: --features serde,test_utils
-          - check: Tests et fuzzer Moirai
-            args: --release --all-features -- --include-ignored --test-threads=1
+          - check: Standard tests
+            args: ""
+          - check: Ignored tests and fuzzers
+            args: --release -- --ignored --test-threads=1
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v2
@@ -58,9 +56,11 @@ jobs:
           cache-key: ${{ matrix.check }}
       - name: Run workspace tests and doctests
         env:
-          # Check Moirai's internal invariants during optimized fuzz runs.
           CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
-        run: cargo test --workspace --locked --no-fail-fast ${{ matrix.args }}
+        run: >-
+          cargo test --workspace --locked --no-fail-fast
+          --features serde,test_utils
+          ${{ matrix.args }}
 
   clippy:
     name: Clippy
