@@ -17,7 +17,7 @@ use std::{any::type_name, fmt::Display};
 
 use deepsize::DeepSizeOf;
 use moirai_protocol::{
-    commitment::commit_log::CommitmentLog,
+    commitment::{commit_log::CommitmentLog, protocol::AtomicBroadcastProtocol},
     data_type::replicated::ReplicatedDataType,
     state::{cache::CachedLog, log::IsLog, po_log::POLog},
 };
@@ -104,20 +104,14 @@ where
     }
 }
 
-impl<L> LogFootprint for CommitmentLog<L>
+impl<L, A> LogFootprint for CommitmentLog<L, A>
 where
-    L: IsLog + LogFootprint,
+    L: IsLog,
+    A: AtomicBroadcastProtocol<L>,
     Self: DeepSizeOf,
 {
     fn footprint(&self) -> FootprintNode {
-        FootprintNode::parent(
-            self,
-            vec![
-                self.child().footprint(),
-                self.leader_log().footprint(),
-                FootprintNode::leaf(self.protocol()),
-            ],
-        )
+        FootprintNode::leaf(self)
     }
 }
 

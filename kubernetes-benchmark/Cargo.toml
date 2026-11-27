@@ -1,0 +1,8 @@
+[package]
+name = "kubernetes-benchmark"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Run suites of Moirai replica-only Kubernetes benchmarks"
+
+[workspace]

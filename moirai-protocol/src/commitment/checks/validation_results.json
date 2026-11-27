@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "executes_rust": false,
+  "seed_start": 0,
+  "seeds_per_replica_count": 40,
+  "steps": 110,
+  "seeded_executions": 80,
+  "replica_counts": [
+    3,
+    5
+  ],
+  "event_deliveries": 14265,
+  "checkpoint_applications": 1476,
+  "stale_candidates_suppressed": 0,
+  "targeted_checks": [
+    "delayed candidate after pruning",
+    "pre-vertex predecessor choice",
+    "protocol/child log lifecycle"
+  ]
+}

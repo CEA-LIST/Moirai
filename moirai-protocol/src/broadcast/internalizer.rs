@@ -112,6 +112,10 @@ impl Resolver {
     pub fn into_vec(&self) -> Vec<ReplicaId> {
         self.inner.iter().cloned().collect()
     }
+
+    pub(crate) fn identity(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
 }
 
 impl Debug for Resolver {

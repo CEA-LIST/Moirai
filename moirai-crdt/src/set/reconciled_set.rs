@@ -111,7 +111,7 @@ where
     V: Debug + Clone + Eq + Hash,
     U: IsUnstableCore<SetUpdate<V>>,
     Q: QueryOperation,
-    SequentialSet<V>: SequentialEval<Q, Update = SetUpdate<V>>,
+    SequentialSet<V>: SequentialDataType<Update = SetUpdate<V>> + SequentialEval<Q>,
 {
     fn execute_query(stable: &SequentialSet<V>, unstable: &U, query: &Q) -> Q::Response {
         let state = Reconciled::<SequentialSet<V>, Sorted<LwwPolicy>>::fold(stable, unstable);

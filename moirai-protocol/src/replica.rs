@@ -43,7 +43,7 @@ use crate::{
 pub struct ReplicaId(pub String);
 
 /// Local index of the replica. It is an alias for its string ID.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 pub struct ReplicaIdx(pub usize);
 
@@ -97,7 +97,7 @@ pub struct Replica<L, T> {
 impl<L, T> IsReplica<L> for Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     type Command = L::Command;
     type Payload = L::Update;
@@ -157,7 +157,7 @@ where
 impl<L, T> Replica<L, T>
 where
     L: IsLog,
-    T: IsTcsb<L::Update> + Debug,
+    T: IsTcsb<L::Update>,
 {
     fn deliver(&mut self, event: Event<L::Update>) {
         // Keep track of the effects of the event on the state (e.g., object creation, deletion, etc.)

@@ -16,7 +16,7 @@
 use std::fmt::Debug;
 
 use moirai_protocol::{
-    commitment::commit_log::CommitmentLog,
+    commitment::{commit_log::CommitmentLog, protocol::AtomicBroadcastProtocol},
     data_type::replicated::{
         CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
     },
@@ -68,11 +68,12 @@ where
     }
 }
 
-impl<L> CommandGenerator for CommitmentLog<L>
+impl<L, A> CommandGenerator for CommitmentLog<L, A>
 where
-    L: IsLog + CommandGenerator,
+    L: CommandGenerator,
+    A: AtomicBroadcastProtocol<L>,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         self.child().generate_command(rng)
     }
 }

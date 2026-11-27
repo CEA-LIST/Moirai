@@ -1,0 +1,23 @@
+# Paths are relative to the repository-root build context.
+# Send only the Rust workspace and the independently built replica crate.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!README.md
+!LICENSE
+!moirai-protocol/**
+!moirai-crdt/**
+!moirai-fuzz/**
+!moirai-macros/**
+!moirai-network-node/**
+
+# Keep generated artifacts out even when nested inside an included crate.
+**/target
+**/result
+**/results
+**/simulation-files
+**/client-results
+**/__pycache__
+**/.git
+**/.DS_Store
