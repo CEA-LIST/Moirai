@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -51,11 +51,10 @@ impl<V, U> CausalStabilize<U> for RWSet<V>
 where
     V: Debug + Clone + Eq + Hash,
 {
-    fn on_stabilize(
-        tagged_op: &TaggedOp<Self::Update>,
-        stable: &mut Self::Stable,
-        unstable: &mut (impl IsUnstablePrune<Self::Update> + IsUnstableCore<Self::Update>),
-    ) {
+    fn on_stabilize(tagged_op: &TaggedOp<Self::Update>, stable: &mut Self::Stable, unstable: &mut U)
+    where
+        U: IsUnstablePrune<Self::Update> + IsUnstableCore<Self::Update>,
+    {
         // Two cases:
         // 1. The tagged_op is a 'add'
         // ...in this case: remove this 'add' if there exists another op with the same arg in unstable,

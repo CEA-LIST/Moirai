@@ -1,10 +1,6 @@
 [package]
 name = "moirai-crdt"
 edition = "2024"
-authors = [
-    "Léo Olivier <leo.olivier@cea.fr>",
-    "MORCOS Kirollos <Kirollos.MORCOS@cea.fr>",
-]
 version.workspace = true
 license.workspace = true
 repository.workspace = true

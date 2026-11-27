@@ -139,16 +139,10 @@ where
     fn stabilize(&mut self, frontier: &CausalFrontier) {
         match R::causal_stabilize(frontier, &self.stable, &self.unstable) {
             Stabilization::Regular => {
-                // 1. select all ops in unstable that are predecessors of a version
-                // 2. for each of them, call stabilize, which may modify stable and/or unstable
-                // 3. if the operation is still in unstable, apply the op to stable and remove it from unstable
+                let candidates = R::stabilization_candidates(frontier, &self.unstable);
 
-                let candidates = self
-                    .unstable
-                    .iter()
-                    .filter(|tagged_op| frontier.contains(tagged_op.id()))
-                    .cloned()
-                    .collect::<Vec<_>>();
+                // for each candidate, call stabilize, which may modify stable and/or unstable
+                // if the operation is still in unstable, apply the op to stable and remove it from unstable
 
                 for tagged_op in candidates {
                     R::on_stabilize(&tagged_op, &mut self.stable, &mut self.unstable);
