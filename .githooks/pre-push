@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+master_commit=
+while read -r local_ref local_oid remote_ref _; do
+    if [ "$remote_ref" = refs/heads/master ] && [ "$local_ref" != "(delete)" ]; then
+        master_commit=$local_oid
+    fi
+done
+
+# Give early feedback on the working tree, including on topic branches.
+if ! cargo clippy --workspace --all-targets --all-features --locked; then
+    printf '%s\n' 'Clippy reported an error. See the diagnostics above (advisory).' >&2
+fi
+
+[ -n "$master_commit" ] || exit 0
+
+# Check the commit being pushed even when HEAD or the working tree differs.
+snapshot=$(mktemp -d "${TMPDIR:-/tmp}/moirai-pre-push.XXXXXXXX")
+trap 'rm -rf "$snapshot"' 0
+trap 'exit 1' HUP INT TERM
+mkdir "$snapshot/source"
+git archive --format=tar --output="$snapshot/source.tar" "$master_commit"
+tar -xf "$snapshot/source.tar" -C "$snapshot/source"
+
+(
+    for variable in $(git rev-parse --local-env-vars); do
+        unset "$variable"
+    done
+    cd "$snapshot/source"
+    cargo +nightly fmt --all -- --check --unstable-features \
+        --config imports_granularity=Crate,group_imports=StdExternalCrate
+    cargo hack check --workspace --feature-powerset --locked
+)
