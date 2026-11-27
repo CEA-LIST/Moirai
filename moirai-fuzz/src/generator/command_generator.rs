@@ -33,7 +33,7 @@ use crate::generator::op_generator::OpGenerator;
 
 /// Generates client commands from the current state of a log.
 pub trait CommandGenerator: IsLog {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command;
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command;
 }
 
 //* Default implementations of CommandGenerator for some common log types.
@@ -48,7 +48,7 @@ where
         + CausalReset<U>,
     U: IsUnstableCore<R::Update> + IsUnstablePrune<R::Update> + Default + Debug,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         R::generate(
             rng,
             &<R as OpGenerator<U>>::Config::default(),
@@ -63,7 +63,7 @@ where
     L: IsLog + CommandGenerator,
     V: IncrementalCache<L::Update> + Debug,
 {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         self.inner().generate_command(rng)
     }
 }
@@ -79,7 +79,7 @@ where
 }
 
 impl<L: CommandGenerator> CommandGenerator for Box<L> {
-    fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
+    fn generate_command(&self, rng: &mut impl Rng) -> <Self as IsLog>::Command {
         (**self).generate_command(rng)
     }
 }

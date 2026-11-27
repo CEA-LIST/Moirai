@@ -6,7 +6,7 @@ use moirai_fuzz::{
 use moirai_macros::union;
 use moirai_protocol::state::po_log::{GraphLog, VecLog};
 #[cfg(feature = "fuzz")]
-use moirai_protocol::{data_type::query::Read, utils::boxer::Boxer};
+use moirai_protocol::utils::boxer::Boxer;
 #[cfg(feature = "fuzz")]
 use rand::Rng;
 
@@ -30,170 +30,52 @@ union! {
         | Array(NestedListUpdate<Box<Json>>, NestedListLog::<JsonLog> => Vec<JsonValue>)
 }
 
-// TODO: the code must be factorized
 #[cfg(feature = "fuzz")]
 impl CommandGenerator for JsonLog {
     fn generate_command(&self, rng: &mut impl Rng) -> Self::Command {
         use moirai_protocol::state::log::IsLog;
-        use rand::distr::{Distribution, weighted::WeightedIndex};
+        use rand::{
+            distr::{Distribution, weighted::WeightedIndex},
+            seq::IteratorRandom,
+        };
 
-        enum Choice {
-            Number,
-            Boolean,
-            String,
-            Object,
-            Array,
-        }
-        let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
-
-        fn generate_number(log: &VecLog<Counter<f64>>, rng: &mut impl Rng) -> Json {
-            Json::Number(<VecLog<Counter<f64>> as CommandGenerator>::generate_command(log, rng))
-        }
-
-        fn generate_boolean(log: &VecLog<EWFlag>, rng: &mut impl Rng) -> Json {
-            Json::Boolean(<VecLog<EWFlag> as CommandGenerator>::generate_command(
-                log, rng,
-            ))
-        }
-
-        fn generate_string(log: &GraphLog<List<char>>, rng: &mut impl Rng) -> Json {
-            Json::String(<GraphLog<List<char>> as CommandGenerator>::generate_command(log, rng))
-        }
-
-        fn generate_object(log: &UWMapLog<String, JsonLog>, rng: &mut impl Rng) -> Json {
-            let op = <UWMapLog<String, JsonLog> as CommandGenerator>::generate_command(log, rng);
-            Json::Object(Boxer::<MapUpdate<String, Box<Json>>>::boxer(op))
-        }
-
-        fn generate_array(log: &NestedListLog<JsonLog>, rng: &mut impl Rng) -> Json {
-            use moirai_protocol::utils::boxer::Boxer;
-
-            let list_op = <NestedListLog<JsonLog> as CommandGenerator>::generate_command(log, rng);
-            let o = Boxer::<NestedListUpdate<Box<Json>>>::boxer(list_op);
-            Json::Array(o)
-        }
-
-        fn generate_value(val: &JsonChildValue, log: &JsonChild, rng: &mut impl Rng) -> Json {
-            match (val, log) {
-                (JsonChildValue::Number(_), JsonChild::Number(l)) => generate_number(l, rng),
-                (JsonChildValue::Boolean(_), JsonChild::Boolean(l)) => generate_boolean(l, rng),
-                (JsonChildValue::String(_), JsonChild::String(l)) => generate_string(l, rng),
-                (JsonChildValue::Object(_), JsonChild::Object(l)) => generate_object(l, rng),
-                (JsonChildValue::Array(_), JsonChild::Array(l)) => generate_array(l, rng),
-                _ => unreachable!(),
+        fn generate_value(log: &JsonChild, rng: &mut impl Rng) -> Json {
+            match log {
+                JsonChild::Number(log) => Json::Number(log.generate_command(rng)),
+                JsonChild::Boolean(log) => Json::Boolean(log.generate_command(rng)),
+                JsonChild::String(log) => Json::String(log.generate_command(rng)),
+                JsonChild::Object(log) => Json::Object(
+                    Boxer::<MapUpdate<String, Box<Json>>>::boxer(log.generate_command(rng)),
+                ),
+                JsonChild::Array(log) => Json::Array(Boxer::<NestedListUpdate<Box<Json>>>::boxer(
+                    log.generate_command(rng),
+                )),
             }
         }
 
-        const fn variant_of(value: &JsonChildValue) -> JsonVariant {
-            match value {
-                JsonChildValue::Number(_) => JsonVariant::Number,
-                JsonChildValue::Boolean(_) => JsonVariant::Boolean,
-                JsonChildValue::String(_) => JsonVariant::String,
-                JsonChildValue::Object(_) => JsonVariant::Object,
-                JsonChildValue::Array(_) => JsonVariant::Array,
-            }
-        }
-
-        let value = self.eval(&Read::new());
-
-        match value {
-            JsonValue::Unset => {
-                use moirai_protocol::state::log::IsLog;
-
-                let available_choices: Vec<Choice> = match &self.child {
-                    JsonContainer::Unset => vec![
-                        Choice::Number,
-                        Choice::String,
-                        Choice::Boolean,
-                        Choice::Object,
-                        Choice::Array,
-                    ],
-                    JsonContainer::Value(child) => match child.as_ref() {
-                        JsonChild::Number(_) => vec![Choice::Number],
-                        JsonChild::Boolean(_) => vec![Choice::Boolean],
-                        JsonChild::String(_) => vec![Choice::String],
-                        JsonChild::Object(_) => vec![Choice::Object],
-                        JsonChild::Array(_) => vec![Choice::Array],
-                    },
-                    JsonContainer::Conflicts(children) => children
-                        .iter()
-                        .map(|child| match child {
-                            JsonChild::Number(_) => Choice::Number,
-                            JsonChild::Boolean(_) => Choice::Boolean,
-                            JsonChild::String(_) => Choice::String,
-                            JsonChild::Object(_) => Choice::Object,
-                            JsonChild::Array(_) => Choice::Array,
-                        })
-                        .collect(),
+        let children: Vec<_> = self.active_children().collect();
+        match children.as_slice() {
+            [] => {
+                let dist = WeightedIndex::new([2, 2, 2, 3, 3]).unwrap();
+                let new_child = match dist.sample(rng) {
+                    0 => JsonChild::Number(VecLog::new()),
+                    1 => JsonChild::String(GraphLog::new()),
+                    2 => JsonChild::Boolean(VecLog::new()),
+                    3 => JsonChild::Object(UWMapLog::new()),
+                    _ => JsonChild::Array(NestedListLog::new()),
                 };
-
-                let choice = if available_choices.len() == 5 {
-                    &available_choices[dist.sample(rng)]
+                generate_value(&new_child, rng)
+            }
+            [child] => generate_value(child, rng),
+            _ => {
+                let choose = WeightedIndex::new([1, 3]).unwrap().sample(rng) == 0;
+                let child = children.into_iter().choose(rng).unwrap();
+                if choose {
+                    Json::Choose(child.variant())
                 } else {
-                    rand::seq::IteratorRandom::choose(available_choices.iter(), rng).unwrap()
-                };
-                match choice {
-                    Choice::Number => generate_number(&VecLog::<Counter<f64>>::new(), rng),
-                    Choice::Boolean => generate_boolean(&VecLog::<EWFlag>::new(), rng),
-                    Choice::Object => generate_object(&UWMapLog::<String, Self>::new(), rng),
-                    Choice::String => generate_string(&GraphLog::<List<char>>::new(), rng),
-                    Choice::Array => generate_array(&NestedListLog::<Self>::new(), rng),
+                    generate_value(child, rng)
                 }
             }
-            JsonValue::Value(v) => match &self.child {
-                JsonContainer::Value(child) => generate_value(&v, child.as_ref(), rng),
-                JsonContainer::Conflicts(child_logs) => {
-                    let log = child_logs
-                        .iter()
-                        .find(|log| {
-                            matches!(
-                                (v.as_ref(), log),
-                                (JsonChildValue::Number(_), JsonChild::Number(_))
-                                    | (JsonChildValue::Boolean(_), JsonChild::Boolean(_))
-                                    | (JsonChildValue::Object(_), JsonChild::Object(_))
-                                    | (JsonChildValue::String(_), JsonChild::String(_))
-                                    | (JsonChildValue::Array(_), JsonChild::Array(_))
-                            )
-                        })
-                        .unwrap();
-                    generate_value(&v, log, rng)
-                }
-                JsonContainer::Unset => unreachable!(),
-            },
-            JsonValue::Conflict(json_child_values) => match &self.child {
-                JsonContainer::Conflicts(child_logs) => {
-                    enum ConflictChoice {
-                        Choose,
-                        Update,
-                    }
-
-                    let conflict_dist = WeightedIndex::new([1, 3]).unwrap();
-                    let conflict_choice = &[ConflictChoice::Choose, ConflictChoice::Update]
-                        [conflict_dist.sample(rng)];
-                    let choice =
-                        rand::seq::IteratorRandom::choose(json_child_values.iter(), rng).unwrap();
-
-                    if matches!(conflict_choice, ConflictChoice::Choose) {
-                        return Json::Choose(variant_of(choice));
-                    }
-
-                    let log = child_logs
-                        .iter()
-                        .find(|log| {
-                            matches!(
-                                (choice, log),
-                                (JsonChildValue::Number(_), JsonChild::Number(_))
-                                    | (JsonChildValue::Boolean(_), JsonChild::Boolean(_))
-                                    | (JsonChildValue::Object(_), JsonChild::Object(_))
-                                    | (JsonChildValue::String(_), JsonChild::String(_))
-                                    | (JsonChildValue::Array(_), JsonChild::Array(_))
-                            )
-                        })
-                        .unwrap();
-                    generate_value(choice, log, rng)
-                }
-                _ => unreachable!(),
-            },
         }
     }
 }
@@ -213,7 +95,7 @@ mod tests {
     use crate::{
         counter::update::CounterUpdate,
         flag::update::FlagUpdate,
-        json::{Json, JsonLog, JsonVariant},
+        json::{Json, JsonLog, JsonValue, JsonVariant},
         list::update::{ListUpdate, NestedListUpdate},
         map::update::MapUpdate,
         query::read_as_json::ReadAsJson,
@@ -274,6 +156,107 @@ mod tests {
     }
 
     #[test]
+    fn choose_preserves_concurrent_boolean_clear() {
+        let (mut a, mut b) = twins_log::<JsonLog>();
+        let boolean = a.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
+        let number = b.send(Json::Number(CounterUpdate::Inc(5.0))).unwrap();
+        a.receive(number);
+        b.receive(boolean);
+
+        let choose = a.send(Json::Choose(JsonVariant::Number)).unwrap();
+        let clear = b.send(Json::Boolean(FlagUpdate::Clear)).unwrap();
+        a.receive(clear);
+        b.receive(choose);
+
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&ReadAsJson::new()), json!([false, 5.0]));
+        }
+    }
+
+    #[test]
+    fn choose_removes_observed_boolean_clear() {
+        let (mut a, mut b) = twins_log::<JsonLog>();
+        let boolean = a.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
+        let number = b.send(Json::Number(CounterUpdate::Inc(5.0))).unwrap();
+        a.receive(number);
+        b.receive(boolean);
+
+        let clear = b.send(Json::Boolean(FlagUpdate::Clear)).unwrap();
+        a.receive(clear);
+        assert_eq!(a.query(&ReadAsJson::new()), json!([false, 5.0]));
+        b.receive(a.send(Json::Choose(JsonVariant::Number)).unwrap());
+
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&ReadAsJson::new()), json!(5.0));
+        }
+    }
+
+    #[test]
+    fn concurrent_choices_can_unset_the_union() {
+        let (mut a, mut b) = twins_log::<JsonLog>();
+        let boolean = a.send(Json::Boolean(FlagUpdate::Enable)).unwrap();
+        let number = b.send(Json::Number(CounterUpdate::Inc(5.0))).unwrap();
+        a.receive(number);
+        b.receive(boolean);
+
+        let choose_number = a.send(Json::Choose(JsonVariant::Number)).unwrap();
+        let choose_boolean = b.send(Json::Choose(JsonVariant::Boolean)).unwrap();
+        a.receive(choose_boolean);
+        b.receive(choose_number);
+
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&Read::new()), JsonValue::Unset);
+        }
+    }
+
+    #[test]
+    fn hidden_string_keeps_history_for_concurrent_insert() {
+        let (mut a, mut b) = twins_log::<JsonLog>();
+        let number = a.send(Json::Number(CounterUpdate::Inc(5.0))).unwrap();
+        let string = b.send(Json::String(ListUpdate::insert('x', 0))).unwrap();
+        a.receive(string);
+        b.receive(number);
+
+        let choose = a.send(Json::Choose(JsonVariant::Number)).unwrap();
+        assert_eq!(a.query(&ReadAsJson::new()), json!(5.0));
+        let insert = b.send(Json::String(ListUpdate::insert('y', 1))).unwrap();
+        a.receive(insert);
+        b.receive(choose);
+
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&ReadAsJson::new()), json!([5.0, "y"]));
+        }
+    }
+
+    #[test]
+    fn parent_reset_removes_observed_variant_presence() {
+        let (mut a, mut b) = twins_log::<JsonLog>();
+        let key = String::from("flag");
+        let set_flag = |update| {
+            Json::Object(MapUpdate::Update(
+                key.clone(),
+                Box::new(Json::Boolean(update)),
+            ))
+        };
+        let remove_flag = || Json::Object(MapUpdate::Remove(key.clone()));
+
+        b.receive(a.send(set_flag(FlagUpdate::Enable)).unwrap());
+        let remove = a.send(remove_flag()).unwrap();
+        let clear = b.send(set_flag(FlagUpdate::Clear)).unwrap();
+        a.receive(clear);
+        b.receive(remove);
+
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&ReadAsJson::new()), json!({"flag": false}));
+        }
+
+        b.receive(a.send(remove_flag()).unwrap());
+        for replica in [&a, &b] {
+            assert_eq!(replica.query(&ReadAsJson::new()), json!({}));
+        }
+    }
+
+    #[test]
     fn sequential_same_variant() {
         let (mut replica_a, _) = twins_log::<JsonLog>();
 
@@ -292,6 +275,7 @@ mod tests {
     fn root() {
         let (replica_a, _) = twins_log::<JsonLog>();
 
+        assert!(JsonLog::default().is_unset());
         let result = Value::Null;
         assert_eq!(result, replica_a.query(&ReadAsJson::new()));
     }
@@ -569,8 +553,6 @@ mod tests {
             config::{ChurnConfig, FuzzerConfig, Predicate, RunConfig},
             fuzzer::fuzzer,
         };
-
-        use crate::json::JsonValue;
 
         let run =
             RunConfig::new(ChurnConfig::new(0.6, 0.4), 4, 100, None, None).with_execution_graph();
