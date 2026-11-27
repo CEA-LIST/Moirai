@@ -12,8 +12,7 @@
 //! `--features serde,test_utils`.
 #![cfg(all(feature = "serde", feature = "test_utils"))]
 
-use std::collections::BTreeMap;
-use std::fmt::Debug;
+use std::{collections::BTreeMap, fmt::Debug};
 
 use moirai_crdt::{
     counter::{Counter, update::CounterUpdate},
