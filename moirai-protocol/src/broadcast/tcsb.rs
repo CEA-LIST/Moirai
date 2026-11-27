@@ -76,6 +76,16 @@ pub struct Tcsb<O> {
     last_updated_columns: Vec<ReplicaIdx>,
 }
 
+/// Causal bookkeeping transferred alongside a log, in the donor's member indices.
+#[cfg(feature = "serde")]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct StateSnapshot<O> {
+    delivered: Version,
+    rows: Vec<Version>,
+    stable: CausalFrontier,
+    outbox: Vec<Event<O>>,
+}
+
 impl<O> IsTcsb<O> for Tcsb<O>
 where
     O: Clone,
@@ -384,6 +394,102 @@ where
         }
 
         version
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<O> Tcsb<O>
+where
+    O: Clone,
+{
+    /// The causal bookkeeping a state transfer carries.
+    pub(crate) fn snapshot(&self) -> StateSnapshot<O> {
+        StateSnapshot {
+            delivered: self.matrix_clock.origin_version().clone(),
+            rows: (0..self.interner.resolver().len())
+                .map(|idx| {
+                    self.matrix_clock
+                        .version_by_idx(ReplicaIdx(idx))
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            Version::new(ReplicaIdx(idx), self.interner.resolver().clone())
+                        })
+                })
+                .collect(),
+            stable: self.last_stable_version.clone(),
+            outbox: self
+                .outbox
+                .values()
+                .flat_map(|row| row.values().cloned())
+                .collect(),
+        }
+    }
+
+    /// Replace this bookkeeping with a donor's, deserialized with one shared
+    /// `table`. The adopter keeps the donor's member order and is appended to
+    /// it (or keeps the donor's index for it), so every index already in the
+    /// adopted log stays valid. Only for a replica that has sent nothing: peers
+    /// would otherwise hold its older member table.
+    pub(crate) fn adopt(&mut self, snapshot: StateSnapshot<O>, table: Resolver, id: &ReplicaId) {
+        let own = self.matrix_clock.origin_version();
+        assert_eq!(
+            own.seq_by_idx(own.origin_idx()),
+            0,
+            "a replica that has sent events cannot adopt a snapshot: its history would be lost"
+        );
+        let mut interner = Interner::from_resolver(table);
+        let (idx, _) = interner.intern(id);
+        let mut adopted = Self::new(idx, interner);
+        for row in snapshot.rows {
+            adopted.matrix_clock.set_by_idx(row.origin_idx(), row);
+        }
+        // The adopter has delivered what the donor delivered.
+        let local = Version::from((CausalFrontier::from(snapshot.delivered), idx));
+        adopted.matrix_clock.set_by_idx(idx, local);
+        adopted.last_stable_version = snapshot.stable;
+        for event in snapshot.outbox {
+            adopted
+                .outbox
+                .entry(event.id().idx())
+                .or_default()
+                .insert(event.id().seq(), event);
+        }
+        *self = adopted;
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<O> StateSnapshot<O> {
+    /// Every index fits the donor's member table, so adopting cannot panic.
+    pub(crate) fn check(&self, table: &Resolver) -> Result<(), String> {
+        let n = table.len();
+        let fits = |v: &Version| v.origin_idx().0 < n && v.iter().count() <= n;
+        let bad = if self.delivered.resolver() != table {
+            Some("its member table")
+        } else if !fits(&self.delivered) {
+            Some("its delivered version")
+        } else if self.rows.len() != n
+            || self
+                .rows
+                .iter()
+                .enumerate()
+                .any(|(i, row)| row.origin_idx().0 != i || !fits(row))
+        {
+            Some("its matrix clock")
+        } else if self.stable.iter().count() > n {
+            Some("its stable frontier")
+        } else if self.outbox.iter().any(|e| {
+            e.id().idx().0 >= n || e.version().origin_idx() != e.id().idx() || !fits(e.version())
+        }) {
+            Some("its outbox")
+        } else {
+            None
+        };
+        bad.map_or(Ok(()), |part| {
+            Err(format!(
+                "an inconsistent snapshot: {part} does not fit its {n} members"
+            ))
+        })
     }
 }
 

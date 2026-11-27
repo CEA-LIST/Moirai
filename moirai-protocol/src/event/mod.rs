@@ -15,6 +15,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Event<O> {
     id: EventId,
     lamport: Lamport,

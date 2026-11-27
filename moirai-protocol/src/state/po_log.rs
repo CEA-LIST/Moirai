@@ -42,6 +42,14 @@ pub type VecLog<R> = POLog<R, Vec<TaggedOp<<R as ReplicatedDataType>::Update>>>;
 pub type MapLog<R> = POLog<R, FxHashMap<EventId, TaggedOp<<R as ReplicatedDataType>::Update>>>;
 pub type GraphLog<R> = POLog<R, EventGraph<<R as ReplicatedDataType>::Update>>;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "Stable<R>: serde::Serialize, U: serde::Serialize",
+        deserialize = "Stable<R>: serde::Deserialize<'de>, U: serde::Deserialize<'de>"
+    ))
+)]
 pub struct POLog<R, U>
 where
     R: ReplicatedDataType,

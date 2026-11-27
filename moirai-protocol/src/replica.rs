@@ -18,8 +18,13 @@ use std::fmt::{Debug, Display};
 #[cfg(feature = "test_utils")]
 use deepsize::DeepSizeOf;
 
-#[cfg(feature = "test_utils")]
+#[cfg(any(feature = "test_utils", feature = "serde"))]
 use crate::broadcast::tcsb::Tcsb;
+#[cfg(feature = "serde")]
+use crate::broadcast::{
+    internalizer::{Resolver, with_shared_resolver},
+    tcsb::StateSnapshot,
+};
 use crate::{
     broadcast::{
         internalizer::Interner,
@@ -45,6 +50,7 @@ pub struct ReplicaId(pub String);
 /// Local index of the replica. It is an alias for its string ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaIdx(pub usize);
 
 /// A replica in the system, which maintains a local state and communicates with other replicas via messages.
@@ -169,6 +175,66 @@ where
         if let Some(frontier) = self.tcsb.is_stable() {
             self.state.stabilize(frontier);
         }
+    }
+}
+
+/// A replica's log and causal bookkeeping, as a state transfer sends them.
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize)]
+pub struct Snapshot<'a, L, O> {
+    state: &'a L,
+    tcsb: StateSnapshot<O>,
+}
+
+/// A state transfer as received: only deserialization makes one, so the
+/// member table its parts share is the adopter's alone.
+#[cfg(feature = "serde")]
+pub struct ReplicaSnapshot<L, O> {
+    state: L,
+    tcsb: StateSnapshot<O>,
+    table: Resolver,
+}
+
+#[cfg(feature = "serde")]
+impl<'de, L, O> serde::Deserialize<'de> for ReplicaSnapshot<L, O>
+where
+    L: serde::Deserialize<'de>,
+    O: serde::Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Parts<L, O> {
+            state: L,
+            tcsb: StateSnapshot<O>,
+        }
+        let (parts, table) = with_shared_resolver(|| Parts::<L, O>::deserialize(deserializer));
+        let Parts { state, tcsb } = parts?;
+        let table = table.ok_or_else(|| serde::de::Error::custom("a snapshot with no members"))?;
+        tcsb.check(&table).map_err(serde::de::Error::custom)?;
+        Ok(Self { state, tcsb, table })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<L> Replica<L, Tcsb<L::Update>>
+where
+    L: IsLog,
+    L::Update: Clone,
+{
+    /// This replica's log and causal bookkeeping, for a state transfer.
+    pub fn snapshot(&self) -> Snapshot<'_, L, L::Update> {
+        Snapshot {
+            state: &self.state,
+            tcsb: self.tcsb.snapshot(),
+        }
+    }
+
+    /// Replace this replica's log and causal bookkeeping with a donor's,
+    /// keeping this replica's own id. Only for a replica that has sent
+    /// nothing yet: panics otherwise, as its own events would be lost.
+    pub fn adopt(&mut self, snapshot: ReplicaSnapshot<L, L::Update>) {
+        self.tcsb.adopt(snapshot.tcsb, snapshot.table, &self.id);
+        self.state = snapshot.state;
     }
 }
 

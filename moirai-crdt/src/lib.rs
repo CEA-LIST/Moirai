@@ -29,3 +29,27 @@ pub mod utils;
 
 type FxHashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 type FxHashSet<V> = rustc_hash::FxHashSet<V>;
+
+/// JSON map keys must be strings; maps of other keys travel as entries.
+#[cfg(feature = "serde")]
+pub(crate) mod serde_entries {
+    use std::hash::Hash;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<K: Serialize, V: Serialize, S: Serializer>(
+        map: &crate::FxHashMap<K, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K, V, D>(deserializer: D) -> Result<crate::FxHashMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Eq + Hash,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        Vec::<(K, V)>::deserialize(deserializer).map(|entries| entries.into_iter().collect())
+    }
+}

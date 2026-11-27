@@ -97,10 +97,20 @@ impl<V: deepsize::DeepSizeOf> deepsize::DeepSizeOf for CacheCell<V> {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "L: serde::Serialize",
+        deserialize = "L: serde::Deserialize<'de>, V: Default"
+    ))
+)]
 pub struct CachedLog<L, V> {
     inner: L,
     /// Join of the event versions represented by the inner log, when known.
     frontier: Option<CausalFrontier>,
+    /// Derived from the inner log; an empty one is filled on the next read.
+    #[cfg_attr(feature = "serde", serde(skip))]
     read_cache: CacheCell<V>,
 }
 

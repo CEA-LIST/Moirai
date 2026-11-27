@@ -46,12 +46,21 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "K: serde::Serialize, L: serde::Serialize",
+        deserialize = "K: serde::Deserialize<'de>, L: serde::Deserialize<'de>"
+    ))
+)]
 pub struct RWMapLog<K, L>
 where
     K: Clone + Debug + Eq + Hash,
     L: IsLog,
 {
     set: VecLog<RWSet<K>>,
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_entries"))]
     children: FxHashMap<K, L>,
 }
 

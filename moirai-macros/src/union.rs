@@ -40,6 +40,7 @@ macro_rules! union {
 
             /// Set of Union CRDT child logs, one for each variant
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             pub enum [<$union Child>] {
                 $(
                     $variant($log),
@@ -96,6 +97,7 @@ macro_rules! union {
             }
 
             #[derive(Clone, Debug)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             struct [<$union Branch>] {
                 child: [<$union Child>],
@@ -132,6 +134,7 @@ macro_rules! union {
 
             /// Union log with at most one child log per variant.
             #[derive(Clone, Debug, Default)]
+            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             #[cfg_attr(feature = "test_utils", derive(::deepsize::DeepSizeOf))]
             pub struct [<$union Log>] {
                 children: ::std::collections::BTreeMap<[<$union Variant>], [<$union Branch>]>,

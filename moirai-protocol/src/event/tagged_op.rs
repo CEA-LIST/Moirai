@@ -23,6 +23,7 @@ use crate::event::{Event, id::EventId, lamport::Lamport, tag::Tag};
 /// An operation tagged with an event ID and Lamport timestamp.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TaggedOp<O> {
     op: O,
     tag: Tag,

@@ -30,6 +30,7 @@ use crate::{
 /// Represents the unique identifier for an event.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventId {
     /// The index of the replica that issued the event.
     idx: ReplicaIdx,

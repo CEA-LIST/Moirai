@@ -172,6 +172,7 @@ macro_rules! float_counter_value {
     ($float:ty, $accumulator:ident, $sum:ty) => {
         #[doc(hidden)]
         #[derive(Clone, Debug, Default, PartialEq, Eq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct $accumulator($sum);
 
         #[cfg(feature = "test_utils")]

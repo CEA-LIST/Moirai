@@ -34,6 +34,7 @@ use crate::{
 /// versions. It is not the version of an event.
 #[cfg_attr(feature = "test_utils", derive(DeepSizeOf))]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CausalFrontier {
     entries: VersionEntries,
     resolver: Resolver,

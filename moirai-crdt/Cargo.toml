@@ -35,4 +35,4 @@ test_utils = [
     "moirai-protocol/test_utils",
     "moirai-macros/test_utils",
 ]
-serde = ["dep:serde", "moirai-protocol/serde", "moirai-macros/serde"]
+serde = ["dep:serde", "moirai-protocol/serde", "moirai-macros/serde", "bitrep/serde"]

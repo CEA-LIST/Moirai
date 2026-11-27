@@ -168,6 +168,14 @@ where
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "V: Serialize",
+        deserialize = "V: Deserialize<'de> + Eq + Hash"
+    ))
+)]
 pub struct Set<V>(FxHashSet<V>);
 
 #[cfg(feature = "test_utils")]

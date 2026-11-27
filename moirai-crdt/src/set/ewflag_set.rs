@@ -44,6 +44,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EWFlagSetLog<V: Clone + Hash + Debug + Eq> {
     inner: UWMapLog<V, VecLog<EWFlag>>,
 }
