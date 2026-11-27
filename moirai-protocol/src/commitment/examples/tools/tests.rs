@@ -1,35 +1,34 @@
-use crate::state::log::EvalNested;
 use std::convert::Infallible;
 
 use crate::{
     broadcast::internalizer::Interner,
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
-    commitment::{commit_log::CommitmentLog, wire_id::StableReplicaId},
+    commitment::{
+        commit_log::CommitmentLog,
+        commit_protocols::omega::{
+            omega_commit::OmegaCommit, oracle::Omega, support_op::SupportOp,
+            versioned_vote::VersionedVote, vote_log::VoteLog,
+        },
+        examples::{commit_set::Sorted, tools::builders::CommitReplica},
+        wire_id::StableReplicaId,
+    },
     data_type::{
+        policy::LwwPolicy,
         query::QueryOperation,
+        reconciliation::Reconciliation,
         replicated::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
+            Stabilization,
         },
         sequential::{SequentialDataType, SequentialEval},
     },
     event::{Event, id::EventId, lamport::Lamport, tagged_op::TaggedOp},
     replica::{ReplicaId, ReplicaIdx},
-    state::{effect_context::EffectContext, log::IsLog},
-};
-
-use crate::commitment::{
-    commit_protocols::omega::{
-        omega_commit::OmegaCommit, oracle::Omega, support_op::SupportOp,
-        versioned_vote::VersionedVote, vote_log::VoteLog,
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+        po_log::VecLog,
     },
-    examples::{commit_set::Sorted, tools::builders::CommitReplica},
-};
-use crate::{
-    data_type::{
-        policy::LwwPolicy, reconciliation::Reconciliation, replicated::Eval,
-        replicated::Stabilization,
-    },
-    state::po_log::VecLog,
 };
 
 fn clock(names: &[&str]) -> Version {

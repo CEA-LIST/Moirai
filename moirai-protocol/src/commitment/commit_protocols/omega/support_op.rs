@@ -1,7 +1,5 @@
 use crate::commitment::wire_id::{StableEventId, StableReplicaId};
 
-
-
 /// A commitment operation with additional information to make computation more efficient
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -18,8 +16,18 @@ pub struct SupportOp<O> {
 }
 
 impl<O> SupportOp<O> {
-    pub fn new(op: O, vote: StableReplicaId, is_partial: bool, last_partial: Option<StableEventId>) -> Self {
-        Self { op, vote, is_partial, last_partial }
+    pub fn new(
+        op: O,
+        vote: StableReplicaId,
+        is_partial: bool,
+        last_partial: Option<StableEventId>,
+    ) -> Self {
+        Self {
+            op,
+            vote,
+            is_partial,
+            last_partial,
+        }
     }
 
     pub fn split(self) -> (O, StableReplicaId, bool, Option<StableEventId>) {

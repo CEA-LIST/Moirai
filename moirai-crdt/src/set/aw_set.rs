@@ -478,5 +478,4 @@ mod tests {
 
         fuzzer::<VecLog<AWSet<usize>>, Read<FxHashSet<usize>>>(config);
     }
-
 }

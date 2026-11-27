@@ -1,14 +1,17 @@
 use std::{convert::Infallible, fmt::Debug, hash::Hash, marker::PhantomData};
 
+#[cfg(feature = "test_utils")]
+use deepsize::DeepSizeOf;
+use rustc_hash::FxHashSet;
+
 use crate::{
     clock::causal_frontier::CausalFrontier,
     data_type::{
         policy::{LwwPolicy, Policy},
         query::{Contains, QueryOperation, Read},
         reconciliation::{Reconciled, Reconciliation},
-        replicated::Eval,
         replicated::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
             Stabilization, Stable,
         },
         sequential::{SequentialDataType, SequentialEval},
@@ -16,10 +19,6 @@ use crate::{
     event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableCore,
 };
-#[cfg(feature = "test_utils")]
-use deepsize::DeepSizeOf;
-
-use rustc_hash::FxHashSet;
 
 /// Sequential operations carried by the commitment set example.
 #[derive(Clone, Debug)]
@@ -180,15 +179,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use rustc_hash::FxHashSet;
+
+    use super::{CommitBTreeSet, SetUpdate};
     use crate::{
-        commitment::examples::tools::btree_set::BTreeLog,
+        commitment::examples::tools::{
+            btree_set::BTreeLog,
+            builders::{commit_replicas, lamport_commit_replicas},
+        },
         data_type::query::{Contains, Read},
         replica::IsReplica,
     };
-
-    use super::{CommitBTreeSet, SetUpdate};
-    use crate::commitment::examples::tools::builders::{commit_replicas, lamport_commit_replicas};
-    use rustc_hash::FxHashSet;
 
     #[test]
     fn commit_set_converges_with_commit_log() {

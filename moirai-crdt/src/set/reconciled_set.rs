@@ -23,13 +23,12 @@ use moirai_protocol::{
         policy::{LwwPolicy, Policy},
         query::{Contains, QueryOperation, Read},
         reconciliation::{Reconciled, Reconciliation},
-        replicated::Eval,
         replicated::{
-            CausalCompaction, CausalReset, CausalStabilize, Precondition, ReplicatedDataType,
+            CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
         },
         sequential::{SequentialDataType, SequentialEval},
     },
-    event::{tagged_op::TaggedOp},
+    event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableCore,
 };
 

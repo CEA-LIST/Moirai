@@ -8,7 +8,9 @@ use std::fmt::{self, Display};
 pub struct StableReplicaId(pub u16);
 
 impl From<u16> for StableReplicaId {
-    fn from(value: u16) -> Self { Self(value) }
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
 }
 
 impl Display for StableReplicaId {

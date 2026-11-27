@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
-    clock::{causal_frontier::CausalFrontier, version_vector::Version}, replica::ReplicaIdx,
-};
-
 use super::{versioned_vote::VersionedVote, vote_origin::VoteOrigin};
+use crate::{
+    clock::{causal_frontier::CausalFrontier, version_vector::Version},
+    replica::ReplicaIdx,
+};
 
 /// Causally delivered votes and incremental support for candidate leaders.
 #[derive(Debug, Clone, Default)]
@@ -27,7 +27,11 @@ impl VoteLog {
         assert!(vertex.origin_seq() > 0, "Votes must identify actual events");
         let trace = self.causal_votes.entry(vertex.origin_idx()).or_default();
         let previous_seq = trace.last_key_value().map_or(0, |(seq, _)| *seq);
-        assert_eq!(previous_seq, vertex.origin_seq() - 1, "Votes must be delivered once, in causal order");
+        assert_eq!(
+            previous_seq,
+            vertex.origin_seq() - 1,
+            "Votes must be delivered once, in causal order"
+        );
         trace.insert(vertex.origin_seq(), vertex.vote());
         self.update_partial_states(&vertex);
 
@@ -43,16 +47,17 @@ impl VoteLog {
     fn after_committed(&self, vertex: &VersionedVote) -> bool {
         self.last_committed.as_ref().is_none_or(|committed| {
             vertex.vote_origin() != committed.vote_origin()
-                && committed.version().iter().all(|(r, seq)| {
-                    vertex.version().seq_by_idx(r) >= seq
-                })
+                && committed
+                    .version()
+                    .iter()
+                    .all(|(r, seq)| vertex.version().seq_by_idx(r) >= seq)
         })
     }
 
     fn already_committed(&self, id: &VoteOrigin) -> bool {
-        self.last_committed.as_ref().is_some_and(|v| {
-            id.seq() <= v.version().seq_by_idx(id.id())
-        })
+        self.last_committed
+            .as_ref()
+            .is_some_and(|v| id.seq() <= v.version().seq_by_idx(id.id()))
     }
 
     /// No successor of a newly delivered vertex has been delivered yet.
@@ -70,8 +75,14 @@ impl VoteLog {
             // For a candidate strictly after last_committed, the metadata
             // retention boundary preserves this predecessor. Never interpret
             // a missing/pruned trace as vacuous support.
-            assert!(trace.contains_key(&previous), "Missing candidate predecessor vote");
-            if trace.range(previous..).all(|(_, vote)| *vote == vertex.origin_idx()) {
+            assert!(
+                trace.contains_key(&previous),
+                "Missing candidate predecessor vote"
+            );
+            if trace
+                .range(previous..)
+                .all(|(_, vote)| *vote == vertex.origin_idx())
+            {
                 state.insert(replica, false);
             }
         }
@@ -96,20 +107,28 @@ impl VoteLog {
 
     pub fn set_committed(&mut self, version: &Version) {
         if let Some(vertex) = self.get_partial_leader_by_version(version) {
-            assert!(self.after_committed(vertex), "Commit checkpoints must advance causally");
+            assert!(
+                self.after_committed(vertex),
+                "Commit checkpoints must advance causally"
+            );
             self.last_committed = Some(vertex.clone());
         } else {
-            return
+            return;
         }
-
     }
 
     /// Follow immutable sender-chosen predecessors, stopping at the committed cut.
     pub fn ready_to_commit(&self, members: &[ReplicaIdx]) -> Vec<&Version> {
-        assert!(!members.is_empty(), "Commitment requires a fixed nonempty membership");
-        let Some((mut anchor, _)) = self.partial_leaders.iter().rev().find(|(v, state)| {
-            self.after_committed(v) && Self::is_leader(state, members)
-        }) else {
+        assert!(
+            !members.is_empty(),
+            "Commitment requires a fixed nonempty membership"
+        );
+        let Some((mut anchor, _)) = self
+            .partial_leaders
+            .iter()
+            .rev()
+            .find(|(v, state)| self.after_committed(v) && Self::is_leader(state, members))
+        else {
             return Vec::new();
         };
         let mut ready = BTreeSet::new();
@@ -118,24 +137,33 @@ impl VoteLog {
             if self.already_committed(id) {
                 break;
             }
-            let previous = self.get_partial_by_vote_origin(id)
+            let previous = self
+                .get_partial_by_vote_origin(id)
                 .expect("Missing uncommitted predecessor checkpoint");
             assert!(
                 previous.vote_origin() != anchor.vote_origin()
-                    && previous.version().iter().all(|(r, seq)| anchor.version().seq_by_idx(r) >= seq),
+                    && previous
+                        .version()
+                        .iter()
+                        .all(|(r, seq)| anchor.version().seq_by_idx(r) >= seq),
                 "Checkpoint predecessor must be in its strict causal past"
             );
             assert!(ready.insert(previous), "Cycle in checkpoint chain");
             anchor = previous;
         }
-        ready.iter()
+        ready
+            .iter()
             .map(|versioned_vote| versioned_vote.version())
             .collect()
     }
 
     pub fn get_leaders(&self, members: &[ReplicaIdx]) -> BTreeSet<&VersionedVote> {
-        assert!(!members.is_empty(), "Commitment requires a fixed nonempty membership");
-        self.partial_leaders.iter()
+        assert!(
+            !members.is_empty(),
+            "Commitment requires a fixed nonempty membership"
+        );
+        self.partial_leaders
+            .iter()
             .filter(|(_, state)| Self::is_leader(state, members))
             .map(|(vertex, _)| vertex)
             .collect()
@@ -167,37 +195,55 @@ impl VoteLog {
             let through = frontier.seq_by_idx(replica);
             trace.retain(|seq, _| *seq > through);
         }
-        self.partial_leaders.retain(|v, _| {
-            v.origin_seq() > frontier.seq_by_idx(v.origin_idx())
-        });
+        self.partial_leaders
+            .retain(|v, _| v.origin_seq() > frontier.seq_by_idx(v.origin_idx()));
     }
 
     fn is_leader(state: &BTreeMap<ReplicaIdx, bool>, members: &[ReplicaIdx]) -> bool {
-        members.iter().filter(|r| state.get(*r) == Some(&true)).count() > members.len() / 2
+        members
+            .iter()
+            .filter(|r| state.get(*r) == Some(&true))
+            .count()
+            > members.len() / 2
     }
 
     /// Deliberately select the predecessor in past(new_vertex), before its vote.
     /// This defines the recursive closure documented in CORRECTNESS.md.
-    pub fn is_potential(&self, my_id: ReplicaIdx, members: &[ReplicaIdx]) -> (bool, Option<VoteOrigin>) {
-        assert!(!members.is_empty(), "Commitment requires a fixed nonempty membership");
-        let votes = members.iter().filter(|r| {
-            self.causal_votes.get(*r)
-                .and_then(|trace| trace.last_key_value())
-                .is_some_and(|(_, vote)| *vote == my_id)
-        }).count();
+    pub fn is_potential(
+        &self,
+        my_id: ReplicaIdx,
+        members: &[ReplicaIdx],
+    ) -> (bool, Option<VoteOrigin>) {
+        assert!(
+            !members.is_empty(),
+            "Commitment requires a fixed nonempty membership"
+        );
+        let votes = members
+            .iter()
+            .filter(|r| {
+                self.causal_votes
+                    .get(*r)
+                    .and_then(|trace| trace.last_key_value())
+                    .is_some_and(|(_, vote)| *vote == my_id)
+            })
+            .count();
         if votes <= members.len() / 2 {
             return (false, None);
         }
-        let previous = self.partial_leaders.iter().rev()
+        let previous = self
+            .partial_leaders
+            .iter()
+            .rev()
             .find(|(_, state)| Self::is_current_partial(state, members))
             .map(|(v, _)| v.vote_origin().clone());
         (true, previous)
     }
 
     pub fn latest_frontier(&self) -> Vec<(ReplicaIdx, usize, ReplicaIdx)> {
-        self.causal_votes.iter().filter_map(|(r, trace)| {
-            trace.last_key_value().map(|(seq, vote)| (*r, *seq, *vote))
-        }).collect()
+        self.causal_votes
+            .iter()
+            .filter_map(|(r, trace)| trace.last_key_value().map(|(seq, vote)| (*r, *seq, *vote)))
+            .collect()
     }
 
     fn is_current_partial(state: &BTreeMap<ReplicaIdx, bool>, members: &[ReplicaIdx]) -> bool {

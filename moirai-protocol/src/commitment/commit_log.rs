@@ -1,10 +1,12 @@
-use crate::state::log::EvalNested;
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::protocol::AtomicBroadcastProtocol,
     data_type::query::QueryOperation,
     event::Event,
-    state::{effect_context::EffectContext, log::IsLog},
+    state::{
+        effect_context::EffectContext,
+        log::{EvalNested, IsLog},
+    },
 };
 
 /// Special log that wraps a child log and provides a commitment protocol on top of it.

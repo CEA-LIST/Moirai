@@ -1,3 +1,5 @@
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     clock::{causal_frontier::CausalFrontier, version_vector::Version},
     commitment::{
@@ -12,7 +14,6 @@ use crate::{
     replica::{ReplicaId, ReplicaIdx},
     state::{effect_context::EffectContext, log::IsLog},
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "test_utils", derive(deepsize::DeepSizeOf))]
