@@ -17,10 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
-        with:
-          components: rustfmt
-          cache: false
+      - name: Install nightly with rustfmt
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
       - name: Check workspace formatting
         run: >-
           cargo +nightly fmt --all -- --check --unstable-features
