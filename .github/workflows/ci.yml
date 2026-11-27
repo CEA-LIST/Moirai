@@ -1,0 +1,76 @@
+name: Moirai CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Format Moirai
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          components: rustfmt
+          cache: false
+      - name: Check workspace formatting
+        run: >-
+          cargo +nightly fmt --all -- --check --unstable-features
+          --config imports_granularity=Crate,group_imports=StdExternalCrate
+
+  features:
+    name: Features Moirai
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack@0.6.46
+      - run: cargo hack check --workspace --feature-powerset --locked
+
+  tests:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check: Tests Moirai
+            args: ''
+          - check: Tests Serde Moirai
+            args: --features serde,test_utils
+          - check: Tests et fuzzer Moirai
+            args: --release --all-features -- --include-ignored --test-threads=1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
+          cache-key: ${{ matrix.check }}
+      - name: Run workspace tests and doctests
+        env:
+          # Check Moirai's internal invariants during optimized fuzz runs.
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+        run: cargo test --workspace --locked --no-fail-fast ${{ matrix.args }}
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          components: clippy
+          build-warnings: warn
+      - run: cargo clippy --workspace --all-targets --all-features --locked

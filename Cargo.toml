@@ -5,7 +5,6 @@ members = ["moirai-protocol", "moirai-crdt", "moirai-fuzz", "moirai-macros"]
 [workspace.package]
 version = "0.8.3"
 license = "Apache-2.0"
-authors = ["Léo Olivier <leo.olivier@cea.fr>"]
 repository = "https://github.com/CEA-LIST/Moirai.git"
 homepage = "https://github.com/CEA-LIST/Moirai"
 description = "Moirai: A Rust Implementation of the Pure Operation-Based CRDT Framework, made for Building Collaborative Applications"

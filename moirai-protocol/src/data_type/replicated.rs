@@ -1,13 +1,13 @@
 /////////////////////////////////////////////////////////////////////////////
 //  Copyright (c) 2025, 2026 CEA LIST.
-//  
+//
 //  This program and the accompanying materials
 //  are made available under the terms of the Apache License, Version 2.0
 //  which accompanies this distribution, and is available at
 //  https://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 //  SPDX-License-Identifier: Apache-2.0
-//  
+//
 //  Contributors:
 // Léo Olivier -  (CEA LIST) - Initial implementation
 //
@@ -125,8 +125,10 @@ pub trait CausalStabilize<U>: ReplicatedDataType {
     fn on_stabilize(
         _tagged_op: &TaggedOp<Self::Update>,
         _stable: &mut Stable<Self>,
-        _unstable: &mut (impl IsUnstablePrune<Self::Update> + IsUnstableCore<Self::Update>),
-    ) {
+        _unstable: &mut U,
+    ) where
+        U: IsUnstablePrune<Self::Update> + IsUnstableCore<Self::Update>,
+    {
     }
 
     fn causal_stabilize(
@@ -139,6 +141,21 @@ pub trait CausalStabilize<U>: ReplicatedDataType {
         } else {
             Stabilization::Regular
         }
+    }
+
+    fn stabilization_candidates(
+        frontier: &CausalFrontier,
+        unstable: &U,
+    ) -> Vec<TaggedOp<Self::Update>>
+    where
+        U: IsUnstableCore<Self::Update>,
+    {
+        // select all ops in unstable that are predecessors of a version
+        unstable
+            .iter()
+            .filter(|tagged_op| frontier.contains(tagged_op.id()))
+            .cloned()
+            .collect::<Vec<_>>()
     }
 }
 

@@ -25,11 +25,10 @@ use moirai_protocol::{
         reconciliation::{Reconciled, Reconciliation},
         replicated::{
             CausalCompaction, CausalReset, CausalStabilize, Eval, Precondition, ReplicatedDataType,
-            Stabilization, Stable,
         },
         sequential::{SequentialDataType, SequentialEval},
     },
-    event::{lamport::Lamport, tagged_op::TaggedOp},
+    event::tagged_op::TaggedOp,
     state::unstable_state::IsUnstableCore,
 };
 
@@ -66,35 +65,6 @@ where
 /// An update-consistent set
 pub struct ReconciledSet<V>(PhantomData<V>);
 
-impl<V: Debug + Clone + Eq + Hash> ReconciledSet<V> {
-    fn get_frontier_from_lamport(
-        unstable: &impl IsUnstableCore<SetUpdate<V>>,
-        watermark: Lamport,
-    ) -> Option<CausalFrontier> {
-        let eligible_ids: Vec<_> = unstable
-            .iter()
-            .filter(|op| op.lamport().val() <= watermark.val())
-            .map(|op| op.id().clone())
-            .collect();
-
-        let first_id = eligible_ids.first()?;
-
-        let mut frontier = CausalFrontier::new(first_id.resolver().clone());
-
-        // The frontier component for each replica is its greatest eligible sequence.
-        for id in &eligible_ids {
-            let origin = id.idx();
-            let seq = id.seq();
-
-            if seq > frontier.seq_by_idx(origin) {
-                frontier.set_by_idx(origin, seq);
-            }
-        }
-
-        Some(frontier)
-    }
-}
-
 impl<V: Debug + Clone + Eq + Hash> ReplicatedDataType for ReconciledSet<V> {
     type Update = SetUpdate<V>;
     type Stable = SequentialSet<V>;
@@ -122,31 +92,15 @@ where
 {
     const DISABLE_STABILIZE: bool = false;
 
-    fn causal_stabilize(
+    fn stabilization_candidates(
         frontier: &CausalFrontier,
-        stable: &Stable<Self>,
         unstable: &U,
-    ) -> Stabilization<Stable<Self>> {
+    ) -> Vec<TaggedOp<Self::Update>> {
         let lamport = frontier.sum();
-
-        let new_frontier =
-            match ReconciledSet::get_frontier_from_lamport(unstable, Lamport::new(lamport)) {
-                Some(f) => f,
-                None => return Stabilization::None,
-            };
-
-        let mut new_stable = stable.clone();
-
-        for tagged_op in Sorted::<LwwPolicy>::linearize(unstable)
-            .filter(|tagged_op| new_frontier.contains(tagged_op.id()))
-        {
-            new_stable.apply(tagged_op.op());
-        }
-
-        Stabilization::Critical {
-            frontier: new_frontier,
-            stable: new_stable,
-        }
+        Sorted::<LwwPolicy>::linearize(unstable)
+            .take_while(|op| op.lamport().val() <= lamport)
+            .cloned()
+            .collect()
     }
 }
 
@@ -260,7 +214,7 @@ mod tests {
     use moirai_protocol::{
         data_type::query::{Contains, Read},
         replica::IsReplica,
-        state::po_log::{GraphLog, VecLog},
+        state::po_log::VecLog,
     };
 
     use crate::{
@@ -271,7 +225,7 @@ mod tests {
 
     #[test]
     fn reconciled_set_converges_with_polog() {
-        let (mut a, mut b) = twins_log::<GraphLog<ReconciledSet<&str>>>();
+        let (mut a, mut b) = twins_log::<VecLog<ReconciledSet<&str>>>();
 
         // Both updates have timestamp 1. B's removal wins, even though it is
         // initially ineffective and B receives A's insertion afterwards.
